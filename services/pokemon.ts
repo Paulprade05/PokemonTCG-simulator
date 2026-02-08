@@ -18,11 +18,14 @@ export const getCardsFromSet = async (setId: string) => {
       const response = await fetch(
         `https://api.pokemontcg.io/v2/cards?q=set.id:${setId}&select=id,name,images,rarity`, 
         {
-          cache: 'no-store',
-          signal: controller.signal, // Vinculamos el timeout
+          // 🔴 ANTES: cache: 'no-store' (Esto era lo lento)
+          
+          // 🟢 AHORA: Guardamos los datos 1 día entero (86400 segundos)
+          next: { revalidate: 86400 }, 
+          
+          signal: controller.signal,
           headers: {
-            // 👇 ASEGÚRATE DE QUE TU CLAVE ESTÁ AQUÍ PUESTA
-            'X-Api-Key': '3f05da5b-76ab-47ff-b319-44440619ffda' 
+            'X-Api-Key': 'TU_CLAVE_API_AQUI' 
           }
         }
       );

@@ -37,9 +37,11 @@ export default function Home() {
 
  // src/app/page.tsx
 
+// En src/app/page.tsx (dentro de tu componente)
+
 const handleSelectSet = async (setId: string) => {
-    setLoading(true);
-    setSelectedSet(setId); // Mostramos la interfaz de carga
+    setLoading(true); // <--- Esto le dice a React: "¡Pinta el cargando!"
+    setSelectedSet(setId); 
     
     try {
         const data = await getCardsFromSet(setId);
@@ -53,11 +55,11 @@ const handleSelectSet = async (setId: string) => {
         resetPackState();
     } catch (error) {
         console.error("Error cargando set:", error);
-        alert("❌ Error de conexión con la API de Pokémon.\n\nNo se pudieron descargar las cartas. Revisa tu conexión a internet o intenta esperar unos minutos.");
-        setSelectedSet(null); // TE DEVUELVE AL MENÚ para que no te quedes en una tienda rota
+        alert("❌ Error de conexión o límite de API.\n\nInténtalo de nuevo en unos minutos.");
+        setSelectedSet(null); 
         setAllCards([]);
     } finally {
-        setLoading(false);
+        setLoading(false); // <--- Esto le dice: "¡Ya terminé, quita el cargando!"
     }
 };
 
@@ -213,6 +215,14 @@ const handleBuyPack = (type: 'STANDARD' | 'PREMIUM' | 'GOLDEN') => {
                         2500 💰
                     </button>
                 </div>
+                {/* --- PEGA ESTO AQUÍ AL FINAL, ANTES DE CERRAR EL MAIN --- */}
+      {loading && (
+        <div className="fixed inset-0 bg-black/90 z-[100] flex flex-col items-center justify-center backdrop-blur-md">
+            <div className="text-6xl animate-bounce mb-4">🔮</div>
+            <h2 className="text-2xl font-bold text-yellow-400 animate-pulse">Invocando Cartas...</h2>
+            <p className="text-gray-400 mt-2 font-mono text-sm">Conectando con el servidor...</p>
+        </div>
+      )}
 
             </div>
          </div>
