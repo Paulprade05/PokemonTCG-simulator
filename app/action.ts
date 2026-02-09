@@ -122,4 +122,35 @@ export async function getFullCollection() {
     console.error("❌ Error cargando colección:", error);
     return [];
   }
+  
+}
+// src/app/action.ts (Añadir al final)
+
+// 5. VENDER CARTA (Restar cantidad y dar dinero)
+export async function sellCardAction(cardId: string, price: number) {
+  const { userId } = await auth();
+  if (!userId) return false;
+
+  try {
+    // 1. Restamos 1 a la cantidad de esa carta
+    // Si la cantidad llega a 0, podrías borrar la fila, pero dejarla a 0 también vale para el historial
+    await sql`
+      UPDATE user_collection 
+      SET quantity = quantity - 1 
+      WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity > 0
+    `;
+
+    // 2. Sumamos las monedas al usuario
+    await sql`
+      UPDATE users 
+      SET coins = coins + ${price} 
+      WHERE id = ${userId}
+    `;
+
+    revalidatePath('/collection'); // Actualizar vistas
+    return true;
+  } catch (error) {
+    console.error("Error vendiendo carta:", error);
+    return false;
+  }
 }
