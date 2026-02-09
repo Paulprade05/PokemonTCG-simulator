@@ -2,57 +2,76 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getUserData, updateCoins, savePackToCollection } from './action';
+import { useUser, SignInButton, SignedIn, SignedOut, UserButton } from '@clerk/nextjs';
 import { AnimatePresence, motion } from "framer-motion";
+import Link from "next/link";
+
+// --- TUS IMPORTACIONES ---
+import { getUserData, updateCoins, savePackToCollection } from './action'; // ⚠️ Asegúrate de que el archivo se llame action.ts o actions.ts
 import { getCardsFromSet } from "../services/pokemon";
-import { SignInButton, SignedIn, SignedOut, UserButton } from '@clerk/nextjs';
-// --- CAMBIO 1: IMPORTAMOS LAS NUEVAS FUNCIONES ---
 import {
   openStandardPack,
   openPremiumPack,
   openGoldenPack,
 } from "../utils/packLogic";
-import { saveToCollection, getCollection } from "../utils/storage"; // Necesitamos getCollection para el sobre dorado
+import { saveToCollection, getCollection } from "../utils/storage"; 
 import { useCurrency } from "../hooks/useGameCurrency";
 import { AVAILABLE_SETS } from "../utils/constanst";
 import PokemonCard from "../components/PokemonCard";
-import Link from "next/link";
 
 export default function Home() {
-  const { coins, spendCoins } = useCurrency();
+  // Hooks de estado y autenticación
+  const { coins, setCoins, spendCoins } = useCurrency(); // Asegúrate de que tu hook useCurrency exporte setCoins
+  const { isSignedIn, isLoaded } = useUser();
 
+  // Estados del juego
   const [selectedSet, setSelectedSet] = useState<string | null>(null);
   const [allCards, setAllCards] = useState<any[]>([]);
-  const [userCollectionIds, setUserCollectionIds] = useState<string[]>([]); // Para saber qué tiene el usuario
-
-  // --- ESTADOS PARA LA APERTURA ---
+  const [userCollectionIds, setUserCollectionIds] = useState<string[]>([]);
+  
+  // Estados de la apertura de sobres
   const [currentPack, setCurrentPack] = useState<any[]>([]);
   const [packIndex, setPackIndex] = useState(0);
   const [isPackOpen, setIsPackOpen] = useState(false);
   const [cardRevealed, setCardRevealed] = useState(false);
-  // --------------------------------
-
+  
+  // Estados de carga
   const [loading, setLoading] = useState(false);
   const [packSaved, setPackSaved] = useState(false);
 
-  // Cargar colección del usuario al montar (para el sobre dorado)
+  // 1. EFECTO: Sincronizar Monedas con la Base de Datos al entrar
   useEffect(() => {
+    const syncUserData = async () => {
+      if (isSignedIn && isLoaded) {
+        const data = await getUserData();
+        if (data) {
+          console.log("💰 Monedas cargadas desde BD:", data.coins);
+          setCoins(data.coins); // Actualizamos el contador visual
+        }
+      }
+    };
+    syncUserData();
+  }, [isSignedIn, isLoaded, setCoins]);
+
+  // 2. EFECTO: Cargar IDs de colección (para el sobre dorado)
+  useEffect(() => {
+    // Si queremos hacerlo "PRO", aquí podríamos llamar también a getFullCollection IDs
+    // De momento mantenemos tu lógica híbrida para no romper el sobre dorado
     const col = getCollection();
     setUserCollectionIds(col.map((c: any) => c.id));
-  }, [packSaved]); // Recargamos si guarda un pack nuevo
+  }, [packSaved]);
 
-  // src/app/page.tsx
 
-  // En src/app/page.tsx (dentro de tu componente)
+  // --- FUNCIONES DE LÓGICA ---
 
   const handleSelectSet = async (setId: string) => {
-    setLoading(true); // <--- Esto le dice a React: "¡Pinta el cargando!"
+    setLoading(true);
     setSelectedSet(setId);
 
     try {
+      // Intentamos cargar (primero mira BD local, luego API)
       const data = await getCardsFromSet(setId);
 
-      // Verificamos si realmente han llegado cartas
       if (!data || data.length === 0) {
         throw new Error("La API no devolvió cartas.");
       }
@@ -61,13 +80,11 @@ export default function Home() {
       resetPackState();
     } catch (error) {
       console.error("Error cargando set:", error);
-      alert(
-        "❌ Error de conexión o límite de API.\n\nInténtalo de nuevo en unos minutos.",
-      );
+      alert("❌ Error de conexión. Inténtalo de nuevo.");
       setSelectedSet(null);
       setAllCards([]);
     } finally {
-      setLoading(false); // <--- Esto le dice: "¡Ya terminé, quita el cargando!"
+      setLoading(false);
     }
   };
 
@@ -79,25 +96,18 @@ export default function Home() {
     setPackSaved(false);
   };
 
-  // --- LÓGICA UNIFICADA DE APERTURA ---
-  // src/app/page.tsx
-
-  const handleBuyPack = (type: "STANDARD" | "PREMIUM" | "GOLDEN") => {
-    // 1. SEGURIDAD: ¿Tenemos cartas para abrir?
+  const handleBuyPack = async (type: "STANDARD" | "PREMIUM" | "GOLDEN") => {
     if (!allCards || allCards.length === 0) {
-      alert(
-        "⚠️ Error: Las cartas no se han cargado correctamente.\n\nPor favor, recarga la página o elige otra expansión.",
-      );
-      return; // ¡AQUÍ PARAMOS ANTES DE COBRAR!
+      alert("⚠️ Error: Las cartas no se han cargado. Recarga la página.");
+      return;
     }
 
     let price = 0;
     let newPack: any[] = [];
 
-    // 2. Configurar precios
+    // Lógica de generación de sobres
     if (type === "STANDARD") {
       price = 50;
-      // Solo generamos el pack SI tenemos dinero, pero no cobramos aún
       if (coins >= price) newPack = openStandardPack(allCards);
     } else if (type === "PREMIUM") {
       price = 200;
@@ -107,14 +117,22 @@ export default function Home() {
       if (coins >= price) newPack = openGoldenPack(allCards, userCollectionIds);
     }
 
-    // 3. Comprobar saldo
     if (coins < price) {
       alert("¡No tienes suficientes monedas!");
       return;
     }
 
-    // 4. TRANSACCIÓN: Solo cobramos si todo lo anterior ha ido bien
+    // --- TRANSACCIÓN Y GUARDADO ---
+    // 1. Actualizamos visualmente (Optimistic UI)
     if (spendCoins(price)) {
+      
+      // 2. Si está logueado, actualizamos en la Nube ☁️
+      if (isSignedIn) {
+        // Restamos el precio a las monedas actuales
+        await updateCoins(coins - price);
+      }
+
+      // 3. Preparamos la animación
       setCurrentPack(newPack);
       setPackIndex(0);
       setCardRevealed(false);
@@ -123,16 +141,28 @@ export default function Home() {
     }
   };
 
-  const handleNextCard = () => {
+  const handleNextCard = async () => {
     if (!cardRevealed) {
       setCardRevealed(true);
       return;
     }
+
     if (packIndex < 9) {
+      // Siguiente carta
       setCardRevealed(false);
       setPackIndex((prev) => prev + 1);
     } else {
-      saveToCollection(currentPack);
+      // ¡SOBRE TERMINADO!
+      
+      // GUARDAR COLECCIÓN EN LA NUBE ☁️
+      if (isSignedIn) {
+        console.log("💾 Guardando pack en base de datos...");
+        await savePackToCollection(currentPack);
+      } else {
+        // Fallback: Guardar en localStorage si es invitado
+        saveToCollection(currentPack);
+      }
+
       setPackSaved(true);
       setIsPackOpen(false);
     }
@@ -144,17 +174,22 @@ export default function Home() {
     resetPackState();
   };
 
+  // --- RENDERIZADO ---
   return (
     <main className="flex min-h-screen flex-col items-center p-8 bg-gray-900 text-white overflow-hidden">
-      {/* Cabecera */}
+      
+      {/* CABECERA */}
       <div className="w-full max-w-6xl flex justify-between items-center mb-8 bg-gray-800 p-4 rounded-xl shadow-md border border-gray-700 z-10">
         <div className="flex items-center gap-2">
           <span className="text-2xl">💰</span>
-          <span className="text-xl font-bold text-yellow-400">{coins}</span>
+          <span className="text-xl font-bold text-yellow-400">
+             {/* Mostramos '...' mientras carga el usuario para que no se vea el salto de 500 a X */}
+             {!isLoaded ? "..." : coins}
+          </span>
         </div>
-        {/* 👇 AQUÍ ESTÁ LA MAGIA DE CLERK 👇 */}
-             
-             {/* Si NO has iniciado sesión, muestra este botón */}
+        
+        {/* LOGIN DE CLERK */}
+        <div className="flex gap-4 items-center">
              <SignedOut>
                 <SignInButton mode="modal">
                     <button className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold transition">
@@ -163,30 +198,30 @@ export default function Home() {
                 </SignInButton>
              </SignedOut>
 
-             {/* Si YA has iniciado sesión, muestra tu foto de perfil */}
              <SignedIn>
                 <div className="flex items-center gap-2 bg-gray-700/50 px-3 py-1 rounded-full border border-gray-600">
-                    <span className="text-sm text-gray-300 mr-2">Jugador</span>
+                    <span className="text-sm text-gray-300 mr-2 hidden sm:inline">Entrenador</span>
                     <UserButton />
                 </div>
              </SignedIn>
-             {/* 👆 FIN DE LA MAGIA 👆 */}
-        <Link
-          href="/collection"
-          className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition"
-        >
-          Ver Álbum 📒
-        </Link>
+
+            <Link
+            href="/collection"
+            className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition"
+            >
+            Ver Álbum 📒
+            </Link>
+        </div>
       </div>
 
-      {/* VISTA 1: MENÚ DE SELECCIÓN DE EXPANSIÓN */}
+      {/* VISTA 1: SELECCIÓN DE EXPANSIÓN */}
       {!selectedSet && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-6xl w-full">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-6xl w-full animate-fade-in-up">
           {AVAILABLE_SETS.map((set) => (
             <button
               key={set.id}
               onClick={() => handleSelectSet(set.id)}
-              className="bg-gray-800 p-6 rounded-xl hover:bg-gray-700 hover:scale-105 transition-all border border-gray-700 flex flex-col items-center gap-4 group"
+              className="bg-gray-800 p-6 rounded-xl hover:bg-gray-700 hover:scale-105 transition-all border border-gray-700 flex flex-col items-center gap-4 group shadow-lg"
             >
               <img
                 src={set.logo}
@@ -206,7 +241,7 @@ export default function Home() {
         <div className="w-full max-w-5xl flex flex-col items-center animate-fade-in-up">
           <button
             onClick={handleBackToMenu}
-            className="mb-8 text-gray-400 hover:text-white underline"
+            className="mb-8 text-gray-400 hover:text-white underline transition"
           >
             ← Cambiar Expansión
           </button>
@@ -215,23 +250,23 @@ export default function Home() {
             Elige tu sobre
           </h2>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full">
-            {/* --- OPCIÓN 1: BÁSICO --- */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full px-4">
+            {/* STANDARD */}
             <div
               className="bg-gray-800 border border-gray-600 rounded-2xl p-6 flex flex-col items-center hover:scale-105 transition shadow-lg group cursor-pointer"
               onClick={() => handleBuyPack("STANDARD")}
             >
               <div className="text-6xl mb-4 group-hover:animate-bounce">🃏</div>
               <h3 className="text-xl font-bold text-white">Estándar</h3>
-              <p className="text-sm text-gray-400 text-center mb-4">
-                Probabilidades oficiales. Bueno para empezar.
+              <p className="text-sm text-gray-400 text-center mb-4 mt-2">
+                Probabilidades oficiales.<br/>Ideal para empezar.
               </p>
-              <button className="mt-auto bg-blue-600 text-white font-bold py-2 px-6 rounded-full w-full hover:bg-blue-500">
+              <button className="mt-auto bg-blue-600 text-white font-bold py-2 px-6 rounded-full w-full hover:bg-blue-500 shadow-md">
                 50 💰
               </button>
             </div>
 
-            {/* --- OPCIÓN 2: ÉLITE --- */}
+            {/* PREMIUM */}
             <div
               className="bg-gray-900 border border-purple-500 rounded-2xl p-6 flex flex-col items-center hover:scale-105 transition shadow-[0_0_20px_rgba(168,85,247,0.3)] group cursor-pointer relative overflow-hidden"
               onClick={() => handleBuyPack("PREMIUM")}
@@ -241,35 +276,37 @@ export default function Home() {
               </div>
               <div className="text-6xl mb-4 group-hover:animate-pulse">✨</div>
               <h3 className="text-xl font-bold text-purple-300">Élite</h3>
-              <p className="text-sm text-gray-400 text-center mb-4">
+              <p className="text-sm text-gray-400 text-center mb-4 mt-2">
                 ¡Sin cartas comunes! <br /> 2 Raras aseguradas.
               </p>
-              <button className="mt-auto bg-purple-600 text-white font-bold py-2 px-6 rounded-full w-full hover:bg-purple-500">
+              <button className="mt-auto bg-purple-600 text-white font-bold py-2 px-6 rounded-full w-full hover:bg-purple-500 shadow-lg shadow-purple-900/50">
                 200 💰
               </button>
             </div>
 
-            {/* --- OPCIÓN 3: LEYENDA --- */}
+            {/* GOLDEN */}
             <div
               className="bg-gradient-to-b from-yellow-900 to-black border border-yellow-500 rounded-2xl p-6 flex flex-col items-center hover:scale-105 transition shadow-[0_0_30px_rgba(234,179,8,0.4)] group cursor-pointer relative"
               onClick={() => handleBuyPack("GOLDEN")}
             >
-              <div className="absolute top-0 left-0 w-full bg-yellow-600 text-black text-xs font-bold text-center py-1">
+              <div className="absolute top-0 left-0 w-full bg-yellow-600 text-black text-xs font-bold text-center py-1 shadow-sm">
                 GARANTIZA CARTA NUEVA
               </div>
-              <div className="text-6xl mb-4 mt-2 group-hover:rotate-12 transition">
+              <div className="text-6xl mb-4 mt-4 group-hover:rotate-12 transition transform">
                 👑
               </div>
               <h3 className="text-xl font-bold text-yellow-400">Leyenda</h3>
-              <p className="text-sm text-yellow-200/80 text-center mb-4">
-                Garantiza 1 carta que NO tengas en tu álbum.
+              <p className="text-sm text-yellow-200/80 text-center mb-4 mt-2">
+                100% Garantizado:<br/>1 carta que NO tienes.
               </p>
-              <button className="mt-auto bg-yellow-600 text-black font-bold py-2 px-6 rounded-full w-full hover:bg-yellow-500">
+              <button className="mt-auto bg-yellow-600 text-black font-bold py-2 px-6 rounded-full w-full hover:bg-yellow-500 shadow-lg shadow-yellow-900/50">
                 2500 💰
               </button>
             </div>
-            {/* --- PEGA ESTO AQUÍ AL FINAL, ANTES DE CERRAR EL MAIN --- */}
-            {loading && (
+          </div>
+          
+          {/* LOADER */}
+          {loading && (
               <div className="fixed inset-0 bg-black/90 z-[100] flex flex-col items-center justify-center backdrop-blur-md">
                 <div className="text-6xl animate-bounce mb-4">🔮</div>
                 <h2 className="text-2xl font-bold text-yellow-400 animate-pulse">
@@ -279,14 +316,13 @@ export default function Home() {
                   Conectando con el servidor...
                 </p>
               </div>
-            )}
-          </div>
+          )}
         </div>
       )}
 
-      {/* VISTA 3: MESA DE JUEGO (APERTURA) */}
+      {/* VISTA 3: APERTURA DE SOBRE */}
       {isPackOpen && (
-        <div className="w-full max-w-6xl flex flex-col items-center relative min-h-[600px]">
+        <div className="w-full max-w-6xl flex flex-col items-center relative min-h-[600px] justify-center">
           <div className="relative w-full h-[500px] flex justify-center items-center perspective-1000">
             <AnimatePresence mode="wait">
               <motion.div
@@ -307,37 +343,49 @@ export default function Home() {
               </motion.div>
             </AnimatePresence>
 
-            {/* Indicador de carta garantizada (Solo visual para el pack dorado) */}
             {coins >= 2500 && packIndex === 9 && (
-              <div className="absolute top-10 text-yellow-400 font-bold animate-bounce tracking-widest">
+              <div className="absolute top-10 text-yellow-400 font-bold animate-bounce tracking-widest bg-black/50 px-4 py-2 rounded-full border border-yellow-500">
                 ¡CARTA GARANTIZADA!
               </div>
             )}
 
-            <div className="absolute bottom-10 text-gray-400 font-mono text-sm bg-black/50 px-4 py-2 rounded-full">
+            <div className="absolute bottom-5 text-gray-400 font-mono text-sm bg-black/50 px-4 py-2 rounded-full backdrop-blur-sm border border-gray-700">
               Carta {packIndex + 1} / 10
             </div>
           </div>
+          <p className="text-gray-500 mt-4 animate-pulse">Toca la carta para revelar / siguiente</p>
         </div>
       )}
 
       {/* VISTA 4: RESUMEN FINAL */}
       {!isPackOpen && currentPack.length > 0 && (
-        <div className="flex flex-col items-center w-full max-w-6xl animate-fade-in-up">
-          <div className="flex gap-4 mb-6">
-            <h2 className="text-2xl font-bold text-white">
+        <div className="flex flex-col items-center w-full max-w-6xl animate-fade-in-up pb-20">
+          <div className="flex flex-col md:flex-row gap-6 mb-8 items-center">
+            <h2 className="text-3xl font-bold text-white">
               ¡Apertura completada!
             </h2>
-            <button
-              onClick={() => setCurrentPack([])}
-              className="bg-gray-600 hover:bg-gray-500 px-6 py-2 rounded-full"
-            >
-              Abrir otro
-            </button>
+            <div className="flex gap-4">
+                <button
+                onClick={() => {
+                    setCurrentPack([]);
+                    // Opcional: Volver a comprar automáticamente si hay dinero
+                }}
+                className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-full font-bold shadow-lg transition"
+                >
+                Abrir otro igual 🔄
+                </button>
+                <button
+                onClick={handleBackToMenu}
+                className="bg-gray-700 hover:bg-gray-600 px-6 py-2 rounded-full transition"
+                >
+                Volver al menú
+                </button>
+            </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 w-full pb-20">
+
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 w-full">
             {currentPack.map((card, index) => (
-              <div key={index} className="scale-95 hover:scale-100 transition">
+              <div key={index} className="scale-95 hover:scale-100 transition duration-300">
                 <PokemonCard card={card} reveal={true} />
               </div>
             ))}
