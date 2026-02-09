@@ -38,3 +38,44 @@ body {
     transform: rotateY(180deg);
   }
 }
+/* src/app/globals.css */
+
+/* --- EFECTO HOLO / BRILLANTE --- */
+
+/* 1. Definimos la animación del movimiento */
+@keyframes shine-move {
+  0% {
+    background-position: 200% center;
+  }
+  100% {
+    background-position: -200% center;
+  }
+}
+
+/* 2. Definimos la capa brillante */
+.holo-overlay {
+  /* Se coloca encima de la carta */
+  position: absolute;
+  inset: 0; /* Ocupa todo el espacio (top, right, bottom, left: 0) */
+  z-index: 20; /* Por encima de la imagen */
+  pointer-events: none; /* Deja que los clics pasen a través */
+  border-radius: inherit; /* Copia las esquinas redondeadas de la carta */
+  
+  /* El gradiente mágico: transparente -> blanco luz -> transparente */
+  background: linear-gradient(
+    115deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.4) 45%, /* El punto más brillante */
+    rgba(255, 255, 255, 0.4) 55%, 
+    transparent 70%
+  );
+  background-size: 400% 100%; /* Hacemos el fondo muy ancho para moverlo */
+  
+  /* LA CLAVE: 'overlay' fusiona el blanco con los colores de abajo para que parezca luz */
+  mix-blend-mode: overlay; 
+  /* mix-blend-mode: screen; <--- PRUEBA ESTE SI overlay TE PARECE MUY OSCURO */
+
+  /* Aplicamos la animación: 4 segundos, infinita, velocidad constante */
+  animation: shine-move 4s infinite linear;
+  opacity: 0.8; /* Un poco de transparencia general */
+}
