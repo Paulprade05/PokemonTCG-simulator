@@ -1,20 +1,25 @@
 // src/app/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
-import { useUser, SignInButton, SignedIn, SignedOut, UserButton } from '@clerk/nextjs';
+import {
+  useUser,
+  SignInButton,
+  SignedIn,
+  SignedOut,
+  UserButton,
+} from "@clerk/nextjs";
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
-
+import { useState, useEffect, useMemo } from "react"; // <--- Añade useMemo
 // --- TUS IMPORTACIONES ---
-import { getUserData, updateCoins, savePackToCollection } from './action'; // ⚠️ Asegúrate de que el archivo se llame action.ts o actions.ts
+import { getUserData, updateCoins, savePackToCollection } from "./action"; // ⚠️ Asegúrate de que el archivo se llame action.ts o actions.ts
 import { getCardsFromSet } from "../services/pokemon";
 import {
   openStandardPack,
   openPremiumPack,
   openGoldenPack,
 } from "../utils/packLogic";
-import { saveToCollection, getCollection } from "../utils/storage"; 
+import { saveToCollection, getCollection } from "../utils/storage";
 import { useCurrency } from "../hooks/useGameCurrency";
 import { AVAILABLE_SETS } from "../utils/constanst";
 import PokemonCard from "../components/PokemonCard";
@@ -28,13 +33,13 @@ export default function Home() {
   const [selectedSet, setSelectedSet] = useState<string | null>(null);
   const [allCards, setAllCards] = useState<any[]>([]);
   const [userCollectionIds, setUserCollectionIds] = useState<string[]>([]);
-  
+
   // Estados de la apertura de sobres
   const [currentPack, setCurrentPack] = useState<any[]>([]);
   const [packIndex, setPackIndex] = useState(0);
   const [isPackOpen, setIsPackOpen] = useState(false);
   const [cardRevealed, setCardRevealed] = useState(false);
-  
+
   // Estados de carga
   const [loading, setLoading] = useState(false);
   const [packSaved, setPackSaved] = useState(false);
@@ -60,7 +65,6 @@ export default function Home() {
     const col = getCollection();
     setUserCollectionIds(col.map((c: any) => c.id));
   }, [packSaved]);
-
 
   // --- FUNCIONES DE LÓGICA ---
 
@@ -125,7 +129,6 @@ export default function Home() {
     // --- TRANSACCIÓN Y GUARDADO ---
     // 1. Actualizamos visualmente (Optimistic UI)
     if (spendCoins(price)) {
-      
       // 2. Si está logueado, actualizamos en la Nube ☁️
       if (isSignedIn) {
         // Restamos el precio a las monedas actuales
@@ -153,7 +156,7 @@ export default function Home() {
       setPackIndex((prev) => prev + 1);
     } else {
       // ¡SOBRE TERMINADO!
-      
+
       // GUARDAR COLECCIÓN EN LA NUBE ☁️
       if (isSignedIn) {
         console.log("💾 Guardando pack en base de datos...");
@@ -173,66 +176,99 @@ export default function Home() {
     setAllCards([]);
     resetPackState();
   };
-
+  const setsBySeries = useMemo(() => {
+    const groups: Record<string, typeof AVAILABLE_SETS> = {};
+    AVAILABLE_SETS.forEach((set) => {
+      // Si la serie no existe en el objeto, creamos el array
+      // Usamos 'Otra' por si se nos olvidó ponerle serie a alguna
+      const seriesName = set.series || "Otras";
+      if (!groups[seriesName]) groups[seriesName] = [];
+      groups[seriesName].push(set);
+    });
+    return groups;
+  }, []);
   // --- RENDERIZADO ---
   return (
     <main className="flex min-h-screen flex-col items-center p-8 bg-gray-900 text-white overflow-hidden">
-      
       {/* CABECERA */}
       <div className="w-full max-w-6xl flex justify-between items-center mb-8 bg-gray-800 p-4 rounded-xl shadow-md border border-gray-700 z-10">
         <div className="flex items-center gap-2">
           <span className="text-2xl">💰</span>
           <span className="text-xl font-bold text-yellow-400">
-             {/* Mostramos '...' mientras carga el usuario para que no se vea el salto de 500 a X */}
-             {!isLoaded ? "..." : coins}
+            {/* Mostramos '...' mientras carga el usuario para que no se vea el salto de 500 a X */}
+            {!isLoaded ? "..." : coins}
           </span>
         </div>
-        
+
         {/* LOGIN DE CLERK */}
         <div className="flex gap-4 items-center">
-             <SignedOut>
-                <SignInButton mode="modal">
-                    <button className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold transition">
-                        Iniciar Sesión 👤
-                    </button>
-                </SignInButton>
-             </SignedOut>
+          <SignedOut>
+            <SignInButton mode="modal">
+              <button className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold transition">
+                Iniciar Sesión 👤
+              </button>
+            </SignInButton>
+          </SignedOut>
 
-             <SignedIn>
-                <div className="flex items-center gap-2 bg-gray-700/50 px-3 py-1 rounded-full border border-gray-600">
-                    <span className="text-sm text-gray-300 mr-2 hidden sm:inline">Entrenador</span>
-                    <UserButton />
-                </div>
-             </SignedIn>
+          <SignedIn>
+            <div className="flex items-center gap-2 bg-gray-700/50 px-3 py-1 rounded-full border border-gray-600">
+              <span className="text-sm text-gray-300 mr-2 hidden sm:inline">
+                Entrenador
+              </span>
+              <UserButton />
+            </div>
+          </SignedIn>
 
-            <Link
+          <Link
             href="/collection"
             className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition"
-            >
+          >
             Ver Álbum 📒
-            </Link>
+          </Link>
         </div>
       </div>
 
-      {/* VISTA 1: SELECCIÓN DE EXPANSIÓN */}
+      {/* VISTA 1: SELECCIÓN DE EXPANSIÓN (CLASIFICADA) */}
       {!selectedSet && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-6xl w-full animate-fade-in-up">
-          {AVAILABLE_SETS.map((set) => (
-            <button
-              key={set.id}
-              onClick={() => handleSelectSet(set.id)}
-              className="bg-gray-800 p-6 rounded-xl hover:bg-gray-700 hover:scale-105 transition-all border border-gray-700 flex flex-col items-center gap-4 group shadow-lg"
-            >
-              <img
-                src={set.logo}
-                alt={set.name}
-                className="h-24 object-contain group-hover:drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] transition"
-              />
-              <span className="font-bold text-lg text-gray-300">
-                {set.name}
-              </span>
-            </button>
+        <div className="w-full max-w-6xl flex flex-col gap-12 animate-fade-in-up pb-20">
+          
+          {/* Iteramos por cada Serie (Escarlata, Espada...) */}
+          {Object.entries(setsBySeries).map(([seriesName, sets]) => (
+            <div key={seriesName} className="flex flex-col gap-4">
+               
+               {/* Título de la Generación */}
+               <div className="flex items-center gap-4">
+                 <h2 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 uppercase tracking-wider">
+                    {seriesName}
+                 </h2>
+                 <div className="h-px bg-gray-700 flex-1"></div>
+               </div>
+
+               {/* Grid de Sets de esa generación */}
+               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  {sets.map((set) => (
+                    <button
+                      key={set.id}
+                      onClick={() => handleSelectSet(set.id)}
+                      className="bg-gray-800 p-6 rounded-xl hover:bg-gray-700 hover:scale-105 transition-all border border-gray-700 flex flex-col items-center gap-4 group shadow-lg relative overflow-hidden"
+                    >
+                      {/* Efecto de brillo al pasar el ratón */}
+                      <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition duration-500"></div>
+                      
+                      <img
+                        src={set.logo}
+                        alt={set.name}
+                        className="h-24 object-contain group-hover:drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] transition relative z-10"
+                      />
+                      <span className="font-bold text-lg text-gray-300 relative z-10">
+                        {set.name}
+                      </span>
+                    </button>
+                  ))}
+               </div>
+            </div>
           ))}
+
         </div>
       )}
 
@@ -259,7 +295,9 @@ export default function Home() {
               <div className="text-6xl mb-4 group-hover:animate-bounce">🃏</div>
               <h3 className="text-xl font-bold text-white">Estándar</h3>
               <p className="text-sm text-gray-400 text-center mb-4 mt-2">
-                Probabilidades oficiales.<br/>Ideal para empezar.
+                Probabilidades oficiales.
+                <br />
+                Ideal para empezar.
               </p>
               <button className="mt-auto bg-blue-600 text-white font-bold py-2 px-6 rounded-full w-full hover:bg-blue-500 shadow-md">
                 50 💰
@@ -297,25 +335,26 @@ export default function Home() {
               </div>
               <h3 className="text-xl font-bold text-yellow-400">Leyenda</h3>
               <p className="text-sm text-yellow-200/80 text-center mb-4 mt-2">
-                100% Garantizado:<br/>1 carta que NO tienes.
+                100% Garantizado:
+                <br />1 carta que NO tienes.
               </p>
               <button className="mt-auto bg-yellow-600 text-black font-bold py-2 px-6 rounded-full w-full hover:bg-yellow-500 shadow-lg shadow-yellow-900/50">
                 2500 💰
               </button>
             </div>
           </div>
-          
+
           {/* LOADER */}
           {loading && (
-              <div className="fixed inset-0 bg-black/90 z-[100] flex flex-col items-center justify-center backdrop-blur-md">
-                <div className="text-6xl animate-bounce mb-4">🔮</div>
-                <h2 className="text-2xl font-bold text-yellow-400 animate-pulse">
-                  Invocando Cartas...
-                </h2>
-                <p className="text-gray-400 mt-2 font-mono text-sm">
-                  Conectando con el servidor...
-                </p>
-              </div>
+            <div className="fixed inset-0 bg-black/90 z-[100] flex flex-col items-center justify-center backdrop-blur-md">
+              <div className="text-6xl animate-bounce mb-4">🔮</div>
+              <h2 className="text-2xl font-bold text-yellow-400 animate-pulse">
+                Invocando Cartas...
+              </h2>
+              <p className="text-gray-400 mt-2 font-mono text-sm">
+                Conectando con el servidor...
+              </p>
+            </div>
           )}
         </div>
       )}
@@ -353,7 +392,9 @@ export default function Home() {
               Carta {packIndex + 1} / 10
             </div>
           </div>
-          <p className="text-gray-500 mt-4 animate-pulse">Toca la carta para revelar / siguiente</p>
+          <p className="text-gray-500 mt-4 animate-pulse">
+            Toca la carta para revelar / siguiente
+          </p>
         </div>
       )}
 
@@ -365,27 +406,30 @@ export default function Home() {
               ¡Apertura completada!
             </h2>
             <div className="flex gap-4">
-                <button
+              <button
                 onClick={() => {
-                    setCurrentPack([]);
-                    // Opcional: Volver a comprar automáticamente si hay dinero
+                  setCurrentPack([]);
+                  // Opcional: Volver a comprar automáticamente si hay dinero
                 }}
                 className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-full font-bold shadow-lg transition"
-                >
+              >
                 Abrir otro igual 🔄
-                </button>
-                <button
+              </button>
+              <button
                 onClick={handleBackToMenu}
                 className="bg-gray-700 hover:bg-gray-600 px-6 py-2 rounded-full transition"
-                >
+              >
                 Volver al menú
-                </button>
+              </button>
             </div>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 w-full">
             {currentPack.map((card, index) => (
-              <div key={index} className="scale-95 hover:scale-100 transition duration-300">
+              <div
+                key={index}
+                className="scale-95 hover:scale-100 transition duration-300"
+              >
                 <PokemonCard card={card} reveal={true} />
               </div>
             ))}

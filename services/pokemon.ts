@@ -1,82 +1,68 @@
 // src/services/pokemon.ts
-'use server'
 
-import { sql } from '@vercel/postgres';
+const API_KEY = process.env.NEXT_PUBLIC_POKEMON_API_KEY; 
 
-// Definimos el tipo de carta para TypeScript
-interface Card {
-  id: string;
-  name: string;
-  rarity: string;
-  images: { small: string; large: string };
-}
-
-export const getCardsFromSet = async (setId: string) => {
-  console.log(`🔍 [DB] Buscando set: ${setId}...`);
-
-  try {
-    // 1. PRIMERO: Miramos en NUESTRA Base de Datos (Neon/Vercel)
-    // Seleccionamos todas las cartas que tengan ese 'set_id'
-    const { rows } = await sql`SELECT * FROM cards WHERE set_id = ${setId}`;
-
-    if (rows.length > 0) {
-      console.log(`⚡ ¡CACHE HIT! Encontradas ${rows.length} cartas en la BD.`);
-      // La BD devuelve el JSON de 'images' como objeto, así que lo mapeamos directo
-      return rows.map((row: any) => ({
-        id: row.id,
-        name: row.name,
-        rarity: row.rarity,
-        images: row.images, // Postgres ya lo convierte de JSON a objeto
-      })) as Card[];
+export async function getCardsFromSet(setId: string) {
+  // 1. 🕵️‍♂️ PRIMERO MIRAMOS EN LA "CACHÉ" LOCAL (Tu navegador)
+  // Si ya hemos descargado este set antes, lo leemos de la memoria.
+  if (typeof window !== 'undefined') {
+    const cachedData = localStorage.getItem(`cache_set_${setId}`);
+    if (cachedData) {
+      console.log(`⚡ Cargando set ${setId} desde caché local...`);
+      return JSON.parse(cachedData);
     }
+  }
 
-    // 2. SEGUNDO: Si no están (Cache Miss), llamamos a la API Externa
-    console.log(`🌍 [API] No están en BD. Descargando de Pokémon TCG API...`);
-    
+  // 2. 🌐 SI NO LO TENEMOS, LLAMAMOS A LA API
+  try {
+    console.log(`📡 Descargando set ${setId} de internet...`);
     const response = await fetch(
-      `https://api.pokemontcg.io/v2/cards?q=set.id:${setId}&select=id,name,images,rarity`, 
+      `https://api.pokemontcg.io/v2/cards?q=set.id:${setId}&select=id,name,images,rarity,set,number,artist,flavorText,tcgplayer,types,subtypes,hp,supertype`, 
       {
         headers: {
-          // Asegúrate de que tu API KEY sigue aquí
-          'X-Api-Key': 'TU_CLAVE_API_AQUI' 
+          ...(API_KEY && { "3f05da5b-76ab-47ff-b319-44440619ffda": API_KEY }),
         }
       }
     );
 
-    if (!response.ok) throw new Error(`Error API Externa: ${response.status}`);
-    
+    if (!response.ok) {
+       if (response.status === 429) throw new Error("⚠️ Demasiadas peticiones. Espera un minuto.");
+       throw new Error("Error de conexión con la API");
+    }
+
     const data = await response.json();
-    const cards: Card[] = data.data;
+    
+    const cleanData = data.data.map((card: any) => ({
+      id: card.id,
+      name: card.name,
+      images: card.images,
+      rarity: card.rarity,
+      set: card.set, 
+      number: card.number,
+      artist: card.artist,
+      flavorText: card.flavorText,
+      tcgplayer: card.tcgplayer,
+      hp: card.hp,
+      types: card.types,
+      subtypes: card.subtypes,
+      supertype: card.supertype
+    }));
 
-    // 3. TERCERO: ¡Guardamos todo en la BD para siempre!
-    console.log(`💾 [DB] Guardando ${cards.length} cartas nuevas...`);
+    // 3. 💾 ¡GUARDAMOS EN CACHÉ PARA SIEMPRE!
+    // La próxima vez no hará falta internet
+    if (typeof window !== 'undefined') {
+        try {
+            localStorage.setItem(`cache_set_${setId}`, JSON.stringify(cleanData));
+        } catch (e) {
+            console.warn("Memoria llena, no se pudo cachear el set.");
+        }
+    }
 
-    // Insertamos las cartas una a una (o en paralelo)
-    // Usamos Promise.all para que sea más rápido
-    await Promise.all(
-      cards.map(card => {
-        // OJO: 'images' es un objeto, hay que convertirlo a string para guardarlo si usas SQL puro,
-        // pero con @vercel/postgres y JSONB suele ser automático. 
-        // Por seguridad usamos JSON.stringify para asegurar el formato.
-        return sql`
-          INSERT INTO cards (id, name, rarity, images, set_id)
-          VALUES (
-            ${card.id}, 
-            ${card.name}, 
-            ${card.rarity || 'Common'}, 
-            ${JSON.stringify(card.images)}, 
-            ${setId}
-          )
-          ON CONFLICT (id) DO NOTHING; -- Si la carta ya existe, no falles
-        `;
-      })
-    );
-
-    console.log("✅ Set guardado. La próxima vez será instantáneo.");
-    return cards;
+    return cleanData;
 
   } catch (error) {
-    console.error("❌ Error en getCardsFromSet:", error);
-    return []; // En caso de emergencia devolvemos vacío
+    console.error(error);
+    // Si falla, devolvemos array vacío para que la UI lo maneje
+    throw error;
   }
-};
+}
