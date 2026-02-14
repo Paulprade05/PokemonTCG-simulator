@@ -1,10 +1,8 @@
-// src/app/collection/page.tsx
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { useUser } from "@clerk/nextjs"; // <--- 1. Importar Clerk
-// 👇 2. Importar tus acciones de servidor (Asegúrate del nombre del archivo: action o actions)
+import { useUser } from "@clerk/nextjs";
 import { getFullCollection, sellCardAction } from "../action";
 import { getCollection, saveCollectionRaw } from "../../utils/storage";
 import { useCurrency } from "../../hooks/useGameCurrency";
@@ -17,25 +15,23 @@ import PokemonCard from "../../components/PokemonCard";
 import Link from "next/link";
 
 export default function CollectionPage() {
-  const { isSignedIn, isLoaded } = useUser(); // Hook de usuario
+  const { isSignedIn, isLoaded } = useUser();
   const [cards, setCards] = useState<any[]>([]);
-  const { coins, addCoins } = useCurrency(); // Esto actualiza el contador visual localmente
+  const { coins, addCoins } = useCurrency();
   const [showStats, setShowStats] = useState(false);
-  const [loading, setLoading] = useState(true); // Estado de carga
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState("rarity_desc");
   const [filterSet, setFilterSet] = useState("all");
   const [selectedCard, setSelectedCard] = useState<any | null>(null);
 
-  // --- CARGA DE DATOS (BD vs LocalStorage) ---
+  // --- CARGA DE DATOS ---
   useEffect(() => {
     async function initCollection() {
-      if (!isLoaded) return; // Esperar a que Clerk cargue
-
+      if (!isLoaded) return;
       setLoading(true);
 
       if (isSignedIn) {
-        // ☁️ MODO NUBE: Cargar desde Postgres
         try {
           const dbCards = await getFullCollection();
           setCards(dbCards);
@@ -43,38 +39,35 @@ export default function CollectionPage() {
           console.error("Error cargando colección:", error);
         }
       } else {
-        // 💾 MODO LOCAL: Fallback a localStorage
         const localCards = getCollection();
         setCards(localCards);
       }
-
       setLoading(false);
     }
-
     initCollection();
   }, [isSignedIn, isLoaded]);
 
-  // --- LÓGICA DE PROGRESO POR SET (Tu código original intacto) ---
+  // --- LÓGICA DE ESTADÍSTICAS ---
   const setStats = useMemo(() => {
     return AVAILABLE_SETS.map((set) => {
       const uniqueCardsOwned = cards.filter((c) =>
-        c.id.startsWith(set.id),
+        c.id.startsWith(set.id)
       ).length;
       const percentage = Math.min(
         100,
-        Math.round((uniqueCardsOwned / set.total) * 100),
+        Math.round((uniqueCardsOwned / set.total) * 100)
       );
       const missing = Math.max(0, set.total - uniqueCardsOwned);
       return { ...set, owned: uniqueCardsOwned, percentage, missing };
     });
   }, [cards]);
 
-  // --- FILTROS Y ORDEN (Tu código original intacto) ---
+  // --- FILTROS Y ORDEN ---
   const processedCards = useMemo(() => {
     let result = [...cards];
     if (searchTerm)
       result = result.filter((c) =>
-        c.name.toLowerCase().includes(searchTerm.toLowerCase()),
+        c.name.toLowerCase().includes(searchTerm.toLowerCase())
       );
     if (filterSet !== "all")
       result = result.filter((c) => c.id.startsWith(filterSet));
@@ -96,27 +89,21 @@ export default function CollectionPage() {
 
   const getPrice = (rarity: string) => SELL_PRICES[rarity] || 10;
 
-  // --- VENTA DE CARTAS (Híbrido BD + Local) ---
+  // --- VENTA ---
   const handleSellCard = async (
     e: React.MouseEvent,
     cardId: string,
-    rarity: string,
+    rarity: string
   ) => {
     e.stopPropagation();
-
-    // 🔍 BUSCAMOS LA CARTA PARA VER SU CANTIDAD
     const card = cards.find((c) => c.id === cardId);
-
-    // 🛡️ PROTECCIÓN: Si no existe o solo tienes 1, no hacemos nada.
     if (!card || card.quantity <= 1) return;
 
     const price = getPrice(rarity);
-
-    // ... (el resto de tu código sigue igual: UI Optimista, setCards, etc.) ...
     const updatedCards = cards.map((c) => {
       if (c.id === cardId) return { ...c, quantity: c.quantity - 1 };
       return c;
-    }); // Nota: Ya no filtramos quantity > 0 porque sabemos que mínimo quedará 1.
+    });
 
     setCards(updatedCards);
     addCoins(price);
@@ -139,7 +126,7 @@ export default function CollectionPage() {
 
   return (
     <main className="min-h-screen bg-gray-900 text-white p-8 pb-32">
-      {/* Cabecera */}
+      {/* CABECERA */}
       <div className="sticky top-0 z-40 bg-gray-900/95 backdrop-blur-md border-b border-gray-700 py-4 mb-8 -mx-8 px-8 shadow-2xl flex justify-between items-center">
         <div className="flex items-center gap-4">
           <Link
@@ -156,9 +143,8 @@ export default function CollectionPage() {
         </div>
       </div>
 
-      {/* --- DASHBOARD DE PROGRESO (DESPLEGABLE) --- */}
+      {/* DASHBOARD ESTADÍSTICAS */}
       <div className="max-w-7xl mx-auto mb-6">
-        {/* BOTÓN TOGGLE */}
         <button
           onClick={() => setShowStats(!showStats)}
           className="w-full bg-gray-800 p-4 rounded-xl border border-gray-700 flex justify-between items-center hover:bg-gray-700 transition group shadow-lg"
@@ -170,38 +156,31 @@ export default function CollectionPage() {
                 Progreso de Colección
               </h3>
               <p className="text-xs text-gray-400">
-                {showStats
-                  ? "Haz click para ocultar"
-                  : "Haz click para ver cuánto te falta"}
+                {showStats ? "Ocultar detalles" : "Ver progreso por expansión"}
               </p>
             </div>
           </div>
-
-          {/* Flechita animada */}
           <motion.div
             animate={{ rotate: showStats ? 180 : 0 }}
-            transition={{ duration: 0.3 }}
             className="text-gray-400"
           >
             ▼
           </motion.div>
         </button>
 
-        {/* CONTENIDO DESPLEGABLE */}
         <AnimatePresence>
           {showStats && (
             <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: "auto", opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.4, ease: "easeInOut" }}
               className="overflow-hidden"
             >
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-4 pb-2">
                 {setStats.map((stat) => (
                   <div
                     key={stat.id}
-                    className="bg-gray-800/50 p-4 rounded-xl border border-gray-700/50 flex flex-col gap-3 hover:border-gray-500 transition"
+                    className="bg-gray-800/50 p-4 rounded-xl border border-gray-700/50 flex flex-col gap-3"
                   >
                     <div className="flex items-center gap-3">
                       <img
@@ -214,25 +193,19 @@ export default function CollectionPage() {
                           {stat.name}
                         </h3>
                         <p className="text-xs text-gray-400">
-                          {stat.owned} / {stat.total} cartas
+                          {stat.owned}/{stat.total}
                         </p>
                       </div>
                     </div>
-
                     <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
                       <div
-                        className={`h-full rounded-full ${stat.percentage === 100 ? "bg-green-500" : "bg-blue-500"}`}
+                        className={`h-full rounded-full ${
+                          stat.percentage === 100
+                            ? "bg-green-500"
+                            : "bg-blue-500"
+                        }`}
                         style={{ width: `${stat.percentage}%` }}
                       ></div>
-                    </div>
-
-                    <div className="flex justify-between text-xs font-mono">
-                      <span className="text-blue-300">{stat.percentage}%</span>
-                      {stat.missing > 0 ? (
-                        <span className="text-red-300">-{stat.missing}</span>
-                      ) : (
-                        <span className="text-green-400 font-bold">✓</span>
-                      )}
                     </div>
                   </div>
                 ))}
@@ -242,11 +215,11 @@ export default function CollectionPage() {
         </AnimatePresence>
       </div>
 
-      {/* Toolbar de Filtros */}
+      {/* TOOLBAR */}
       <div className="max-w-7xl mx-auto mb-6 flex flex-wrap gap-2 items-center bg-gray-800 p-2 rounded-lg border border-gray-700">
         <input
           type="text"
-          placeholder="🔍 Buscar carta..."
+          placeholder="🔍 Buscar..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="bg-gray-900 text-white px-3 py-1.5 rounded border border-gray-600 focus:border-yellow-400 outline-none text-sm w-full md:w-auto"
@@ -254,9 +227,9 @@ export default function CollectionPage() {
         <select
           value={filterSet}
           onChange={(e) => setFilterSet(e.target.value)}
-          className="bg-gray-900 text-white px-3 py-1.5 rounded border border-gray-600 outline-none text-sm flex-1 md:flex-none"
+          className="bg-gray-900 text-white px-3 py-1.5 rounded border border-gray-600 text-sm"
         >
-          <option value="all">🌍 Todas las Expansiones</option>
+          <option value="all">🌍 Todas</option>
           {AVAILABLE_SETS.map((set) => (
             <option key={set.id} value={set.id}>
               {set.name}
@@ -266,21 +239,18 @@ export default function CollectionPage() {
         <select
           value={sortBy}
           onChange={(e) => setSortBy(e.target.value)}
-          className="bg-gray-900 text-white px-3 py-1.5 rounded border border-gray-600 outline-none text-sm flex-1 md:flex-none"
+          className="bg-gray-900 text-white px-3 py-1.5 rounded border border-gray-600 text-sm"
         >
-          <option value="rarity_desc">💎 Valor</option>
+          <option value="rarity_desc">💎 Rareza</option>
           <option value="quantity_desc">🔢 Cantidad</option>
           <option value="name_asc">🔤 Nombre</option>
         </select>
       </div>
 
-      {/* Grid de Cartas */}
+      {/* GRID CARTAS */}
       {processedCards.length === 0 ? (
         <div className="text-center py-20 text-gray-500">
-          <p className="text-xl">No se encontraron cartas.</p>
-          <Link href="/" className="text-blue-400 underline mt-2 inline-block">
-            ¡Ve a abrir sobres!
-          </Link>
+          <p>No tienes cartas aún.</p>
         </div>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6 max-w-7xl mx-auto">
@@ -295,21 +265,26 @@ export default function CollectionPage() {
                   {card.quantity}
                 </div>
               )}
+              
               <div className="transition transform group-hover:-translate-y-1 duration-300 pointer-events-none">
-                <PokemonCard card={card} reveal={true} />
+                {/* 👇 ¡AQUÍ ESTÁ EL ARREGLO! 👇 */}
+                <PokemonCard 
+                  card={card} 
+                  reveal={true} 
+                  isFavorite={card.is_favorite} 
+                />
               </div>
+
               <div className="mt-2 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                {/* 👇 SOLO MOSTRAMOS EL BOTÓN SI TIENES DUPLICADOS (quantity > 1) 👇 */}
                 {card.quantity > 1 ? (
                   <button
                     onClick={(e) => handleSellCard(e, card.id, card.rarity)}
-                    className="bg-red-900/80 hover:bg-red-600 text-white text-xs py-1 px-3 rounded-full flex items-center gap-1 border border-red-400 backdrop-blur-sm z-20 transition"
+                    className="bg-red-900/80 hover:bg-red-600 text-white text-xs py-1 px-3 rounded-full border border-red-400 backdrop-blur-sm z-20"
                   >
                     Vender (+{getPrice(card.rarity)})
                   </button>
                 ) : (
-                  // Opcional: Mostrar un texto que diga "Original"
-                  <span className="text-[10px] font-bold text-gray-500 bg-black/60 px-2 py-1 rounded select-none border border-gray-700">
+                  <span className="text-[10px] font-bold text-gray-500 bg-black/60 px-2 py-1 rounded border border-gray-700">
                     🔒 Original
                   </span>
                 )}
@@ -319,8 +294,7 @@ export default function CollectionPage() {
         </div>
       )}
 
-      {/* MODAL DETALLE (FICHA TÉCNICA) */}
-      {/* MODAL DETALLE SIMPLIFICADO */}
+      {/* MODAL DETALLE */}
       <AnimatePresence>
         {selectedCard && (
           <motion.div
@@ -337,13 +311,13 @@ export default function CollectionPage() {
               className="relative w-full max-w-4xl bg-gray-900 rounded-2xl overflow-hidden shadow-2xl border border-gray-700 flex flex-col md:flex-row"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* BOTÓN CERRAR */}
               <button
                 onClick={() => setSelectedCard(null)}
                 className="absolute top-4 right-4 text-gray-400 hover:text-white z-50 bg-black/50 p-2 rounded-full"
-              >✕</button>
+              >
+                ✕
+              </button>
 
-              {/* COLUMNA IZQUIERDA: IMAGEN */}
               <div className="w-full md:w-1/2 p-8 bg-gray-800 flex items-center justify-center">
                 <img
                   src={selectedCard.images.large}
@@ -352,39 +326,50 @@ export default function CollectionPage() {
                 />
               </div>
 
-              {/* COLUMNA DERECHA: DATOS SELECCIONADOS */}
               <div className="w-full md:w-1/2 p-10 flex flex-col justify-center gap-8 bg-gray-900">
-                
-                {/* 1. NOMBRE */}
                 <div>
-                  <p className="text-gray-500 text-xs uppercase tracking-widest mb-1 font-bold">Pokémon</p>
+                  <p className="text-gray-500 text-xs uppercase tracking-widest mb-1 font-bold">
+                    Pokémon
+                  </p>
                   <h2 className="text-5xl font-black text-white tracking-tight">
                     {selectedCard.name}
                   </h2>
                 </div>
 
-                {/* 2. EXPANSIÓN (SET) */}
                 <div className="flex flex-col gap-2">
-                  <p className="text-gray-500 text-xs uppercase tracking-widest font-bold">Expansión</p>
+                  <p className="text-gray-500 text-xs uppercase tracking-widest font-bold">
+                    Expansión
+                  </p>
                   <div className="flex items-center gap-3 bg-gray-800 p-3 rounded-xl border border-gray-700">
                     {(() => {
                       const setId = selectedCard.set_id || selectedCard.set?.id;
-                      const setInfo = AVAILABLE_SETS.find((s) => s.id === setId);
+                      const setInfo = AVAILABLE_SETS.find(
+                        (s) => s.id === setId
+                      );
                       return setInfo ? (
                         <>
-                          <img src={setInfo.logo} alt="set" className="h-8 w-auto object-contain" />
-                          <span className="text-xl font-bold text-gray-200">{setInfo.name}</span>
+                          <img
+                            src={setInfo.logo}
+                            alt="set"
+                            className="h-8 w-auto object-contain"
+                          />
+                          <span className="text-xl font-bold text-gray-200">
+                            {setInfo.name}
+                          </span>
                         </>
                       ) : (
-                        <span className="text-xl font-bold text-gray-200">{selectedCard.set?.name || "Desconocido"}</span>
+                        <span className="text-xl font-bold text-gray-200">
+                          {selectedCard.set?.name || "Desconocido"}
+                        </span>
                       );
                     })()}
                   </div>
                 </div>
 
-                {/* 3. PRECIO (VALOR EN JUEGO) */}
                 <div>
-                  <p className="text-gray-500 text-xs uppercase tracking-widest mb-2 font-bold">Valor de Venta</p>
+                  <p className="text-gray-500 text-xs uppercase tracking-widest mb-2 font-bold">
+                    Valor Actual
+                  </p>
                   <div className="inline-flex items-center gap-3 bg-yellow-400/10 p-4 rounded-2xl border border-yellow-400/20">
                     <span className="text-4xl font-black text-yellow-400">
                       {getPrice(selectedCard.rarity)}
@@ -392,7 +377,6 @@ export default function CollectionPage() {
                     <span className="text-2xl">💰</span>
                   </div>
                 </div>
-
               </div>
             </motion.div>
           </motion.div>

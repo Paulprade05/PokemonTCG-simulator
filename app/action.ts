@@ -145,9 +145,12 @@ export async function sellCardAction(cardId: string, price: number) {
   }
 }
 
+// En src/app/action.ts
+
 export async function toggleFavorite(cardId: string) {
-  // ✅ CORRECCIÓN: Añadido 'await' a auth()
+  // 🔴 ¡IMPORTANTE! El 'await' aquí es OBLIGATORIO en versiones nuevas
   const { userId } = await auth(); 
+  
   if (!userId) return { error: "No estás logueado" };
 
   try {
@@ -157,27 +160,25 @@ export async function toggleFavorite(cardId: string) {
       WHERE user_id = ${userId} AND card_id = ${cardId}
     `;
     
-    // Si no existe la fila (raro, pero posible), asumimos false
+    // Si no encuentra la carta, es que no la tienes
+    if (currentStatus.rowCount === 0) return { error: "No tienes esta carta" };
+
     const isFav = currentStatus.rows[0]?.is_favorite || false;
 
-    // 2. Si queremos marcar como favorito (actualmente es false), verificamos límite
+    // 2. Comprobar límite de 10 (solo si vamos a activar el favorito)
     if (!isFav) {
       const countResult = await sql`
         SELECT count(*) as total FROM user_collection 
         WHERE user_id = ${userId} AND is_favorite = true
       `;
-      
       const totalFavs = parseInt(countResult.rows[0].total);
-
-      if (totalFavs >= 10) {
-        return { error: "¡Ya tienes 10 favoritos! Desmarca uno antes." };
-      }
+      if (totalFavs >= 10) return { error: "¡Límite de 10 favoritos alcanzado!" };
     }
 
-    // 3. Cambiamos el estado (Toggle)
+    // 3. Cambiar el estado
     await sql`
       UPDATE user_collection 
-      SET is_favorite = NOT is_favorite 
+      SET is_favorite = ${!isFav} 
       WHERE user_id = ${userId} AND card_id = ${cardId}
     `;
 
@@ -185,8 +186,8 @@ export async function toggleFavorite(cardId: string) {
     return { success: true, isFavorite: !isFav };
 
   } catch (error) {
-    console.error("Error al marcar favorita:", error);
-    return { error: "Error de base de datos" };
+    console.error("Error toggleFavorite:", error); // 👈 Mira la terminal de VSCode si falla
+    return { error: "Error interno del servidor" };
   }
 }
 
