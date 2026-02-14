@@ -75,19 +75,39 @@ export const openPremiumPack = (allCards: Card[]): Card[] => {
   const pools = categorizeCards(allCards);
   const pack: Card[] = [];
 
-  // Sin comunes, solo calidad.
-  // 4 Infrecuentes
-  for (let i = 0; i < 4; i++) pack.push(draw(pools.uncommon, pools.rare));
-  
-  // 3 Raras (Holo o Reverse genéricas)
-  for (let i = 0; i < 3; i++) pack.push(draw(pools.rare, pools.uncommon));
+  // --- FASE 1: EL RELLENO (8 Cartas) ---
+  // Mezclamos Infrecuentes y Raras para que no se sienta "barato", pero sin dar premios gordos.
+  for (let i = 0; i < 4; i++) pack.push(draw(pools.uncommon, pools.common));
+  for (let i = 0; i < 4; i++) pack.push(draw(pools.rare, pools.uncommon));
 
-  // 2 Carta de Arte o ex (Probabilidad media)
-  pack.push(draw(pools.illustrationRare.length > 0 ? pools.illustrationRare : pools.doubleRare, pools.rare));
-  pack.push(draw(pools.doubleRare, pools.rare));
+  // --- FASE 2: LOS HITS (2 Cartas) ---
 
-  // 1 EL GRAN HIT (Probabilidad aumentada)
-  pack.push(getHitCard(pools, 'PREMIUM'));
+  // SLOT 9: Garantizado "Illustration Rare" O "Double Rare"
+  // Creamos un pool combinado. Si el set tiene Art Rares, salen aquí. Si no, sale una ex.
+  const midTierPool = [...pools.illustrationRare, ...pools.doubleRare];
+  // Si el set es muy antiguo y no tiene ni ex ni arts, damos una Rara Holo.
+  pack.push(draw(midTierPool, pools.rare)); 
+
+  // SLOT 10: EL JEFE (Probabilidad de Ultra Rare superior)
+  const rand = Math.random() * 100;
+  let bossCard;
+
+  // Ajuste de probabilidades para el último slot:
+  if (rand < 5) {
+     // 5% -> Hyper Rare (Dorada)
+     bossCard = draw(pools.hyperRare, pools.ultraRare);
+  } else if (rand < 15) {
+     // 10% -> Special Illustration Rare (SIR/SAR)
+     bossCard = draw(pools.specialIllustrationRare, pools.ultraRare);
+  } else if (rand < 40) {
+     // 25% -> Ultra Rare (Full Art)
+     bossCard = draw(pools.ultraRare, pools.doubleRare);
+  } else {
+     // 60% -> Double Rare (ex normal) - El premio de consolación del slot jefe
+     bossCard = draw(pools.doubleRare, pools.rare);
+  }
+
+  pack.push(bossCard);
 
   return pack;
 };

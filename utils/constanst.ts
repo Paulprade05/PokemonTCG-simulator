@@ -197,36 +197,43 @@ export const AVAILABLE_SETS = [
 // src/utils/constanst.ts
 
 // 1. RANKING (Para ordenar en el álbum)
+// src/utils/constanst.ts
+
+// 💎 RANKING DE RAREZA (Para ordenar: 1 = Peor, 10 = Mejor)
 export const RARITY_RANK: Record<string, number> = {
+  // Basura
   "Common": 1,
+  
+  // Normales
   "Uncommon": 2,
   "Rare": 3,
   "Rare Holo": 4,
   "Promo": 4,
-  "Classic Collection": 4, // Celebrations
-  
-  // V / ex / GX (Nivel Medio)
-  "Double Rare": 5,        // SV: ex
-  "Rare Holo V": 5,        // SwSh: V
-  "Rare Holo GX": 5,       // Sun&Moon: GX (por si acaso)
-  "Rare Holo EX": 5,       // Black&White: EX
-  "Radiant Rare": 6,
+
+  // V / ex
+  "Double Rare": 5,
+  "Rare Holo V": 5,
   "Rare Holo VMAX": 6,
   "Rare Holo VSTAR": 6,
-  "Shiny Rare": 6,         // Destinos Brillantes (Baby Shinies)
+  "Rare Ultra": 6, // A veces sale así
 
-  // Full Arts / Secretas (Nivel Alto)
-  "Illustration Rare": 7,  
-  "Trainer Gallery Rare Holo": 7, // Las cartas con entrenador dibujado
-  "Rare Ultra": 8,         // <--- ESTA FALTABA (Es clave para Full Arts)
-  "Ultra Rare": 8,
-  "Shiny Ultra Rare": 8,
+  // Arte
+  "Illustration Rare": 7,
+  "Trainer Gallery Rare Holo": 7,
   
-  // Nivel Dios
+  // Full Art
+  "Ultra Rare": 8,
+  "Rare Holo GX": 8, // Por si acaso
+  
+  // SIR / SAR
   "Special Illustration Rare": 9,
-  "Rare Secret": 10,
+  
+  // --- DIOSES (AQUÍ ESTÁ TU CARTA) ---
+  "Hyper Rare": 10,
   "Secret Rare": 10,
-  "Hyper Rare": 10
+  "Rainbow Rare": 10,
+  "Rare Rainbow": 10,  // 👈 ESTA ES LA QUE TIENES TÚ
+  "Rare Secret": 10
 };
 
 // 2. PRECIOS DE VENTA (Asegurando que nadie valga 10 monedas si brilla)
@@ -238,39 +245,35 @@ export const RARITY_RANK: Record<string, number> = {
 // - Comunes a 3 (Base sólida)
 // - Escalado fuerte en las cartas raras.
 
+// src/utils/constanst.ts
+
 export const SELL_PRICES: Record<string, number> = {
-  // --- LA BASE (Recuperas algo, pero pierdes dinero) ---
-  "Common": 3,             // 3 monedas (Antes 1)
-  "Uncommon": 8,           // Un salto decente
-  "Rare": 15,              // Una rara normal no paga el sobre
-  "Promo": 15,
-  
-  // --- ZONA MEDIA (Casi recuperas la inversión) ---
-  "Rare Holo": 35,         // Recuperas la mitad del sobre
-  "Classic Collection": 35,
-  "Shiny Rare": 40,        
+  // --- BÁSICAS ---
+  "Common": 5,
+  "Uncommon": 10,
+  "Rare": 20,
+  "Rare Holo": 30,
+  "Promo": 35,
 
-  // --- PUNTO DE BENEFICIO (Aquí empiezas a sonreír) ---
-  "Double Rare": 80,       // V / ex: ¡Beneficio! (+10 monedas + lo que valga la morralla)
-  "Rare Holo V": 80,       
-  "Rare Holo GX": 80,
-  "Rare Holo EX": 80,
+  // --- INTERMEDIAS (V, ex, GX) ---
+  "Double Rare": 100,         // Las ex normales
+  "Rare Holo V": 100,
+  "Rare Holo VMAX": 150,      // VMAX normal
+  "Rare Holo VSTAR": 150,
   
-  "Radiant Rare": 85,      
-  "Rare Holo VMAX": 120,   // Doblas la inversión
-  "Rare Holo VSTAR": 120,
-
-  // --- ZONA ALTA (Grandes premios) ---
-  "Trainer Gallery Rare Holo": 170, // 3 Sobres gratis
-  "Illustration Rare": 195,         
+  // --- ARTE ---
+  "Illustration Rare": 200,          // Cartas bonitas (AR)
+  "Trainer Gallery Rare Holo": 200,  // TG
   
-  "Rare Ultra": 350,       // Full Arts: 7 Sobres gratis
-  "Ultra Rare": 350,       
-  "Shiny Ultra Rare": 400, 
-
-  // --- EL GORDO (Escalado Masivo 🚀) ---
-  "Special Illustration Rare": 1200, // ¡BOOM!
-  "Rare Secret": 2000,     // Te soluciona la partida
-  "Secret Rare": 2000,
-  "Hyper Rare": 2500       // El premio máximo
+  // --- ALTA GAMA (Full Art) ---
+  "Ultra Rare": 400,                 // Full Arts plateadas/colores
+  
+  // --- TOP TIER (SIR / SAR) ---
+  "Special Illustration Rare": 800,  // Las de arte alternativo caro
+  
+  // --- EL OLIMPO (Tus cartas Rainbow y Doradas) ---
+  "Hyper Rare": 1500,        // Las nuevas doradas
+  "Secret Rare": 1500,       // Secretas antiguas
+  "Rainbow Rare": 1500,      // 🌈 AQUÍ ESTÁ TU CINDERACE (valía 10, ahora 1500)
+  "Rare Rainbow": 1500       // (Pongo las dos variantes por si acaso)
 };
