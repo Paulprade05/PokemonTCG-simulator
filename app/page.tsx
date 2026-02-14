@@ -12,7 +12,12 @@ import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import { useState, useEffect, useMemo } from "react"; // <--- Añade useMemo
 // --- TUS IMPORTACIONES ---
-import { getUserData, updateCoins, syncSetToDatabase,savePackToCollection } from "./action"; // ⚠️ Asegúrate de que el archivo se llame action.ts o actions.ts
+import {
+  getUserData,
+  updateCoins,
+  syncSetToDatabase,
+  savePackToCollection,
+} from "./action"; // ⚠️ Asegúrate de que el archivo se llame action.ts o actions.ts
 import { getCardsFromSet } from "../services/pokemon";
 
 import {
@@ -34,7 +39,9 @@ export default function Home() {
   const [selectedSet, setSelectedSet] = useState<string | null>(null);
   const [allCards, setAllCards] = useState<any[]>([]);
   const [userCollectionIds, setUserCollectionIds] = useState<string[]>([]);
-const [currentPackType, setCurrentPackType] = useState<"STANDARD" | "PREMIUM" | "GOLDEN" | null>(null);
+  const [currentPackType, setCurrentPackType] = useState<
+    "STANDARD" | "PREMIUM" | "GOLDEN" | null
+  >(null);
   // Estados de la apertura de sobres
   const [currentPack, setCurrentPack] = useState<any[]>([]);
   const [packIndex, setPackIndex] = useState(0);
@@ -60,34 +67,38 @@ const [currentPackType, setCurrentPackType] = useState<"STANDARD" | "PREMIUM" | 
   }, [isSignedIn, isLoaded, setCoins]);
 
   useEffect(() => {
-  async function loadAndSync() {
-    if (!selectedSet) return; // Si no hay set seleccionado, no hacemos nada
+    async function loadAndSync() {
+      if (!selectedSet) return; // Si no hay set seleccionado, no hacemos nada
 
-    setLoading(true);
-    try {
-      // 1. Cargamos las cartas (usa tu caché de localStorage si existe)
-      const cards = await getCardsFromSet(selectedSet);
-      
-      if (cards && cards.length > 0) {
-        setAllCards(cards);
-        
-        // 2. ⚡ AUTO-SINCRONIZACIÓN EN SEGUNDO PLANO
-        // No usamos 'await' aquí para que el usuario pueda empezar a comprar
-        // sobres mientras la base de datos se actualiza en el fondo.
-        syncSetToDatabase(selectedSet, cards)
-          .then(res => console.log(`🔄 Sincronización de ${selectedSet}:`, res.status))
-          .catch(err => console.error("❌ Fallo en auto-sync:", err));
+      setLoading(true);
+      try {
+        // 1. Cargamos las cartas (usa tu caché de localStorage si existe)
+        const cards = await getCardsFromSet(selectedSet);
+
+        if (cards && cards.length > 0) {
+          setAllCards(cards);
+
+          // 2. ⚡ AUTO-SINCRONIZACIÓN EN SEGUNDO PLANO
+          // No usamos 'await' aquí para que el usuario pueda empezar a comprar
+          // sobres mientras la base de datos se actualiza en el fondo.
+          syncSetToDatabase(selectedSet, cards)
+            .then((res) =>
+              console.log(`🔄 Sincronización de ${selectedSet}:`, res.status),
+            )
+            .catch((err) => console.error("❌ Fallo en auto-sync:", err));
+        }
+      } catch (err) {
+        console.error("Fallo al invocar cartas:", err);
+        // Si hay un error de conexión
+        alert(
+          "Error de conexión con la API de Pokémon. Inténtalo de nuevo en unos momentos.",
+        );
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      console.error("Fallo al invocar cartas:", err);
-      // Si hay un error de conexión
-      alert("Error de conexión con la API de Pokémon. Inténtalo de nuevo en unos momentos.");
-    } finally {
-      setLoading(false);
     }
-  }
-  loadAndSync();
-}, [selectedSet]);
+    loadAndSync();
+  }, [selectedSet]);
 
   // --- FUNCIONES DE LÓGICA ---
 
@@ -236,44 +247,41 @@ const [currentPackType, setCurrentPackType] = useState<"STANDARD" | "PREMIUM" | 
       {/* VISTA 1: SELECCIÓN DE EXPANSIÓN (CLASIFICADA) */}
       {!selectedSet && (
         <div className="w-full max-w-6xl flex flex-col gap-12 animate-fade-in-up pb-20">
-          
           {/* Iteramos por cada Serie (Escarlata, Espada...) */}
           {Object.entries(setsBySeries).map(([seriesName, sets]) => (
             <div key={seriesName} className="flex flex-col gap-4">
-               
-               {/* Título de la Generación */}
-               <div className="flex items-center gap-4">
-                 <h2 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 uppercase tracking-wider">
-                    {seriesName}
-                 </h2>
-                 <div className="h-px bg-gray-700 flex-1"></div>
-               </div>
+              {/* Título de la Generación */}
+              <div className="flex items-center gap-4">
+                <h2 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 uppercase tracking-wider">
+                  {seriesName}
+                </h2>
+                <div className="h-px bg-gray-700 flex-1"></div>
+              </div>
 
-               {/* Grid de Sets de esa generación */}
-               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                  {sets.map((set) => (
-                    <button
-                      key={set.id}
-                      onClick={() => handleSelectSet(set.id)}
-                      className="bg-gray-800 p-6 rounded-xl hover:bg-gray-700 hover:scale-105 transition-all border border-gray-700 flex flex-col items-center gap-4 group shadow-lg relative overflow-hidden"
-                    >
-                      {/* Efecto de brillo al pasar el ratón */}
-                      <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition duration-500"></div>
-                      
-                      <img
-                        src={set.logo}
-                        alt={set.name}
-                        className="h-24 object-contain group-hover:drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] transition relative z-10"
-                      />
-                      <span className="font-bold text-lg text-gray-300 relative z-10">
-                        {set.name}
-                      </span>
-                    </button>
-                  ))}
-               </div>
+              {/* Grid de Sets de esa generación */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {sets.map((set) => (
+                  <button
+                    key={set.id}
+                    onClick={() => handleSelectSet(set.id)}
+                    className="bg-gray-800 p-6 rounded-xl hover:bg-gray-700 hover:scale-105 transition-all border border-gray-700 flex flex-col items-center gap-4 group shadow-lg relative overflow-hidden"
+                  >
+                    {/* Efecto de brillo al pasar el ratón */}
+                    <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition duration-500"></div>
+
+                    <img
+                      src={set.logo}
+                      alt={set.name}
+                      className="h-24 object-contain group-hover:drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] transition relative z-10"
+                    />
+                    <span className="font-bold text-lg text-gray-300 relative z-10">
+                      {set.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
           ))}
-
         </div>
       )}
 
@@ -388,10 +396,10 @@ const [currentPackType, setCurrentPackType] = useState<"STANDARD" | "PREMIUM" | 
             </AnimatePresence>
 
             {currentPackType === "GOLDEN" && packIndex === 9 && (
-  <div className="absolute top-10 text-yellow-400 font-bold animate-bounce tracking-widest bg-black/50 px-4 py-2 rounded-full border border-yellow-500">
-    ¡CARTA GARANTIZADA!
-  </div>
-)}
+              <div className="absolute top-10 text-yellow-400 font-bold animate-bounce tracking-widest bg-black/50 px-4 py-2 rounded-full border border-yellow-500">
+                ¡CARTA GARANTIZADA!
+              </div>
+            )}
 
             <div className="absolute bottom-5 text-gray-400 font-mono text-sm bg-black/50 px-4 py-2 rounded-full backdrop-blur-sm border border-gray-700">
               Carta {packIndex + 1} / 10
