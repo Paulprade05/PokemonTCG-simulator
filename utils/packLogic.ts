@@ -1,5 +1,3 @@
-// src/utils/packLogic.ts
-
 interface Card {
   id: string;
   name: string;
@@ -7,70 +5,123 @@ interface Card {
   images: { small: string; large: string };
 }
 
-// Función auxiliar para mezclar y sacar N cartas
-const getRandom = (pool: Card[], count: number) => {
-  if (pool.length === 0) return [];
-  // Si pedimos más cartas de las que hay, devolvemos todas las que haya (y repetimos si hace falta)
-  if (count > pool.length) {
-     const repeated = [...pool, ...pool, ...pool].sort(() => 0.5 - Math.random());
-     return repeated.slice(0, count);
-  }
-  const shuffled = [...pool].sort(() => 0.5 - Math.random());
-  return shuffled.slice(0, count);
+// 1. Clasificador de Rarezas (Para tener los "mazos" ordenados)
+const categorizeCards = (cards: Card[]) => {
+  return {
+    common: cards.filter(c => c.rarity === 'Common'),
+    uncommon: cards.filter(c => c.rarity === 'Uncommon'),
+    rare: cards.filter(c => c.rarity === 'Rare' || c.rarity === 'Rare Holo'),
+    doubleRare: cards.filter(c => c.rarity === 'Double Rare' || c.rarity.includes('V') || c.rarity.includes('ex')),
+    illustrationRare: cards.filter(c => c.rarity === 'Illustration Rare' || c.rarity === 'Trainer Gallery Rare (TG)'),
+    ultraRare: cards.filter(c => c.rarity === 'Ultra Rare' || c.rarity === 'Full Art'),
+    specialIllustrationRare: cards.filter(c => c.rarity === 'Special Illustration Rare'),
+    hyperRare: cards.filter(c => c.rarity === 'Hyper Rare' || c.rarity === 'Secret Rare'),
+  };
 };
 
-// --- NIVEL 1: SOBRE BÁSICO (50 monedas) ---
-// 6 Comunes, 3 Infrecuentes, 1 Rara+
-export const openStandardPack = (allCards: Card[]): Card[] => {
-  const commons = allCards.filter(c => c.rarity === 'Common');
-  const uncommons = allCards.filter(c => c.rarity === 'Uncommon');
-  const rares = allCards.filter(c => !['Common', 'Uncommon'].includes(c.rarity));
-
-  return [
-    ...getRandom(commons, 6),
-    ...getRandom(uncommons, 3),
-    ...getRandom(rares, 1) // 1 Rara garantizada
-  ];
+// Función auxiliar para sacar carta de un pool seguro (si está vacío, busca en el anterior peor)
+const draw = (pool: Card[], fallbackPool: Card[]): Card => {
+  if (pool.length > 0) return pool[Math.floor(Math.random() * pool.length)];
+  if (fallbackPool.length > 0) return fallbackPool[Math.floor(Math.random() * fallbackPool.length)];
+  return { id: 'error', name: 'MissingNo', rarity: 'Common', images: { small: '', large: '' } }; // Fallback final
 };
 
-// --- NIVEL 2: SOBRE ÉLITE (200 monedas) ---
-// ¡Sin comunes! 7 Infrecuentes, 3 Raras+ (Mayor probabilidad de hit)
-export const openPremiumPack = (allCards: Card[]): Card[] => {
-  const commons = allCards.filter(c => c.rarity === 'Common');
-  const uncommons = allCards.filter(c => c.rarity === 'Uncommon');
-  // Filtramos solo las raras MUY buenas para asegurar emoción
-  const goodRares = allCards.filter(c => !['Common', 'Uncommon'].includes(c.rarity));
+// --- LOGICA DE PROBABILIDAD (El corazón del realismo) ---
+const getHitCard = (pools: any, type: 'STANDARD' | 'PREMIUM') => {
+  const rand = Math.random() * 100; // Número entre 0.00 y 99.99
 
-  return [
-    ...getRandom(commons, 6),
-    ...getRandom(uncommons, 6),
-    ...getRandom(goodRares, 2) // 3 Raras garantizadas
-  ];
-};
-
-// --- NIVEL 3: SOBRE LEYENDA (2500 monedas) ---
-// Garantiza 1 carta NUEVA (que no tengas). El resto son Raras.
-export const openGoldenPack = (allCards: Card[], userIds: string[]): Card[] => {
-  // 1. Buscamos qué cartas le faltan al usuario DE ESTE SET
-  const missingCards = allCards.filter(card => !userIds.includes(card.id));
+  if (type === 'STANDARD') {
+    // 📊 PROBABILIDADES REALISTAS (Aprox. Era Escarlata y Púrpura)
+    if (rand < 0.5) return draw(pools.hyperRare, pools.ultraRare);       // 0.5% - Gold / Hyper
+    if (rand < 2.5) return draw(pools.specialIllustrationRare, pools.ultraRare); // 2% - SIR / SAR
+    if (rand < 6.5) return draw(pools.ultraRare, pools.doubleRare);      // 4% - Ultra Rare (Full Art)
+    if (rand < 14.5) return draw(pools.illustrationRare, pools.rare);    // 8% - Illustration Rare (Art Rare)
+    if (rand < 30.0) return draw(pools.doubleRare, pools.rare);          // 15.5% - Double Rare (ex / V)
+    return draw(pools.rare, pools.uncommon);                             // 70% - Holo Rare (Lo normal)
+  } 
   
-  // 2. Preparamos el pool de cartas de relleno (solo raras e infrecuentes de calidad)
-  const fillers = allCards.filter(c => !['Common'].includes(c.rarity));
+  else if (type === 'PREMIUM') {
+    // 📊 PROBABILIDADES MEJORADAS (God Pack / Premium)
+    if (rand < 2.0) return draw(pools.hyperRare, pools.ultraRare);       // 2%
+    if (rand < 8.0) return draw(pools.specialIllustrationRare, pools.ultraRare); // 6%
+    if (rand < 20.0) return draw(pools.ultraRare, pools.doubleRare);     // 12%
+    if (rand < 40.0) return draw(pools.illustrationRare, pools.doubleRare); // 20%
+    return draw(pools.doubleRare, pools.rare);                           // 60% - Mínimo una ex/V garantizada
+  }
 
+  return draw(pools.rare, pools.uncommon);
+};
+
+// --- NIVEL 1: SOBRE ESTÁNDAR (Realista) ---
+export const openStandardPack = (allCards: Card[]): Card[] => {
+  const pools = categorizeCards(allCards);
+  const pack: Card[] = [];
+
+  // 1. Relleno Común (6 cartas)
+  for (let i = 0; i < 6; i++) pack.push(draw(pools.common, pools.uncommon));
+
+  // 2. Relleno Infrecuente (3 cartas)
+  for (let i = 0; i < 3; i++) pack.push(draw(pools.uncommon, pools.common));
+
+  // 3. LA CARTA RARA (Slot 10 - El "Hit")
+  // Aquí es donde ocurre la magia de la probabilidad
+  pack.push(getHitCard(pools, 'STANDARD'));
+
+  return pack;
+};
+
+// --- NIVEL 2: SOBRE PREMIUM (High Class Pack) ---
+export const openPremiumPack = (allCards: Card[]): Card[] => {
+  const pools = categorizeCards(allCards);
+  const pack: Card[] = [];
+
+  // Sin comunes, solo calidad.
+  // 4 Infrecuentes
+  for (let i = 0; i < 4; i++) pack.push(draw(pools.uncommon, pools.rare));
+  
+  // 3 Raras (Holo o Reverse genéricas)
+  for (let i = 0; i < 3; i++) pack.push(draw(pools.rare, pools.uncommon));
+
+  // 2 Carta de Arte o ex (Probabilidad media)
+  pack.push(draw(pools.illustrationRare.length > 0 ? pools.illustrationRare : pools.doubleRare, pools.rare));
+  pack.push(draw(pools.doubleRare, pools.rare));
+
+  // 1 EL GRAN HIT (Probabilidad aumentada)
+  pack.push(getHitCard(pools, 'PREMIUM'));
+
+  return pack;
+};
+
+// --- NIVEL 3: SOBRE LEYENDA (Garantizado) ---
+export const openGoldenPack = (allCards: Card[], userIds: string[]): Card[] => {
+  const pools = categorizeCards(allCards);
+  
+  // 1. Buscamos carta faltante (Lógica original perfecta)
+  const missingCards = allCards.filter(card => !userIds.includes(card.id));
   let guaranteedCard: Card;
 
   if (missingCards.length > 0) {
-    // Si le faltan cartas, le damos una de las que le faltan
-    guaranteedCard = getRandom(missingCards, 1)[0];
+    // Priorizamos darte una carta RARA que te falte, no una común
+    const missingRares = missingCards.filter(c => !['Common', 'Uncommon'].includes(c.rarity));
+    if (missingRares.length > 0) {
+        guaranteedCard = missingRares[Math.floor(Math.random() * missingRares.length)];
+    } else {
+        guaranteedCard = missingCards[Math.floor(Math.random() * missingCards.length)];
+    }
   } else {
-    // Si ya tiene TODAS, le damos una carta muy valiosa al azar (Hyper Rare)
-    const bestCards = allCards.filter(c => c.rarity === 'Hyper Rare' || c.rarity === 'Special Illustration Rare');
-    guaranteedCard = getRandom(bestCards.length > 0 ? bestCards : fillers, 1)[0];
+    // Si tienes todo, te damos la carta más cara del set (Hyper Rare / SIR)
+    guaranteedCard = draw(pools.hyperRare, pools.specialIllustrationRare);
   }
 
-  // El sobre son 9 cartas buenas + la garantizada (que ponemos la última para el final)
-  const packContent = getRandom(fillers, 9);
-  packContent.push(guaranteedCard);
+  // 2. Relleno de lujo (9 cartas)
+  // Mezclamos cosas buenas para que el sobre se sienta "pesado"
+  const pack: Card[] = [];
+  for (let i = 0; i < 5; i++) pack.push(draw(pools.rare, pools.uncommon));
+  for (let i = 0; i < 3; i++) pack.push(draw(pools.doubleRare, pools.rare));
+  for (let i = 0; i < 1; i++) pack.push(draw(pools.ultraRare, pools.illustrationRare));
 
-  return packContent;
+  // Añadimos la garantizada al final (Slot 10)
+  pack.push(guaranteedCard);
+
+  return pack;
 };

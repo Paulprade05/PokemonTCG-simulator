@@ -12,8 +12,9 @@ import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import { useState, useEffect, useMemo } from "react"; // <--- Añade useMemo
 // --- TUS IMPORTACIONES ---
-import { getUserData, updateCoins, savePackToCollection } from "./action"; // ⚠️ Asegúrate de que el archivo se llame action.ts o actions.ts
+import { getUserData, updateCoins, syncSetToDatabase,savePackToCollection } from "./action"; // ⚠️ Asegúrate de que el archivo se llame action.ts o actions.ts
 import { getCardsFromSet } from "../services/pokemon";
+
 import {
   openStandardPack,
   openPremiumPack,
@@ -58,40 +59,44 @@ export default function Home() {
     syncUserData();
   }, [isSignedIn, isLoaded, setCoins]);
 
-  // 2. EFECTO: Cargar IDs de colección (para el sobre dorado)
   useEffect(() => {
-    // Si queremos hacerlo "PRO", aquí podríamos llamar también a getFullCollection IDs
-    // De momento mantenemos tu lógica híbrida para no romper el sobre dorado
-    const col = getCollection();
-    setUserCollectionIds(col.map((c: any) => c.id));
-  }, [packSaved]);
+  async function loadAndSync() {
+    if (!selectedSet) return; // Si no hay set seleccionado, no hacemos nada
 
-  // --- FUNCIONES DE LÓGICA ---
-
-  const handleSelectSet = async (setId: string) => {
     setLoading(true);
-    setSelectedSet(setId);
-
     try {
-      // Intentamos cargar (primero mira BD local, luego API)
-      const data = await getCardsFromSet(setId);
-
-      if (!data || data.length === 0) {
-        throw new Error("La API no devolvió cartas.");
+      // 1. Cargamos las cartas (usa tu caché de localStorage si existe)
+      const cards = await getCardsFromSet(selectedSet);
+      
+      if (cards && cards.length > 0) {
+        setAllCards(cards);
+        
+        // 2. ⚡ AUTO-SINCRONIZACIÓN EN SEGUNDO PLANO
+        // No usamos 'await' aquí para que el usuario pueda empezar a comprar
+        // sobres mientras la base de datos se actualiza en el fondo.
+        syncSetToDatabase(selectedSet, cards)
+          .then(res => console.log(`🔄 Sincronización de ${selectedSet}:`, res.status))
+          .catch(err => console.error("❌ Fallo en auto-sync:", err));
       }
-
-      setAllCards(data);
-      resetPackState();
-    } catch (error) {
-      console.error("Error cargando set:", error);
-      alert("❌ Error de conexión. Inténtalo de nuevo.");
-      setSelectedSet(null);
-      setAllCards([]);
+    } catch (err) {
+      console.error("Fallo al invocar cartas:", err);
+      // Si hay un error de conexión
+      alert("Error de conexión con la API de Pokémon. Inténtalo de nuevo en unos momentos.");
     } finally {
       setLoading(false);
     }
-  };
+  }
+  loadAndSync();
+}, [selectedSet]);
 
+  // --- FUNCIONES DE LÓGICA ---
+
+  const handleSelectSet = (setId: string) => {
+    // Ya no hacemos el fetch aquí, dejamos que el useEffect se encargue
+    // al detectar el cambio de selectedSet.
+    setSelectedSet(setId);
+    resetPackState();
+  };
   const resetPackState = () => {
     setCurrentPack([]);
     setPackIndex(0);

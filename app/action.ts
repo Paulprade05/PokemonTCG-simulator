@@ -142,4 +142,35 @@ export async function sellCardAction(cardId: string, price: number) {
     console.error("Error vendiendo carta:", error);
     return false;
   }
+  
+}
+// src/app/action.ts
+
+export async function syncSetToDatabase(setId: string, cards: any[]) {
+  try {
+    // 1. Verificamos si ya tenemos cartas de este set para no trabajar doble
+    const { count } = (await sql`SELECT count(*) FROM cards WHERE set_id = ${setId}`).rows[0];
+    
+    if (parseInt(count) > 0) return { status: 'already_synced' };
+
+    console.log(`📥 Sincronizando ${setId} con la base de datos...`);
+
+    // 2. Guardamos el catálogo completo
+    for (const card of cards) {
+      await sql`
+        INSERT INTO cards (id, name, rarity, images, set_id, number, artist, flavor_text, tcgplayer)
+        VALUES (
+          ${card.id}, ${card.name}, ${card.rarity || 'Common'}, 
+          ${JSON.stringify(card.images)}, ${setId}, ${card.number || '???'},       
+          ${card.artist || 'Artista Desconocido'}, ${card.flavorText || ''},   
+          ${JSON.stringify(card.tcgplayer || {})}
+        ) ON CONFLICT (id) DO NOTHING;
+      `;
+    }
+
+    return { status: 'success' };
+  } catch (error) {
+    console.error("Error sincronizando set:", error);
+    return { status: 'error' };
+  }
 }

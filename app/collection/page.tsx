@@ -320,204 +320,79 @@ export default function CollectionPage() {
       )}
 
       {/* MODAL DETALLE (FICHA TÉCNICA) */}
+      {/* MODAL DETALLE SIMPLIFICADO */}
       <AnimatePresence>
         {selectedCard && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-md p-4"
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md p-4"
             onClick={() => setSelectedCard(null)}
           >
             <motion.div
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 20 }}
-              className="relative w-full max-w-5xl bg-gray-900 rounded-2xl overflow-hidden shadow-2xl border border-gray-700 flex flex-col md:flex-row max-h-[90vh]"
+              initial={{ scale: 0.9 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.9 }}
+              className="relative w-full max-w-4xl bg-gray-900 rounded-2xl overflow-hidden shadow-2xl border border-gray-700 flex flex-col md:flex-row"
               onClick={(e) => e.stopPropagation()}
             >
               {/* BOTÓN CERRAR */}
               <button
                 onClick={() => setSelectedCard(null)}
-                className="absolute top-4 right-4 text-gray-400 hover:text-white bg-black/50 hover:bg-red-600 rounded-full w-10 h-10 flex items-center justify-center transition z-50 backdrop-blur-sm"
-              >
-                ✕
-              </button>
+                className="absolute top-4 right-4 text-gray-400 hover:text-white z-50 bg-black/50 p-2 rounded-full"
+              >✕</button>
 
               {/* COLUMNA IZQUIERDA: IMAGEN */}
-              <div className="w-full md:w-1/2 p-8 bg-gradient-to-br from-gray-800 to-black flex items-center justify-center">
-                <motion.img
-                  layoutId={`card-${selectedCard.id}`}
+              <div className="w-full md:w-1/2 p-8 bg-gray-800 flex items-center justify-center">
+                <img
                   src={selectedCard.images.large}
                   alt={selectedCard.name}
-                  className="object-contain max-h-[50vh] md:max-h-[70vh] w-auto drop-shadow-[0_0_35px_rgba(255,255,255,0.15)]"
+                  className="object-contain max-h-[60vh] drop-shadow-2xl"
                 />
               </div>
 
-              {/* COLUMNA DERECHA: DATOS */}
-              <div className="w-full md:w-1/2 p-8 flex flex-col gap-6 overflow-y-auto bg-gray-900">
-                {/* CABECERA */}
+              {/* COLUMNA DERECHA: DATOS SELECCIONADOS */}
+              <div className="w-full md:w-1/2 p-10 flex flex-col justify-center gap-8 bg-gray-900">
+                
+                {/* 1. NOMBRE */}
                 <div>
-                  <div className="flex justify-between items-start">
-                    <h2 className="text-4xl font-bold text-white mb-2">
-                      {selectedCard.name}
-                    </h2>
-                    {selectedCard.hp && (
-                      <span className="text-2xl font-bold text-red-500 flex items-center gap-1">
-                        <span className="text-sm text-gray-400">HP</span>{" "}
-                        {selectedCard.hp}
-                      </span>
-                    )}
+                  <p className="text-gray-500 text-xs uppercase tracking-widest mb-1 font-bold">Pokémon</p>
+                  <h2 className="text-5xl font-black text-white tracking-tight">
+                    {selectedCard.name}
+                  </h2>
+                </div>
+
+                {/* 2. EXPANSIÓN (SET) */}
+                <div className="flex flex-col gap-2">
+                  <p className="text-gray-500 text-xs uppercase tracking-widest font-bold">Expansión</p>
+                  <div className="flex items-center gap-3 bg-gray-800 p-3 rounded-xl border border-gray-700">
+                    {(() => {
+                      const setId = selectedCard.set_id || selectedCard.set?.id;
+                      const setInfo = AVAILABLE_SETS.find((s) => s.id === setId);
+                      return setInfo ? (
+                        <>
+                          <img src={setInfo.logo} alt="set" className="h-8 w-auto object-contain" />
+                          <span className="text-xl font-bold text-gray-200">{setInfo.name}</span>
+                        </>
+                      ) : (
+                        <span className="text-xl font-bold text-gray-200">{selectedCard.set?.name || "Desconocido"}</span>
+                      );
+                    })()}
                   </div>
-                  <div className="flex gap-2">
-                    <span className="bg-gray-800 text-gray-300 px-3 py-1 rounded text-sm border border-gray-700">
-                      {selectedCard.supertype} -{" "}
-                      {selectedCard.subtypes?.join(", ")}
+                </div>
+
+                {/* 3. PRECIO (VALOR EN JUEGO) */}
+                <div>
+                  <p className="text-gray-500 text-xs uppercase tracking-widest mb-2 font-bold">Valor de Venta</p>
+                  <div className="inline-flex items-center gap-3 bg-yellow-400/10 p-4 rounded-2xl border border-yellow-400/20">
+                    <span className="text-4xl font-black text-yellow-400">
+                      {getPrice(selectedCard.rarity)}
                     </span>
-                    {selectedCard.types?.map((type: string) => (
-                      <span
-                        key={type}
-                        className="bg-blue-900 text-blue-100 px-3 py-1 rounded text-sm border border-blue-700 font-bold"
-                      >
-                        {type}
-                      </span>
-                    ))}
+                    <span className="text-2xl">💰</span>
                   </div>
                 </div>
 
-                <hr className="border-gray-800" />
-
-                {/* PRECIOS Y VALOR */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-gray-800 p-4 rounded-xl border border-gray-700">
-                    <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">
-                      Valor en Juego
-                    </p>
-                    <p className="text-2xl font-bold text-yellow-400 flex items-center gap-2">
-                      {getPrice(selectedCard.rarity)} 💰
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Lo que obtienes al venderla
-                    </p>
-                  </div>
-                  <div className="bg-gray-800 p-4 rounded-xl border border-gray-700">
-                    <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">
-                      Mercado Real (USD)
-                    </p>
-                    <p className="text-2xl font-bold text-green-400 flex items-center gap-2">
-                      $
-                      {selectedCard.tcgplayer?.prices?.holofoil?.market ||
-                        selectedCard.tcgplayer?.prices?.normal?.market ||
-                        "---"}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Precio en TCGPlayer
-                    </p>
-                  </div>
-                </div>
-
-                {/* DETALLES DE COLECCIONISTA */}
-                <div className="space-y-3 text-sm text-gray-300">
-                  <div className="flex justify-between border-b border-gray-800 pb-2">
-                    <span className="text-gray-500">Rareza</span>
-                    <span className="font-bold text-purple-300">
-                      {selectedCard.rarity}
-                    </span>
-                  </div>
-                  <div className="flex justify-between border-b border-gray-800 pb-2">
-                    <span className="text-gray-500">Artista</span>
-                    <span>{selectedCard.artist || "Desconocido"}</span>
-                  </div>
-                  <div className="flex justify-between border-b border-gray-800 pb-2">
-                    <span className="text-gray-500">Set</span>
-                    <div className="flex items-center gap-2">
-                      {/* 1. Buscamos el set en tu lista de constantes (funciona con BD y con Local) */}
-                      {(() => {
-                        // Intentamos encontrar el set usando el ID que tenga la carta
-                        const setId =
-                          selectedCard.set_id || selectedCard.set?.id;
-                        const setInfo = AVAILABLE_SETS.find(
-                          (s) => s.id === setId,
-                        );
-
-                        // Si lo encontramos, mostramos su logo y nombre
-                        if (setInfo) {
-                          return (
-                            <>
-                              <img
-                                src={setInfo.logo}
-                                alt="set"
-                                className="h-4 w-auto object-contain"
-                              />
-                              <span>{setInfo.name}</span>
-                            </>
-                          );
-                        }
-
-                        // Si no lo encontramos (fallback de seguridad), mostramos lo que podamos
-                        return (
-                          <>
-                            {/* Usamos el símbolo si existe (para cartas antiguas locales) */}
-                            {selectedCard.set?.images?.symbol && (
-                              <img
-                                src={selectedCard.set.images.symbol}
-                                alt="set"
-                                className="h-4 w-auto"
-                              />
-                            )}
-                            {/* Mostramos el nombre o 'Desconocido' */}
-                            <span>
-                              {selectedCard.set?.name || setId || "Desconocido"}
-                            </span>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  </div>
-                  <div className="flex justify-between border-b border-gray-800 pb-2">
-                    <span className="text-gray-500">Número</span>
-                    <span className="font-mono">
-                      {/* LÓGICA DE SEGURIDAD PARA EL TOTAL DE CARTAS */}
-                      {(() => {
-                        const setId =
-                          selectedCard.set_id || selectedCard.set?.id;
-                        // Buscamos en tus constantes (donde pusiste total: 190, total: 250, etc.)
-                        const setInfo = AVAILABLE_SETS.find(
-                          (s) => s.id === setId,
-                        );
-
-                        // Si lo encontramos en constantes, usamos ese. Si no, intentamos el de la carta. Si no, '???'
-                        const totalCards =
-                          setInfo?.total ||
-                          selectedCard.set?.printedTotal ||
-                          "???";
-
-                        return `${selectedCard.number} / ${totalCards}`;
-                      })()}
-                    </span>
-                  </div>
-                </div>
-
-                {/* POKÉDEX FLAVOR TEXT (Si existe) */}
-                {selectedCard.flavorText && (
-                  <div className="mt-auto bg-gray-800/50 p-4 rounded-lg italic text-gray-400 border-l-4 border-gray-600">
-                    "{selectedCard.flavorText}"
-                  </div>
-                )}
-
-                {/* ACCIONES */}
-                <div className="mt-4 flex gap-3">
-                  {selectedCard.tcgplayer?.url && (
-                    <a
-                      href={selectedCard.tcgplayer.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex-1 bg-gray-800 hover:bg-gray-700 text-center py-3 rounded-lg transition text-sm font-bold border border-gray-600"
-                    >
-                      Ver en Web Oficial ↗
-                    </a>
-                  )}
-                </div>
               </div>
             </motion.div>
           </motion.div>
