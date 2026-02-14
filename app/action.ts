@@ -1,7 +1,7 @@
 // src/app/action.ts
 'use server'
 
-import { auth } from '@clerk/nextjs/server';
+import { auth } from '@clerk/nextjs/server'; // ✅ Importación correcta para Server Actions
 import { sql } from '@vercel/postgres';
 import { revalidatePath } from 'next/cache';
 
@@ -38,7 +38,7 @@ export async function updateCoins(newAmount: number) {
   }
 }
 
-// --- 2. GESTIÓN DE LA COLECCIÓN (ACTUALIZADA) ---
+// --- 2. GESTIÓN DE LA COLECCIÓN ---
 
 export async function savePackToCollection(cards: any[]) {
   const { userId } = await auth();
@@ -48,14 +48,13 @@ export async function savePackToCollection(cards: any[]) {
     for (const card of cards) {
       const setId = card.set?.id || card.setId || 'unknown_set';
       
-      // PREPARAR DATOS EXTRA (Si no existen, ponemos null)
+      // PREPARAR DATOS EXTRA
       const number = card.number || '';
       const artist = card.artist || 'Desconocido';
       const flavorText = card.flavorText || '';
-      // El precio viene como objeto, lo pasamos a texto para guardarlo
       const tcgplayer = JSON.stringify(card.tcgplayer || {}); 
 
-      // 1. INSERTAR EN TABLA MAESTRA CON TODOS LOS DATOS NUEVOS
+      // 1. INSERTAR EN TABLA MAESTRA (Si no existe)
       await sql`
         INSERT INTO cards (id, name, rarity, images, set_id, number, artist, flavor_text, tcgplayer)
         VALUES (
@@ -72,7 +71,7 @@ export async function savePackToCollection(cards: any[]) {
         ON CONFLICT (id) DO NOTHING;
       `;
 
-      // 2. Guardar en la colección del usuario
+      // 2. INSERTAR EN COLECCIÓN DE USUARIO (Incrementar cantidad)
       await sql`
         INSERT INTO user_collection (user_id, card_id, quantity)
         VALUES (${userId}, ${card.id}, 1)
@@ -94,23 +93,24 @@ export async function getFullCollection() {
   if (!userId) return [];
 
   try {
-    // Pedimos TODAS las columnas (c.*)
+    // ✅ CORRECCIÓN IMPORTANTE:
+    // 1. Pedimos la columna 'is_favorite'
+    // 2. Ordenamos primero por favoritos (DESC) y luego por cantidad
     const { rows } = await sql`
-      SELECT c.*, uc.quantity 
-      FROM user_collection uc
-      JOIN cards c ON uc.card_id = c.id
-      WHERE uc.user_id = ${userId}
-      AND uc.quantity > 0
-      ORDER BY uc.quantity DESC
-    `;
+  SELECT c.*, uc.quantity, uc.is_favorite -- 👈 Asegúrate de pedir esta columna
+  FROM user_collection uc
+  JOIN cards c ON uc.card_id = c.id
+  WHERE uc.user_id = ${userId}
+  ORDER BY 
+    uc.is_favorite DESC,  -- 👈 PRIMERO LAS FAVORITAS (True va antes que False)
+    c.rarity DESC,        -- Luego por rareza
+    c.name ASC            -- Luego por nombre
+`;
     
-    // Procesamos los datos para que el Frontend los entienda
     return rows.map((row: any) => ({
       ...row,
-      // Convertimos de vuelta los JSONs guardados como texto
       images: typeof row.images === 'string' ? JSON.parse(row.images) : row.images,
       tcgplayer: typeof row.tcgplayer === 'string' ? JSON.parse(row.tcgplayer) : row.tcgplayer,
-      // Postgres devuelve 'flavor_text' (snake_case), pero tu app usa 'flavorText' (camelCase)
       flavorText: row.flavor_text 
     }));
   } catch (error) {
@@ -119,12 +119,14 @@ export async function getFullCollection() {
   }
 }
 
-// 3. VENDER CARTA
+// --- 3. ACCIONES DE JUEGO (Vender / Favoritos) ---
+
 export async function sellCardAction(cardId: string, price: number) {
   const { userId } = await auth();
   if (!userId) return false;
 
   try {
+    // Solo vendemos si tiene más de 1 copia (Protección)
     const result = await sql`
       UPDATE user_collection 
       SET quantity = quantity - 1 
@@ -132,7 +134,6 @@ export async function sellCardAction(cardId: string, price: number) {
     `;
 
     if (result.rowCount === 0) return false; 
-  
 
     await sql`UPDATE users SET coins = coins + ${price} WHERE id = ${userId}`;
 
@@ -142,20 +143,63 @@ export async function sellCardAction(cardId: string, price: number) {
     console.error("Error vendiendo carta:", error);
     return false;
   }
-  
 }
-// src/app/action.ts
+
+export async function toggleFavorite(cardId: string) {
+  // ✅ CORRECCIÓN: Añadido 'await' a auth()
+  const { userId } = await auth(); 
+  if (!userId) return { error: "No estás logueado" };
+
+  try {
+    // 1. Verificamos estado actual
+    const currentStatus = await sql`
+      SELECT is_favorite FROM user_collection 
+      WHERE user_id = ${userId} AND card_id = ${cardId}
+    `;
+    
+    // Si no existe la fila (raro, pero posible), asumimos false
+    const isFav = currentStatus.rows[0]?.is_favorite || false;
+
+    // 2. Si queremos marcar como favorito (actualmente es false), verificamos límite
+    if (!isFav) {
+      const countResult = await sql`
+        SELECT count(*) as total FROM user_collection 
+        WHERE user_id = ${userId} AND is_favorite = true
+      `;
+      
+      const totalFavs = parseInt(countResult.rows[0].total);
+
+      if (totalFavs >= 10) {
+        return { error: "¡Ya tienes 10 favoritos! Desmarca uno antes." };
+      }
+    }
+
+    // 3. Cambiamos el estado (Toggle)
+    await sql`
+      UPDATE user_collection 
+      SET is_favorite = NOT is_favorite 
+      WHERE user_id = ${userId} AND card_id = ${cardId}
+    `;
+
+    revalidatePath('/collection');
+    return { success: true, isFavorite: !isFav };
+
+  } catch (error) {
+    console.error("Error al marcar favorita:", error);
+    return { error: "Error de base de datos" };
+  }
+}
+
+// --- 4. HERRAMIENTAS DE SINCRONIZACIÓN (Opcional si usas JSON local) ---
 
 export async function syncSetToDatabase(setId: string, cards: any[]) {
   try {
-    // 1. Verificamos si ya tenemos cartas de este set para no trabajar doble
     const { count } = (await sql`SELECT count(*) FROM cards WHERE set_id = ${setId}`).rows[0];
     
     if (parseInt(count) > 0) return { status: 'already_synced' };
 
     console.log(`📥 Sincronizando ${setId} con la base de datos...`);
 
-    // 2. Guardamos el catálogo completo
     for (const card of cards) {
       await sql`
         INSERT INTO cards (id, name, rarity, images, set_id, number, artist, flavor_text, tcgplayer)
