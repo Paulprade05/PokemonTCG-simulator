@@ -34,7 +34,7 @@ export default function Home() {
   const [selectedSet, setSelectedSet] = useState<string | null>(null);
   const [allCards, setAllCards] = useState<any[]>([]);
   const [userCollectionIds, setUserCollectionIds] = useState<string[]>([]);
-
+const [currentPackType, setCurrentPackType] = useState<"STANDARD" | "PREMIUM" | "GOLDEN" | null>(null);
   // Estados de la apertura de sobres
   const [currentPack, setCurrentPack] = useState<any[]>([]);
   const [packIndex, setPackIndex] = useState(0);
@@ -139,7 +139,7 @@ export default function Home() {
         // Restamos el precio a las monedas actuales
         await updateCoins(coins - price);
       }
-
+      setCurrentPackType(type);
       // 3. Preparamos la animación
       setCurrentPack(newPack);
       setPackIndex(0);
@@ -387,11 +387,11 @@ export default function Home() {
               </motion.div>
             </AnimatePresence>
 
-            {coins >= 2500 && packIndex === 9 && (
-              <div className="absolute top-10 text-yellow-400 font-bold animate-bounce tracking-widest bg-black/50 px-4 py-2 rounded-full border border-yellow-500">
-                ¡CARTA GARANTIZADA!
-              </div>
-            )}
+            {currentPackType === "GOLDEN" && packIndex === 9 && (
+  <div className="absolute top-10 text-yellow-400 font-bold animate-bounce tracking-widest bg-black/50 px-4 py-2 rounded-full border border-yellow-500">
+    ¡CARTA GARANTIZADA!
+  </div>
+)}
 
             <div className="absolute bottom-5 text-gray-400 font-mono text-sm bg-black/50 px-4 py-2 rounded-full backdrop-blur-sm border border-gray-700">
               Carta {packIndex + 1} / 10
