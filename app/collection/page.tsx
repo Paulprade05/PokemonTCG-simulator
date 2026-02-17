@@ -459,15 +459,7 @@ export default function CollectionPage() {
                 <div className="p-8 pt-6 flex-1 flex flex-col gap-8">
                   {/* PRECIO / VALOR */}
                   <div className="bg-gradient-to-r from-gray-800 to-gray-900 p-4 rounded-2xl border border-gray-700 flex items-center justify-between shadow-lg">
-                    <div>
-                      <p className="text-gray-400 text-xs font-bold uppercase mb-1">
-                        Valor de Mercado
-                      </p>
-                      <p className="text-3xl font-black text-yellow-400 flex items-center gap-2">
-                        {getPrice(selectedCard.rarity)}{" "}
-                        <span className="text-lg">💰</span>
-                      </p>
-                    </div>
+                    
                     <div className="text-right">
                       {/* PRECIO / VALOR */}
                       <div className="bg-gradient-to-r from-gray-800 to-gray-900 p-4 rounded-2xl border border-gray-700 flex items-center justify-between shadow-lg">
