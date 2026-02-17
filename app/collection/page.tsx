@@ -481,7 +481,7 @@ export default function CollectionPage() {
                           </p>
                         </div>
 
-                        <div className="text-right">
+                        
                           {selectedCard.quantity > 1 ? (
                             <button
                               onClick={handleSellAll}
@@ -512,7 +512,6 @@ export default function CollectionPage() {
                               ÚLTIMA COPIA
                             </button>
                           )}
-                        </div>
                       </div>
                     </div>
                   </div>
