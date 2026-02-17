@@ -478,7 +478,7 @@ export default function CollectionPage() {
                     <div className="text-right">
                       {selectedCard.quantity > 1 ? (
                         <button
-                          // Asegúrate de que tienes la función handleSellAll definida arriba en tu componente
+                          // ✅ CORRECTO: Usamos la función local, no la del servidor directa
                           onClick={handleSellAll} 
                           className="group relative px-4 py-2 rounded-full border border-red-500 bg-red-500/10 text-red-400 font-bold text-xs hover:bg-red-500 hover:text-white transition-all overflow-hidden"
                         >
