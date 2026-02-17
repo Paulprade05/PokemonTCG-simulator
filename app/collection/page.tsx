@@ -458,7 +458,6 @@ export default function CollectionPage() {
                 {/* 2. CUERPO DE DATOS */}
                 <div className="p-8 pt-6 flex-1 flex flex-col gap-8">
                   {/* PRECIO / VALOR */}
-                  <div className="bg-gradient-to-r from-gray-800 to-gray-900 p-4 rounded-2xl border border-gray-700 flex items-center justify-between shadow-lg">
                     
                     <div className="text-right">
                       {/* PRECIO / VALOR */}
@@ -506,7 +505,7 @@ export default function CollectionPage() {
                           )}
                       </div>
                     </div>
-                  </div>
+                  
 
                   {/* FLAVOR TEXT (Descripción) */}
                   {selectedCard.flavorText && (
