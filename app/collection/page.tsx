@@ -5,7 +5,7 @@ import { useEffect, useState, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
 // 👇 IMPORTANTE: Asegúrate de importar toggleFavorite
-import { getFullCollection, sellCardAction, toggleFavorite } from "../action";
+import { getFullCollection, sellCardAction, toggleFavorite,sellAllDuplicatesAction } from "../action";
 import { getCollection, saveCollectionRaw } from "../../utils/storage";
 import { useCurrency } from "../../hooks/useGameCurrency";
 import {
@@ -115,6 +115,8 @@ export default function CollectionPage() {
       if (c.id === cardId) return { ...c, quantity: c.quantity - 1 };
       return c;
     });
+    // --- FUNCIÓN PARA VENDER TODOS LOS DUPLICADOS ---
+  
 
     setCards(updatedCards);
     addCoins(price);
@@ -125,7 +127,38 @@ export default function CollectionPage() {
       saveCollectionRaw(updatedCards);
     }
   };
+// --- FUNCIÓN NUEVA: VENDER TODOS LOS DUPLICADOS ---
+  const handleSellAll = async (e: React.MouseEvent) => {
+    e.stopPropagation(); // Evita conflictos de clic
+    if (!selectedCard || selectedCard.quantity <= 1) return;
 
+    const unitPrice = getPrice(selectedCard.rarity);
+    const duplicates = selectedCard.quantity - 1;
+    const totalValue = duplicates * unitPrice;
+
+    // 1. UI Optimista: Actualizamos monedas y carta visualmente YA
+    const oldQuantity = selectedCard.quantity;
+    addCoins(totalValue); 
+    
+    // Dejamos la carta con 1 sola copia en el modal y en la lista de fondo
+    setSelectedCard({ ...selectedCard, quantity: 1 });
+    setCards((prev) => 
+      prev.map((c) => c.id === selectedCard.id ? { ...c, quantity: 1 } : c)
+    );
+
+    // 2. Llamada al servidor (en segundo plano)
+    const res = await sellAllDuplicatesAction(selectedCard.id, unitPrice);
+
+    // 3. Si falla, deshacemos los cambios
+    if (!res?.success) {
+      alert("Error al vender: " + (res?.error || "Desconocido"));
+      addCoins(-totalValue);
+      setSelectedCard({ ...selectedCard, quantity: oldQuantity });
+      setCards((prev) => 
+         prev.map((c) => c.id === selectedCard.id ? { ...c, quantity: oldQuantity } : c)
+      );
+    }
+  };
   // 🔥 NUEVA LÓGICA DE FAVORITOS (SOLO EN MODAL)
   const handleToggleFavInModal = async () => {
     if (!selectedCard) return;
@@ -430,27 +463,45 @@ export default function CollectionPage() {
                       </p>
                     </div>
                     <div className="text-right">
-                      <button
-                        onClick={(e) =>
-                          handleSellCard(
-                            e,
-                            selectedCard.id,
-                            selectedCard.rarity,
-                          )
-                        }
-                        disabled={selectedCard.quantity <= 1}
-                        className={`text-xs px-3 py-1.5 rounded-full border font-bold transition
-            ${
-              selectedCard.quantity > 1
-                ? "bg-red-500/10 border-red-500 text-red-400 hover:bg-red-500 hover:text-white"
-                : "bg-gray-700 border-gray-600 text-gray-500 cursor-not-allowed"
-            }
-          `}
-                      >
-                        {selectedCard.quantity > 1
-                          ? "VENDER COPIA"
-                          : "NO VENDIBLE"}
-                      </button>
+                      {/* PRECIO / VALOR */}
+                  <div className="bg-gradient-to-r from-gray-800 to-gray-900 p-4 rounded-2xl border border-gray-700 flex items-center justify-between shadow-lg">
+                    <div>
+                      <p className="text-gray-400 text-xs font-bold uppercase mb-1">
+                        Valor de Mercado
+                      </p>
+                      <p className="text-3xl font-black text-yellow-400 flex items-center gap-2">
+                        {getPrice(selectedCard.rarity)}{" "}
+                        <span className="text-lg">💰</span>
+                      </p>
+                    </div>
+
+                    <div className="text-right">
+                      {selectedCard.quantity > 1 ? (
+                        <button
+                          // Asegúrate de que tienes la función handleSellAll definida arriba en tu componente
+                          onClick={handleSellAll} 
+                          className="group relative px-4 py-2 rounded-full border border-red-500 bg-red-500/10 text-red-400 font-bold text-xs hover:bg-red-500 hover:text-white transition-all overflow-hidden"
+                        >
+                          {/* Texto normal */}
+                          <span className="relative z-10 group-hover:hidden">
+                             VENDER {selectedCard.quantity - 1} COPIAS
+                          </span>
+                          
+                          {/* Texto al pasar el ratón (Muestra ganancia total) */}
+                          <span className="absolute inset-0 z-10 hidden group-hover:flex items-center justify-center font-black bg-red-600 text-white">
+                             +{ (selectedCard.quantity - 1) * getPrice(selectedCard.rarity) } 💰
+                          </span>
+                        </button>
+                      ) : (
+                        <button
+                          disabled
+                          className="text-xs px-3 py-1.5 rounded-full border bg-gray-700 border-gray-600 text-gray-500 cursor-not-allowed opacity-50"
+                        >
+                          ÚLTIMA COPIA
+                        </button>
+                      )}
+                    </div>
+                  </div>
                     </div>
                   </div>
 

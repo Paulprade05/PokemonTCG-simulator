@@ -219,3 +219,46 @@ export async function syncSetToDatabase(setId: string, cards: any[]) {
     return { status: 'error' };
   }
 }
+export async function sellAllDuplicatesAction(cardId: string, unitPrice: number) {
+  const { userId } = await auth();
+  if (!userId) return { success: false, error: "No autorizado" };
+
+  try {
+    // 1. Consultamos cuántas tiene el usuario
+    const { rows } = await sql`
+      SELECT quantity FROM user_collection 
+      WHERE user_id = ${userId} AND card_id = ${cardId}
+    `;
+
+    if (rows.length === 0) return { success: false, error: "No tienes la carta" };
+
+    const currentQty = rows[0].quantity;
+    const duplicates = currentQty - 1;
+
+    // Si no hay duplicados, no hacemos nada
+    if (duplicates <= 0) return { success: false, error: "No tienes duplicados" };
+
+    const totalEarned = duplicates * unitPrice;
+
+    // 2. Actualizamos la colección: Dejamos la cantidad en 1
+    await sql`
+      UPDATE user_collection 
+      SET quantity = 1 
+      WHERE user_id = ${userId} AND card_id = ${cardId}
+    `;
+
+    // 3. Damos el dinero total
+    await sql`
+      UPDATE users 
+      SET coins = coins + ${totalEarned} 
+      WHERE id = ${userId}
+    `;
+
+    revalidatePath('/collection');
+    return { success: true, sold: duplicates, earned: totalEarned };
+
+  } catch (error) {
+    console.error("Error vendiendo todo:", error);
+    return { success: false, error: "Error en servidor" };
+  }
+}
