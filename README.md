@@ -43,7 +43,7 @@ MEJORAS PARA LA WEB
 - que la primera carta salga al reves pero el resto que salgan dadas directamente la vuelta.
 - que al terminar de abrir un sobre salga cuantas cartas he añadido a la coleccion
 - mientras se abre el sobre encima de la carta salga un recuadro pequeño diciendo new si es nueva, como cuando pone que es holo pero a la izquierda
-
+- hacer que al puinchar a un set en la coleccion salga una cuadricula 3x3 en la que salgan las cartas que tengo de esa coleccion y las que no que salgan vacias pero que no ponga nada dentro solo el numero de la carta que va en ese sitio por ejemplo tengo la carta 40 y 42 pero la 41 sale vacia y pone solo 41
 
 
 
