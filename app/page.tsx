@@ -181,7 +181,7 @@ export default function Home() {
   // (Asegúrate de cambiar set.logo por set.images?.logo en el renderizado HTML de los sets)
   // --- RENDERIZADO ---
   return (
-    <main className="flex min-h-screen flex-col items-center p-8 bg-gray-900 text-white overflow-hidden">
+    <main className="flex min-h-screen flex-col items-center p-8 bg-gray-900 text-white overflow-hidden select-none" >
       {/* CABECERA */}
       <div className="w-full max-w-6xl flex justify-between items-center mb-8 bg-gray-800 p-4 rounded-xl shadow-md border border-gray-700 z-10">
         <div className="flex items-center gap-2">

@@ -221,7 +221,7 @@ export default function CollectionPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-900 text-white p-8 pb-32">
+    <main className="min-h-screen bg-gray-900 text-white p-8 pb-32 select-none">
       {/* CABECERA */}
       <div className="sticky top-0 z-40 bg-gray-900/95 backdrop-blur-md border-b border-gray-700 py-4 mb-8 -mx-8 px-8 shadow-2xl flex justify-between items-center">
         <div className="flex items-center gap-4">
