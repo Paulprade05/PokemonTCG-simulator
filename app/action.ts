@@ -263,13 +263,17 @@ export async function sellAllDuplicatesAction(cardId: string, unitPrice: number)
   }
 }
 // src/app/action.ts
+// src/app/action.ts
+
 export async function getSetsFromDB() {
   try {
     const { rows } = await sql`
-      SELECT id, name, series, images 
+      /* 👇 AÑADIMOS 'total' A LA LISTA DE COSAS QUE PEDIMOS 👇 */
+      SELECT id, name, series, images, total 
       FROM sets 
       ORDER BY release_date DESC
     `;
+    
     // Parseamos las imágenes ya que vienen como string JSON
     return rows.map(set => ({
       ...set,

@@ -4,26 +4,26 @@
 import { useEffect, useState, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
-// 👇 IMPORTANTE: Asegúrate de importar toggleFavorite
 import {
   getFullCollection,
   sellCardAction,
   toggleFavorite,
   sellAllDuplicatesAction,
+  getSetsFromDB, // 👈 IMPORTANTE: Añadimos esto
 } from "../action";
 import { getCollection, saveCollectionRaw } from "../../utils/storage";
 import { useCurrency } from "../../hooks/useGameCurrency";
 import {
-  AVAILABLE_SETS,
   RARITY_RANK,
   SELL_PRICES,
-} from "../../utils/constanst";
+} from "../../utils/constanst"; // 👈 QUITAMOS AVAILABLE_SETS de aquí
 import PokemonCard from "../../components/PokemonCard";
 import Link from "next/link";
 
 export default function CollectionPage() {
   const { isSignedIn, isLoaded } = useUser();
   const [cards, setCards] = useState<any[]>([]);
+  const [dbSets, setDbSets] = useState<any[]>([]);
   const { coins, addCoins } = useCurrency();
   const [showStats, setShowStats] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -37,6 +37,10 @@ export default function CollectionPage() {
     async function initCollection() {
       if (!isLoaded) return;
       setLoading(true);
+
+      // 👈 NUEVO: Cargamos los sets siempre
+      const sets = await getSetsFromDB();
+      setDbSets(sets);
 
       if (isSignedIn) {
         try {
@@ -55,19 +59,28 @@ export default function CollectionPage() {
   }, [isSignedIn, isLoaded]);
 
   // --- LÓGICA DE ESTADÍSTICAS ---
+ // --- LÓGICA DE ESTADÍSTICAS ---
   const setStats = useMemo(() => {
-    return AVAILABLE_SETS.map((set) => {
+    return dbSets.map((set) => {
+      // 👇 AQUÍ ESTÁ LA MAGIA: Añadimos + "-" para evitar colisiones de nombres
       const uniqueCardsOwned = cards.filter((c) =>
-        c.id.startsWith(set.id),
+        c.id.startsWith(set.id + "-"), 
       ).length;
+      
+      // Protegemos contra divisiones por 0
+      const totalInSet = set.total || 1; 
+      
       const percentage = Math.min(
         100,
-        Math.round((uniqueCardsOwned / set.total) * 100),
+        Math.round((uniqueCardsOwned / totalInSet) * 100),
       );
-      const missing = Math.max(0, set.total - uniqueCardsOwned);
-      return { ...set, owned: uniqueCardsOwned, percentage, missing };
+      const missing = Math.max(0, totalInSet - uniqueCardsOwned);
+      
+      const logoUrl = set.images?.logo || ""; 
+      
+      return { ...set, logo: logoUrl, owned: uniqueCardsOwned, percentage, missing };
     });
-  }, [cards]);
+  }, [cards, dbSets]);
 
   // --- FILTROS Y ORDEN ---
   // --- FILTROS Y ORDEN ---
@@ -313,7 +326,7 @@ export default function CollectionPage() {
           className="bg-gray-900 text-white px-3 py-1.5 rounded border border-gray-600 text-sm"
         >
           <option value="all">🌍 Todas</option>
-          {AVAILABLE_SETS.map((set) => (
+          {dbSets.map((set) => ( // 👈 CAMBIADO: Usamos dbSets
             <option key={set.id} value={set.id}>
               {set.name}
             </option>
@@ -545,16 +558,16 @@ export default function CollectionPage() {
                     {/* Set / Expansión */}
                     <div className="col-span-2 bg-gray-800/50 p-3 rounded-xl border border-gray-700/50 flex items-center gap-3">
                       {(() => {
-                        const setId =
-                          selectedCard.set_id || selectedCard.set?.id;
-                        const setInfo = AVAILABLE_SETS.find(
-                          (s) => s.id === setId,
-                        );
+                        const setId = selectedCard.set_id || selectedCard.set?.id;
+                        // 👈 CAMBIADO: Usamos dbSets
+                        const setInfo = dbSets.find((s) => s.id === setId);
+                        
                         return (
                           <>
                             {setInfo && (
                               <img
-                                src={setInfo.logo}
+                                // 👈 CAMBIADO: Usamos setInfo.images.logo
+                                src={setInfo.images?.logo} 
                                 className="h-6 w-auto opacity-80"
                               />
                             )}
