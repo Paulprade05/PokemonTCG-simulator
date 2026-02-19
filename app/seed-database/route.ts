@@ -5,39 +5,75 @@ import path from 'path';
 
 export async function GET(request: Request) {
   try {
-    // 1. Configuración: ¿Queremos forzar la recarga?
-    // Si pones ?force=true en la URL, sobreescribirá todo. Si no, saltará lo existente.
     const { searchParams } = new URL(request.url);
     const forceUpdate = searchParams.get('force') === 'true';
 
     const dataDirectory = path.join(process.cwd(), 'src/data');
+    
+    // 1. CARGAMOS EL MAESTRO DE SETS
+    const setsFilePath = path.join(dataDirectory, 'all-sets.json');
+    let allSets = [];
+    try {
+        const setsFileContent = await fs.readFile(setsFilePath, 'utf8');
+        allSets = JSON.parse(setsFileContent);
+        console.log(`📚 Maestro de Sets cargado: ${allSets.length} sets disponibles.`);
+    } catch (e) {
+        console.error("⚠️ No se encontró src/data/all-sets.json. Los sets no se actualizarán.");
+    }
+
+    // 2. LEEMOS LOS ARCHIVOS DE CARTAS
     const files = await fs.readdir(dataDirectory);
-    const jsonFiles = files.filter(file => file.endsWith('.json'));
+    const jsonFiles = files.filter(file => file.endsWith('.json') && file !== 'all-sets.json');
 
-    console.log(`📂 Escaneando ${jsonFiles.length} archivos locales...`);
-
+    console.log(`📂 Escaneando ${jsonFiles.length} archivos de cartas...`);
     let setsProcesados = 0;
-    let setsSaltados = 0;
 
     for (const filename of jsonFiles) {
       const setId = filename.replace('.json', '');
       
-      // 🛑 COMPROBACIÓN DE SEGURIDAD
-      // Preguntamos si ya existen cartas de este set
+      // Si NO forzamos, saltamos lo que ya existe
       if (!forceUpdate) {
         const { rows } = await sql`SELECT count(*) FROM cards WHERE set_id = ${setId}`;
-        const count = parseInt(rows[0].count);
-
-        if (count > 0) {
-          console.log(`⏭️ Saltando ${setId}: Ya tiene ${count} cartas en la base de datos.`);
-          setsSaltados++;
-          continue; // <--- ¡AQUÍ ESTÁ LA MAGIA! Pasa al siguiente archivo
+        if (parseInt(rows[0].count) > 0) {
+            console.log(`⏭️ Saltando ${setId} (Ya existe).`);
+            continue;
         }
       }
 
-      console.log(`💿 Procesando Set NUEVO: ${setId} ...`);
+      console.log(`💿 Procesando Set: ${setId} ...`);
 
-      // Leemos y procesamos el archivo solo si es necesario
+      // --- A) INSERTAR DATOS DEL SET (Si existe en el maestro) ---
+      const setInfo = allSets.find((s: any) => s.id === setId);
+      if (setInfo) {
+          const legalities = JSON.stringify(setInfo.legalities || {});
+          const images = JSON.stringify(setInfo.images || {});
+          
+          await sql`
+            INSERT INTO sets (id, name, series, printed_total, total, legalities, ptcgo_code, release_date, images)
+            VALUES (
+                ${setInfo.id},
+                ${setInfo.name},
+                ${setInfo.series},
+                ${setInfo.printedTotal},
+                ${setInfo.total},
+                ${legalities},
+                ${setInfo.ptcgoCode || null},
+                ${setInfo.releaseDate},
+                ${images}
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                series = EXCLUDED.series,
+                total = EXCLUDED.total,
+                release_date = EXCLUDED.release_date,
+                images = EXCLUDED.images;
+          `;
+          console.log(`   ✅ Info del Set ${setId} guardada en DB.`);
+      } else {
+          console.warn(`   ⚠️ El set ${setId} no aparece en all-sets.json`);
+      }
+
+      // --- B) INSERTAR CARTAS ---
       const filePath = path.join(dataDirectory, filename);
       const fileContents = await fs.readFile(filePath, 'utf8');
       const jsonData = JSON.parse(fileContents);
@@ -45,16 +81,24 @@ export async function GET(request: Request) {
 
       if (!cards || cards.length === 0) continue;
 
-      // Inserción masiva (Batch)
-      // Para ir más rápido, procesamos carta a carta pero sin detenernos
       for (const card of cards) {
         const tcgplayer = JSON.stringify(card.tcgplayer || {});
         const images = JSON.stringify(card.images);
         const flavorText = card.flavorText || '';
         const number = String(card.number || '000');
+        
+        const hp = card.hp || null;
+        const types = JSON.stringify(card.types || []);
+        const attacks = JSON.stringify(card.attacks || []);
+        const weaknesses = JSON.stringify(card.weaknesses || []);
+        const retreatCost = JSON.stringify(card.retreatCost || []);
+
+        // Guardamos también las habilidades y resistencia si existen en el JSON
+        const abilities = JSON.stringify(card.abilities || []);
+        const resistance = JSON.stringify(card.resistances || []);
 
         await sql`
-          INSERT INTO cards (id, name, rarity, images, set_id, number, artist, flavor_text, tcgplayer)
+          INSERT INTO cards (id, name, rarity, images, set_id, number, artist, flavor_text, tcgplayer, hp, types, attacks, weaknesses, retreat_cost)
           VALUES (
             ${card.id}, 
             ${card.name}, 
@@ -64,27 +108,27 @@ export async function GET(request: Request) {
             ${number},       
             ${card.artist || 'Desconocido'},       
             ${flavorText},   
-            ${tcgplayer}
+            ${tcgplayer},
+            ${hp},
+            ${types},
+            ${attacks},
+            ${weaknesses},
+            ${retreatCost}
           )
           ON CONFLICT (id) DO UPDATE SET
             name = EXCLUDED.name,
             rarity = EXCLUDED.rarity,
             images = EXCLUDED.images,
-            number = EXCLUDED.number,
-            artist = EXCLUDED.artist,
-            flavor_text = EXCLUDED.flavor_text,
-            tcgplayer = EXCLUDED.tcgplayer;
+            hp = EXCLUDED.hp,
+            attacks = EXCLUDED.attacks;
         `;
       }
-      
       setsProcesados++;
-      console.log(`✅ ${setId} cargado correctamente.`);
     }
 
     return NextResponse.json({ 
-      message: "Proceso completado", 
-      setsNuevosCargados: setsProcesados,
-      setsIgnorados: setsSaltados
+        message: "Base de datos actualizada (Sets + Cartas)", 
+        setsProcessed: setsProcesados 
     });
 
   } catch (error) {
