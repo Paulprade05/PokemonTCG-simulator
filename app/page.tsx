@@ -10,89 +10,80 @@ import {
 } from "@clerk/nextjs";
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
-import { useState, useEffect, useMemo } from "react"; // <--- Añade useMemo
-// --- TUS IMPORTACIONES ---
+import { useState, useEffect, useMemo } from "react";
 import {
   getUserData,
   updateCoins,
   syncSetToDatabase,
   savePackToCollection,
-} from "./action"; // ⚠️ Asegúrate de que el archivo se llame action.ts o actions.ts
+  getSetsFromDB, // 👈 1. IMPORTAMOS LA NUEVA FUNCIÓN
+} from "./action";
 import { getCardsFromSet } from "../services/pokemon";
-
 import {
   openStandardPack,
   openPremiumPack,
   openGoldenPack,
 } from "../utils/packLogic";
-import { saveToCollection, getCollection } from "../utils/storage";
+import { saveToCollection } from "../utils/storage";
 import { useCurrency } from "../hooks/useGameCurrency";
-import { AVAILABLE_SETS } from "../utils/constanst";
 import PokemonCard from "../components/PokemonCard";
+// 👈 2. ELIMINADO EL IMPORT DE 'AVAILABLE_SETS'
 
 export default function Home() {
-  // Hooks de estado y autenticación
-  const { coins, setCoins, spendCoins } = useCurrency(); // Asegúrate de que tu hook useCurrency exporte setCoins
+  const { coins, setCoins, spendCoins } = useCurrency();
   const { isSignedIn, isLoaded } = useUser();
 
-  // Estados del juego
+  // 👈 3. NUEVO ESTADO PARA GUARDAR LOS SETS DE LA BD
+  const [dbSets, setDbSets] = useState<any[]>([]);
+
   const [selectedSet, setSelectedSet] = useState<string | null>(null);
   const [allCards, setAllCards] = useState<any[]>([]);
   const [userCollectionIds, setUserCollectionIds] = useState<string[]>([]);
   const [currentPackType, setCurrentPackType] = useState<
     "STANDARD" | "PREMIUM" | "GOLDEN" | null
   >(null);
-  // Estados de la apertura de sobres
   const [currentPack, setCurrentPack] = useState<any[]>([]);
   const [packIndex, setPackIndex] = useState(0);
   const [isPackOpen, setIsPackOpen] = useState(false);
   const [cardRevealed, setCardRevealed] = useState(false);
-
-  // Estados de carga
   const [loading, setLoading] = useState(false);
   const [packSaved, setPackSaved] = useState(false);
 
-  // 1. EFECTO: Sincronizar Monedas con la Base de Datos al entrar
+  // 👈 4. NUEVO EFECTO: CARGAR SETS AL ABRIR LA PÁGINA
+  useEffect(() => {
+    const loadSets = async () => {
+      const sets = await getSetsFromDB();
+      setDbSets(sets);
+    };
+    loadSets();
+  }, []);
+
+  // Sincronizar Monedas con la BD
   useEffect(() => {
     const syncUserData = async () => {
       if (isSignedIn && isLoaded) {
         const data = await getUserData();
-        if (data) {
-          console.log("💰 Monedas cargadas desde BD:", data.coins);
-          setCoins(data.coins); // Actualizamos el contador visual
-        }
+        if (data) setCoins(data.coins);
       }
     };
     syncUserData();
   }, [isSignedIn, isLoaded, setCoins]);
 
+  // Cargar cartas al seleccionar un set
   useEffect(() => {
     async function loadAndSync() {
-      if (!selectedSet) return; // Si no hay set seleccionado, no hacemos nada
-
+      if (!selectedSet) return;
       setLoading(true);
       try {
-        // 1. Cargamos las cartas (usa tu caché de localStorage si existe)
         const cards = await getCardsFromSet(selectedSet);
-
         if (cards && cards.length > 0) {
           setAllCards(cards);
-
-          // 2. ⚡ AUTO-SINCRONIZACIÓN EN SEGUNDO PLANO
-          // No usamos 'await' aquí para que el usuario pueda empezar a comprar
-          // sobres mientras la base de datos se actualiza en el fondo.
-          syncSetToDatabase(selectedSet, cards)
-            .then((res) =>
-              console.log(`🔄 Sincronización de ${selectedSet}:`, res.status),
-            )
-            .catch((err) => console.error("❌ Fallo en auto-sync:", err));
+          syncSetToDatabase(selectedSet, cards).catch((err) =>
+            console.error("Fallo sync:", err),
+          );
         }
       } catch (err) {
         console.error("Fallo al invocar cartas:", err);
-        // Si hay un error de conexión
-        alert(
-          "Error de conexión con la API de Pokémon. Inténtalo de nuevo en unos momentos.",
-        );
       } finally {
         setLoading(false);
       }
@@ -100,14 +91,22 @@ export default function Home() {
     loadAndSync();
   }, [selectedSet]);
 
-  // --- FUNCIONES DE LÓGICA ---
+  // 👈 5. MODIFICADO: Agrupar usando 'dbSets' en lugar de 'AVAILABLE_SETS'
+  const setsBySeries = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    dbSets.forEach((set) => {
+      const seriesName = set.series || "Otras";
+      if (!groups[seriesName]) groups[seriesName] = [];
+      groups[seriesName].push(set);
+    });
+    return groups;
+  }, [dbSets]);
 
   const handleSelectSet = (setId: string) => {
-    // Ya no hacemos el fetch aquí, dejamos que el useEffect se encargue
-    // al detectar el cambio de selectedSet.
     setSelectedSet(setId);
     resetPackState();
   };
+
   const resetPackState = () => {
     setCurrentPack([]);
     setPackIndex(0);
@@ -125,7 +124,6 @@ export default function Home() {
     let price = 0;
     let newPack: any[] = [];
 
-    // Lógica de generación de sobres
     if (type === "STANDARD") {
       price = 50;
       if (coins >= price) newPack = openStandardPack(allCards);
@@ -142,16 +140,9 @@ export default function Home() {
       return;
     }
 
-    // --- TRANSACCIÓN Y GUARDADO ---
-    // 1. Actualizamos visualmente (Optimistic UI)
     if (spendCoins(price)) {
-      // 2. Si está logueado, actualizamos en la Nube ☁️
-      if (isSignedIn) {
-        // Restamos el precio a las monedas actuales
-        await updateCoins(coins - price);
-      }
+      if (isSignedIn) await updateCoins(coins - price);
       setCurrentPackType(type);
-      // 3. Preparamos la animación
       setCurrentPack(newPack);
       setPackIndex(0);
       setCardRevealed(false);
@@ -167,21 +158,14 @@ export default function Home() {
     }
 
     if (packIndex < 9) {
-      // Siguiente carta
       setCardRevealed(false);
       setPackIndex((prev) => prev + 1);
     } else {
-      // ¡SOBRE TERMINADO!
-
-      // GUARDAR COLECCIÓN EN LA NUBE ☁️
       if (isSignedIn) {
-        console.log("💾 Guardando pack en base de datos...");
         await savePackToCollection(currentPack);
       } else {
-        // Fallback: Guardar en localStorage si es invitado
         saveToCollection(currentPack);
       }
-
       setPackSaved(true);
       setIsPackOpen(false);
     }
@@ -192,17 +176,9 @@ export default function Home() {
     setAllCards([]);
     resetPackState();
   };
-  const setsBySeries = useMemo(() => {
-    const groups: Record<string, typeof AVAILABLE_SETS> = {};
-    AVAILABLE_SETS.forEach((set) => {
-      // Si la serie no existe en el objeto, creamos el array
-      // Usamos 'Otra' por si se nos olvidó ponerle serie a alguna
-      const seriesName = set.series || "Otras";
-      if (!groups[seriesName]) groups[seriesName] = [];
-      groups[seriesName].push(set);
-    });
-    return groups;
-  }, []);
+
+  // ... AQUÍ EMPIEZA TU RETURN ORIGINAL ...
+  // (Asegúrate de cambiar set.logo por set.images?.logo en el renderizado HTML de los sets)
   // --- RENDERIZADO ---
   return (
     <main className="flex min-h-screen flex-col items-center p-8 bg-gray-900 text-white overflow-hidden">
@@ -270,7 +246,7 @@ export default function Home() {
                     <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition duration-500"></div>
 
                     <img
-                      src={set.logo}
+                      src={set.images?.logo}
                       alt={set.name}
                       className="h-24 object-contain group-hover:drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] transition relative z-10"
                     />

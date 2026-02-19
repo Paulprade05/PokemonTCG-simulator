@@ -262,3 +262,21 @@ export async function sellAllDuplicatesAction(cardId: string, unitPrice: number)
     return { success: false, error: "Error en servidor" };
   }
 }
+// src/app/action.ts
+export async function getSetsFromDB() {
+  try {
+    const { rows } = await sql`
+      SELECT id, name, series, images 
+      FROM sets 
+      ORDER BY release_date DESC
+    `;
+    // Parseamos las imágenes ya que vienen como string JSON
+    return rows.map(set => ({
+      ...set,
+      images: typeof set.images === 'string' ? JSON.parse(set.images) : set.images
+    }));
+  } catch (error) {
+    console.error("Error al obtener sets:", error);
+    return [];
+  }
+}
