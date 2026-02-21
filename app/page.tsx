@@ -109,7 +109,21 @@ export default function Home() {
     });
     return groups;
   }, [dbSets]);
+// 👈 NUEVO EFECTO: Controlar la Barra Espaciadora para abrir sobres
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Si el sobre está abierto y pulsamos Espacio
+      if (e.code === "Space" && isPackOpen) {
+        e.preventDefault(); // Evita que la web haga scroll hacia abajo
+        handleNextCard();
+      }
+    };
 
+    window.addEventListener("keydown", handleKeyDown);
+    
+    // Limpiamos el evento para que no se duplique
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isPackOpen, cardRevealed, packIndex, currentPack, isSignedIn]);
   const handleSelectSet = (setId: string) => {
     setSelectedSet(setId);
     resetPackState();
@@ -164,16 +178,19 @@ export default function Home() {
     }
   };
 
-  const handleNextCard = async () => {
+ const handleNextCard = async () => {
     if (!cardRevealed) {
       setCardRevealed(true);
       return;
     }
 
     if (packIndex < 9) {
-      setCardRevealed(false);
+      // Siguiente carta
+      // 👇 MAGIA AQUÍ: Forzamos a que las siguientes cartas nazcan ya reveladas
+      setCardRevealed(true); 
       setPackIndex((prev) => prev + 1);
     } else {
+      // ¡SOBRE TERMINADO!
       if (isSignedIn) {
         await savePackToCollection(currentPack);
       } else {
