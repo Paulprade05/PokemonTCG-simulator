@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { useUser } from "@clerk/nextjs";
+import { useUser, SignedIn, UserButton } from "@clerk/nextjs";
 import {
   getFullCollection,
   sellCardAction,
@@ -222,21 +222,38 @@ export default function CollectionPage() {
 
   return (
     <main className="min-h-screen bg-gray-900 text-white p-8 pb-32 select-none">
-      {/* CABECERA */}
-      <div className="sticky top-0 z-40 bg-gray-900/95 backdrop-blur-md border-b border-gray-700 py-4 mb-8 -mx-8 px-8 shadow-2xl flex justify-between items-center">
+      {/* CABECERA TIPO "ISLA" (Igual que en Inicio) */}
+      <div className="w-full max-w-7xl mx-auto sticky top-4 z-50 bg-gray-800 p-4 rounded-xl shadow-xl border border-gray-700 mb-8 flex justify-between items-center transition-all">
+        
+        {/* Lado Izquierdo: Botón Volver y Título */}
         <div className="flex items-center gap-4">
           <Link
             href="/"
-            className="bg-gray-800 hover:bg-gray-700 p-2 rounded-full transition"
+            className="bg-gray-700 hover:bg-gray-600 w-10 h-10 flex items-center justify-center rounded-lg border border-gray-600 transition shadow"
+            title="Volver al menú"
           >
             🏠
           </Link>
-          <h1 className="text-2xl font-bold text-yellow-400">Mi Álbum</h1>
+          <h1 className="text-xl md:text-2xl font-bold text-white tracking-wide">
+            Mi Álbum
+          </h1>
         </div>
-        <div className="bg-gray-800 px-4 py-1.5 rounded-full border border-gray-600 flex items-center gap-2">
-          <span>💰</span>
-          <span className="font-bold text-yellow-400">{coins}</span>
+
+        {/* Lado Derecho: Monedas y Usuario */}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 bg-gray-900/60 px-4 py-2 rounded-full border border-gray-700 shadow-inner">
+            <span className="text-xl drop-shadow-md">💰</span>
+            <span className="font-black text-yellow-400">{coins}</span>
+          </div>
+          
+          {/* Añadimos también el botón del usuario para que sea idéntico a la Home */}
+          <SignedIn>
+            <div className="bg-gray-700/50 p-1 rounded-full border border-gray-600 hidden sm:block">
+              <UserButton />
+            </div>
+          </SignedIn>
         </div>
+        
       </div>
 
       {/* DASHBOARD ESTADÍSTICAS */}
