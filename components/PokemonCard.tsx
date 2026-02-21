@@ -15,17 +15,22 @@ const isHoloCard = (rarity: string | undefined) => {
 interface PokemonCardProps {
   card: any;
   reveal?: boolean;
+  useHighRes?: boolean;
   // Ya no necesitamos isFavorite aquí para nada visual
 }
 
-export default function PokemonCard({ card, reveal = false }: PokemonCardProps) {
+export default function PokemonCard({ 
+  card, 
+  reveal = false, 
+  useHighRes = false // 👈 Por defecto es false (usará la pequeña)
+}: PokemonCardProps) {
   const [isFlipped, setIsFlipped] = useState(!reveal);
   const hasHoloEffect = isHoloCard(card.rarity);
 
   useEffect(() => {
     setIsFlipped(!reveal);
   }, [reveal]);
-
+const imageUrl = useHighRes ? card.images.large : card.images.small;
   return (
     <div className="relative w-full aspect-[2.5/3.5] group perspective-1000">
       <motion.div
@@ -42,10 +47,10 @@ export default function PokemonCard({ card, reveal = false }: PokemonCardProps) 
         >
           {/* IMAGEN LIMPIA (Sin botones encima) */}
           <img
-            src={card.images.small}
-            alt={card.name}
-            className="w-full h-full object-cover relative z-10"
-          />
+        src={imageUrl} 
+        alt={card.name}
+        className="..."
+      />
           
           {/* EFECTO HOLO */}
           {hasHoloEffect && (
