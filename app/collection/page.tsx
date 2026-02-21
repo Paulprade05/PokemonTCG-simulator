@@ -406,35 +406,34 @@ export default function CollectionPage() {
         </div>
       )}
 
-      {/* MODAL DETALLE */}
       <AnimatePresence>
         {selectedCard && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md p-4"
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md p-4 sm:p-6"
             onClick={() => setSelectedCard(null)}
           >
             <motion.div
               initial={{ scale: 0.9 }}
               animate={{ scale: 1 }}
               exit={{ scale: 0.9 }}
-              className="relative w-full max-w-4xl bg-gray-900 rounded-2xl overflow-hidden shadow-2xl border border-gray-700 flex flex-col md:flex-row"
+              className="relative w-full max-w-4xl bg-gray-900 rounded-2xl overflow-y-auto shadow-2xl border border-gray-700 flex flex-col md:flex-row max-h-[90vh] custom-scrollbar"
               onClick={(e) => e.stopPropagation()}
             >
+              
               <button
                 onClick={() => setSelectedCard(null)}
-                className="absolute top-4 right-4 text-gray-400 hover:text-white z-50 bg-black/50 p-2 rounded-full"
+                className="absolute top-4 right-4 w-10 h-10 flex items-center justify-center text-white z-50 bg-gray-800 hover:bg-red-500 border border-gray-600 rounded-full shadow-lg transition"
               >
                 ✕
               </button>
 
-              <div className="w-full md:w-1/2 p-8 bg-gray-800 flex items-center justify-center relative">
-                {/* OPCIÓN 1: BOTÓN FLOTANTE SOBRE LA IMAGEN */}
+              <div className="w-full md:w-1/2 p-8 pt-16 md:pt-8 bg-gray-800 flex items-center justify-center relative">
                 <button
                   onClick={handleToggleFavInModal}
-                  className="absolute top-6 right-6 z-50 bg-black/40 backdrop-blur-md p-3 rounded-full hover:scale-110 transition border border-white/10 group"
+                  className="absolute top-4 left-4 md:top-6 md:right-6 md:left-auto z-50 bg-black/40 backdrop-blur-md p-3 rounded-full hover:scale-110 transition border border-white/10 group"
                   title={
                     selectedCard.is_favorite
                       ? "Quitar de favoritos"
@@ -442,7 +441,7 @@ export default function CollectionPage() {
                   }
                 >
                   <span
-                    className={`text-3xl filter drop-shadow-lg block ${selectedCard.is_favorite ? "" : "grayscale opacity-50 group-hover:grayscale-0 group-hover:opacity-100 transition-all"}`}
+                    className={`text-2xl md:text-3xl filter drop-shadow-lg block ${selectedCard.is_favorite ? "" : "grayscale opacity-50 group-hover:grayscale-0 group-hover:opacity-100 transition-all"}`}
                   >
                     {selectedCard.is_favorite ? "❤️" : "🤍"}
                   </span>
@@ -451,24 +450,24 @@ export default function CollectionPage() {
                 <img
                   src={selectedCard.images.large}
                   alt={selectedCard.name}
-                  className="object-contain max-h-[60vh] drop-shadow-2xl"
+                  className="object-contain max-h-[40vh] md:max-h-[60vh] max-w-[260px] md:max-w-full drop-shadow-2xl"
                 />
               </div>
 
-              <div className="w-full md:w-1/2 bg-gray-900 flex flex-col h-full max-h-[90vh] overflow-y-auto custom-scrollbar">
-                {/* 1. CABECERA (Nombre y Favorito) */}
+              <div className="w-full md:w-1/2 bg-gray-900 flex flex-col h-full">
+                
+                {/* 1. CABECERA */}
                 <div className="p-8 pb-4 border-b border-gray-800">
                   <div className="flex justify-between items-start gap-4">
                     <div>
                       <p className="text-blue-400 text-xs uppercase tracking-widest font-bold mb-1">
                         {selectedCard.supertype || "Pokémon"}
                       </p>
-                      <h2 className="text-4xl md:text-5xl font-black text-white tracking-tight leading-none">
+                      <h2 className="text-3xl md:text-5xl font-black text-white tracking-tight leading-none">
                         {selectedCard.name}
                       </h2>
                     </div>
 
-                    {/* Botón Favorito Pequeño */}
                     <button
                       onClick={handleToggleFavInModal}
                       className={`p-3 rounded-xl border transition-all ${
@@ -487,36 +486,26 @@ export default function CollectionPage() {
                 {/* 2. CUERPO DE DATOS */}
                 <div className="p-8 pt-6 flex-1 flex flex-col gap-8">
                   {/* PRECIO / VALOR */}
-                    
                     <div className="text-right">
-                      {/* PRECIO / VALOR */}
                       <div className="bg-gradient-to-r from-gray-800 to-gray-900 p-4 rounded-2xl border border-gray-700 flex items-center justify-between shadow-lg">
-                        <div>
+                        <div className="text-left">
                           <p className="text-gray-400 text-xs font-bold uppercase mb-1">
                             Valor de Mercado
                           </p>
-                          <p className="text-3xl font-black text-yellow-400 flex items-center gap-2">
+                          <p className="text-2xl md:text-3xl font-black text-yellow-400 flex items-center gap-2">
                             {getPrice(selectedCard.rarity)}{" "}
                             <span className="text-lg">💰</span>
                           </p>
                         </div>
 
-                        
                           {selectedCard.quantity > 1 ? (
                             <button
                               onClick={handleSellAll}
-                              // Añadimos 'min-w-[150px]' para que tenga un ancho mínimo estable
                               className="group relative px-4 py-2 rounded-full border border-red-500 bg-red-500/10 text-red-400 font-bold text-xs hover:bg-red-500 hover:text-white transition-all overflow-hidden min-w-[150px]"
                             >
-                              {/* 1. TEXTO NORMAL: */}
-                              {/* Cambiamos 'group-hover:hidden' por 'group-hover:opacity-0' */}
-                              {/* Así el texto se vuelve invisible pero SIGUE OCUPANDO ESPACIO, evitando que el botón se encoja */}
                               <span className="relative z-10 transition-opacity group-hover:opacity-0">
                                 VENDER {selectedCard.quantity - 1} COPIAS
                               </span>
-
-                              {/* 2. TEXTO HOVER: */}
-                              {/* Cambiamos 'hidden' por 'opacity-0' y 'group-hover:flex' por 'group-hover:opacity-100' */}
                               <span className="absolute inset-0 z-20 flex items-center justify-center font-black bg-red-600 text-white opacity-0 group-hover:opacity-100 transition-opacity">
                                 +
                                 {(selectedCard.quantity - 1) *
@@ -534,11 +523,10 @@ export default function CollectionPage() {
                           )}
                       </div>
                     </div>
-                  
 
-                  {/* FLAVOR TEXT (Descripción) */}
+                  {/* FLAVOR TEXT */}
                   {selectedCard.flavorText && (
-                    <div className="relative pl-4 border-l-4 border-blue-500 italic text-gray-300 text-lg leading-relaxed">
+                    <div className="relative pl-4 border-l-4 border-blue-500 italic text-gray-300 text-base md:text-lg leading-relaxed">
                       <span className="absolute -top-2 -left-2 text-4xl text-blue-500 opacity-20">
                         “
                       </span>
@@ -556,7 +544,7 @@ export default function CollectionPage() {
                       <p className="text-gray-500 text-[10px] uppercase font-bold">
                         Rareza
                       </p>
-                      <p className="text-white font-medium flex items-center gap-2">
+                      <p className="text-white text-sm md:text-base font-medium flex items-center gap-2">
                         💎 {selectedCard.rarity || "Común"}
                       </p>
                     </div>
@@ -566,7 +554,7 @@ export default function CollectionPage() {
                       <p className="text-gray-500 text-[10px] uppercase font-bold">
                         Ilustrador
                       </p>
-                      <p className="text-white font-medium truncate flex items-center gap-2">
+                      <p className="text-white text-sm md:text-base font-medium truncate flex items-center gap-2">
                         🖌️ {selectedCard.artist || "Desconocido"}
                       </p>
                     </div>
@@ -575,23 +563,22 @@ export default function CollectionPage() {
                     <div className="col-span-2 bg-gray-800/50 p-3 rounded-xl border border-gray-700/50 flex items-center gap-3">
                       {(() => {
                         const setId = selectedCard.set_id || selectedCard.set?.id;
-                        // 👈 CAMBIADO: Usamos dbSets
                         const setInfo = dbSets.find((s) => s.id === setId);
                         
                         return (
                           <>
                             {setInfo && (
                               <img
-                                // 👈 CAMBIADO: Usamos setInfo.images.logo
                                 src={setInfo.images?.logo} 
                                 className="h-6 w-auto opacity-80"
+                                alt="set logo"
                               />
                             )}
                             <div>
                               <p className="text-gray-500 text-[10px] uppercase font-bold">
                                 Expansión
                               </p>
-                              <p className="text-white font-medium">
+                              <p className="text-white text-sm md:text-base font-medium">
                                 {setInfo?.name ||
                                   selectedCard.set?.name ||
                                   setId}
@@ -608,7 +595,7 @@ export default function CollectionPage() {
                 </div>
 
                 {/* PIE DE PÁGINA: ESTÉTICO */}
-                <div className="p-6 border-t border-gray-800 text-center">
+                <div className="p-6 border-t border-gray-800 text-center mt-auto">
                   <p className="text-[10px] text-gray-600 uppercase tracking-widest">
                     Pokémon TCG Simulator • {new Date().getFullYear()}
                   </p>
