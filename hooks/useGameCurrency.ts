@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 
 export const useCurrency = () => {
   // Iniciamos con 500 o lo que haya en localStorage
-  const [coins, setCoins] = useState(500); 
+  const [coins, setCoins] = useState(2000); 
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
