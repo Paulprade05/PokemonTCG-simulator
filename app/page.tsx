@@ -19,7 +19,6 @@ import {
   savePackToCollection,
   getSetsFromDB, // 👈 1. IMPORTAMOS LA NUEVA FUNCIÓN
   getFullCollection,
-  getFriendsList, sendFriendRequest, acceptFriendRequest, removeFriend, syncUserName // 👈 ¡AÑADIR ESTA!
 } from "./action";
 import { getCardsFromSet } from "../services/pokemon";
 import {
@@ -34,7 +33,7 @@ import PokemonCard from "../components/PokemonCard";
 
 export default function Home() {
   const { coins, setCoins, spendCoins } = useCurrency();
-  const { isSignedIn, isLoaded } = useUser();
+  const { isSignedIn, isLoaded, user } = useUser();
 
   // 👈 3. NUEVO ESTADO PARA GUARDAR LOS SETS DE LA BD
   const [dbSets, setDbSets] = useState<any[]>([]);
@@ -259,15 +258,15 @@ export default function Home() {
           </SignedOut>
 
           <SignedIn>
-            {/* Pill del usuario */}
+            {/* Pill del usuario con TU NOMBRE REAL */}
             <div className="flex items-center gap-2 bg-gray-700/50 p-1 pr-3 sm:pr-4 rounded-full border border-gray-600 hidden lg:flex">
               <UserButton />
-              <span className="text-sm text-gray-300 font-medium">
-                Entrenador
+              <span className="text-sm text-gray-300 font-medium truncate max-w-[120px]">
+                {user?.username || user?.firstName || "Entrenador"}
               </span>
             </div>
 
-            {/* 👇 NUEVO BOTÓN DE AMIGOS 👇 */}
+            {/* Botón de Amigos */}
             <Link
               href="/friends"
               className="bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white px-3 py-2 sm:px-4 rounded-full text-sm font-bold transition border border-blue-500/50 hover:border-blue-500 shadow-md flex items-center gap-2"
