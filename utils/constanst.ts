@@ -200,80 +200,70 @@ export const AVAILABLE_SETS = [
 // src/utils/constanst.ts
 
 // 💎 RANKING DE RAREZA (Para ordenar: 1 = Peor, 10 = Mejor)
-export const RARITY_RANK: Record<string, number> = {
-  // Basura
+// src/utils/constanst.ts
+
+// --- PRECIOS DE VENTA (Economía ajustada) ---
+export const SELL_PRICES: Record<string, number> = {
+  // 🧱 Tier 1: Morralla (Reciclaje)
   "Common": 1,
-  
-  // Normales
   "Uncommon": 2,
-  "Rare": 3,
-  "Rare Holo": 4,
-  "Promo": 4,
+  "Rare": 5,
 
-  // V / ex
-  "Double Rare": 5,
-  "Rare Holo V": 5,
-  "Rare Holo VMAX": 6,
-  "Rare Holo VSTAR": 6,
-  "Rare Ultra": 6, // A veces sale así
+  // ✨ Tier 2: Cartas Brillantes y Promos
+  "Rare Holo": 10,
+  "Promo": 20,
+  "ACE SPEC Rare": 30,
 
-  // Arte
-  "Illustration Rare": 7,
-  "Trainer Gallery Rare Holo": 7,
-  
-  // Full Art
-  "Ultra Rare": 8,
-  "Rare Holo GX": 8, // Por si acaso
-  
-  // SIR / SAR
-  "Special Illustration Rare": 9,
-  
-  // --- DIOSES (AQUÍ ESTÁ TU CARTA) ---
-  "Hyper Rare": 10,
-  "Secret Rare": 10,
-  "Rainbow Rare": 10,
-  "Rare Rainbow": 10,  // 👈 ESTA ES LA QUE TIENES TÚ
-  "Rare Secret": 10
+  // ⚔️ Tier 3: Hits Básicos (Casi pagan un sobre estándar de 50💰)
+  "Double Rare": 40,        // Las cartas "ex" normales
+  "Rare Holo V": 40,        // Las cartas "V" normales
+  "Amazing Rare": 50,
+  "Radiant Rare": 50,
+
+  // 🖼️ Tier 4: Hits Medios y Evoluciones (Ganancia pura)
+  "Shiny Rare": 60,
+  "Rare Shiny": 60,
+  "Trainer Gallery Rare Holo": 70, 
+  "Rare Holo VMAX": 80,
+  "Rare Holo VSTAR": 80,
+  "Illustration Rare": 100, // Art Rares (AR)
+
+  // 💎 Tier 5: Full Arts (Pagan casi un sobre Premium de 200💰)
+  "Ultra Rare": 150,        // Full Arts modernas
+  "Rare Ultra": 150,        // Full Arts clásicas/GX/EX
+  "Shiny Ultra Rare": 180,  // Full Arts variocolor
+
+  // 👑 Tier 6: Secretas y Persecuciones (El premio gordo)
+  "Special Illustration Rare": 500, // SAR / SIR (Las más buscadas hoy)
+  "Rare Rainbow": 600,              // Rainbow Rares
+  "Rare Secret": 700,               // Secretas genéricas
+  "Hyper Rare": 800                 // Cartas Doradas
 };
 
-// 2. PRECIOS DE VENTA (Asegurando que nadie valga 10 monedas si brilla)
-// src/utils/constanst.ts
-
-// ... (Tu RARITY_RANK igual) ...
-
-// ⚖️ ECONOMÍA AJUSTADA:
-// - Comunes a 3 (Base sólida)
-// - Escalado fuerte en las cartas raras.
-
-// src/utils/constanst.ts
-
-export const SELL_PRICES: Record<string, number> = {
-  // --- BÁSICAS ---
-  "Common": 5,
-  "Uncommon": 10,
-  "Rare": 20,
-  "Rare Holo": 30,
-  "Promo": 35,
-
-  // --- INTERMEDIAS (V, ex, GX) ---
-  "Double Rare": 100,         // Las ex normales
-  "Rare Holo V": 100,
-  "Rare Holo VMAX": 150,      // VMAX normal
-  "Rare Holo VSTAR": 150,
-  
-  // --- ARTE ---
-  "Illustration Rare": 200,          // Cartas bonitas (AR)
-  "Trainer Gallery Rare Holo": 200,  // TG
-  
-  // --- ALTA GAMA (Full Art) ---
-  "Ultra Rare": 400,                 // Full Arts plateadas/colores
-  
-  // --- TOP TIER (SIR / SAR) ---
-  "Special Illustration Rare": 800,  // Las de arte alternativo caro
-  
-  // --- EL OLIMPO (Tus cartas Rainbow y Doradas) ---
-  "Hyper Rare": 1500,        // Las nuevas doradas
-  "Secret Rare": 1500,       // Secretas antiguas
-  "Rainbow Rare": 1500,      // 🌈 AQUÍ ESTÁ TU CINDERACE (valía 10, ahora 1500)
-  "Rare Rainbow": 1500       // (Pongo las dos variantes por si acaso)
+// --- ORDEN DE RAREZA (Para ordenar el álbum de mejor a peor) ---
+// Cuanto mayor sea el número, más arriba aparecerá al filtrar por "Rareza"
+export const RARITY_RANK: Record<string, number> = {
+  "Hyper Rare": 100,
+  "Rare Secret": 95,
+  "Rare Rainbow": 90,
+  "Special Illustration Rare": 85,
+  "Shiny Ultra Rare": 80,
+  "Ultra Rare": 75,
+  "Rare Ultra": 75,
+  "Illustration Rare": 70,
+  "Rare Holo VSTAR": 65,
+  "Rare Holo VMAX": 60,
+  "Trainer Gallery Rare Holo": 55,
+  "Shiny Rare": 50,
+  "Rare Shiny": 50,
+  "Radiant Rare": 45,
+  "Amazing Rare": 45,
+  "Double Rare": 40,
+  "Rare Holo V": 40,
+  "ACE SPEC Rare": 35,
+  "Promo": 30,
+  "Rare Holo": 20,
+  "Rare": 10,
+  "Uncommon": 5,
+  "Common": 1
 };

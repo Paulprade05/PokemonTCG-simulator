@@ -55,7 +55,7 @@ export default function Home() {
     currentSetObj.name.toLowerCase().includes("gallery") ||
     currentSetObj.series === "POP" ||
     currentSetObj.series === "Other" ||
-    currentSetObj.total < 100 // Sets muy pequeños como Celebrations o Detective Pikachu
+    currentSetObj.total < 69 // Sets muy pequeños como Celebrations o Detective Pikachu
   ) : false;
   // 👈 4. NUEVO EFECTO: CARGAR SETS AL ABRIR LA PÁGINA
   useEffect(() => {
