@@ -4,7 +4,7 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { sql } from '@vercel/postgres';
 import { revalidatePath } from 'next/cache';
-
+import { SELL_PRICES } from "../utils/constanst";
 // --- 1. GESTIÓN DE USUARIO Y MONEDAS ---
 
 export async function getUserData() {
@@ -365,16 +365,15 @@ export async function syncUserName() {
   }
 }
 
-// --- FUNCIÓN ACTUALIZADA: Obtener amigos CON SUS NOMBRES ---
+// --- FUNCIÓN ACTUALIZADA: Obtener amigos CON ESTADÍSTICAS Y RANKING ---
 export async function getFriendsList() {
   const { userId } = await auth();
   if (!userId) return { accepted: [], pendingRequests: [] };
 
   try {
-    // LEFT JOIN para cruzar la tabla de amistades con los nombres de la tabla users
     const { rows: accepted } = await sql`
       SELECT 
-        f.id, 
+        f.id as friendship_id, 
         CASE WHEN f.user_id = ${userId} THEN f.friend_id ELSE f.user_id END as friend_id,
         COALESCE(u.username, 'Entrenador') as friend_name
       FROM friendships f
@@ -391,6 +390,44 @@ export async function getFriendsList() {
       LEFT JOIN users u ON u.id = f.user_id
       WHERE f.friend_id = ${userId} AND f.status = 'pending'
     `;
+
+    // === NUEVO: Calcular estadísticas de cada amigo en vivo ===
+    for (const friend of accepted) {
+      // Buscamos todas las cartas de este amigo en la BD
+      const { rows: friendCards } = await sql`
+        SELECT uc.quantity, uc.is_favorite, c.rarity
+        FROM user_collection uc
+        JOIN cards c ON uc.card_id = c.id
+        WHERE uc.user_id = ${friend.friend_id}
+      `;
+
+      let totalValue = 0;
+      let totalCards = 0;
+      let totalUnique = 0;
+      let totalFavs = 0;
+
+      // Calculamos las 4 estadísticas
+      friendCards.forEach((row) => {
+        totalUnique += 1;
+        totalCards += row.quantity;
+        if (row.is_favorite) totalFavs += 1;
+        
+        // Calcular valor basado en SELL_PRICES
+        const price = SELL_PRICES[row.rarity as keyof typeof SELL_PRICES] || 10;
+        totalValue += (price * row.quantity);
+      });
+
+      // Se las guardamos en su perfil
+      friend.stats = {
+        value: totalValue,
+        cards: totalCards,
+        unique: totalUnique,
+        favs: totalFavs
+      };
+    }
+
+    // 🔥 LA MAGIA: Ordenamos la lista de amigos por Valor de Colección (De mayor a menor)
+    accepted.sort((a, b) => b.stats.value - a.stats.value);
 
     return { accepted, pendingRequests: pending };
   } catch (error) {
