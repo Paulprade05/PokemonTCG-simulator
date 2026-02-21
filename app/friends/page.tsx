@@ -8,15 +8,15 @@ import {
   getFriendsList, sendFriendRequest, acceptFriendRequest, removeFriend,
   syncUserName, getPendingTrades, acceptTrade, rejectTrade, sendTradeRequest,
   getFullCollection, getTrainerCollection, 
-  getCompletedTrades, markTradeAsRead // 👈 NUEVAS FUNCIONES
+  getCompletedTrades, markTradeAsRead
 } from "../action";
 
 export default function FriendsPage() {
-    const [completedTrades, setCompletedTrades] = useState<any[]>([]);
   const { user, isLoaded, isSignedIn } = useUser();
   const [friends, setFriends] = useState<any[]>([]);
   const [requests, setRequests] = useState<any[]>([]);
   const [tradeRequests, setTradeRequests] = useState<any[]>([]);
+  const [completedTrades, setCompletedTrades] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [friendIdInput, setFriendIdInput] = useState("");
   const [expandedFriendId, setExpandedFriendId] = useState<string | null>(null);
@@ -29,25 +29,22 @@ export default function FriendsPage() {
   const [selectedFriendCard, setSelectedFriendCard] = useState<any | null>(null);
   const [isSendingTrade, setIsSendingTrade] = useState(false);
 
+  // --- CARGA DE DATOS ---
   const loadData = async () => {
     if (!isSignedIn) return;
     setLoading(true);
     await syncUserName(); 
-    const handleDismissTrade = async (tradeId: number) => {
-    await markTradeAsRead(tradeId);
-    setCompletedTrades(prev => prev.filter(t => t.trade_id !== tradeId));
-  };
-    // Cargamos todo en paralelo
+
     const [friendsData, tradesData, completedData] = await Promise.all([
       getFriendsList(),
       getPendingTrades(),
-      getCompletedTrades() // 👈 CARGAMOS LAS NOTIFICACIONES
+      getCompletedTrades() 
     ]);
 
     setFriends(friendsData.accepted);
     setRequests(friendsData.pendingRequests);
     setTradeRequests(tradesData);
-    setCompletedTrades(completedData); // 👈 LAS GUARDAMOS
+    setCompletedTrades(completedData); 
     setLoading(false);
   };
 
@@ -55,13 +52,24 @@ export default function FriendsPage() {
     if (isLoaded) loadData();
   }, [isLoaded, isSignedIn]);
 
-  // --- LÓGICA DE AMIGOS NORMAL ---
+  // --- LÓGICA DE AMIGOS ---
   const handleAddFriend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!friendIdInput.trim()) return;
     const res = await sendFriendRequest(friendIdInput.trim());
     if (res.error) alert(res.error);
     else { alert("¡Petición enviada! 📨"); setFriendIdInput(""); }
+  };
+
+  const handleAcceptFriend = async (id: any) => {
+    await acceptFriendRequest(id);
+    loadData();
+  };
+
+  const handleRemoveFriend = async (id: any) => {
+    if (!confirm("¿Seguro que quieres eliminar a este amigo/petición?")) return;
+    await removeFriend(id);
+    loadData();
   };
 
   const toggleExpand = (id: string) => setExpandedFriendId(expandedFriendId === id ? null : id);
@@ -72,25 +80,22 @@ export default function FriendsPage() {
     setSelectedMyCard(null);
     setSelectedFriendCard(null);
     
-    // Cargamos ambas colecciones
     const [mine, theirs] = await Promise.all([
       getFullCollection(),
       getTrainerCollection(friend.friend_id)
     ]);
     
-    // Función mágica para ordenar: Repetidas primero, únicas después
     const sortCards = (cards: any[]) => {
       return cards
         .filter(c => c.quantity > 0)
         .sort((a, b) => {
-          if (a.quantity > 1 && b.quantity === 1) return -1; // 'a' (repe) va antes que 'b' (única)
-          if (a.quantity === 1 && b.quantity > 1) return 1;  // 'b' (repe) va antes que 'a' (única)
-          if (b.quantity !== a.quantity) return b.quantity - a.quantity; // Si ambas son repes, la que tengas más va primero
-          return a.name.localeCompare(b.name); // Desempate por nombre
+          if (a.quantity > 1 && b.quantity === 1) return -1; 
+          if (a.quantity === 1 && b.quantity > 1) return 1;  
+          if (b.quantity !== a.quantity) return b.quantity - a.quantity; 
+          return a.name.localeCompare(b.name); 
         });
     };
 
-    // Aplicamos el filtro y el orden a ambas listas
     setMyCards(sortCards(mine));
     setFriendCards(sortCards(theirs));
   };
@@ -108,25 +113,33 @@ export default function FriendsPage() {
     }
   };
 
- const handleAccept = async (id: any) => {
-    await acceptFriendRequest(id);
+  // ✅ CORREGIDO: Funciones específicas para aceptar/rechazar cartas
+  const handleAcceptTrade = async (tradeId: number) => {
+    if(!confirm("¿Aceptar este intercambio? Tu carta se enviará y recibirás la suya.")) return;
+    const res = await acceptTrade(tradeId);
+    if (res.error) alert(res.error);
+    else { alert("¡Intercambio realizado con éxito! 🎉"); loadData(); }
+  };
+
+  const handleRejectTrade = async (tradeId: number) => {
+    await rejectTrade(tradeId);
     loadData();
   };
 
-  const handleRemove = async (id: any) => {
-    if (!confirm("¿Seguro que quieres eliminar a este amigo/petición?")) return;
-    await removeFriend(id);
-    loadData();
-  };
-
-  const handleCounterOffer = (trade: any) => {
-    // Para contraofertar, cerramos la notificación y abrimos el modal de oferta hacia esa persona
-    rejectTrade(trade.trade_id); // Rechazamos la actual automáticamente
+  const handleCounterOffer = async (trade: any) => {
+    await rejectTrade(trade.trade_id); 
     const friendData = friends.find(f => f.friend_id === trade.sender_id);
     if (friendData) handleOpenTradeModal(friendData);
     else alert("Este usuario ya no está en tu lista de amigos.");
   };
 
+  // ✅ CORREGIDO: Sacamos esto de dentro del loadData
+  const handleDismissTrade = async (tradeId: number) => {
+    await markTradeAsRead(tradeId);
+    setCompletedTrades(prev => prev.filter(t => t.trade_id !== tradeId));
+  };
+
+  // --- RENDERIZADO ---
   if (!isLoaded || loading) return <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center text-white"><div className="text-4xl animate-bounce mb-4">🌍</div><p className="animate-pulse">Cargando Red de Entrenadores...</p></div>;
   if (!isSignedIn) return <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-8 text-center"><h2 className="text-2xl font-bold mb-4">Inicia sesión</h2><Link href="/" className="bg-blue-600 px-6 py-2 rounded-full font-bold">Volver</Link></div>;
 
@@ -141,6 +154,7 @@ export default function FriendsPage() {
       </div>
 
       <div className="max-w-5xl mx-auto space-y-8">
+        
         {/* --- NOTIFICACIONES DE RESPUESTAS A TUS OFERTAS --- */}
         {completedTrades.length > 0 && (
           <div className="bg-green-900/30 border-2 border-green-500 shadow-green-500/20 shadow-lg p-6 rounded-2xl mb-6">
@@ -153,7 +167,8 @@ export default function FriendsPage() {
                     {trade.status === 'rejected' && <p className="text-sm text-gray-300"><strong className="text-white">{trade.receiver_name}</strong> ha <strong className="text-red-400">RECHAZADO</strong> tu intercambio por {trade.receiver_card_name}.</p>}
                     {trade.status === 'failed' && <p className="text-sm text-gray-300">Tu intercambio con <strong className="text-white">{trade.receiver_name}</strong> ha <strong className="text-orange-400">FALLADO</strong> (alguien vendió las cartas antes de tiempo).</p>}
                   </div>
-                  <button onClick={() => handleRemove(trade.trade_id)} className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-xs font-bold transition whitespace-nowrap">
+                  {/* ✅ CORREGIDO: Usamos handleDismissTrade */}
+                  <button onClick={() => handleDismissTrade(trade.trade_id)} className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-xs font-bold transition whitespace-nowrap">
                     Entendido 👍
                   </button>
                 </div>
@@ -161,6 +176,7 @@ export default function FriendsPage() {
             </div>
           </div>
         )}
+
         {/* --- NOTIFICACIONES DE INTERCAMBIO RECIBIDAS --- */}
         {tradeRequests.length > 0 && (
           <div className="bg-purple-900/40 border-2 border-purple-500 shadow-purple-500/20 shadow-lg p-6 rounded-2xl animate-pulse-slow">
@@ -184,10 +200,11 @@ export default function FriendsPage() {
                     </div>
                   </div>
 
+                  {/* ✅ CORREGIDO: Usamos las funciones de TRADE correctas */}
                   <div className="flex gap-2 mt-auto">
-                    <button onClick={() => handleAccept(trade.trade_id)} className="flex-1 bg-green-600 hover:bg-green-500 text-white text-xs font-bold py-2 rounded transition">Aceptar Trato</button>
+                    <button onClick={() => handleAcceptTrade(trade.trade_id)} className="flex-1 bg-green-600 hover:bg-green-500 text-white text-xs font-bold py-2 rounded transition">Aceptar Trato</button>
                     <button onClick={() => handleCounterOffer(trade)} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold py-2 rounded transition">Cambiar Carta 🔄</button>
-                    <button onClick={() => handleRemove(trade.trade_id)} className="bg-gray-700 hover:bg-red-600 text-white px-3 py-2 rounded transition text-xs font-bold">✕</button>
+                    <button onClick={() => handleRejectTrade(trade.trade_id)} className="bg-gray-700 hover:bg-red-600 text-white px-3 py-2 rounded transition text-xs font-bold">✕</button>
                   </div>
                 </div>
               ))}
@@ -222,8 +239,8 @@ export default function FriendsPage() {
                     <div key={req.id} className="bg-gray-800 p-3 rounded-xl border border-gray-700 flex justify-between items-center">
                       <span className="text-xs font-bold truncate w-1/2">{req.requester_name}</span>
                       <div className="flex gap-1">
-                        <button onClick={() => handleAccept(req.id)} className="bg-green-600 px-2 py-1 rounded text-xs font-bold">✓</button>
-                        <button onClick={() => handleRemove(req.id)} className="bg-red-600 px-2 py-1 rounded text-xs font-bold">✕</button>
+                        <button onClick={() => handleAcceptFriend(req.id)} className="bg-green-600 px-2 py-1 rounded text-xs font-bold">✓</button>
+                        <button onClick={() => handleRemoveFriend(req.id)} className="bg-red-600 px-2 py-1 rounded text-xs font-bold">✕</button>
                       </div>
                     </div>
                   ))}
@@ -287,7 +304,7 @@ export default function FriendsPage() {
                                   </button>
                                 )}
                                 {!isMe && (
-                                  <button onClick={() => handleRemove(friend.friendship_id)} className="bg-gray-800 hover:bg-red-600 border border-gray-700 text-gray-400 hover:text-white px-4 py-2.5 rounded-lg transition" title="Eliminar amigo">🗑️</button>
+                                  <button onClick={() => handleRemoveFriend(friend.friendship_id)} className="bg-gray-800 hover:bg-red-600 border border-gray-700 text-gray-400 hover:text-white px-4 py-2.5 rounded-lg transition" title="Eliminar amigo">🗑️</button>
                                 )}
                               </div>
                             </div>
@@ -334,7 +351,6 @@ export default function FriendsPage() {
                               'border-transparent hover:border-gray-500 opacity-50 hover:opacity-100 grayscale-[20%]'
                             }`}
                           >
-                            {/* Etiqueta Flotante de Cantidad o Candado */}
                             {isDuplicate ? (
                               <div className="absolute -top-2 -right-2 bg-blue-600 text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full border border-gray-900 shadow-md z-20">
                                 {c.quantity}
@@ -374,7 +390,6 @@ export default function FriendsPage() {
                               'border-transparent hover:border-gray-500 opacity-50 hover:opacity-100 grayscale-[20%]'
                             }`}
                           >
-                            {/* Etiqueta Flotante de Cantidad o Candado */}
                             {isDuplicate ? (
                               <div className="absolute -top-2 -right-2 bg-blue-600 text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full border border-gray-900 shadow-md z-20">
                                 {c.quantity}
