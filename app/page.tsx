@@ -51,11 +51,11 @@ export default function Home() {
 // 👈 AÑADE ESTO JUSTO ANTES DEL return (
   const currentSetObj = dbSets.find((s) => s.id === selectedSet);
   const isSpecialSet = currentSetObj ? (
-    currentSetObj.name.toLowerCase().includes("promo") ||
-    currentSetObj.name.toLowerCase().includes("mcdonald") ||
+    currentSetObj.name.toLowerCase().includes("promos") ||
+    currentSetObj.name.toLowerCase().includes("gallery") ||
     currentSetObj.series === "POP" ||
     currentSetObj.series === "Other" ||
-    currentSetObj.total < 50 // Sets muy pequeños como Celebrations o Detective Pikachu
+    currentSetObj.total < 100 // Sets muy pequeños como Celebrations o Detective Pikachu
   ) : false;
   // 👈 4. NUEVO EFECTO: CARGAR SETS AL ABRIR LA PÁGINA
   useEffect(() => {
