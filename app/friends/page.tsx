@@ -153,64 +153,90 @@ export default function FriendsPage() {
               <p className="text-gray-500 text-center py-8">Aún no tienes amigos añadidos.</p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {friends.map((friend, index) => (
-                  <div key={friend.friendship_id} className="bg-gray-900 p-5 rounded-2xl border border-gray-700 flex flex-col gap-4 relative overflow-hidden group hover:border-blue-500 transition shadow-md">
-                    
-                    {/* MEDALLAS PARA EL TOP 3 */}
-                    {index === 0 && <div className="absolute top-0 right-0 bg-yellow-500 text-yellow-900 text-[10px] font-black px-3 py-1 rounded-bl-lg z-10 shadow">🥇 TOP 1</div>}
-                    {index === 1 && <div className="absolute top-0 right-0 bg-gray-300 text-gray-800 text-[10px] font-black px-3 py-1 rounded-bl-lg z-10 shadow">🥈 TOP 2</div>}
-                    {index === 2 && <div className="absolute top-0 right-0 bg-orange-700 text-orange-100 text-[10px] font-black px-3 py-1 rounded-bl-lg z-10 shadow">🥉 TOP 3</div>}
+                {friends.map((friend, index) => {
+                  const isMe = friend.friend_id === user?.id; // 👈 Detectamos si esta tarjeta eres TÚ
 
-                    {/* PERFIL */}
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-blue-500 to-purple-600 flex items-center justify-center text-2xl shadow-lg border-2 border-gray-800">
-                        🧑‍🎤
-                      </div>
-                      <div className="overflow-hidden flex-1 pr-10">
-                        <p className="font-black text-lg text-white truncate leading-tight">{friend.friend_name}</p>
-                        <p className="text-[10px] text-gray-500 font-mono truncate">{friend.friend_id}</p>
-                      </div>
-                    </div>
+                  return (
+                    <div 
+                      key={friend.friend_id} 
+                      className={`p-5 rounded-2xl border flex flex-col gap-4 relative overflow-hidden group transition shadow-md ${
+                        isMe 
+                          ? "bg-blue-900/20 border-blue-500 shadow-blue-500/20" // 👈 Tu tarjeta brilla azul
+                          : "bg-gray-900 border-gray-700 hover:border-blue-500"
+                      }`}
+                    >
+                      
+                      {/* MEDALLAS PARA EL TOP 3 */}
+                      {index === 0 && <div className="absolute top-0 right-0 bg-yellow-500 text-yellow-900 text-[10px] font-black px-3 py-1 rounded-bl-lg z-10 shadow">🥇 TOP 1</div>}
+                      {index === 1 && <div className="absolute top-0 right-0 bg-gray-300 text-gray-800 text-[10px] font-black px-3 py-1 rounded-bl-lg z-10 shadow">🥈 TOP 2</div>}
+                      {index === 2 && <div className="absolute top-0 right-0 bg-orange-700 text-orange-100 text-[10px] font-black px-3 py-1 rounded-bl-lg z-10 shadow">🥉 TOP 3</div>}
 
-                    {/* ESTADÍSTICAS */}
-                    <div className="grid grid-cols-2 gap-2 mt-2">
-                      <div className="bg-gray-800 p-2 rounded-lg border border-gray-700 flex flex-col justify-center">
-                        <p className="text-[9px] text-gray-400 font-bold uppercase mb-0.5">Valor Total</p>
-                        <p className="text-yellow-400 font-black flex items-center gap-1">{friend.stats?.value || 0} 💰</p>
+                      {/* PERFIL */}
+                      <div className="flex items-center gap-3">
+                        <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl shadow-lg border-2 ${isMe ? 'bg-gradient-to-tr from-yellow-400 to-orange-500 border-yellow-200' : 'bg-gradient-to-tr from-blue-500 to-purple-600 border-gray-800'}`}>
+                          {isMe ? '👑' : '🧑‍🎤'}
+                        </div>
+                        <div className="overflow-hidden flex-1 pr-10">
+                          <p className={`font-black text-lg truncate leading-tight ${isMe ? 'text-blue-300' : 'text-white'}`}>
+                            {friend.friend_name}
+                          </p>
+                          <p className="text-[10px] text-gray-500 font-mono truncate">{friend.friend_id}</p>
+                        </div>
                       </div>
-                      <div className="bg-gray-800 p-2 rounded-lg border border-gray-700 flex flex-col justify-center">
-                        <p className="text-[9px] text-gray-400 font-bold uppercase mb-0.5">Progreso Único</p>
-                        <p className="text-white font-black flex items-center gap-1">{friend.stats?.unique || 0} 🎴</p>
-                      </div>
-                      <div className="bg-gray-800 p-2 rounded-lg border border-gray-700 flex flex-col justify-center">
-                        <p className="text-[9px] text-gray-400 font-bold uppercase mb-0.5">Cartas Totales</p>
-                        <p className="text-gray-300 font-black flex items-center gap-1">{friend.stats?.cards || 0} 📦</p>
-                      </div>
-                      <div className="bg-gray-800 p-2 rounded-lg border border-gray-700 flex flex-col justify-center">
-                        <p className="text-[9px] text-gray-400 font-bold uppercase mb-0.5">Favoritas</p>
-                        <p className="text-red-400 font-black flex items-center gap-1">{friend.stats?.favs || 0} ❤️</p>
-                      </div>
-                    </div>
-                    
-                    {/* BOTONES */}
-                    <div className="flex gap-2 mt-auto pt-2">
-                      <Link 
-                        href={`/trainer/${friend.friend_id}`}
-                        className="flex-1 bg-blue-600 hover:bg-blue-500 text-center text-xs font-bold py-2.5 rounded-lg transition"
-                      >
-                        Inspeccionar Álbum 🔍
-                      </Link>
-                      <button 
-                        onClick={() => handleRemove(friend.friendship_id || friend.id)}
-                        className="bg-gray-800 hover:bg-red-600 border border-gray-700 text-gray-400 hover:text-white px-4 py-2.5 rounded-lg transition"
-                        title="Eliminar amigo"
-                      >
-                        🗑️
-                      </button>
-                    </div>
 
-                  </div>
-                ))}
+                      {/* ESTADÍSTICAS AMPLIADAS */}
+                      <div className="grid grid-cols-3 gap-2 mt-2">
+                        <div className="bg-gray-800/80 p-2 rounded-lg border border-gray-700/50 flex flex-col justify-center">
+                          <p className="text-[8px] sm:text-[9px] text-gray-400 font-bold uppercase mb-0.5">Valor Total</p>
+                          <p className="text-yellow-400 font-black flex items-center gap-1 text-sm">{friend.stats?.value || 0} 💰</p>
+                        </div>
+                        <div className="bg-gray-800/80 p-2 rounded-lg border border-gray-700/50 flex flex-col justify-center">
+                          <p className="text-[8px] sm:text-[9px] text-gray-400 font-bold uppercase mb-0.5">Progreso</p>
+                          <p className="text-white font-black flex items-center gap-1 text-sm">{friend.stats?.unique || 0} 🎴</p>
+                        </div>
+                        <div className="bg-gray-800/80 p-2 rounded-lg border border-gray-700/50 flex flex-col justify-center">
+                          <p className="text-[8px] sm:text-[9px] text-gray-400 font-bold uppercase mb-0.5">Cartas</p>
+                          <p className="text-gray-300 font-black flex items-center gap-1 text-sm">{friend.stats?.cards || 0} 📦</p>
+                        </div>
+                        
+                        <div className="bg-gray-800/80 p-2 rounded-lg border border-gray-700/50 flex flex-col justify-center">
+                          <p className="text-[8px] sm:text-[9px] text-gray-400 font-bold uppercase mb-0.5">Favoritas</p>
+                          <p className="text-red-400 font-black flex items-center gap-1 text-sm">{friend.stats?.favs || 0} ❤️</p>
+                        </div>
+                        <div className="bg-blue-900/30 p-2 rounded-lg border border-blue-800/50 flex flex-col justify-center">
+                          <p className="text-[8px] sm:text-[9px] text-blue-400 font-bold uppercase mb-0.5">Sobres</p>
+                          <p className="text-blue-300 font-black flex items-center gap-1 text-sm">{friend.stats?.packs || 0} ✉️</p>
+                        </div>
+                        <div className="bg-green-900/30 p-2 rounded-lg border border-green-800/50 flex flex-col justify-center">
+                          <p className="text-[8px] sm:text-[9px] text-green-400 font-bold uppercase mb-0.5">Gastado</p>
+                          <p className="text-green-300 font-black flex items-center gap-1 text-sm">{friend.stats?.spent || 0} 💸</p>
+                        </div>
+                      </div>
+                      
+                      {/* BOTONES */}
+                      <div className="flex gap-2 mt-auto pt-2">
+                        <Link 
+                          href={isMe ? "/collection" : `/trainer/${friend.friend_id}`}
+                          className="flex-1 bg-blue-600 hover:bg-blue-500 text-center text-xs font-bold py-2.5 rounded-lg transition"
+                        >
+                          {isMe ? "Ir a mi Álbum 📒" : "Inspeccionar Álbum 🔍"}
+                        </Link>
+                        
+                        {/* 🚨 Ocultamos el botón de borrar si eres tú mismo */}
+                        {!isMe && (
+                          <button 
+                            onClick={() => handleRemove(friend.friendship_id)}
+                            className="bg-gray-800 hover:bg-red-600 border border-gray-700 text-gray-400 hover:text-white px-4 py-2.5 rounded-lg transition"
+                            title="Eliminar amigo"
+                          >
+                            🗑️
+                          </button>
+                        )}
+                      </div>
+
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

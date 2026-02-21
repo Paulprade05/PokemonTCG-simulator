@@ -365,7 +365,7 @@ export async function syncUserName() {
   }
 }
 
-// --- FUNCIÓN ACTUALIZADA: Obtener amigos CON ESTADÍSTICAS Y RANKING ---
+// --- FUNCIÓN ACTUALIZADA: Obtener amigos + TÚ MISMO en el Ranking ---
 export async function getFriendsList() {
   const { userId } = await auth();
   if (!userId) return { accepted: [], pendingRequests: [] };
@@ -375,7 +375,9 @@ export async function getFriendsList() {
       SELECT 
         f.id as friendship_id, 
         CASE WHEN f.user_id = ${userId} THEN f.friend_id ELSE f.user_id END as friend_id,
-        COALESCE(u.username, 'Entrenador') as friend_name
+        COALESCE(u.username, 'Entrenador') as friend_name,
+        COALESCE(u.packs_opened, 0) as packs_opened,
+        COALESCE(u.money_spent, 0) as money_spent
       FROM friendships f
       LEFT JOIN users u ON u.id = (CASE WHEN f.user_id = ${userId} THEN f.friend_id ELSE f.user_id END)
       WHERE (f.user_id = ${userId} OR f.friend_id = ${userId}) AND f.status = 'accepted'
@@ -391,9 +393,29 @@ export async function getFriendsList() {
       WHERE f.friend_id = ${userId} AND f.status = 'pending'
     `;
 
-    // === NUEVO: Calcular estadísticas de cada amigo en vivo ===
+    // === 🚨 NUEVO: Te añadimos a ti mismo a la lista del ranking ===
+    const { rows: myData } = await sql`
+      SELECT 
+        id, 
+        COALESCE(username, 'Entrenador') as username, 
+        COALESCE(packs_opened, 0) as packs_opened, 
+        COALESCE(money_spent, 0) as money_spent
+      FROM users WHERE id = ${userId}
+    `;
+
+    if (myData.length > 0) {
+      accepted.push({
+        friendship_id: 'me', // Un ID ficticio para que React no se queje
+        friend_id: myData[0].id,
+        friend_name: myData[0].username + " (Tú)", // Destacamos que eres tú
+        packs_opened: myData[0].packs_opened,
+        money_spent: myData[0].money_spent
+      });
+    }
+    // ===============================================================
+
+    // Calcular estadísticas de todos (ahora te incluye a ti)
     for (const friend of accepted) {
-      // Buscamos todas las cartas de este amigo en la BD
       const { rows: friendCards } = await sql`
         SELECT uc.quantity, uc.is_favorite, c.rarity
         FROM user_collection uc
@@ -406,27 +428,25 @@ export async function getFriendsList() {
       let totalUnique = 0;
       let totalFavs = 0;
 
-      // Calculamos las 4 estadísticas
       friendCards.forEach((row) => {
         totalUnique += 1;
         totalCards += row.quantity;
         if (row.is_favorite) totalFavs += 1;
-        
-        // Calcular valor basado en SELL_PRICES
         const price = SELL_PRICES[row.rarity as keyof typeof SELL_PRICES] || 10;
         totalValue += (price * row.quantity);
       });
 
-      // Se las guardamos en su perfil
       friend.stats = {
         value: totalValue,
         cards: totalCards,
         unique: totalUnique,
-        favs: totalFavs
+        favs: totalFavs,
+        packs: friend.packs_opened,
+        spent: friend.money_spent
       };
     }
 
-    // 🔥 LA MAGIA: Ordenamos la lista de amigos por Valor de Colección (De mayor a menor)
+    // Ordenamos de mayor a menor valor
     accepted.sort((a, b) => b.stats.value - a.stats.value);
 
     return { accepted, pendingRequests: pending };
