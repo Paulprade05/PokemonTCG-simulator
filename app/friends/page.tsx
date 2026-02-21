@@ -3,13 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useUser, SignedIn, UserButton } from "@clerk/nextjs";
-import { 
-  getFriendsList, 
-  sendFriendRequest, 
-  acceptFriendRequest, 
-  removeFriend,
-  syncUserName // 👈 NUEVA IMPORTACIÓN
-} from "../action";
+import { getFriendsList, sendFriendRequest, acceptFriendRequest, removeFriend, syncUserName } from "../action";
 
 export default function FriendsPage() {
   const { user, isLoaded, isSignedIn } = useUser();
