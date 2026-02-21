@@ -596,3 +596,43 @@ export async function rejectTrade(tradeId: number) {
   await sql`UPDATE trades SET status = 'rejected' WHERE id = ${tradeId} AND receiver_id = ${userId}`;
   return true;
 }
+// 5. Leer notificaciones de mis ofertas respondidas
+export async function getCompletedTrades() {
+  const { userId } = await auth();
+  if (!userId) return [];
+
+  try {
+    const { rows } = await sql`
+      SELECT 
+        t.id as trade_id,
+        t.receiver_id,
+        COALESCE(u.username, 'Entrenador') as receiver_name,
+        t.status,
+        c1.name as sender_card_name,
+        c2.name as receiver_card_name
+      FROM trades t
+      JOIN users u ON u.id = t.receiver_id
+      JOIN cards c1 ON c1.id = t.sender_card_id
+      JOIN cards c2 ON c2.id = t.receiver_card_id
+      WHERE t.sender_id = ${userId} 
+        AND t.status IN ('accepted', 'rejected', 'failed') 
+        AND t.is_read = FALSE
+    `;
+    return rows;
+  } catch (error) {
+    console.error("Error leyendo trades completados:", error);
+    return [];
+  }
+}
+
+// 6. Marcar notificación como leída
+export async function markTradeAsRead(tradeId: number) {
+  const { userId } = await auth();
+  if (!userId) return false;
+  try {
+    await sql`UPDATE trades SET is_read = TRUE WHERE id = ${tradeId} AND sender_id = ${userId}`;
+    return true;
+  } catch (error) {
+    return false;
+  }
+}

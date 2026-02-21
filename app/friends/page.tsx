@@ -5,20 +5,14 @@ import Link from "next/link";
 import { useUser, SignedIn, UserButton } from "@clerk/nextjs";
 import { AnimatePresence, motion } from "framer-motion";
 import { 
-  getFriendsList, 
-  sendFriendRequest, 
-  acceptFriendRequest, 
-  removeFriend,
-  syncUserName,
-  getPendingTrades,
-  acceptTrade,
-  rejectTrade,
-  sendTradeRequest,
-  getFullCollection,
-  getTrainerCollection
+  getFriendsList, sendFriendRequest, acceptFriendRequest, removeFriend,
+  syncUserName, getPendingTrades, acceptTrade, rejectTrade, sendTradeRequest,
+  getFullCollection, getTrainerCollection, 
+  getCompletedTrades, markTradeAsRead // 👈 NUEVAS FUNCIONES
 } from "../action";
 
 export default function FriendsPage() {
+    const [completedTrades, setCompletedTrades] = useState<any[]>([]);
   const { user, isLoaded, isSignedIn } = useUser();
   const [friends, setFriends] = useState<any[]>([]);
   const [requests, setRequests] = useState<any[]>([]);
@@ -39,16 +33,21 @@ export default function FriendsPage() {
     if (!isSignedIn) return;
     setLoading(true);
     await syncUserName(); 
-    
+    const handleDismissTrade = async (tradeId: number) => {
+    await markTradeAsRead(tradeId);
+    setCompletedTrades(prev => prev.filter(t => t.trade_id !== tradeId));
+  };
     // Cargamos todo en paralelo
-    const [friendsData, tradesData] = await Promise.all([
+    const [friendsData, tradesData, completedData] = await Promise.all([
       getFriendsList(),
-      getPendingTrades()
+      getPendingTrades(),
+      getCompletedTrades() // 👈 CARGAMOS LAS NOTIFICACIONES
     ]);
 
     setFriends(friendsData.accepted);
     setRequests(friendsData.pendingRequests);
     setTradeRequests(tradesData);
+    setCompletedTrades(completedData); // 👈 LAS GUARDAMOS
     setLoading(false);
   };
 
@@ -79,9 +78,21 @@ export default function FriendsPage() {
       getTrainerCollection(friend.friend_id)
     ]);
     
-    // Solo mostramos cartas que tengan copias (> 0)
-    setMyCards(mine.filter(c => c.quantity > 0));
-    setFriendCards(theirs.filter(c => c.quantity > 0));
+    // Función mágica para ordenar: Repetidas primero, únicas después
+    const sortCards = (cards: any[]) => {
+      return cards
+        .filter(c => c.quantity > 0)
+        .sort((a, b) => {
+          if (a.quantity > 1 && b.quantity === 1) return -1; // 'a' (repe) va antes que 'b' (única)
+          if (a.quantity === 1 && b.quantity > 1) return 1;  // 'b' (repe) va antes que 'a' (única)
+          if (b.quantity !== a.quantity) return b.quantity - a.quantity; // Si ambas son repes, la que tengas más va primero
+          return a.name.localeCompare(b.name); // Desempate por nombre
+        });
+    };
+
+    // Aplicamos el filtro y el orden a ambas listas
+    setMyCards(sortCards(mine));
+    setFriendCards(sortCards(theirs));
   };
 
   const submitTradeOffer = async () => {
@@ -130,7 +141,26 @@ export default function FriendsPage() {
       </div>
 
       <div className="max-w-5xl mx-auto space-y-8">
-        
+        {/* --- NOTIFICACIONES DE RESPUESTAS A TUS OFERTAS --- */}
+        {completedTrades.length > 0 && (
+          <div className="bg-green-900/30 border-2 border-green-500 shadow-green-500/20 shadow-lg p-6 rounded-2xl mb-6">
+            <h3 className="text-green-400 font-black text-xl mb-4 flex items-center gap-2"><span>✅</span> ¡Actualizaciones de tus Ofertas!</h3>
+            <div className="flex flex-col gap-3">
+              {completedTrades.map(trade => (
+                <div key={trade.trade_id} className="bg-gray-900 p-4 rounded-xl border border-green-700/50 flex flex-col sm:flex-row justify-between items-center gap-4">
+                  <div className="flex-1">
+                    {trade.status === 'accepted' && <p className="text-sm text-gray-300"><strong className="text-white">{trade.receiver_name}</strong> ha <strong className="text-green-400">ACEPTADO</strong> tu intercambio. ¡Has recibido <strong>{trade.receiver_card_name}</strong> a cambio de tu {trade.sender_card_name}!</p>}
+                    {trade.status === 'rejected' && <p className="text-sm text-gray-300"><strong className="text-white">{trade.receiver_name}</strong> ha <strong className="text-red-400">RECHAZADO</strong> tu intercambio por {trade.receiver_card_name}.</p>}
+                    {trade.status === 'failed' && <p className="text-sm text-gray-300">Tu intercambio con <strong className="text-white">{trade.receiver_name}</strong> ha <strong className="text-orange-400">FALLADO</strong> (alguien vendió las cartas antes de tiempo).</p>}
+                  </div>
+                  <button onClick={() => handleRemove(trade.trade_id)} className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-xs font-bold transition whitespace-nowrap">
+                    Entendido 👍
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {/* --- NOTIFICACIONES DE INTERCAMBIO RECIBIDAS --- */}
         {tradeRequests.length > 0 && (
           <div className="bg-purple-900/40 border-2 border-purple-500 shadow-purple-500/20 shadow-lg p-6 rounded-2xl animate-pulse-slow">
@@ -289,14 +319,39 @@ export default function FriendsPage() {
                 {/* LADO IZQUIERDO: TUS CARTAS */}
                 <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4">
                   <h3 className="font-bold text-sm text-center mb-4 border-b border-gray-700 pb-2">1. Elige qué carta tuya OFRECES</h3>
-                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 h-64 overflow-y-auto custom-scrollbar pr-2">
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 h-64 overflow-y-auto custom-scrollbar pr-2 pt-2">
                     {myCards.length === 0 ? <p className="col-span-full text-center text-xs text-gray-500">No tienes cartas</p> : 
-                      myCards.map(c => (
-                        <div key={c.id} onClick={() => setSelectedMyCard(c)} className={`cursor-pointer rounded-lg border-2 transition ${selectedMyCard?.id === c.id ? 'border-green-500 shadow-lg shadow-green-500/30 scale-105' : 'border-transparent hover:border-gray-500 opacity-70 hover:opacity-100'}`}>
-                          <img src={c.images.small} alt={c.name} className="w-full h-auto rounded-md" />
-                          <div className="text-center text-[9px] bg-gray-900/80 truncate px-1 rounded-b-md">{c.quantity} copias</div>
-                        </div>
-                      ))
+                      myCards.map(c => {
+                        const isDuplicate = c.quantity > 1;
+                        const isSelected = selectedMyCard?.id === c.id;
+                        return (
+                          <div 
+                            key={c.id} 
+                            onClick={() => setSelectedMyCard(c)} 
+                            className={`relative cursor-pointer rounded-lg border-2 transition duration-200 ${
+                              isSelected ? 'border-green-500 shadow-lg shadow-green-500/30 scale-105 z-10' : 
+                              isDuplicate ? 'border-transparent hover:border-green-400/50' : 
+                              'border-transparent hover:border-gray-500 opacity-50 hover:opacity-100 grayscale-[20%]'
+                            }`}
+                          >
+                            {/* Etiqueta Flotante de Cantidad o Candado */}
+                            {isDuplicate ? (
+                              <div className="absolute -top-2 -right-2 bg-blue-600 text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full border border-gray-900 shadow-md z-20">
+                                {c.quantity}
+                              </div>
+                            ) : (
+                              <div className="absolute -top-2 -right-2 bg-gray-700 text-gray-300 text-[8px] font-black px-1.5 py-0.5 rounded border border-gray-900 shadow-md z-20">
+                                🔒 1
+                              </div>
+                            )}
+                            
+                            <img src={c.images.small} alt={c.name} className="w-full h-auto rounded-t-md" />
+                            <div className={`text-center text-[9px] font-bold truncate px-1 py-0.5 rounded-b-md ${isDuplicate ? 'bg-blue-900/80 text-blue-200' : 'bg-gray-900/80 text-gray-400'}`}>
+                              {c.name}
+                            </div>
+                          </div>
+                        )
+                      })
                     }
                   </div>
                 </div>
@@ -304,14 +359,39 @@ export default function FriendsPage() {
                 {/* LADO DERECHO: SUS CARTAS */}
                 <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4">
                   <h3 className="font-bold text-sm text-center mb-4 border-b border-gray-700 pb-2">2. Elige qué carta suya PIDES</h3>
-                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 h-64 overflow-y-auto custom-scrollbar pr-2">
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 h-64 overflow-y-auto custom-scrollbar pr-2 pt-2">
                     {friendCards.length === 0 ? <p className="col-span-full text-center text-xs text-gray-500">Tu amigo no tiene cartas</p> : 
-                      friendCards.map(c => (
-                        <div key={c.id} onClick={() => setSelectedFriendCard(c)} className={`cursor-pointer rounded-lg border-2 transition ${selectedFriendCard?.id === c.id ? 'border-purple-500 shadow-lg shadow-purple-500/30 scale-105' : 'border-transparent hover:border-gray-500 opacity-70 hover:opacity-100'}`}>
-                          <img src={c.images.small} alt={c.name} className="w-full h-auto rounded-md" />
-                          <div className="text-center text-[9px] bg-gray-900/80 truncate px-1 rounded-b-md">{c.name}</div>
-                        </div>
-                      ))
+                      friendCards.map(c => {
+                        const isDuplicate = c.quantity > 1;
+                        const isSelected = selectedFriendCard?.id === c.id;
+                        return (
+                          <div 
+                            key={c.id} 
+                            onClick={() => setSelectedFriendCard(c)} 
+                            className={`relative cursor-pointer rounded-lg border-2 transition duration-200 ${
+                              isSelected ? 'border-purple-500 shadow-lg shadow-purple-500/30 scale-105 z-10' : 
+                              isDuplicate ? 'border-transparent hover:border-purple-400/50' : 
+                              'border-transparent hover:border-gray-500 opacity-50 hover:opacity-100 grayscale-[20%]'
+                            }`}
+                          >
+                            {/* Etiqueta Flotante de Cantidad o Candado */}
+                            {isDuplicate ? (
+                              <div className="absolute -top-2 -right-2 bg-blue-600 text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full border border-gray-900 shadow-md z-20">
+                                {c.quantity}
+                              </div>
+                            ) : (
+                              <div className="absolute -top-2 -right-2 bg-gray-700 text-gray-300 text-[8px] font-black px-1.5 py-0.5 rounded border border-gray-900 shadow-md z-20">
+                                🔒 1
+                              </div>
+                            )}
+
+                            <img src={c.images.small} alt={c.name} className="w-full h-auto rounded-t-md" />
+                            <div className={`text-center text-[9px] font-bold truncate px-1 py-0.5 rounded-b-md ${isDuplicate ? 'bg-purple-900/80 text-purple-200' : 'bg-gray-900/80 text-gray-400'}`}>
+                              {c.name}
+                            </div>
+                          </div>
+                        )
+                      })
                     }
                   </div>
                 </div>
