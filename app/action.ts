@@ -1,46 +1,49 @@
-// src/app/action.ts
-'use server'
+  // src/app/action.ts
+  'use server'
 
-import { auth, currentUser } from "@clerk/nextjs/server";
-import { sql } from '@vercel/postgres';
-import { revalidatePath } from 'next/cache';
-import { SELL_PRICES } from "../utils/constanst";
-// --- 1. GESTIÓN DE USUARIO Y MONEDAS ---
+  import { auth, currentUser } from "@clerk/nextjs/server";
+  import { sql } from '@vercel/postgres';
+  import { revalidatePath } from 'next/cache';
+  import { SELL_PRICES } from "../utils/constanst";
+  // --- 1. GESTIÓN DE USUARIO Y MONEDAS ---
 
-export async function getUserData() {
-  const { userId } = await auth();
-  if (!userId) return null;
+  export async function getUserData() {
+    const { userId } = await auth();
+    if (!userId) return null;
 
-  try {
-    const { rows } = await sql`SELECT * FROM users WHERE id = ${userId}`;
-    if (rows.length > 0) return { coins: rows[0].coins };
+    try {
+      const { rows } = await sql`SELECT * FROM users WHERE id = ${userId}`;
+      if (rows.length > 0) return { coins: rows[0].coins };
 
-    console.log(`🆕 Creando usuario: ${userId}`);
-    await sql`INSERT INTO users (id, coins) VALUES (${userId}, 500)`;
-    return { coins: 500 };
-  } catch (error) {
-    console.error("❌ Error getUserData:", error);
-    return null;
+      console.log(`🆕 Creando usuario: ${userId}`);
+      await sql`INSERT INTO users (id, coins) VALUES (${userId}, 500)`;
+      return { coins: 500 };
+    } catch (error) {
+      console.error("❌ Error getUserData:", error);
+      return null;
+    }
   }
-}
 
-export async function updateCoins(newAmount: number) {
-  const { userId } = await auth();
-  if (!userId) throw new Error("No autorizado");
+  export async function updateCoins(newAmount: number) {
+    const { userId } = await auth();
+    if (!userId) throw new Error("No autorizado");
 
-  try {
-    await sql`UPDATE users SET coins = ${newAmount} WHERE id = ${userId}`;
-    revalidatePath('/'); 
-    return true;
-  } catch (error) {
-    console.error("❌ Error updateCoins:", error);
-    return false;
+    try {
+      await sql`UPDATE users SET coins = ${newAmount} WHERE id = ${userId}`;
+      revalidatePath('/'); 
+      return true;
+    } catch (error) {
+      console.error("❌ Error updateCoins:", error);
+      return false;
+    }
   }
-}
 
-// --- 2. GESTIÓN DE LA COLECCIÓN ---
+  // --- 2. GESTIÓN DE LA COLECCIÓN ---
 
-export async function savePackToCollection(cards: any[]) {
+ // --- 2. GESTIÓN DE LA COLECCIÓN ---
+
+// 👇 Añadimos "packPrice" como segundo parámetro (puedes cambiar el 100 por lo que cuesten tus sobres)
+export async function savePackToCollection(cards: any[], packPrice: number = 100) {
   const { userId } = await auth();
   if (!userId) return { success: false, error: "No logueado" };
 
@@ -80,6 +83,15 @@ export async function savePackToCollection(cards: any[]) {
       `;
     }
 
+    // 🚨 NUEVO: SUMAR A LAS ESTADÍSTICAS DEL JUGADOR 🚨
+    await sql`
+      UPDATE users 
+      SET packs_opened = COALESCE(packs_opened, 0) + 1,
+          money_spent = COALESCE(money_spent, 0) + ${packPrice}
+      WHERE id = ${userId}
+    `;
+    // ================================================
+
     revalidatePath('/collection');
     return { success: true };
   } catch (error) {
@@ -88,402 +100,402 @@ export async function savePackToCollection(cards: any[]) {
   }
 }
 
-export async function getFullCollection() {
-  const { userId } = await auth();
-  if (!userId) return [];
+  export async function getFullCollection() {
+    const { userId } = await auth();
+    if (!userId) return [];
 
-  try {
-    // ✅ CORRECCIÓN IMPORTANTE:
-    // 1. Pedimos la columna 'is_favorite'
-    // 2. Ordenamos primero por favoritos (DESC) y luego por cantidad
-    const { rows } = await sql`
-  SELECT c.*, uc.quantity, uc.is_favorite -- 👈 Asegúrate de pedir esta columna
-  FROM user_collection uc
-  JOIN cards c ON uc.card_id = c.id
-  WHERE uc.user_id = ${userId}
-  ORDER BY 
-    uc.is_favorite DESC,  -- 👈 PRIMERO LAS FAVORITAS (True va antes que False)
-    c.rarity DESC,        -- Luego por rareza
-    c.name ASC            -- Luego por nombre
-`;
-    
-    return rows.map((row: any) => ({
-      ...row,
-      images: typeof row.images === 'string' ? JSON.parse(row.images) : row.images,
-      tcgplayer: typeof row.tcgplayer === 'string' ? JSON.parse(row.tcgplayer) : row.tcgplayer,
-      flavorText: row.flavor_text 
-    }));
-  } catch (error) {
-    console.error("❌ Error cargando colección:", error);
-    return [];
-  }
-}
-
-// --- 3. ACCIONES DE JUEGO (Vender / Favoritos) ---
-
-export async function sellCardAction(cardId: string, price: number) {
-  const { userId } = await auth();
-  if (!userId) return false;
-
-  try {
-    // Solo vendemos si tiene más de 1 copia (Protección)
-    const result = await sql`
-      UPDATE user_collection 
-      SET quantity = quantity - 1 
-      WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity > 1
-    `;
-
-    if (result.rowCount === 0) return false; 
-
-    await sql`UPDATE users SET coins = coins + ${price} WHERE id = ${userId}`;
-
-    revalidatePath('/collection'); 
-    return true;
-  } catch (error) {
-    console.error("Error vendiendo carta:", error);
-    return false;
-  }
-}
-
-// En src/app/action.ts
-
-export async function toggleFavorite(cardId: string) {
-  // 🔴 ¡IMPORTANTE! El 'await' aquí es OBLIGATORIO en versiones nuevas
-  const { userId } = await auth(); 
-  
-  if (!userId) return { error: "No estás logueado" };
-
-  try {
-    // 1. Verificamos estado actual
-    const currentStatus = await sql`
-      SELECT is_favorite FROM user_collection 
-      WHERE user_id = ${userId} AND card_id = ${cardId}
-    `;
-    
-    // Si no encuentra la carta, es que no la tienes
-    if (currentStatus.rowCount === 0) return { error: "No tienes esta carta" };
-
-    const isFav = currentStatus.rows[0]?.is_favorite || false;
-
-    // 2. Comprobar límite de 10 (solo si vamos a activar el favorito)
-    if (!isFav) {
-      const countResult = await sql`
-        SELECT count(*) as total FROM user_collection 
-        WHERE user_id = ${userId} AND is_favorite = true
-      `;
-      const totalFavs = parseInt(countResult.rows[0].total);
-      if (totalFavs >= 10) return { error: "¡Límite de 10 favoritos alcanzado!" };
+    try {
+      // ✅ CORRECCIÓN IMPORTANTE:
+      // 1. Pedimos la columna 'is_favorite'
+      // 2. Ordenamos primero por favoritos (DESC) y luego por cantidad
+      const { rows } = await sql`
+    SELECT c.*, uc.quantity, uc.is_favorite -- 👈 Asegúrate de pedir esta columna
+    FROM user_collection uc
+    JOIN cards c ON uc.card_id = c.id
+    WHERE uc.user_id = ${userId}
+    ORDER BY 
+      uc.is_favorite DESC,  -- 👈 PRIMERO LAS FAVORITAS (True va antes que False)
+      c.rarity DESC,        -- Luego por rareza
+      c.name ASC            -- Luego por nombre
+  `;
+      
+      return rows.map((row: any) => ({
+        ...row,
+        images: typeof row.images === 'string' ? JSON.parse(row.images) : row.images,
+        tcgplayer: typeof row.tcgplayer === 'string' ? JSON.parse(row.tcgplayer) : row.tcgplayer,
+        flavorText: row.flavor_text 
+      }));
+    } catch (error) {
+      console.error("❌ Error cargando colección:", error);
+      return [];
     }
-
-    // 3. Cambiar el estado
-    await sql`
-      UPDATE user_collection 
-      SET is_favorite = ${!isFav} 
-      WHERE user_id = ${userId} AND card_id = ${cardId}
-    `;
-
-    revalidatePath('/collection');
-    return { success: true, isFavorite: !isFav };
-
-  } catch (error) {
-    console.error("Error toggleFavorite:", error); // 👈 Mira la terminal de VSCode si falla
-    return { error: "Error interno del servidor" };
   }
-}
 
-// --- 4. HERRAMIENTAS DE SINCRONIZACIÓN (Opcional si usas JSON local) ---
+  // --- 3. ACCIONES DE JUEGO (Vender / Favoritos) ---
 
-export async function syncSetToDatabase(setId: string, cards: any[]) {
-  try {
-    const { count } = (await sql`SELECT count(*) FROM cards WHERE set_id = ${setId}`).rows[0];
+  export async function sellCardAction(cardId: string, price: number) {
+    const { userId } = await auth();
+    if (!userId) return false;
+
+    try {
+      // Solo vendemos si tiene más de 1 copia (Protección)
+      const result = await sql`
+        UPDATE user_collection 
+        SET quantity = quantity - 1 
+        WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity > 1
+      `;
+
+      if (result.rowCount === 0) return false; 
+
+      await sql`UPDATE users SET coins = coins + ${price} WHERE id = ${userId}`;
+
+      revalidatePath('/collection'); 
+      return true;
+    } catch (error) {
+      console.error("Error vendiendo carta:", error);
+      return false;
+    }
+  }
+
+  // En src/app/action.ts
+
+  export async function toggleFavorite(cardId: string) {
+    // 🔴 ¡IMPORTANTE! El 'await' aquí es OBLIGATORIO en versiones nuevas
+    const { userId } = await auth(); 
     
-    if (parseInt(count) > 0) return { status: 'already_synced' };
+    if (!userId) return { error: "No estás logueado" };
 
-    console.log(`📥 Sincronizando ${setId} con la base de datos...`);
+    try {
+      // 1. Verificamos estado actual
+      const currentStatus = await sql`
+        SELECT is_favorite FROM user_collection 
+        WHERE user_id = ${userId} AND card_id = ${cardId}
+      `;
+      
+      // Si no encuentra la carta, es que no la tienes
+      if (currentStatus.rowCount === 0) return { error: "No tienes esta carta" };
 
-    for (const card of cards) {
+      const isFav = currentStatus.rows[0]?.is_favorite || false;
+
+      // 2. Comprobar límite de 10 (solo si vamos a activar el favorito)
+      if (!isFav) {
+        const countResult = await sql`
+          SELECT count(*) as total FROM user_collection 
+          WHERE user_id = ${userId} AND is_favorite = true
+        `;
+        const totalFavs = parseInt(countResult.rows[0].total);
+        if (totalFavs >= 10) return { error: "¡Límite de 10 favoritos alcanzado!" };
+      }
+
+      // 3. Cambiar el estado
       await sql`
-        INSERT INTO cards (id, name, rarity, images, set_id, number, artist, flavor_text, tcgplayer)
-        VALUES (
-          ${card.id}, ${card.name}, ${card.rarity || 'Common'}, 
-          ${JSON.stringify(card.images)}, ${setId}, ${card.number || '???'},       
-          ${card.artist || 'Artista Desconocido'}, ${card.flavorText || ''},   
-          ${JSON.stringify(card.tcgplayer || {})}
-        ) ON CONFLICT (id) DO NOTHING;
+        UPDATE user_collection 
+        SET is_favorite = ${!isFav} 
+        WHERE user_id = ${userId} AND card_id = ${cardId}
       `;
+
+      revalidatePath('/collection');
+      return { success: true, isFavorite: !isFav };
+
+    } catch (error) {
+      console.error("Error toggleFavorite:", error); // 👈 Mira la terminal de VSCode si falla
+      return { error: "Error interno del servidor" };
     }
-
-    return { status: 'success' };
-  } catch (error) {
-    console.error("Error sincronizando set:", error);
-    return { status: 'error' };
   }
-}
-export async function sellAllDuplicatesAction(cardId: string, unitPrice: number) {
-  const { userId } = await auth();
-  if (!userId) return { success: false, error: "No autorizado" };
 
-  try {
-    // 1. Consultamos cuántas tiene el usuario
-    const { rows } = await sql`
-      SELECT quantity FROM user_collection 
-      WHERE user_id = ${userId} AND card_id = ${cardId}
-    `;
+  // --- 4. HERRAMIENTAS DE SINCRONIZACIÓN (Opcional si usas JSON local) ---
 
-    if (rows.length === 0) return { success: false, error: "No tienes la carta" };
+  export async function syncSetToDatabase(setId: string, cards: any[]) {
+    try {
+      const { count } = (await sql`SELECT count(*) FROM cards WHERE set_id = ${setId}`).rows[0];
+      
+      if (parseInt(count) > 0) return { status: 'already_synced' };
 
-    const currentQty = rows[0].quantity;
-    const duplicates = currentQty - 1;
+      console.log(`📥 Sincronizando ${setId} con la base de datos...`);
 
-    // Si no hay duplicados, no hacemos nada
-    if (duplicates <= 0) return { success: false, error: "No tienes duplicados" };
+      for (const card of cards) {
+        await sql`
+          INSERT INTO cards (id, name, rarity, images, set_id, number, artist, flavor_text, tcgplayer)
+          VALUES (
+            ${card.id}, ${card.name}, ${card.rarity || 'Common'}, 
+            ${JSON.stringify(card.images)}, ${setId}, ${card.number || '???'},       
+            ${card.artist || 'Artista Desconocido'}, ${card.flavorText || ''},   
+            ${JSON.stringify(card.tcgplayer || {})}
+          ) ON CONFLICT (id) DO NOTHING;
+        `;
+      }
 
-    const totalEarned = duplicates * unitPrice;
-
-    // 2. Actualizamos la colección: Dejamos la cantidad en 1
-    await sql`
-      UPDATE user_collection 
-      SET quantity = 1 
-      WHERE user_id = ${userId} AND card_id = ${cardId}
-    `;
-
-    // 3. Damos el dinero total
-    await sql`
-      UPDATE users 
-      SET coins = coins + ${totalEarned} 
-      WHERE id = ${userId}
-    `;
-
-    revalidatePath('/collection');
-    return { success: true, sold: duplicates, earned: totalEarned };
-
-  } catch (error) {
-    console.error("Error vendiendo todo:", error);
-    return { success: false, error: "Error en servidor" };
-  }
-}
-// src/app/action.ts
-// src/app/action.ts
-
-export async function getSetsFromDB() {
-  try {
-    const { rows } = await sql`
-      /* 👇 AÑADIMOS 'total' A LA LISTA DE COSAS QUE PEDIMOS 👇 */
-      SELECT id, name, series, images, total 
-      FROM sets 
-      ORDER BY release_date DESC
-    `;
-    
-    // Parseamos las imágenes ya que vienen como string JSON
-    return rows.map(set => ({
-      ...set,
-      images: typeof set.images === 'string' ? JSON.parse(set.images) : set.images
-    }));
-  } catch (error) {
-    console.error("Error al obtener sets:", error);
-    return [];
-  }
-}
-// Añade esto al final de tu src/app/action.ts
-
-export async function getTrainerCollection(trainerId: string) {
-  try {
-    // Hacemos un JOIN entre tus dos tablas correctas: user_collection y cards
-    const { rows } = await sql`
-      SELECT 
-        c.*, 
-        uc.quantity, 
-        uc.is_favorite
-      FROM user_collection uc
-      JOIN cards c ON uc.card_id = c.id
-      WHERE uc.user_id = ${trainerId}
-    `;
-
-    // Formateamos los datos para que tu página los entienda perfectamente
-    return rows.map((row: any) => ({
-      ...row,
-      // Si las imágenes están guardadas como texto (JSON), las convertimos a objeto
-      images: typeof row.images === 'string' ? JSON.parse(row.images) : row.images,
-      // Adaptamos el set para que funcione con tu componente PokemonCard
-      set: { id: row.set_id, name: row.set_name } 
-    }));
-    
-  } catch (error) {
-    console.error("❌ Error leyendo colección del entrenador:", error);
-    return [];
-  }
-}
-// --- SISTEMA DE AMIGOS ---
-
-// 1. Enviar petición de amistad
-export async function sendFriendRequest(friendId: string) {
-  const { userId } = await auth();
-  if (!userId) throw new Error("No autorizado");
-  if (userId === friendId) return { error: "No puedes añadirte a ti mismo" };
-
-  try {
-    // Comprobar si ya existe la amistad o la petición
-    const { rows: existing } = await sql`
-      SELECT * FROM friendships 
-      WHERE (user_id = ${userId} AND friend_id = ${friendId})
-         OR (user_id = ${friendId} AND friend_id = ${userId})
-    `;
-    
-    if (existing.length > 0) {
-      return { error: "Ya sois amigos o hay una petición pendiente." };
+      return { status: 'success' };
+    } catch (error) {
+      console.error("Error sincronizando set:", error);
+      return { status: 'error' };
     }
-
-    await sql`
-      INSERT INTO friendships (user_id, friend_id, status)
-      VALUES (${userId}, ${friendId}, 'pending')
-    `;
-    return { success: true };
-  } catch (error) {
-    console.error("Error enviando petición:", error);
-    return { error: "Error de servidor al enviar petición." };
   }
-}
+  export async function sellAllDuplicatesAction(cardId: string, unitPrice: number) {
+    const { userId } = await auth();
+    if (!userId) return { success: false, error: "No autorizado" };
 
-// --- NUEVA FUNCIÓN: Guarda tu nombre de Clerk en la BD ---
-export async function syncUserName() {
-  const user = await currentUser();
-  if (!user) return;
+    try {
+      // 1. Consultamos cuántas tiene el usuario
+      const { rows } = await sql`
+        SELECT quantity FROM user_collection 
+        WHERE user_id = ${userId} AND card_id = ${cardId}
+      `;
 
-  // Intentamos coger tu nombre de usuario, si no, tu nombre de pila, y si no, "Entrenador"
-  const displayName = user.username || user.firstName || "Entrenador";
+      if (rows.length === 0) return { success: false, error: "No tienes la carta" };
 
-  try {
-    // Guarda o actualiza el nombre en tu tabla 'users'
-    await sql`
-      INSERT INTO users (id, username) 
-      VALUES (${user.id}, ${displayName})
-      ON CONFLICT (id) 
-      DO UPDATE SET username = ${displayName}
-    `;
-  } catch (error) {
-    console.error("Error sincronizando nombre de usuario:", error);
-  }
-}
+      const currentQty = rows[0].quantity;
+      const duplicates = currentQty - 1;
 
-// --- FUNCIÓN ACTUALIZADA: Obtener amigos + TÚ MISMO en el Ranking ---
-export async function getFriendsList() {
-  const { userId } = await auth();
-  if (!userId) return { accepted: [], pendingRequests: [] };
+      // Si no hay duplicados, no hacemos nada
+      if (duplicates <= 0) return { success: false, error: "No tienes duplicados" };
 
-  try {
-    const { rows: accepted } = await sql`
-      SELECT 
-        f.id as friendship_id, 
-        CASE WHEN f.user_id = ${userId} THEN f.friend_id ELSE f.user_id END as friend_id,
-        COALESCE(u.username, 'Entrenador') as friend_name,
-        COALESCE(u.packs_opened, 0) as packs_opened,
-        COALESCE(u.money_spent, 0) as money_spent
-      FROM friendships f
-      LEFT JOIN users u ON u.id = (CASE WHEN f.user_id = ${userId} THEN f.friend_id ELSE f.user_id END)
-      WHERE (f.user_id = ${userId} OR f.friend_id = ${userId}) AND f.status = 'accepted'
-    `;
+      const totalEarned = duplicates * unitPrice;
 
-    const { rows: pending } = await sql`
-      SELECT 
-        f.id, 
-        f.user_id as requester_id,
-        COALESCE(u.username, 'Entrenador') as requester_name
-      FROM friendships f
-      LEFT JOIN users u ON u.id = f.user_id
-      WHERE f.friend_id = ${userId} AND f.status = 'pending'
-    `;
+      // 2. Actualizamos la colección: Dejamos la cantidad en 1
+      await sql`
+        UPDATE user_collection 
+        SET quantity = 1 
+        WHERE user_id = ${userId} AND card_id = ${cardId}
+      `;
 
-    // === 🚨 NUEVO: Te añadimos a ti mismo a la lista del ranking ===
-    const { rows: myData } = await sql`
-      SELECT 
-        id, 
-        COALESCE(username, 'Entrenador') as username, 
-        COALESCE(packs_opened, 0) as packs_opened, 
-        COALESCE(money_spent, 0) as money_spent
-      FROM users WHERE id = ${userId}
-    `;
+      // 3. Damos el dinero total
+      await sql`
+        UPDATE users 
+        SET coins = coins + ${totalEarned} 
+        WHERE id = ${userId}
+      `;
 
-    if (myData.length > 0) {
-      accepted.push({
-        friendship_id: 'me', // Un ID ficticio para que React no se queje
-        friend_id: myData[0].id,
-        friend_name: myData[0].username + " (Tú)", // Destacamos que eres tú
-        packs_opened: myData[0].packs_opened,
-        money_spent: myData[0].money_spent
-      });
+      revalidatePath('/collection');
+      return { success: true, sold: duplicates, earned: totalEarned };
+
+    } catch (error) {
+      console.error("Error vendiendo todo:", error);
+      return { success: false, error: "Error en servidor" };
     }
-    // ===============================================================
+  }
+  // src/app/action.ts
+  // src/app/action.ts
 
-    // Calcular estadísticas de todos (ahora te incluye a ti)
-    for (const friend of accepted) {
-      const { rows: friendCards } = await sql`
-        SELECT uc.quantity, uc.is_favorite, c.rarity
+  export async function getSetsFromDB() {
+    try {
+      const { rows } = await sql`
+        /* 👇 AÑADIMOS 'total' A LA LISTA DE COSAS QUE PEDIMOS 👇 */
+        SELECT id, name, series, images, total 
+        FROM sets 
+        ORDER BY release_date DESC
+      `;
+      
+      // Parseamos las imágenes ya que vienen como string JSON
+      return rows.map(set => ({
+        ...set,
+        images: typeof set.images === 'string' ? JSON.parse(set.images) : set.images
+      }));
+    } catch (error) {
+      console.error("Error al obtener sets:", error);
+      return [];
+    }
+  }
+  // Añade esto al final de tu src/app/action.ts
+
+  export async function getTrainerCollection(trainerId: string) {
+    try {
+      // Hacemos un JOIN entre tus dos tablas correctas: user_collection y cards
+      const { rows } = await sql`
+        SELECT 
+          c.*, 
+          uc.quantity, 
+          uc.is_favorite
         FROM user_collection uc
         JOIN cards c ON uc.card_id = c.id
-        WHERE uc.user_id = ${friend.friend_id}
+        WHERE uc.user_id = ${trainerId}
       `;
 
-      let totalValue = 0;
-      let totalCards = 0;
-      let totalUnique = 0;
-      let totalFavs = 0;
-
-      friendCards.forEach((row) => {
-        totalUnique += 1;
-        totalCards += row.quantity;
-        if (row.is_favorite) totalFavs += 1;
-        const price = SELL_PRICES[row.rarity as keyof typeof SELL_PRICES] || 10;
-        totalValue += (price * row.quantity);
-      });
-
-      friend.stats = {
-        value: totalValue,
-        cards: totalCards,
-        unique: totalUnique,
-        favs: totalFavs,
-        packs: friend.packs_opened,
-        spent: friend.money_spent
-      };
+      // Formateamos los datos para que tu página los entienda perfectamente
+      return rows.map((row: any) => ({
+        ...row,
+        // Si las imágenes están guardadas como texto (JSON), las convertimos a objeto
+        images: typeof row.images === 'string' ? JSON.parse(row.images) : row.images,
+        // Adaptamos el set para que funcione con tu componente PokemonCard
+        set: { id: row.set_id, name: row.set_name } 
+      }));
+      
+    } catch (error) {
+      console.error("❌ Error leyendo colección del entrenador:", error);
+      return [];
     }
-
-    // Ordenamos de mayor a menor valor
-    accepted.sort((a, b) => b.stats.value - a.stats.value);
-
-    return { accepted, pendingRequests: pending };
-  } catch (error) {
-    console.error("Error obteniendo amigos:", error);
-    return { accepted: [], pendingRequests: [] };
   }
-}
+  // --- SISTEMA DE AMIGOS ---
 
-// 3. Aceptar petición
-export async function acceptFriendRequest(friendshipId: number) {
-  const { userId } = await auth();
-  if (!userId) return { error: "No autorizado" };
+  // 1. Enviar petición de amistad
+  export async function sendFriendRequest(friendId: string) {
+    const { userId } = await auth();
+    if (!userId) throw new Error("No autorizado");
+    if (userId === friendId) return { error: "No puedes añadirte a ti mismo" };
 
-  try {
-    await sql`
-      UPDATE friendships SET status = 'accepted'
-      WHERE id = ${friendshipId} AND friend_id = ${userId}
-    `;
-    return { success: true };
-  } catch (error) {
-    return { error: "Error al aceptar petición" };
+    try {
+      // Comprobar si ya existe la amistad o la petición
+      const { rows: existing } = await sql`
+        SELECT * FROM friendships 
+        WHERE (user_id = ${userId} AND friend_id = ${friendId})
+          OR (user_id = ${friendId} AND friend_id = ${userId})
+      `;
+      
+      if (existing.length > 0) {
+        return { error: "Ya sois amigos o hay una petición pendiente." };
+      }
+
+      await sql`
+        INSERT INTO friendships (user_id, friend_id, status)
+        VALUES (${userId}, ${friendId}, 'pending')
+      `;
+      return { success: true };
+    } catch (error) {
+      console.error("Error enviando petición:", error);
+      return { error: "Error de servidor al enviar petición." };
+    }
   }
-}
 
-// 4. Eliminar amigo o rechazar petición
-export async function removeFriend(friendshipId: number) {
-  const { userId } = await auth();
-  if (!userId) return { error: "No autorizado" };
+  // --- NUEVA FUNCIÓN: Guarda tu nombre de Clerk en la BD ---
+  export async function syncUserName() {
+    const user = await currentUser();
+    if (!user) return;
 
-  try {
-    await sql`
-      DELETE FROM friendships
-      WHERE id = ${friendshipId} AND (user_id = ${userId} OR friend_id = ${userId})
-    `;
-    return { success: true };
-  } catch (error) {
-    return { error: "Error al eliminar amigo" };
+    // Intentamos coger tu nombre de usuario, si no, tu nombre de pila, y si no, "Entrenador"
+    const displayName = user.username || user.firstName || "Entrenador";
+
+    try {
+      // Guarda o actualiza el nombre en tu tabla 'users'
+      await sql`
+        INSERT INTO users (id, username) 
+        VALUES (${user.id}, ${displayName})
+        ON CONFLICT (id) 
+        DO UPDATE SET username = ${displayName}
+      `;
+    } catch (error) {
+      console.error("Error sincronizando nombre de usuario:", error);
+    }
   }
-}
+
+  // --- FUNCIÓN ACTUALIZADA: Obtener amigos + TÚ MISMO en el Ranking ---
+  export async function getFriendsList() {
+    const { userId } = await auth();
+    if (!userId) return { accepted: [], pendingRequests: [] };
+
+    try {
+      const { rows: accepted } = await sql`
+        SELECT 
+          f.id as friendship_id, 
+          CASE WHEN f.user_id = ${userId} THEN f.friend_id ELSE f.user_id END as friend_id,
+          COALESCE(u.username, 'Entrenador') as friend_name,
+          COALESCE(u.packs_opened, 0) as packs_opened,
+          COALESCE(u.money_spent, 0) as money_spent
+        FROM friendships f
+        LEFT JOIN users u ON u.id = (CASE WHEN f.user_id = ${userId} THEN f.friend_id ELSE f.user_id END)
+        WHERE (f.user_id = ${userId} OR f.friend_id = ${userId}) AND f.status = 'accepted'
+      `;
+
+      const { rows: pending } = await sql`
+        SELECT 
+          f.id, 
+          f.user_id as requester_id,
+          COALESCE(u.username, 'Entrenador') as requester_name
+        FROM friendships f
+        LEFT JOIN users u ON u.id = f.user_id
+        WHERE f.friend_id = ${userId} AND f.status = 'pending'
+      `;
+
+      // === 🚨 NUEVO: Te añadimos a ti mismo a la lista del ranking ===
+      const { rows: myData } = await sql`
+        SELECT 
+          id, 
+          COALESCE(username, 'Entrenador') as username, 
+          COALESCE(packs_opened, 0) as packs_opened, 
+          COALESCE(money_spent, 0) as money_spent
+        FROM users WHERE id = ${userId}
+      `;
+
+      if (myData.length > 0) {
+        accepted.push({
+          friendship_id: 'me', // Un ID ficticio para que React no se queje
+          friend_id: myData[0].id,
+          friend_name: myData[0].username + " (Tú)", // Destacamos que eres tú
+          packs_opened: myData[0].packs_opened,
+          money_spent: myData[0].money_spent
+        });
+      }
+      // ===============================================================
+
+      // Calcular estadísticas de todos (ahora te incluye a ti)
+      for (const friend of accepted) {
+        const { rows: friendCards } = await sql`
+          SELECT uc.quantity, uc.is_favorite, c.rarity
+          FROM user_collection uc
+          JOIN cards c ON uc.card_id = c.id
+          WHERE uc.user_id = ${friend.friend_id}
+        `;
+
+        let totalValue = 0;
+        let totalCards = 0;
+        let totalUnique = 0;
+        let totalFavs = 0;
+
+        friendCards.forEach((row) => {
+          totalUnique += 1;
+          totalCards += row.quantity;
+          if (row.is_favorite) totalFavs += 1;
+          const price = SELL_PRICES[row.rarity as keyof typeof SELL_PRICES] || 10;
+          totalValue += (price * row.quantity);
+        });
+
+        friend.stats = {
+          value: totalValue,
+          cards: totalCards,
+          unique: totalUnique,
+          favs: totalFavs,
+          packs: friend.packs_opened,
+          spent: friend.money_spent
+        };
+      }
+
+      // Ordenamos de mayor a menor valor
+      accepted.sort((a, b) => b.stats.value - a.stats.value);
+
+      return { accepted, pendingRequests: pending };
+    } catch (error) {
+      console.error("Error obteniendo amigos:", error);
+      return { accepted: [], pendingRequests: [] };
+    }
+  }
+
+  // 3. Aceptar petición
+  export async function acceptFriendRequest(friendshipId: number) {
+    const { userId } = await auth();
+    if (!userId) return { error: "No autorizado" };
+
+    try {
+      await sql`
+        UPDATE friendships SET status = 'accepted'
+        WHERE id = ${friendshipId} AND friend_id = ${userId}
+      `;
+      return { success: true };
+    } catch (error) {
+      return { error: "Error al aceptar petición" };
+    }
+  }
+
+  // 4. Eliminar amigo o rechazar petición
+  export async function removeFriend(friendshipId: number) {
+    const { userId } = await auth();
+    if (!userId) return { error: "No autorizado" };
+
+    try {
+      await sql`
+        DELETE FROM friendships
+        WHERE id = ${friendshipId} AND (user_id = ${userId} OR friend_id = ${userId})
+      `;
+      return { success: true };
+    } catch (error) {
+      return { error: "Error al eliminar amigo" };
+    }
+  }
