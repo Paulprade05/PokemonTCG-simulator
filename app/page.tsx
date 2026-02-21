@@ -41,6 +41,7 @@ export default function Home() {
   const [selectedSet, setSelectedSet] = useState<string | null>(null);
   const [allCards, setAllCards] = useState<any[]>([]);
   const [userCollectionIds, setUserCollectionIds] = useState<string[]>([]);
+  const [currentPackPrice, setCurrentPackPrice] = useState(0);
   const [currentPackType, setCurrentPackType] = useState<
     "STANDARD" | "PREMIUM" | "GOLDEN" | null
   >(null);
@@ -163,30 +164,31 @@ export default function Home() {
     let price = 0;
     let newPack: any[] = [];
 
+    // 1. Asignamos el precio y generamos el sobre
     if (type === "STANDARD") {
       price = 50;
       if (coins >= price) newPack = openStandardPack(allCards);
     } else if (type === "PREMIUM") {
       price = 250;
       if (coins >= price) newPack = openPremiumPack(allCards);
-    } else if (type === "GOLDEN") {
-      price = 2500;
-      if (coins >= price) newPack = openGoldenPack(allCards, userCollectionIds);
-    } else if (type === "SPECIAL") {
-      // 👇 LÓGICA DEL SOBRE ESPECIAL
+    } else if (type === "GOLDEN" || type === "SPECIAL") {
       price = 2500;
       if (coins >= price) newPack = openGoldenPack(allCards, userCollectionIds);
     }
 
+    // 2. Comprobamos saldo
     if (coins < price) {
       alert("¡No tienes suficientes monedas!");
       return;
     }
 
+    // 3. Cobramos y preparamos la apertura
     if (spendCoins(price)) {
       if (isSignedIn) await updateCoins(coins - price);
+      
       setCurrentPackType(type as any);
       setCurrentPack(newPack);
+      setCurrentPackPrice(price); // 👈 AQUÍ GUARDAMOS EL PRECIO PARA LUEGO
       setPackIndex(0);
       setCardRevealed(false);
       setIsPackOpen(true);
@@ -208,7 +210,7 @@ export default function Home() {
     } else {
       // ¡SOBRE TERMINADO!
       if (isSignedIn) {
-        await savePackToCollection(currentPack);
+        await savePackToCollection(currentPack, currentPackPrice);
       } else {
         saveToCollection(currentPack);
       }
