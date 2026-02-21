@@ -382,7 +382,7 @@ export default function Home() {
                     ¡Sin cartas comunes! <br /> 2 Raras aseguradas.
                   </p>
                   <button className="mt-auto bg-purple-600 text-white font-bold py-2 px-6 rounded-full w-full hover:bg-purple-500 shadow-lg shadow-purple-900/50">
-                    200 💰
+                    250 💰
                   </button>
                 </div>
 
