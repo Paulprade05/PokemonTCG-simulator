@@ -1,4 +1,3 @@
-// src/app/collection/page.tsx
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
@@ -9,14 +8,14 @@ import {
   sellCardAction,
   toggleFavorite,
   sellAllDuplicatesAction,
-  getSetsFromDB, // 👈 IMPORTANTE: Añadimos esto
+  getSetsFromDB,
 } from "../action";
 import { getCollection, saveCollectionRaw } from "../../utils/storage";
 import { useCurrency } from "../../hooks/useGameCurrency";
 import {
   RARITY_RANK,
   SELL_PRICES,
-} from "../../utils/constanst"; // 👈 QUITAMOS AVAILABLE_SETS de aquí
+} from "../../utils/constanst";
 import PokemonCard from "../../components/PokemonCard";
 import Link from "next/link";
 
@@ -38,7 +37,6 @@ export default function CollectionPage() {
       if (!isLoaded) return;
       setLoading(true);
 
-      // 👈 NUEVO: Cargamos los sets siempre
       const sets = await getSetsFromDB();
       setDbSets(sets);
 
@@ -59,30 +57,21 @@ export default function CollectionPage() {
   }, [isSignedIn, isLoaded]);
 
   // --- LÓGICA DE ESTADÍSTICAS ---
- // --- LÓGICA DE ESTADÍSTICAS ---
   const setStats = useMemo(() => {
     return dbSets.map((set) => {
-      // 👇 AQUÍ ESTÁ LA MAGIA: Añadimos + "-" para evitar colisiones de nombres
       const uniqueCardsOwned = cards.filter((c) =>
         c.id.startsWith(set.id + "-"), 
       ).length;
       
-      // Protegemos contra divisiones por 0
       const totalInSet = set.total || 1; 
-      
-      const percentage = Math.min(
-        100,
-        Math.round((uniqueCardsOwned / totalInSet) * 100),
-      );
+      const percentage = Math.min(100, Math.round((uniqueCardsOwned / totalInSet) * 100));
       const missing = Math.max(0, totalInSet - uniqueCardsOwned);
-      
       const logoUrl = set.images?.logo || ""; 
       
       return { ...set, logo: logoUrl, owned: uniqueCardsOwned, percentage, missing };
     });
   }, [cards, dbSets]);
 
-  // --- FILTROS Y ORDEN ---
   // --- FILTROS Y ORDEN ---
   const processedCards = useMemo(() => {
     let result = [...cards];
@@ -94,14 +83,9 @@ export default function CollectionPage() {
       result = result.filter((c) => c.id.startsWith(filterSet));
 
     result.sort((a, b) => {
-      // 👑 REGLA DE ORO: Los favoritos SIEMPRE van primero
-      // Si 'a' es favorita y 'b' no lo es -> 'a' gana (-1)
       if (a.is_favorite && !b.is_favorite) return -1;
-      // Si 'b' es favorita y 'a' no lo es -> 'b' gana (1)
       if (!a.is_favorite && b.is_favorite) return 1;
 
-      // Si empatan (las dos son favoritas o ninguna lo es),
-      // entonces desempatamos con el criterio del desplegable:
       switch (sortBy) {
         case "name_asc":
           return a.name.localeCompare(b.name);
@@ -118,12 +102,10 @@ export default function CollectionPage() {
 
   const getPrice = (rarity: string) => SELL_PRICES[rarity] || 10;
 
-  // --- VENTA ---
-  const handleSellCard = async (
-    e: React.MouseEvent,
-    cardId: string,
-    rarity: string,
-  ) => {
+  // --- FUNCIONES DE VENTA ---
+  
+  // Vender 1 sola copia (desde el grid)
+  const handleSellCard = async (e: React.MouseEvent, cardId: string, rarity: string) => {
     e.stopPropagation();
     const card = cards.find((c) => c.id === cardId);
     if (!card || card.quantity <= 1) return;
@@ -133,7 +115,6 @@ export default function CollectionPage() {
       if (c.id === cardId) return { ...c, quantity: c.quantity - 1 };
       return c;
     });
-    // --- FUNCIÓN PARA VENDER TODOS LOS DUPLICADOS ---
 
     setCards(updatedCards);
     addCoins(price);
@@ -144,71 +125,68 @@ export default function CollectionPage() {
       saveCollectionRaw(updatedCards);
     }
   };
-  // --- FUNCIÓN NUEVA: VENDER TODOS LOS DUPLICADOS ---
-  const handleSellAll = async (e: React.MouseEvent) => {
-    e.stopPropagation(); // Evita conflictos de clic
+
+  // Vender TODOS los duplicados de TODA la colección
+  const handleSellAllDuplicates = async () => {
+    const duplicates = cards.filter((card) => card.quantity > 1);
+    if (duplicates.length === 0) {
+      alert("No tienes cartas duplicadas.");
+      return;
+    }
+
+    let totalGanancias = 0;
+    duplicates.forEach((card) => {
+      totalGanancias += (card.quantity - 1) * getPrice(card.rarity);
+    });
+
+    if (!confirm(`¿Vender todos los duplicados por ${totalGanancias} 💰?`)) return;
+
+    const newCollection = cards.map((card) => ({ ...card, quantity: 1 }));
+    setCards(newCollection);
+    addCoins(totalGanancias);
+
+    if (isSignedIn) {
+      // Usamos Promise.all para procesar todas las ventas en la DB
+      await Promise.all(duplicates.map(c => sellAllDuplicatesAction(c.id, getPrice(c.rarity))));
+    } else {
+      saveCollectionRaw(newCollection);
+    }
+    alert(`¡Vendido! Ganaste ${totalGanancias} 💰`);
+  };
+
+  // Vender todos los duplicados de UNA sola carta (desde el Modal)
+  const handleSellAllFromModal = async () => {
     if (!selectedCard || selectedCard.quantity <= 1) return;
 
     const unitPrice = getPrice(selectedCard.rarity);
     const duplicates = selectedCard.quantity - 1;
     const totalValue = duplicates * unitPrice;
 
-    // 1. UI Optimista: Actualizamos monedas y carta visualmente YA
-    const oldQuantity = selectedCard.quantity;
     addCoins(totalValue);
-
-    // Dejamos la carta con 1 sola copia en el modal y en la lista de fondo
     setSelectedCard({ ...selectedCard, quantity: 1 });
     setCards((prev) =>
       prev.map((c) => (c.id === selectedCard.id ? { ...c, quantity: 1 } : c)),
     );
 
-    // 2. Llamada al servidor (en segundo plano)
-    const res = await sellAllDuplicatesAction(selectedCard.id, unitPrice);
-
-    // 3. Si falla, deshacemos los cambios
-    if (!res?.success) {
-      alert("Error al vender: " + (res?.error || "Desconocido"));
-      addCoins(-totalValue);
-      setSelectedCard({ ...selectedCard, quantity: oldQuantity });
-      setCards((prev) =>
-        prev.map((c) =>
-          c.id === selectedCard.id ? { ...c, quantity: oldQuantity } : c,
-        ),
-      );
+    if (isSignedIn) {
+        await sellAllDuplicatesAction(selectedCard.id, unitPrice);
+    } else {
+        const updated = cards.map(c => c.id === selectedCard.id ? { ...c, quantity: 1 } : c);
+        saveCollectionRaw(updated);
     }
   };
-  // 🔥 NUEVA LÓGICA DE FAVORITOS (SOLO EN MODAL)
+
   const handleToggleFavInModal = async () => {
     if (!selectedCard) return;
-
-    // 1. UI Optimista (Cambio visual inmediato en el modal y en la lista de fondo)
     const newStatus = !selectedCard.is_favorite;
 
-    // Actualizamos la carta seleccionada
     setSelectedCard({ ...selectedCard, is_favorite: newStatus });
-
-    // Actualizamos la lista principal de cartas para que se guarde el estado si cerramos el modal
     setCards((prev) =>
-      prev.map((c) =>
-        c.id === selectedCard.id ? { ...c, is_favorite: newStatus } : c,
-      ),
+      prev.map((c) => (c.id === selectedCard.id ? { ...c, is_favorite: newStatus } : c)),
     );
 
-    // 2. Llamada al servidor
     const res = await toggleFavorite(selectedCard.id);
-
-    // Si falla, revertimos
-    if (res?.error) {
-      alert(res.error);
-      const revertedStatus = !newStatus;
-      setSelectedCard({ ...selectedCard, is_favorite: revertedStatus });
-      setCards((prev) =>
-        prev.map((c) =>
-          c.id === selectedCard.id ? { ...c, is_favorite: revertedStatus } : c,
-        ),
-      );
-    }
+    if (res?.error) alert(res.error);
   };
 
   if (loading) {
@@ -222,38 +200,36 @@ export default function CollectionPage() {
 
   return (
     <main className="min-h-screen bg-gray-900 text-white p-8 pb-32 select-none">
-      {/* CABECERA TIPO "ISLA" (Igual que en Inicio) */}
-      <div className="w-full max-w-7xl mx-auto sticky top-4 z-50 bg-gray-800 p-4 rounded-xl shadow-xl border border-gray-700 mb-8 flex justify-between items-center transition-all">
-        
-        {/* Lado Izquierdo: Botón Volver y Título */}
+      {/* CABECERA */}
+      <div className="w-full max-w-7xl mx-auto sticky top-4 z-50 bg-gray-800 p-4 rounded-xl shadow-xl border border-gray-700 mb-8 flex justify-between items-center">
         <div className="flex items-center gap-4">
-          <Link
-            href="/"
-            className="bg-gray-700 hover:bg-gray-600 w-10 h-10 flex items-center justify-center rounded-lg border border-gray-600 transition shadow"
-            title="Volver al menú"
-          >
+          <Link href="/" className="bg-gray-700 hover:bg-gray-600 w-10 h-10 flex items-center justify-center rounded-lg border border-gray-600 transition shadow">
             🏠
           </Link>
-          <h1 className="text-xl md:text-2xl font-bold text-white tracking-wide">
-            Mi Álbum
-          </h1>
+          <h1 className="text-xl md:text-2xl font-bold text-white tracking-wide">Mi Álbum</h1>
         </div>
 
-        {/* Lado Derecho: Monedas y Usuario */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          {/* BOTÓN VENDER TODO */}
+          <button 
+            onClick={handleSellAllDuplicates}
+            className="bg-red-500/10 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/50 px-3 py-2 rounded-full font-bold text-xs transition-all flex items-center gap-2"
+          >
+            <span>♻️</span>
+            <span className="hidden sm:inline">Limpiar Duplicados</span>
+          </button>
+
           <div className="flex items-center gap-2 bg-gray-900/60 px-4 py-2 rounded-full border border-gray-700 shadow-inner">
-            <span className="text-xl drop-shadow-md">💰</span>
+            <span className="text-xl">💰</span>
             <span className="font-black text-yellow-400">{coins}</span>
           </div>
           
-          {/* Añadimos también el botón del usuario para que sea idéntico a la Home */}
           <SignedIn>
             <div className="bg-gray-700/50 p-1 rounded-full border border-gray-600 hidden sm:block">
               <UserButton />
             </div>
           </SignedIn>
         </div>
-        
       </div>
 
       {/* DASHBOARD ESTADÍSTICAS */}
@@ -265,20 +241,11 @@ export default function CollectionPage() {
           <div className="flex items-center gap-3">
             <span className="text-2xl">📊</span>
             <div className="text-left">
-              <h3 className="font-bold text-white group-hover:text-yellow-400 transition">
-                Progreso de Colección
-              </h3>
-              <p className="text-xs text-gray-400">
-                {showStats ? "Ocultar detalles" : "Ver progreso por expansión"}
-              </p>
+              <h3 className="font-bold text-white group-hover:text-yellow-400 transition">Progreso de Colección</h3>
+              <p className="text-xs text-gray-400">{showStats ? "Ocultar detalles" : "Ver progreso por expansión"}</p>
             </div>
           </div>
-          <motion.div
-            animate={{ rotate: showStats ? 180 : 0 }}
-            className="text-gray-400"
-          >
-            ▼
-          </motion.div>
+          <motion.div animate={{ rotate: showStats ? 180 : 0 }} className="text-gray-400">▼</motion.div>
         </button>
 
         <AnimatePresence>
@@ -294,27 +261,15 @@ export default function CollectionPage() {
                   <Link href={`/album/${stat.id}`} key={stat.id}>
                     <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700/50 flex flex-col gap-3 hover:bg-gray-700 hover:border-blue-500/50 transition cursor-pointer h-full">
                       <div className="flex items-center gap-3">
-                        <img
-                          src={stat.logo}
-                          alt={stat.name}
-                          className="h-8 object-contain"
-                        />
+                        <img src={stat.logo} alt={stat.name} className="h-8 object-contain" />
                         <div className="flex-1">
-                          <h3 className="font-bold text-sm text-gray-200">
-                            {stat.name}
-                          </h3>
-                          <p className="text-xs text-gray-400">
-                            {stat.owned}/{stat.total}
-                          </p>
+                          <h3 className="font-bold text-sm text-gray-200">{stat.name}</h3>
+                          <p className="text-xs text-gray-400">{stat.owned}/{stat.total}</p>
                         </div>
                       </div>
                       <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden mt-auto">
                         <div
-                          className={`h-full rounded-full ${
-                            stat.percentage === 100
-                              ? "bg-green-500"
-                              : "bg-blue-500"
-                          }`}
+                          className={`h-full rounded-full ${stat.percentage === 100 ? "bg-green-500" : "bg-blue-500"}`}
                           style={{ width: `${stat.percentage}%` }}
                         ></div>
                       </div>
@@ -342,10 +297,8 @@ export default function CollectionPage() {
           className="bg-gray-900 text-white px-3 py-1.5 rounded border border-gray-600 text-sm"
         >
           <option value="all">🌍 Todas</option>
-          {dbSets.map((set) => ( // 👈 CAMBIADO: Usamos dbSets
-            <option key={set.id} value={set.id}>
-              {set.name}
-            </option>
+          {dbSets.map((set) => (
+            <option key={set.id} value={set.id}>{set.name}</option>
           ))}
         </select>
         <select
@@ -367,26 +320,15 @@ export default function CollectionPage() {
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6 max-w-7xl mx-auto">
           {processedCards.map((card) => (
-            <div
-              key={card.id}
-              className="relative group cursor-zoom-in"
-              onClick={() => setSelectedCard(card)}
-            >
+            <div key={card.id} className="relative group cursor-zoom-in" onClick={() => setSelectedCard(card)}>
               {card.quantity > 1 && (
                 <div className="absolute -top-2 -right-2 z-30 bg-blue-600 text-white text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full border border-white shadow-lg">
                   {card.quantity}
                 </div>
               )}
-
               <div className="transition transform group-hover:-translate-y-1 duration-300 pointer-events-none">
-                {/* Usamos PokemonCard "limpio" (sin lógica interna de favoritos) */}
-                <PokemonCard
-                  card={card}
-                  reveal={true}
-                  // isFavorite NO se pasa aquí, porque no queremos verlo en pequeño
-                />
+                <PokemonCard card={card} reveal={true} />
               </div>
-
               <div className="mt-2 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                 {card.quantity > 1 ? (
                   <button
@@ -396,9 +338,7 @@ export default function CollectionPage() {
                     Vender (+{getPrice(card.rarity)})
                   </button>
                 ) : (
-                  <span className="text-[10px] font-bold text-gray-500 bg-black/60 px-2 py-1 rounded border border-gray-700">
-                    🔒 Original
-                  </span>
+                  <span className="text-[10px] font-bold text-gray-500 bg-black/60 px-2 py-1 rounded border border-gray-700">🔒 Original</span>
                 )}
               </div>
             </div>
@@ -406,13 +346,14 @@ export default function CollectionPage() {
         </div>
       )}
 
+      {/* MODAL DETALLE */}
       <AnimatePresence>
         {selectedCard && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md p-4 sm:p-6"
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md p-4"
             onClick={() => setSelectedCard(null)}
           >
             <motion.div
@@ -422,183 +363,44 @@ export default function CollectionPage() {
               className="relative w-full max-w-4xl bg-gray-900 rounded-2xl overflow-y-auto shadow-2xl border border-gray-700 flex flex-col md:flex-row max-h-[90vh] custom-scrollbar"
               onClick={(e) => e.stopPropagation()}
             >
-              
-              <button
-                onClick={() => setSelectedCard(null)}
-                className="absolute top-4 right-4 w-10 h-10 flex items-center justify-center text-white z-50 bg-gray-800 hover:bg-red-500 border border-gray-600 rounded-full shadow-lg transition"
-              >
-                ✕
-              </button>
+              <button onClick={() => setSelectedCard(null)} className="absolute top-4 right-4 w-10 h-10 flex items-center justify-center text-white z-50 bg-gray-800 hover:bg-red-500 border border-gray-600 rounded-full transition">✕</button>
 
               <div className="w-full md:w-1/2 p-8 pt-16 md:pt-8 bg-gray-800 flex items-center justify-center relative">
-                <button
-                  onClick={handleToggleFavInModal}
-                  className="absolute top-4 left-4 md:top-6 md:right-6 md:left-auto z-50 bg-black/40 backdrop-blur-md p-3 rounded-full hover:scale-110 transition border border-white/10 group"
-                  title={
-                    selectedCard.is_favorite
-                      ? "Quitar de favoritos"
-                      : "Añadir a favoritos"
-                  }
-                >
-                  <span
-                    className={`text-2xl md:text-3xl filter drop-shadow-lg block ${selectedCard.is_favorite ? "" : "grayscale opacity-50 group-hover:grayscale-0 group-hover:opacity-100 transition-all"}`}
-                  >
+                <button onClick={handleToggleFavInModal} className="absolute top-4 left-4 z-50 bg-black/40 p-3 rounded-full border border-white/10">
+                  <span className={`text-2xl ${selectedCard.is_favorite ? "" : "grayscale opacity-50"}`}>
                     {selectedCard.is_favorite ? "❤️" : "🤍"}
                   </span>
                 </button>
-
-                <img
-                  src={selectedCard.images.large}
-                  alt={selectedCard.name}
-                  className="object-contain max-h-[40vh] md:max-h-[60vh] max-w-[260px] md:max-w-full drop-shadow-2xl"
-                />
+                <img src={selectedCard.images.large} alt={selectedCard.name} className="object-contain max-h-[40vh] md:max-h-[60vh] drop-shadow-2xl" />
               </div>
 
-              <div className="w-full md:w-1/2 bg-gray-900 flex flex-col h-full">
+              <div className="w-full md:w-1/2 bg-gray-900 flex flex-col p-8">
+                <p className="text-blue-400 text-xs font-bold mb-1 uppercase tracking-widest">{selectedCard.supertype}</p>
+                <h2 className="text-4xl font-black text-white mb-6">{selectedCard.name}</h2>
                 
-                {/* 1. CABECERA */}
-                <div className="p-8 pb-4 border-b border-gray-800">
-                  <div className="flex justify-between items-start gap-4">
-                    <div>
-                      <p className="text-blue-400 text-xs uppercase tracking-widest font-bold mb-1">
-                        {selectedCard.supertype || "Pokémon"}
-                      </p>
-                      <h2 className="text-3xl md:text-5xl font-black text-white tracking-tight leading-none">
-                        {selectedCard.name}
-                      </h2>
-                    </div>
-
-                    <button
-                      onClick={handleToggleFavInModal}
-                      className={`p-3 rounded-xl border transition-all ${
-                        selectedCard.is_favorite
-                          ? "bg-red-500/20 border-red-500 text-red-500"
-                          : "bg-gray-800 border-gray-700 text-gray-500 hover:text-white"
-                      }`}
-                    >
-                      <span className="text-2xl">
-                        {selectedCard.is_favorite ? "❤️" : "🤍"}
-                      </span>
+                <div className="bg-gray-800 p-4 rounded-2xl border border-gray-700 flex items-center justify-between mb-8">
+                  <div>
+                    <p className="text-gray-400 text-xs font-bold uppercase">Valor Mercado</p>
+                    <p className="text-2xl font-black text-yellow-400">{getPrice(selectedCard.rarity)} 💰</p>
+                  </div>
+                  {selectedCard.quantity > 1 ? (
+                    <button onClick={handleSellAllFromModal} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-full font-bold text-xs transition">
+                      VENDER {selectedCard.quantity - 1} REPETIDAS
                     </button>
-                  </div>
-                </div>
-
-                {/* 2. CUERPO DE DATOS */}
-                <div className="p-8 pt-6 flex-1 flex flex-col gap-8">
-                  {/* PRECIO / VALOR */}
-                    <div className="text-right">
-                      <div className="bg-gradient-to-r from-gray-800 to-gray-900 p-4 rounded-2xl border border-gray-700 flex items-center justify-between shadow-lg">
-                        <div className="text-left">
-                          <p className="text-gray-400 text-xs font-bold uppercase mb-1">
-                            Valor de Mercado
-                          </p>
-                          <p className="text-2xl md:text-3xl font-black text-yellow-400 flex items-center gap-2">
-                            {getPrice(selectedCard.rarity)}{" "}
-                            <span className="text-lg">💰</span>
-                          </p>
-                        </div>
-
-                          {selectedCard.quantity > 1 ? (
-                            <button
-                              onClick={handleSellAll}
-                              className="group relative px-4 py-2 rounded-full border border-red-500 bg-red-500/10 text-red-400 font-bold text-xs hover:bg-red-500 hover:text-white transition-all overflow-hidden min-w-[150px]"
-                            >
-                              <span className="relative z-10 transition-opacity group-hover:opacity-0">
-                                VENDER {selectedCard.quantity - 1} COPIAS
-                              </span>
-                              <span className="absolute inset-0 z-20 flex items-center justify-center font-black bg-red-600 text-white opacity-0 group-hover:opacity-100 transition-opacity">
-                                +
-                                {(selectedCard.quantity - 1) *
-                                  getPrice(selectedCard.rarity)}{" "}
-                                💰
-                              </span>
-                            </button>
-                          ) : (
-                            <button
-                              disabled
-                              className="text-xs px-3 py-1.5 rounded-full border bg-gray-700 border-gray-600 text-gray-500 cursor-not-allowed opacity-50"
-                            >
-                              ÚLTIMA COPIA
-                            </button>
-                          )}
-                      </div>
-                    </div>
-
-                  {/* FLAVOR TEXT */}
-                  {selectedCard.flavorText && (
-                    <div className="relative pl-4 border-l-4 border-blue-500 italic text-gray-300 text-base md:text-lg leading-relaxed">
-                      <span className="absolute -top-2 -left-2 text-4xl text-blue-500 opacity-20">
-                        “
-                      </span>
-                      {selectedCard.flavorText}
-                      <span className="absolute -bottom-4 right-0 text-4xl text-blue-500 opacity-20">
-                        ”
-                      </span>
-                    </div>
+                  ) : (
+                    <span className="text-xs text-gray-500">SIN DUPLICADOS</span>
                   )}
-
-                  {/* GRID DE DETALLES TÉCNICOS */}
-                  <div className="grid grid-cols-2 gap-4">
-                    {/* Rareza */}
-                    <div className="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
-                      <p className="text-gray-500 text-[10px] uppercase font-bold">
-                        Rareza
-                      </p>
-                      <p className="text-white text-sm md:text-base font-medium flex items-center gap-2">
-                        💎 {selectedCard.rarity || "Común"}
-                      </p>
-                    </div>
-
-                    {/* Artista */}
-                    <div className="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
-                      <p className="text-gray-500 text-[10px] uppercase font-bold">
-                        Ilustrador
-                      </p>
-                      <p className="text-white text-sm md:text-base font-medium truncate flex items-center gap-2">
-                        🖌️ {selectedCard.artist || "Desconocido"}
-                      </p>
-                    </div>
-
-                    {/* Set / Expansión */}
-                    <div className="col-span-2 bg-gray-800/50 p-3 rounded-xl border border-gray-700/50 flex items-center gap-3">
-                      {(() => {
-                        const setId = selectedCard.set_id || selectedCard.set?.id;
-                        const setInfo = dbSets.find((s) => s.id === setId);
-                        
-                        return (
-                          <>
-                            {setInfo && (
-                              <img
-                                src={setInfo.images?.logo} 
-                                className="h-6 w-auto opacity-80"
-                                alt="set logo"
-                              />
-                            )}
-                            <div>
-                              <p className="text-gray-500 text-[10px] uppercase font-bold">
-                                Expansión
-                              </p>
-                              <p className="text-white text-sm md:text-base font-medium">
-                                {setInfo?.name ||
-                                  selectedCard.set?.name ||
-                                  setId}
-                                <span className="text-gray-500 text-sm ml-2">
-                                  #{selectedCard.number}
-                                </span>
-                              </p>
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  </div>
                 </div>
 
-                {/* PIE DE PÁGINA: ESTÉTICO */}
-                <div className="p-6 border-t border-gray-800 text-center mt-auto">
-                  <p className="text-[10px] text-gray-600 uppercase tracking-widest">
-                    Pokémon TCG Simulator • {new Date().getFullYear()}
-                  </p>
+                <div className="grid grid-cols-2 gap-4 mt-auto">
+                    <div className="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                        <p className="text-gray-500 text-[10px] font-bold">RAREZA</p>
+                        <p className="text-white text-sm">💎 {selectedCard.rarity}</p>
+                    </div>
+                    <div className="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                        <p className="text-gray-500 text-[10px] font-bold">ARTISTA</p>
+                        <p className="text-white text-sm">🖌️ {selectedCard.artist}</p>
+                    </div>
                 </div>
               </div>
             </motion.div>

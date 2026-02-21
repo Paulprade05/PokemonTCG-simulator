@@ -206,32 +206,32 @@ export const AVAILABLE_SETS = [
 export const SELL_PRICES: Record<string, number> = {
   // 🧱 Tier 1: Morralla (Reciclaje)
   "Common": 1,
-  "Uncommon": 2,
-  "Rare": 5,
+  "Uncommon": 3,
+  "Rare": 8,
 
   // ✨ Tier 2: Cartas Brillantes y Promos
-  "Rare Holo": 10,
-  "Promo": 20,
-  "ACE SPEC Rare": 30,
+  "Rare Holo": 17,
+  "Promo": 30,
+  "ACE SPEC Rare": 40,
 
   // ⚔️ Tier 3: Hits Básicos (Casi pagan un sobre estándar de 50💰)
-  "Double Rare": 40,        // Las cartas "ex" normales
-  "Rare Holo V": 40,        // Las cartas "V" normales
-  "Amazing Rare": 50,
-  "Radiant Rare": 50,
+  "Double Rare": 45,        // Las cartas "ex" normales
+  "Rare Holo V": 45,        // Las cartas "V" normales
+  "Amazing Rare": 55,
+  "Radiant Rare": 55,
 
   // 🖼️ Tier 4: Hits Medios y Evoluciones (Ganancia pura)
-  "Shiny Rare": 60,
-  "Rare Shiny": 60,
-  "Trainer Gallery Rare Holo": 70, 
-  "Rare Holo VMAX": 80,
-  "Rare Holo VSTAR": 80,
-  "Illustration Rare": 100, // Art Rares (AR)
+  "Shiny Rare": 65,
+  "Rare Shiny": 65,
+  "Trainer Gallery Rare Holo": 75, 
+  "Rare Holo VMAX": 85,
+  "Rare Holo VSTAR": 90,
+  "Illustration Rare": 110, // Art Rares (AR)
 
   // 💎 Tier 5: Full Arts (Pagan casi un sobre Premium de 200💰)
-  "Ultra Rare": 150,        // Full Arts modernas
-  "Rare Ultra": 150,        // Full Arts clásicas/GX/EX
-  "Shiny Ultra Rare": 180,  // Full Arts variocolor
+  "Ultra Rare": 160,        // Full Arts modernas
+  "Rare Ultra": 160,        // Full Arts clásicas/GX/EX
+  "Shiny Ultra Rare": 190,  // Full Arts variocolor
 
   // 👑 Tier 6: Secretas y Persecuciones (El premio gordo)
   "Special Illustration Rare": 500, // SAR / SIR (Las más buscadas hoy)
