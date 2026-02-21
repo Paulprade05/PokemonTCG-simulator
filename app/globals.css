@@ -79,3 +79,25 @@ body {
   animation: shine-move 4s infinite linear;
   opacity: 0.8; /* Un poco de transparencia general */
 }
+/* --- EFECTO HOLOGRÁFICO PARA LAS CARTAS --- */
+@keyframes holo-shimmer {
+  0% { background-position: 200% center; opacity: 0.3; }
+  50% { opacity: 0.8; }
+  100% { background-position: -200% center; opacity: 0.3; }
+}
+
+.holo-glare {
+  background: linear-gradient(
+    115deg,
+    transparent 15%,
+    rgba(255, 255, 255, 0.3) 25%,
+    rgba(255, 100, 200, 0.4) 35%,
+    rgba(100, 255, 255, 0.4) 45%,
+    rgba(255, 255, 255, 0.3) 55%,
+    transparent 65%
+  );
+  background-size: 200% auto;
+  animation: holo-shimmer 4s linear infinite;
+  mix-blend-mode: color-dodge; /* Esto hace que el brillo se fusione con la imagen como luz real */
+  pointer-events: none; /* Para que no interfiera con los clics */
+}

@@ -41,26 +41,21 @@ const imageUrl = useHighRes ? card.images.large : card.images.small;
         style={{ transformStyle: "preserve-3d" }}
       >
         {/* --- CARA DELANTERA --- */}
+        {/* --- CARA DELANTERA --- */}
         <div
           className="absolute w-full h-full rounded-xl overflow-hidden shadow-lg border border-gray-800 bg-gray-900"
           style={{ backfaceVisibility: "hidden" }}
         >
           {/* IMAGEN LIMPIA (Sin botones encima) */}
           <img
-        src={imageUrl} 
-        alt={card.name}
-        className="..."
-      />
+            src={imageUrl} 
+            alt={card.name}
+            className="w-full h-full object-contain"
+          />
           
-          {/* EFECTO HOLO */}
+          {/* 👇 NUEVO EFECTO HOLO AUTOMÁTICO 👇 */}
           {hasHoloEffect && (
-            <div
-              className="absolute inset-0 z-20 opacity-0 group-hover:opacity-60 transition-opacity duration-500 mix-blend-color-dodge pointer-events-none"
-              style={{
-                backgroundImage: "linear-gradient(105deg, transparent 30%, rgba(255,219,112,0.4) 40%, rgba(132,50,255,0.4) 50%, rgba(0,200,255,0.4) 60%, transparent 70%)",
-                backgroundSize: "200% 200%",
-              }}
-            />
+            <div className="absolute inset-0 z-20 holo-glare" />
           )}
           
           {hasHoloEffect && (
