@@ -48,7 +48,15 @@ export default function Home() {
   const [cardRevealed, setCardRevealed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [packSaved, setPackSaved] = useState(false);
-
+// 👈 AÑADE ESTO JUSTO ANTES DEL return (
+  const currentSetObj = dbSets.find((s) => s.id === selectedSet);
+  const isSpecialSet = currentSetObj ? (
+    currentSetObj.name.toLowerCase().includes("promo") ||
+    currentSetObj.name.toLowerCase().includes("mcdonald") ||
+    currentSetObj.series === "POP" ||
+    currentSetObj.series === "Other" ||
+    currentSetObj.total < 50 // Sets muy pequeños como Celebrations o Detective Pikachu
+  ) : false;
   // 👈 4. NUEVO EFECTO: CARGAR SETS AL ABRIR LA PÁGINA
   useEffect(() => {
     const loadSets = async () => {
@@ -115,7 +123,8 @@ export default function Home() {
     setPackSaved(false);
   };
 
-  const handleBuyPack = async (type: "STANDARD" | "PREMIUM" | "GOLDEN") => {
+  // Añadimos "SPECIAL" a las opciones
+  const handleBuyPack = async (type: "STANDARD" | "PREMIUM" | "GOLDEN" | "SPECIAL") => {
     if (!allCards || allCards.length === 0) {
       alert("⚠️ Error: Las cartas no se han cargado. Recarga la página.");
       return;
@@ -133,6 +142,10 @@ export default function Home() {
     } else if (type === "GOLDEN") {
       price = 2500;
       if (coins >= price) newPack = openGoldenPack(allCards, userCollectionIds);
+    } else if (type === "SPECIAL") {
+      // 👇 LÓGICA DEL SOBRE ESPECIAL
+      price = 2500;
+      if (coins >= price) newPack = openGoldenPack(allCards, userCollectionIds);
     }
 
     if (coins < price) {
@@ -142,7 +155,7 @@ export default function Home() {
 
     if (spendCoins(price)) {
       if (isSignedIn) await updateCoins(coins - price);
-      setCurrentPackType(type);
+      setCurrentPackType(type as any);
       setCurrentPack(newPack);
       setPackIndex(0);
       setCardRevealed(false);
@@ -272,65 +285,83 @@ export default function Home() {
           </button>
 
           <h2 className="text-3xl font-bold mb-8 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
-            Elige tu sobre
+            {isSpecialSet ? "Edición Especial" : "Elige tu sobre"}
           </h2>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full px-4">
-            {/* STANDARD */}
-            <div
-              className="bg-gray-800 border border-gray-600 rounded-2xl p-6 flex flex-col items-center hover:scale-105 transition shadow-lg group cursor-pointer"
-              onClick={() => handleBuyPack("STANDARD")}
-            >
-              <div className="text-6xl mb-4 group-hover:animate-bounce">🃏</div>
-              <h3 className="text-xl font-bold text-white">Estándar</h3>
-              <p className="text-sm text-gray-400 text-center mb-4 mt-2">
-                Probabilidades oficiales.
-                <br />
-                Ideal para empezar.
-              </p>
-              <button className="mt-auto bg-blue-600 text-white font-bold py-2 px-6 rounded-full w-full hover:bg-blue-500 shadow-md">
-                50 💰
-              </button>
-            </div>
+          <div className={`grid grid-cols-1 ${isSpecialSet ? 'max-w-md' : 'md:grid-cols-3'} gap-8 w-full px-4`}>
+            
+            {isSpecialSet ? (
+              <div
+                className="bg-gradient-to-b from-blue-900 to-black border border-blue-500 rounded-2xl p-6 flex flex-col items-center hover:scale-105 transition shadow-[0_0_30px_rgba(59,130,246,0.4)] group cursor-pointer relative"
+                onClick={() => handleBuyPack("SPECIAL")}
+              >
+                <div className="absolute top-0 left-0 w-full bg-blue-600 text-white text-xs font-bold text-center py-1 shadow-sm rounded-t-xl">
+                  COLECCIÓN EXCLUSIVA
+                </div>
+                <div className="text-6xl mb-4 mt-6 group-hover:scale-110 transition transform">
+                  🌟
+                </div>
+                <h3 className="text-2xl font-bold text-blue-400">Sobre Promo</h3>
+                <p className="text-sm text-blue-200/80 text-center mb-6 mt-2">
+                  100% Garantizado: <br/> 1 Carta que no tienes.
+                </p>
+                <button className="mt-auto bg-blue-600 text-white font-bold py-3 px-6 rounded-full w-full hover:bg-blue-500 shadow-lg shadow-blue-900/50">
+                  2500 💰
+                </button>
+              </div>
+            ) : (
+              <>
+                <div
+                  className="bg-gray-800 border border-gray-600 rounded-2xl p-6 flex flex-col items-center hover:scale-105 transition shadow-lg group cursor-pointer"
+                  onClick={() => handleBuyPack("STANDARD")}
+                >
+                  <div className="text-6xl mb-4 group-hover:animate-bounce">🃏</div>
+                  <h3 className="text-xl font-bold text-white">Estándar</h3>
+                  <p className="text-sm text-gray-400 text-center mb-4 mt-2">
+                    Probabilidades oficiales.<br />Ideal para empezar.
+                  </p>
+                  <button className="mt-auto bg-blue-600 text-white font-bold py-2 px-6 rounded-full w-full hover:bg-blue-500 shadow-md">
+                    50 💰
+                  </button>
+                </div>
 
-            {/* PREMIUM */}
-            <div
-              className="bg-gray-900 border border-purple-500 rounded-2xl p-6 flex flex-col items-center hover:scale-105 transition shadow-[0_0_20px_rgba(168,85,247,0.3)] group cursor-pointer relative overflow-hidden"
-              onClick={() => handleBuyPack("PREMIUM")}
-            >
-              <div className="absolute top-0 right-0 bg-purple-600 text-xs font-bold px-2 py-1 rounded-bl">
-                MEJORADO
-              </div>
-              <div className="text-6xl mb-4 group-hover:animate-pulse">✨</div>
-              <h3 className="text-xl font-bold text-purple-300">Élite</h3>
-              <p className="text-sm text-gray-400 text-center mb-4 mt-2">
-                ¡Sin cartas comunes! <br /> 2 Raras aseguradas.
-              </p>
-              <button className="mt-auto bg-purple-600 text-white font-bold py-2 px-6 rounded-full w-full hover:bg-purple-500 shadow-lg shadow-purple-900/50">
-                200 💰
-              </button>
-            </div>
+                <div
+                  className="bg-gray-900 border border-purple-500 rounded-2xl p-6 flex flex-col items-center hover:scale-105 transition shadow-[0_0_20px_rgba(168,85,247,0.3)] group cursor-pointer relative overflow-hidden"
+                  onClick={() => handleBuyPack("PREMIUM")}
+                >
+                  <div className="absolute top-0 right-0 bg-purple-600 text-xs font-bold px-2 py-1 rounded-bl">
+                    MEJORADO
+                  </div>
+                  <div className="text-6xl mb-4 group-hover:animate-pulse">✨</div>
+                  <h3 className="text-xl font-bold text-purple-300">Élite</h3>
+                  <p className="text-sm text-gray-400 text-center mb-4 mt-2">
+                    ¡Sin cartas comunes! <br /> 2 Raras aseguradas.
+                  </p>
+                  <button className="mt-auto bg-purple-600 text-white font-bold py-2 px-6 rounded-full w-full hover:bg-purple-500 shadow-lg shadow-purple-900/50">
+                    200 💰
+                  </button>
+                </div>
 
-            {/* GOLDEN */}
-            <div
-              className="bg-gradient-to-b from-yellow-900 to-black border border-yellow-500 rounded-2xl p-6 flex flex-col items-center hover:scale-105 transition shadow-[0_0_30px_rgba(234,179,8,0.4)] group cursor-pointer relative"
-              onClick={() => handleBuyPack("GOLDEN")}
-            >
-              <div className="absolute top-0 left-0 w-full bg-yellow-600 text-black text-xs font-bold text-center py-1 shadow-sm">
-                GARANTIZA CARTA NUEVA
-              </div>
-              <div className="text-6xl mb-4 mt-4 group-hover:rotate-12 transition transform">
-                👑
-              </div>
-              <h3 className="text-xl font-bold text-yellow-400">Leyenda</h3>
-              <p className="text-sm text-yellow-200/80 text-center mb-4 mt-2">
-                100% Garantizado:
-                <br />1 carta que NO tienes.
-              </p>
-              <button className="mt-auto bg-yellow-600 text-black font-bold py-2 px-6 rounded-full w-full hover:bg-yellow-500 shadow-lg shadow-yellow-900/50">
-                2500 💰
-              </button>
-            </div>
+                <div
+                  className="bg-gradient-to-b from-yellow-900 to-black border border-yellow-500 rounded-2xl p-6 flex flex-col items-center hover:scale-105 transition shadow-[0_0_30px_rgba(234,179,8,0.4)] group cursor-pointer relative"
+                  onClick={() => handleBuyPack("GOLDEN")}
+                >
+                  <div className="absolute top-0 left-0 w-full bg-yellow-600 text-black text-xs font-bold text-center py-1 shadow-sm rounded-t-xl">
+                    GARANTIZA CARTA NUEVA
+                  </div>
+                  <div className="text-6xl mb-4 mt-6 group-hover:rotate-12 transition transform">
+                    👑
+                  </div>
+                  <h3 className="text-xl font-bold text-yellow-400">Leyenda</h3>
+                  <p className="text-sm text-yellow-200/80 text-center mb-4 mt-2">
+                    100% Garantizado:<br />1 carta que NO tienes.
+                  </p>
+                  <button className="mt-auto bg-yellow-600 text-black font-bold py-2 px-6 rounded-full w-full hover:bg-yellow-500 shadow-lg shadow-yellow-900/50">
+                    2500 💰
+                  </button>
+                </div>
+              </>
+            )}
           </div>
 
           {/* LOADER */}
