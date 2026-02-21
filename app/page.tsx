@@ -7,6 +7,7 @@ import {
   SignedIn,
   SignedOut,
   UserButton,
+  
 } from "@clerk/nextjs";
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
@@ -17,6 +18,7 @@ import {
   syncSetToDatabase,
   savePackToCollection,
   getSetsFromDB, // 👈 1. IMPORTAMOS LA NUEVA FUNCIÓN
+  getFullCollection, // 👈 ¡AÑADIR ESTA!
 } from "./action";
 import { getCardsFromSet } from "../services/pokemon";
 import {
@@ -24,7 +26,7 @@ import {
   openPremiumPack,
   openGoldenPack,
 } from "../utils/packLogic";
-import { saveToCollection } from "../utils/storage";
+import { saveToCollection, getCollection } from "../utils/storage";
 import { useCurrency } from "../hooks/useGameCurrency";
 import PokemonCard from "../components/PokemonCard";
 // 👈 2. ELIMINADO EL IMPORT DE 'AVAILABLE_SETS'
@@ -67,13 +69,27 @@ export default function Home() {
   }, []);
 
   // Sincronizar Monedas con la BD
+ // Sincronizar Monedas y Colección con la BD
+  // Sincronizar Monedas y Colección
   useEffect(() => {
     const syncUserData = async () => {
-      if (isSignedIn && isLoaded) {
+      // Si Clerk aún no ha cargado, no hacemos nada todavía
+      if (!isLoaded) return;
+      
+      if (isSignedIn) {
+        // --- USUARIO LOGUEADO (Nube ☁️) ---
         const data = await getUserData();
         if (data) setCoins(data.coins);
+
+        const myCards = await getFullCollection();
+        setUserCollectionIds(myCards.map((c: any) => c.id));
+      } else {
+        // --- USUARIO INVITADO (Local 💾) ---
+        const localCards = getCollection();
+        setUserCollectionIds(localCards.map((c: any) => c.id));
       }
     };
+    
     syncUserData();
   }, [isSignedIn, isLoaded, setCoins]);
 
@@ -196,6 +212,11 @@ export default function Home() {
       } else {
         saveToCollection(currentPack);
       }
+      // 👇 NUEVO: Añadimos las cartas de este sobre a nuestra lista "ya obtenidas"
+      const newPackIds = currentPack.map(c => c.id);
+      setUserCollectionIds(prev => [...prev, ...newPackIds]);
+
+      
       setPackSaved(true);
       setIsPackOpen(false);
     }
@@ -416,13 +437,20 @@ export default function Home() {
                 className="absolute z-20 w-64 aspect-[2.5/3.5] cursor-pointer"
                 onClick={handleNextCard}
               >
-                <div className="w-full h-full pointer-events-none">
-                  <PokemonCard
-                    card={currentPack[packIndex]}
-                    reveal={cardRevealed}
-                    useHighRes={true} // 👈 ¡ACTIVAMOS ALTA DEFINICIÓN!
-                  />
-                </div>
+                <div className="w-full h-full pointer-events-none relative">
+                {/* 👇 CARTEL DE NEW 👇 */}
+                {!userCollectionIds.includes(currentPack[packIndex].id) && cardRevealed && (
+                  <div className="absolute -top-4 -right-4 z-50 bg-green-500 text-white text-xs font-black px-2 py-1 rounded-md border-2 border-white shadow-[0_0_15px_rgba(34,197,94,0.8)] animate-bounce">
+                    NEW!
+                  </div>
+                )}
+                
+                <PokemonCard
+                  card={currentPack[packIndex]}
+                  reveal={cardRevealed}
+                  useHighRes={true}
+                />
+              </div>
               </motion.div>
             </AnimatePresence>
 
