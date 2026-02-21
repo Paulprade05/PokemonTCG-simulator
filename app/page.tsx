@@ -366,6 +366,7 @@ export default function Home() {
                   <PokemonCard
                     card={currentPack[packIndex]}
                     reveal={cardRevealed}
+                    useHighRes={true} // 👈 ¡ACTIVAMOS ALTA DEFINICIÓN!
                   />
                 </div>
               </motion.div>
@@ -419,7 +420,9 @@ export default function Home() {
                 key={index}
                 className="scale-95 hover:scale-100 transition duration-300"
               >
-                <PokemonCard card={card} reveal={true} />
+                <PokemonCard card={card} reveal={true} 
+                  useHighRes={true} // 👈 ¡ACTIVAMOS ALTA DEFINICIÓN!
+                />
               </div>
             ))}
           </div>
