@@ -288,28 +288,26 @@ export async function getSetsFromDB() {
 
 export async function getTrainerCollection(trainerId: string) {
   try {
+    // Hacemos un JOIN entre tus dos tablas correctas: user_collection y cards
     const { rows } = await sql`
       SELECT 
-        c.id, c.name, c.rarity, c.images, c.set_id, c.number, c.artist, c.flavor_text, c.supertype,
-        uc.quantity, uc.is_favorite
+        c.*, 
+        uc.quantity, 
+        uc.is_favorite
       FROM user_collection uc
       JOIN cards c ON uc.card_id = c.id
       WHERE uc.user_id = ${trainerId}
     `;
 
+    // Formateamos los datos para que tu página los entienda perfectamente
     return rows.map((row: any) => ({
-      id: row.id,
-      name: row.name,
-      rarity: row.rarity,
+      ...row,
+      // Si las imágenes están guardadas como texto (JSON), las convertimos a objeto
       images: typeof row.images === 'string' ? JSON.parse(row.images) : row.images,
-      set: { id: row.set_id },
-      number: row.number,
-      artist: row.artist,
-      flavorText: row.flavor_text,
-      supertype: row.supertype,
-      quantity: row.quantity,
-      is_favorite: row.is_favorite
+      // Adaptamos el set para que funcione con tu componente PokemonCard
+      set: { id: row.set_id, name: row.set_name } 
     }));
+    
   } catch (error) {
     console.error("❌ Error leyendo colección del entrenador:", error);
     return [];
