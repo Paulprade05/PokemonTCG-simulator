@@ -3,7 +3,14 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useUser, SignedIn, UserButton } from "@clerk/nextjs";
-import { getFriendsList, sendFriendRequest, acceptFriendRequest, removeFriend, syncUserName } from "../action";
+import { AnimatePresence, motion } from "framer-motion"; // 👈 IMPORTAMOS FRAMER MOTION
+import { 
+  getFriendsList, 
+  sendFriendRequest, 
+  acceptFriendRequest, 
+  removeFriend,
+  syncUserName
+} from "../action";
 
 export default function FriendsPage() {
   const { user, isLoaded, isSignedIn } = useUser();
@@ -11,14 +18,14 @@ export default function FriendsPage() {
   const [requests, setRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [friendIdInput, setFriendIdInput] = useState("");
+  
+  // 👈 NUEVO ESTADO: Guarda qué tarjeta está desplegada actualmente
+  const [expandedFriendId, setExpandedFriendId] = useState<string | null>(null);
 
   const loadData = async () => {
     if (!isSignedIn) return;
     setLoading(true);
-    
-    // 👈 MAGIA AQUÍ: Primero sincronizamos tu propio nombre en la Base de Datos
     await syncUserName(); 
-
     const data = await getFriendsList();
     setFriends(data.accepted);
     setRequests(data.pendingRequests);
@@ -51,6 +58,15 @@ export default function FriendsPage() {
     if (!confirm("¿Seguro que quieres eliminar a este amigo/petición?")) return;
     await removeFriend(id);
     loadData();
+  };
+
+  // 👈 FUNCIÓN PARA PLEGAR/DESPLEGAR
+  const toggleExpand = (id: string) => {
+    setExpandedFriendId(expandedFriendId === id ? null : id);
+  };
+
+  const handleTradeClick = () => {
+    alert("¡Próximamente! Aquí montaremos el sistema de intercambios. 🔄");
   };
 
   if (!isLoaded || loading) {
@@ -130,7 +146,7 @@ export default function FriendsPage() {
                 {requests.map(req => (
                   <div key={req.id} className="bg-gray-800 p-3 rounded-xl border border-gray-700 flex justify-between items-center">
                     <span className="text-sm font-bold text-white truncate w-1/2">
-                      {req.requester_name} {/* 👈 MUESTRA SU NOMBRE */}
+                      {req.requester_name}
                     </span>
                     <div className="flex gap-2">
                       <button onClick={() => handleAccept(req.id)} className="bg-green-600 hover:bg-green-500 px-3 py-1 rounded text-xs font-bold transition">Aceptar</button>
@@ -146,94 +162,126 @@ export default function FriendsPage() {
           <div className="bg-gray-800 border border-gray-700 p-6 rounded-2xl shadow-lg">
             <h3 className="font-bold text-lg mb-6 border-b border-gray-700 pb-2 flex justify-between items-center">
               <span>Ranking de Colecciones 🏆</span>
-              <span className="text-sm font-normal text-gray-400">{friends.length} Amigos</span>
+              <span className="text-sm font-normal text-gray-400">{friends.length} Jugadores</span>
             </h3>
             
             {friends.length === 0 ? (
               <p className="text-gray-500 text-center py-8">Aún no tienes amigos añadidos.</p>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-3">
                 {friends.map((friend, index) => {
-                  const isMe = friend.friend_id === user?.id; // 👈 Detectamos si esta tarjeta eres TÚ
+                  const isMe = friend.friend_id === user?.id;
+                  const isExpanded = expandedFriendId === friend.friend_id;
 
                   return (
                     <div 
                       key={friend.friend_id} 
-                      className={`p-5 rounded-2xl border flex flex-col gap-4 relative overflow-hidden group transition shadow-md ${
+                      className={`rounded-xl border flex flex-col relative overflow-hidden group transition shadow-md ${
                         isMe 
-                          ? "bg-blue-900/20 border-blue-500 shadow-blue-500/20" // 👈 Tu tarjeta brilla azul
-                          : "bg-gray-900 border-gray-700 hover:border-blue-500"
+                          ? "bg-blue-900/10 border-blue-500/50 hover:border-blue-400" 
+                          : "bg-gray-900 border-gray-700 hover:border-gray-500"
                       }`}
                     >
-                      
-                      {/* MEDALLAS PARA EL TOP 3 */}
-                      {index === 0 && <div className="absolute top-0 right-0 bg-yellow-500 text-yellow-900 text-[10px] font-black px-3 py-1 rounded-bl-lg z-10 shadow">🥇 TOP 1</div>}
-                      {index === 1 && <div className="absolute top-0 right-0 bg-gray-300 text-gray-800 text-[10px] font-black px-3 py-1 rounded-bl-lg z-10 shadow">🥈 TOP 2</div>}
-                      {index === 2 && <div className="absolute top-0 right-0 bg-orange-700 text-orange-100 text-[10px] font-black px-3 py-1 rounded-bl-lg z-10 shadow">🥉 TOP 3</div>}
+                      {/* MEDALLAS (Flotantes) */}
+                      {index === 0 && <div className="absolute top-0 right-0 bg-yellow-500 text-yellow-900 text-[10px] font-black px-3 py-1 rounded-bl-lg z-10 shadow pointer-events-none">🥇 1º</div>}
+                      {index === 1 && <div className="absolute top-0 right-0 bg-gray-300 text-gray-800 text-[10px] font-black px-3 py-1 rounded-bl-lg z-10 shadow pointer-events-none">🥈 2º</div>}
+                      {index === 2 && <div className="absolute top-0 right-0 bg-orange-700 text-orange-100 text-[10px] font-black px-3 py-1 rounded-bl-lg z-10 shadow pointer-events-none">🥉 3º</div>}
 
-                      {/* PERFIL */}
-                      <div className="flex items-center gap-3">
-                        <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl shadow-lg border-2 ${isMe ? 'bg-gradient-to-tr from-yellow-400 to-orange-500 border-yellow-200' : 'bg-gradient-to-tr from-blue-500 to-purple-600 border-gray-800'}`}>
+                      {/* 1. CABECERA SIEMPRE VISIBLE (Clickable) */}
+                      <div 
+                        onClick={() => toggleExpand(friend.friend_id)}
+                        className="p-4 flex items-center gap-4 cursor-pointer select-none"
+                      >
+                        <div className={`w-12 h-12 flex-shrink-0 rounded-full flex items-center justify-center text-2xl shadow-lg border-2 ${isMe ? 'bg-gradient-to-tr from-yellow-400 to-orange-500 border-yellow-200' : 'bg-gradient-to-tr from-blue-500 to-purple-600 border-gray-800'}`}>
                           {isMe ? '👑' : '🧑‍🎤'}
                         </div>
-                        <div className="overflow-hidden flex-1 pr-10">
-                          <p className={`font-black text-lg truncate leading-tight ${isMe ? 'text-blue-300' : 'text-white'}`}>
+                        <div className="overflow-hidden flex-1 pr-8">
+                          <p className={`font-black text-lg truncate leading-tight ${isMe ? 'text-blue-400' : 'text-white'}`}>
                             {friend.friend_name}
                           </p>
                           <p className="text-[10px] text-gray-500 font-mono truncate">{friend.friend_id}</p>
                         </div>
+                        
+                        {/* Valor resumido y flechita */}
+                        <div className="flex items-center gap-3 text-right">
+                           <p className="text-yellow-400 font-black text-sm hidden sm:block">{friend.stats?.value || 0} 💰</p>
+                           <motion.div animate={{ rotate: isExpanded ? 180 : 0 }} className="text-gray-500 text-sm">▼</motion.div>
+                        </div>
                       </div>
 
-                      {/* ESTADÍSTICAS AMPLIADAS */}
-                      <div className="grid grid-cols-3 gap-2 mt-2">
-                        <div className="bg-gray-800/80 p-2 rounded-lg border border-gray-700/50 flex flex-col justify-center">
-                          <p className="text-[8px] sm:text-[9px] text-gray-400 font-bold uppercase mb-0.5">Valor Total</p>
-                          <p className="text-yellow-400 font-black flex items-center gap-1 text-sm">{friend.stats?.value || 0} 💰</p>
-                        </div>
-                        <div className="bg-gray-800/80 p-2 rounded-lg border border-gray-700/50 flex flex-col justify-center">
-                          <p className="text-[8px] sm:text-[9px] text-gray-400 font-bold uppercase mb-0.5">Progreso</p>
-                          <p className="text-white font-black flex items-center gap-1 text-sm">{friend.stats?.unique || 0} 🎴</p>
-                        </div>
-                        <div className="bg-gray-800/80 p-2 rounded-lg border border-gray-700/50 flex flex-col justify-center">
-                          <p className="text-[8px] sm:text-[9px] text-gray-400 font-bold uppercase mb-0.5">Cartas</p>
-                          <p className="text-gray-300 font-black flex items-center gap-1 text-sm">{friend.stats?.cards || 0} 📦</p>
-                        </div>
-                        
-                        <div className="bg-gray-800/80 p-2 rounded-lg border border-gray-700/50 flex flex-col justify-center">
-                          <p className="text-[8px] sm:text-[9px] text-gray-400 font-bold uppercase mb-0.5">Favoritas</p>
-                          <p className="text-red-400 font-black flex items-center gap-1 text-sm">{friend.stats?.favs || 0} ❤️</p>
-                        </div>
-                        <div className="bg-blue-900/30 p-2 rounded-lg border border-blue-800/50 flex flex-col justify-center">
-                          <p className="text-[8px] sm:text-[9px] text-blue-400 font-bold uppercase mb-0.5">Sobres</p>
-                          <p className="text-blue-300 font-black flex items-center gap-1 text-sm">{friend.stats?.packs || 0} ✉️</p>
-                        </div>
-                        <div className="bg-green-900/30 p-2 rounded-lg border border-green-800/50 flex flex-col justify-center">
-                          <p className="text-[8px] sm:text-[9px] text-green-400 font-bold uppercase mb-0.5">Gastado</p>
-                          <p className="text-green-300 font-black flex items-center gap-1 text-sm">{friend.stats?.spent || 0} 💸</p>
-                        </div>
-                      </div>
-                      
-                      {/* BOTONES */}
-                      <div className="flex gap-2 mt-auto pt-2">
-                        <Link 
-                          href={isMe ? "/collection" : `/trainer/${friend.friend_id}`}
-                          className="flex-1 bg-blue-600 hover:bg-blue-500 text-center text-xs font-bold py-2.5 rounded-lg transition"
-                        >
-                          {isMe ? "Ir a mi Álbum 📒" : "Inspeccionar Álbum 🔍"}
-                        </Link>
-                        
-                        {/* 🚨 Ocultamos el botón de borrar si eres tú mismo */}
-                        {!isMe && (
-                          <button 
-                            onClick={() => handleRemove(friend.friendship_id)}
-                            className="bg-gray-800 hover:bg-red-600 border border-gray-700 text-gray-400 hover:text-white px-4 py-2.5 rounded-lg transition"
-                            title="Eliminar amigo"
+                      {/* 2. ZONA DESPLEGABLE (Animada) */}
+                      <AnimatePresence>
+                        {isExpanded && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="overflow-hidden bg-gray-950/50"
                           >
-                            🗑️
-                          </button>
-                        )}
-                      </div>
+                            <div className="p-4 border-t border-gray-800/50">
+                              
+                              {/* ESTADÍSTICAS */}
+                              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-4">
+                                <div className="bg-gray-800/80 p-2 rounded-lg border border-gray-700/50 flex flex-col items-center justify-center text-center">
+                                  <p className="text-[9px] text-gray-400 font-bold uppercase">Valor</p>
+                                  <p className="text-yellow-400 font-black text-xs">{friend.stats?.value || 0}💰</p>
+                                </div>
+                                <div className="bg-gray-800/80 p-2 rounded-lg border border-gray-700/50 flex flex-col items-center justify-center text-center">
+                                  <p className="text-[9px] text-gray-400 font-bold uppercase">Progreso</p>
+                                  <p className="text-white font-black text-xs">{friend.stats?.unique || 0}🎴</p>
+                                </div>
+                                <div className="bg-gray-800/80 p-2 rounded-lg border border-gray-700/50 flex flex-col items-center justify-center text-center">
+                                  <p className="text-[9px] text-gray-400 font-bold uppercase">Cartas</p>
+                                  <p className="text-gray-300 font-black text-xs">{friend.stats?.cards || 0}📦</p>
+                                </div>
+                                <div className="bg-gray-800/80 p-2 rounded-lg border border-gray-700/50 flex flex-col items-center justify-center text-center">
+                                  <p className="text-[9px] text-gray-400 font-bold uppercase">Favs</p>
+                                  <p className="text-red-400 font-black text-xs">{friend.stats?.favs || 0}❤️</p>
+                                </div>
+                                <div className="bg-blue-900/30 p-2 rounded-lg border border-blue-800/50 flex flex-col items-center justify-center text-center">
+                                  <p className="text-[9px] text-blue-400 font-bold uppercase">Sobres</p>
+                                  <p className="text-blue-300 font-black text-xs">{friend.stats?.packs || 0}✉️</p>
+                                </div>
+                                <div className="bg-green-900/30 p-2 rounded-lg border border-green-800/50 flex flex-col items-center justify-center text-center">
+                                  <p className="text-[9px] text-green-400 font-bold uppercase">Gastado</p>
+                                  <p className="text-green-300 font-black text-xs">{friend.stats?.spent || 0}💸</p>
+                                </div>
+                              </div>
+                              
+                              {/* BOTONES */}
+                              <div className="flex flex-wrap gap-2">
+                                <Link 
+                                  href={isMe ? "/collection" : `/trainer/${friend.friend_id}`}
+                                  className="flex-1 bg-blue-600 hover:bg-blue-500 text-center text-xs font-bold py-2.5 px-3 rounded-lg transition min-w-[120px]"
+                                >
+                                  {isMe ? "Ir a mi Álbum 📒" : "Ver Álbum 🔍"}
+                                </Link>
+                                
+                                {/* NUEVO BOTÓN DE INTERCAMBIO (Solo si no eres tú) */}
+                                {!isMe && (
+                                  <button 
+                                    onClick={handleTradeClick}
+                                    className="flex-1 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold py-2.5 px-3 rounded-lg transition min-w-[120px]"
+                                  >
+                                    Intercambio 🔄
+                                  </button>
+                                )}
 
+                                {!isMe && (
+                                  <button 
+                                    onClick={() => handleRemove(friend.friendship_id)}
+                                    className="bg-gray-800 hover:bg-red-600 border border-gray-700 text-gray-400 hover:text-white px-4 py-2.5 rounded-lg transition"
+                                    title="Eliminar amigo"
+                                  >
+                                    🗑️
+                                  </button>
+                                )}
+                              </div>
+                              
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     </div>
                   );
                 })}
