@@ -196,40 +196,46 @@ export default function Home() {
   return (
     <main className="flex min-h-screen flex-col items-center p-8 bg-gray-900 text-white overflow-hidden select-none" >
       {/* CABECERA */}
-      <div className="w-full max-w-6xl flex justify-between items-center mb-8 bg-gray-800 p-4 rounded-xl shadow-md border border-gray-700 z-10">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">💰</span>
-          <span className="text-xl font-bold text-yellow-400">
-            {/* Mostramos '...' mientras carga el usuario para que no se vea el salto de 500 a X */}
+      {/* CABECERA TIPO "ISLA" */}
+      <div className="w-full max-w-7xl mx-auto sticky top-4 z-50 bg-gray-800 p-4 rounded-xl shadow-xl border border-gray-700 mb-8 flex justify-between items-center transition-all">
+        
+        {/* Lado Izquierdo: Monedas */}
+        <div className="flex items-center gap-2 bg-gray-900/60 px-4 py-2 rounded-full border border-gray-700 shadow-inner">
+          <span className="text-xl drop-shadow-md">💰</span>
+          <span className="font-black text-yellow-400">
             {!isLoaded ? "..." : coins}
           </span>
         </div>
 
-        {/* LOGIN DE CLERK */}
-        <div className="flex gap-4 items-center">
+        {/* Lado Derecho: Login, Usuario y Álbum */}
+        <div className="flex items-center gap-3 sm:gap-4">
+          
           <SignedOut>
             <SignInButton mode="modal">
-              <button className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold transition">
+              <button className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full font-bold transition shadow-md text-sm sm:text-base">
                 Iniciar Sesión 👤
               </button>
             </SignInButton>
           </SignedOut>
 
           <SignedIn>
-            <div className="flex items-center gap-2 bg-gray-700/50 px-3 py-1 rounded-full border border-gray-600">
-              <span className="text-sm text-gray-300 mr-2 hidden sm:inline">
+            {/* Pill del usuario estilo Colección */}
+            <div className="flex items-center gap-2 bg-gray-700/50 p-1 pr-3 sm:pr-4 rounded-full border border-gray-600 hidden sm:flex">
+              <UserButton />
+              <span className="text-sm text-gray-300 font-medium">
                 Entrenador
               </span>
-              <UserButton />
             </div>
           </SignedIn>
 
+          {/* Botón de Álbum redondeado para mantener el diseño */}
           <Link
             href="/collection"
-            className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition"
+            className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-full text-sm font-bold transition border border-gray-600 shadow-md flex items-center gap-2"
           >
-            Ver Álbum 📒
+            <span className="hidden sm:inline">Ver Álbum</span> 📒
           </Link>
+          
         </div>
       </div>
 
