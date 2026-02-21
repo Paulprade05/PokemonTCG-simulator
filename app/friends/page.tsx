@@ -7,7 +7,8 @@ import {
   getFriendsList, 
   sendFriendRequest, 
   acceptFriendRequest, 
-  removeFriend 
+  removeFriend,
+  syncUserName // 👈 NUEVA IMPORTACIÓN
 } from "../action";
 
 export default function FriendsPage() {
@@ -20,6 +21,10 @@ export default function FriendsPage() {
   const loadData = async () => {
     if (!isSignedIn) return;
     setLoading(true);
+    
+    // 👈 MAGIA AQUÍ: Primero sincronizamos tu propio nombre en la Base de Datos
+    await syncUserName(); 
+
     const data = await getFriendsList();
     setFriends(data.accepted);
     setRequests(data.pendingRequests);
@@ -45,7 +50,7 @@ export default function FriendsPage() {
 
   const handleAccept = async (id: number) => {
     await acceptFriendRequest(id);
-    loadData(); // Recargar listas
+    loadData();
   };
 
   const handleRemove = async (id: number) => {
@@ -85,7 +90,7 @@ export default function FriendsPage() {
 
       <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
         
-        {/* COLUMNA IZQUIERDA: Añadir y Tu ID */}
+        {/* COLUMNA IZQUIERDA */}
         <div className="md:col-span-1 space-y-6">
           <div className="bg-blue-900/30 border border-blue-500/50 p-6 rounded-2xl text-center shadow-lg">
             <p className="text-blue-300 text-sm font-bold uppercase mb-2">Tu ID de Entrenador</p>
@@ -100,7 +105,7 @@ export default function FriendsPage() {
                 📋 Copiar mi ID
               </button>
             </div>
-            <p className="text-[10px] text-gray-400 mt-3">Pásale este ID a tus amigos para que te añadan.</p>
+            <p className="text-[10px] text-gray-400 mt-3">Tus amigos te verán como: <strong className="text-white">{user?.username || user?.firstName || "Entrenador"}</strong></p>
           </div>
 
           <form onSubmit={handleAddFriend} className="bg-gray-800 border border-gray-700 p-6 rounded-2xl shadow-lg flex flex-col gap-4">
@@ -118,7 +123,7 @@ export default function FriendsPage() {
           </form>
         </div>
 
-        {/* COLUMNA DERECHA: Listas de amigos */}
+        {/* COLUMNA DERECHA */}
         <div className="md:col-span-2 space-y-8">
           
           {/* PETICIONES PENDIENTES */}
@@ -130,8 +135,8 @@ export default function FriendsPage() {
               <div className="flex flex-col gap-3">
                 {requests.map(req => (
                   <div key={req.id} className="bg-gray-800 p-3 rounded-xl border border-gray-700 flex justify-between items-center">
-                    <span className="text-sm font-mono text-gray-300 truncate w-1/2">
-                      {req.requester_id.substring(0, 15)}...
+                    <span className="text-sm font-bold text-white truncate w-1/2">
+                      {req.requester_name} {/* 👈 MUESTRA SU NOMBRE */}
                     </span>
                     <div className="flex gap-2">
                       <button onClick={() => handleAccept(req.id)} className="bg-green-600 hover:bg-green-500 px-3 py-1 rounded text-xs font-bold transition">Aceptar</button>
@@ -157,7 +162,8 @@ export default function FriendsPage() {
                         🧑‍🎤
                       </div>
                       <div className="overflow-hidden">
-                        <p className="font-bold text-sm text-gray-200">Entrenador</p>
+                        {/* 👈 MUESTRA SU NOMBRE AQUÍ 👇 */}
+                        <p className="font-bold text-base text-white truncate">{friend.friend_name}</p>
                         <p className="text-[10px] text-gray-500 font-mono truncate">{friend.friend_id}</p>
                       </div>
                     </div>

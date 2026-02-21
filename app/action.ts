@@ -1,7 +1,7 @@
 // src/app/action.ts
 'use server'
 
-import { auth } from '@clerk/nextjs/server'; // ✅ Importación correcta para Server Actions
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { sql } from '@vercel/postgres';
 import { revalidatePath } from 'next/cache';
 
@@ -344,24 +344,52 @@ export async function sendFriendRequest(friendId: string) {
   }
 }
 
-// 2. Obtener mi lista de amigos y peticiones
+// --- NUEVA FUNCIÓN: Guarda tu nombre de Clerk en la BD ---
+export async function syncUserName() {
+  const user = await currentUser();
+  if (!user) return;
+
+  // Intentamos coger tu nombre de usuario, si no, tu nombre de pila, y si no, "Entrenador"
+  const displayName = user.username || user.firstName || "Entrenador";
+
+  try {
+    // Guarda o actualiza el nombre en tu tabla 'users'
+    await sql`
+      INSERT INTO users (id, username) 
+      VALUES (${user.id}, ${displayName})
+      ON CONFLICT (id) 
+      DO UPDATE SET username = ${displayName}
+    `;
+  } catch (error) {
+    console.error("Error sincronizando nombre de usuario:", error);
+  }
+}
+
+// --- FUNCIÓN ACTUALIZADA: Obtener amigos CON SUS NOMBRES ---
 export async function getFriendsList() {
   const { userId } = await auth();
   if (!userId) return { accepted: [], pendingRequests: [] };
 
   try {
-    // Amigos aceptados (tanto si la enviaste tú como si te la enviaron)
+    // LEFT JOIN para cruzar la tabla de amistades con los nombres de la tabla users
     const { rows: accepted } = await sql`
-      SELECT id, CASE WHEN user_id = ${userId} THEN friend_id ELSE user_id END as friend_id
-      FROM friendships
-      WHERE (user_id = ${userId} OR friend_id = ${userId}) AND status = 'accepted'
+      SELECT 
+        f.id, 
+        CASE WHEN f.user_id = ${userId} THEN f.friend_id ELSE f.user_id END as friend_id,
+        COALESCE(u.username, 'Entrenador') as friend_name
+      FROM friendships f
+      LEFT JOIN users u ON u.id = (CASE WHEN f.user_id = ${userId} THEN f.friend_id ELSE f.user_id END)
+      WHERE (f.user_id = ${userId} OR f.friend_id = ${userId}) AND f.status = 'accepted'
     `;
 
-    // Peticiones que TE HAN ENVIADO y están pendientes
     const { rows: pending } = await sql`
-      SELECT id, user_id as requester_id
-      FROM friendships
-      WHERE friend_id = ${userId} AND status = 'pending'
+      SELECT 
+        f.id, 
+        f.user_id as requester_id,
+        COALESCE(u.username, 'Entrenador') as requester_name
+      FROM friendships f
+      LEFT JOIN users u ON u.id = f.user_id
+      WHERE f.friend_id = ${userId} AND f.status = 'pending'
     `;
 
     return { accepted, pendingRequests: pending };

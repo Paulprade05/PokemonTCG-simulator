@@ -18,7 +18,8 @@ import {
   syncSetToDatabase,
   savePackToCollection,
   getSetsFromDB, // 👈 1. IMPORTAMOS LA NUEVA FUNCIÓN
-  getFullCollection, // 👈 ¡AÑADIR ESTA!
+  getFullCollection,
+  getFriendsList, sendFriendRequest, acceptFriendRequest, removeFriend, syncUserName // 👈 ¡AÑADIR ESTA!
 } from "./action";
 import { getCardsFromSet } from "../services/pokemon";
 import {
