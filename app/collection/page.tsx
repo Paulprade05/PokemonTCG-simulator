@@ -291,36 +291,35 @@ export default function CollectionPage() {
             >
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-4 pb-2">
                 {setStats.map((stat) => (
-                  <div
-                    key={stat.id}
-                    className="bg-gray-800/50 p-4 rounded-xl border border-gray-700/50 flex flex-col gap-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <img
-                        src={stat.logo}
-                        alt={stat.name}
-                        className="h-8 object-contain"
-                      />
-                      <div className="flex-1">
-                        <h3 className="font-bold text-sm text-gray-200">
-                          {stat.name}
-                        </h3>
-                        <p className="text-xs text-gray-400">
-                          {stat.owned}/{stat.total}
-                        </p>
+                  <Link href={`/album/${stat.id}`} key={stat.id}>
+                    <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700/50 flex flex-col gap-3 hover:bg-gray-700 hover:border-blue-500/50 transition cursor-pointer h-full">
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={stat.logo}
+                          alt={stat.name}
+                          className="h-8 object-contain"
+                        />
+                        <div className="flex-1">
+                          <h3 className="font-bold text-sm text-gray-200">
+                            {stat.name}
+                          </h3>
+                          <p className="text-xs text-gray-400">
+                            {stat.owned}/{stat.total}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden mt-auto">
+                        <div
+                          className={`h-full rounded-full ${
+                            stat.percentage === 100
+                              ? "bg-green-500"
+                              : "bg-blue-500"
+                          }`}
+                          style={{ width: `${stat.percentage}%` }}
+                        ></div>
                       </div>
                     </div>
-                    <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${
-                          stat.percentage === 100
-                            ? "bg-green-500"
-                            : "bg-blue-500"
-                        }`}
-                        style={{ width: `${stat.percentage}%` }}
-                      ></div>
-                    </div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             </motion.div>
