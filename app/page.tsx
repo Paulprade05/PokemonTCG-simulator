@@ -167,7 +167,7 @@ export default function Home() {
       price = 50;
       if (coins >= price) newPack = openStandardPack(allCards);
     } else if (type === "PREMIUM") {
-      price = 200;
+      price = 250;
       if (coins >= price) newPack = openPremiumPack(allCards);
     } else if (type === "GOLDEN") {
       price = 2500;

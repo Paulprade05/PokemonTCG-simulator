@@ -127,31 +127,43 @@ export default function CollectionPage() {
   };
 
   // Vender TODOS los duplicados de TODA la colección
+  // Vender TODOS los duplicados de TODA la colección (Protegiendo Favoritos)
   const handleSellAllDuplicates = async () => {
-    const duplicates = cards.filter((card) => card.quantity > 1);
+    // 1. Buscamos cartas que tengan más de 1 copia Y que NO sean favoritas
+    const duplicates = cards.filter((card) => card.quantity > 1 && !card.is_favorite);
+    
     if (duplicates.length === 0) {
-      alert("No tienes cartas duplicadas.");
+      alert("No tienes cartas duplicadas para vender (o las que tienes están protegidas como favoritas ❤️).");
       return;
     }
 
+    // 2. Calculamos las ganancias
     let totalGanancias = 0;
     duplicates.forEach((card) => {
       totalGanancias += (card.quantity - 1) * getPrice(card.rarity);
     });
 
-    if (!confirm(`¿Vender todos los duplicados por ${totalGanancias} 💰?`)) return;
+    if (!confirm(`¿Vender todos los duplicados (ignorando tus favoritas) por ${totalGanancias} 💰?`)) return;
 
-    const newCollection = cards.map((card) => ({ ...card, quantity: 1 }));
+    // 3. UI Optimista: Bajamos la cantidad a 1 SOLO a las que no son favoritas
+    const newCollection = cards.map((card) => {
+      if (card.quantity > 1 && !card.is_favorite) {
+        return { ...card, quantity: 1 };
+      }
+      return card; // Si es favorita, se queda con todas sus copias intactas
+    });
+    
     setCards(newCollection);
     addCoins(totalGanancias);
 
+    // 4. Guardar en Base de Datos / Local
     if (isSignedIn) {
       // Usamos Promise.all para procesar todas las ventas en la DB
       await Promise.all(duplicates.map(c => sellAllDuplicatesAction(c.id, getPrice(c.rarity))));
     } else {
       saveCollectionRaw(newCollection);
     }
-    alert(`¡Vendido! Ganaste ${totalGanancias} 💰`);
+    alert(`¡Limpieza completada! Ganaste ${totalGanancias} 💰. Tus favoritas están a salvo.`);
   };
 
   // Vender todos los duplicados de UNA sola carta (desde el Modal)

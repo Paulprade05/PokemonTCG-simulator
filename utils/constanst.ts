@@ -205,39 +205,39 @@ export const AVAILABLE_SETS = [
 // --- PRECIOS DE VENTA (Economía ajustada) ---
 export const SELL_PRICES: Record<string, number> = {
   // 🧱 Tier 1: Morralla (Reciclaje)
-  "Common": 1,
-  "Uncommon": 3,
-  "Rare": 8,
+  "Common": 2,
+  "Uncommon": 4,
+  "Rare": 9,
 
   // ✨ Tier 2: Cartas Brillantes y Promos
-  "Rare Holo": 17,
-  "Promo": 30,
-  "ACE SPEC Rare": 40,
+  "Rare Holo": 19,
+  "Promo": 35,
+  "ACE SPEC Rare": 45,
 
   // ⚔️ Tier 3: Hits Básicos (Casi pagan un sobre estándar de 50💰)
-  "Double Rare": 45,        // Las cartas "ex" normales
-  "Rare Holo V": 45,        // Las cartas "V" normales
-  "Amazing Rare": 55,
-  "Radiant Rare": 55,
+  "Double Rare": 50,        // Las cartas "ex" normales
+  "Rare Holo V": 50,        // Las cartas "V" normales
+  "Amazing Rare": 65,
+  "Radiant Rare": 65,
 
   // 🖼️ Tier 4: Hits Medios y Evoluciones (Ganancia pura)
-  "Shiny Rare": 65,
-  "Rare Shiny": 65,
-  "Trainer Gallery Rare Holo": 75, 
-  "Rare Holo VMAX": 85,
-  "Rare Holo VSTAR": 90,
-  "Illustration Rare": 110, // Art Rares (AR)
+  "Shiny Rare": 75,
+  "Rare Shiny": 75,
+  "Trainer Gallery Rare Holo": 85, 
+  "Rare Holo VMAX": 95,
+  "Rare Holo VSTAR": 100,
+  "Illustration Rare": 130, // Art Rares (AR)
 
   // 💎 Tier 5: Full Arts (Pagan casi un sobre Premium de 200💰)
-  "Ultra Rare": 160,        // Full Arts modernas
-  "Rare Ultra": 160,        // Full Arts clásicas/GX/EX
-  "Shiny Ultra Rare": 190,  // Full Arts variocolor
+  "Ultra Rare": 180,        // Full Arts modernas
+  "Rare Ultra": 180,        // Full Arts clásicas/GX/EX
+  "Shiny Ultra Rare": 200,  // Full Arts variocolor
 
   // 👑 Tier 6: Secretas y Persecuciones (El premio gordo)
-  "Special Illustration Rare": 500, // SAR / SIR (Las más buscadas hoy)
-  "Rare Rainbow": 600,              // Rainbow Rares
-  "Rare Secret": 700,               // Secretas genéricas
-  "Hyper Rare": 800                 // Cartas Doradas
+  "Special Illustration Rare": 550, // SAR / SIR (Las más buscadas hoy)
+  "Rare Rainbow": 650,              // Rainbow Rares
+  "Rare Secret": 750,               // Secretas genéricas
+  "Hyper Rare": 900                 // Cartas Doradas
 };
 
 // --- ORDEN DE RAREZA (Para ordenar el álbum de mejor a peor) ---
