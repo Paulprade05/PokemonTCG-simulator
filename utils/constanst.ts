@@ -205,12 +205,12 @@ export const AVAILABLE_SETS = [
 // --- PRECIOS DE VENTA (Economía ajustada) ---
 export const SELL_PRICES: Record<string, number> = {
   // 🧱 Tier 1: Morralla (Reciclaje)
-  "Common": 2,
-  "Uncommon": 4,
-  "Rare": 9,
+  "Common": 3,
+  "Uncommon": 5,
+  "Rare": 10,
 
   // ✨ Tier 2: Cartas Brillantes y Promos
-  "Rare Holo": 19,
+  "Rare Holo": 20,
   "Promo": 35,
   "ACE SPEC Rare": 45,
 
@@ -224,14 +224,14 @@ export const SELL_PRICES: Record<string, number> = {
   "Shiny Rare": 75,
   "Rare Shiny": 75,
   "Trainer Gallery Rare Holo": 85, 
-  "Rare Holo VMAX": 95,
-  "Rare Holo VSTAR": 100,
-  "Illustration Rare": 130, // Art Rares (AR)
+  "Rare Holo VMAX": 100,
+  "Rare Holo VSTAR": 110,
+  "Illustration Rare": 140, // Art Rares (AR)
 
   // 💎 Tier 5: Full Arts (Pagan casi un sobre Premium de 200💰)
-  "Ultra Rare": 180,        // Full Arts modernas
-  "Rare Ultra": 180,        // Full Arts clásicas/GX/EX
-  "Shiny Ultra Rare": 200,  // Full Arts variocolor
+  "Ultra Rare": 190,        // Full Arts modernas
+  "Rare Ultra": 190,        // Full Arts clásicas/GX/EX
+  "Shiny Ultra Rare": 220,  // Full Arts variocolor
 
   // 👑 Tier 6: Secretas y Persecuciones (El premio gordo)
   "Special Illustration Rare": 550, // SAR / SIR (Las más buscadas hoy)
