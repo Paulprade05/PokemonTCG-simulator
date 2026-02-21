@@ -284,3 +284,123 @@ export async function getSetsFromDB() {
     return [];
   }
 }
+// Añade esto al final de tu src/app/action.ts
+
+export async function getTrainerCollection(trainerId: string) {
+  try {
+    const { rows } = await sql`
+      SELECT 
+        c.id, c.name, c.rarity, c.images, c.set_id, c.number, c.artist, c.flavor_text, c.supertype,
+        uc.quantity, uc.is_favorite
+      FROM user_collection uc
+      JOIN cards c ON uc.card_id = c.id
+      WHERE uc.user_id = ${trainerId}
+    `;
+
+    return rows.map((row: any) => ({
+      id: row.id,
+      name: row.name,
+      rarity: row.rarity,
+      images: typeof row.images === 'string' ? JSON.parse(row.images) : row.images,
+      set: { id: row.set_id },
+      number: row.number,
+      artist: row.artist,
+      flavorText: row.flavor_text,
+      supertype: row.supertype,
+      quantity: row.quantity,
+      is_favorite: row.is_favorite
+    }));
+  } catch (error) {
+    console.error("❌ Error leyendo colección del entrenador:", error);
+    return [];
+  }
+}
+// --- SISTEMA DE AMIGOS ---
+
+// 1. Enviar petición de amistad
+export async function sendFriendRequest(friendId: string) {
+  const { userId } = await auth();
+  if (!userId) throw new Error("No autorizado");
+  if (userId === friendId) return { error: "No puedes añadirte a ti mismo" };
+
+  try {
+    // Comprobar si ya existe la amistad o la petición
+    const { rows: existing } = await sql`
+      SELECT * FROM friendships 
+      WHERE (user_id = ${userId} AND friend_id = ${friendId})
+         OR (user_id = ${friendId} AND friend_id = ${userId})
+    `;
+    
+    if (existing.length > 0) {
+      return { error: "Ya sois amigos o hay una petición pendiente." };
+    }
+
+    await sql`
+      INSERT INTO friendships (user_id, friend_id, status)
+      VALUES (${userId}, ${friendId}, 'pending')
+    `;
+    return { success: true };
+  } catch (error) {
+    console.error("Error enviando petición:", error);
+    return { error: "Error de servidor al enviar petición." };
+  }
+}
+
+// 2. Obtener mi lista de amigos y peticiones
+export async function getFriendsList() {
+  const { userId } = await auth();
+  if (!userId) return { accepted: [], pendingRequests: [] };
+
+  try {
+    // Amigos aceptados (tanto si la enviaste tú como si te la enviaron)
+    const { rows: accepted } = await sql`
+      SELECT id, CASE WHEN user_id = ${userId} THEN friend_id ELSE user_id END as friend_id
+      FROM friendships
+      WHERE (user_id = ${userId} OR friend_id = ${userId}) AND status = 'accepted'
+    `;
+
+    // Peticiones que TE HAN ENVIADO y están pendientes
+    const { rows: pending } = await sql`
+      SELECT id, user_id as requester_id
+      FROM friendships
+      WHERE friend_id = ${userId} AND status = 'pending'
+    `;
+
+    return { accepted, pendingRequests: pending };
+  } catch (error) {
+    console.error("Error obteniendo amigos:", error);
+    return { accepted: [], pendingRequests: [] };
+  }
+}
+
+// 3. Aceptar petición
+export async function acceptFriendRequest(friendshipId: number) {
+  const { userId } = await auth();
+  if (!userId) return { error: "No autorizado" };
+
+  try {
+    await sql`
+      UPDATE friendships SET status = 'accepted'
+      WHERE id = ${friendshipId} AND friend_id = ${userId}
+    `;
+    return { success: true };
+  } catch (error) {
+    return { error: "Error al aceptar petición" };
+  }
+}
+
+// 4. Eliminar amigo o rechazar petición
+export async function removeFriend(friendshipId: number) {
+  const { userId } = await auth();
+  if (!userId) return { error: "No autorizado" };
+
+  try {
+    await sql`
+      DELETE FROM friendships
+      WHERE id = ${friendshipId} AND (user_id = ${userId} OR friend_id = ${userId})
+    `;
+    return { success: true };
+  } catch (error) {
+    return { error: "Error al eliminar amigo" };
+  }
+}

@@ -235,18 +235,19 @@ export default function Home() {
     <main className="flex min-h-screen flex-col items-center p-8 bg-gray-900 text-white overflow-hidden select-none" >
       {/* CABECERA */}
       {/* CABECERA TIPO "ISLA" */}
+      {/* CABECERA TIPO "ISLA" */}
       <div className="w-full max-w-7xl mx-auto sticky top-4 z-50 bg-gray-800 p-4 rounded-xl shadow-xl border border-gray-700 mb-8 flex justify-between items-center transition-all">
         
         {/* Lado Izquierdo: Monedas */}
-        <div className="flex items-center gap-2 bg-gray-900/60 px-4 py-2 rounded-full border border-gray-700 shadow-inner">
+        <div className="flex items-center gap-2 bg-gray-900/60 px-3 py-2 sm:px-4 rounded-full border border-gray-700 shadow-inner">
           <span className="text-xl drop-shadow-md">💰</span>
           <span className="font-black text-yellow-400">
             {!isLoaded ? "..." : coins}
           </span>
         </div>
 
-        {/* Lado Derecho: Login, Usuario y Álbum */}
-        <div className="flex items-center gap-3 sm:gap-4">
+        {/* Lado Derecho: Login, Usuario, Amigos y Álbum */}
+        <div className="flex items-center gap-2 sm:gap-4">
           
           <SignedOut>
             <SignInButton mode="modal">
@@ -257,23 +258,40 @@ export default function Home() {
           </SignedOut>
 
           <SignedIn>
-            {/* Pill del usuario estilo Colección */}
-            <div className="flex items-center gap-2 bg-gray-700/50 p-1 pr-3 sm:pr-4 rounded-full border border-gray-600 hidden sm:flex">
+            {/* Pill del usuario */}
+            <div className="flex items-center gap-2 bg-gray-700/50 p-1 pr-3 sm:pr-4 rounded-full border border-gray-600 hidden lg:flex">
               <UserButton />
               <span className="text-sm text-gray-300 font-medium">
                 Entrenador
               </span>
             </div>
+
+            {/* 👇 NUEVO BOTÓN DE AMIGOS 👇 */}
+            <Link
+              href="/friends"
+              className="bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white px-3 py-2 sm:px-4 rounded-full text-sm font-bold transition border border-blue-500/50 hover:border-blue-500 shadow-md flex items-center gap-2"
+              title="Lista de Amigos"
+            >
+              <span className="hidden sm:inline">Amigos</span> 🤝
+            </Link>
           </SignedIn>
 
-          {/* Botón de Álbum redondeado para mantener el diseño */}
+          {/* Botón de Álbum */}
           <Link
             href="/collection"
-            className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-full text-sm font-bold transition border border-gray-600 shadow-md flex items-center gap-2"
+            className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 sm:px-4 rounded-full text-sm font-bold transition border border-gray-600 shadow-md flex items-center gap-2"
+            title="Ver Colección"
           >
-            <span className="hidden sm:inline">Ver Álbum</span> 📒
+            <span className="hidden sm:inline">Álbum</span> 📒
           </Link>
           
+          {/* UserButton suelto para móviles (si se oculta el pill) */}
+          <SignedIn>
+            <div className="lg:hidden bg-gray-700/50 p-1 rounded-full border border-gray-600">
+              <UserButton />
+            </div>
+          </SignedIn>
+
         </div>
       </div>
 
