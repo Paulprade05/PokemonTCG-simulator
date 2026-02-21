@@ -499,3 +499,100 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
       return { error: "Error al eliminar amigo" };
     }
   }
+  // --- 5. SISTEMA DE INTERCAMBIOS ---
+
+// --- 5. SISTEMA DE INTERCAMBIOS ---
+
+// 1. Enviar una oferta de intercambio
+export async function sendTradeRequest(friendId: string, myCardId: string, friendCardId: string) {
+  const { userId } = await auth();
+  if (!userId) return { error: "No autorizado" };
+
+  try {
+    await sql`
+      INSERT INTO trades (sender_id, receiver_id, sender_card_id, receiver_card_id, status)
+      VALUES (${userId}, ${friendId}, ${myCardId}, ${friendCardId}, 'pending')
+    `;
+    return { success: true };
+  } catch (error) {
+    console.error("Error enviando trade:", error);
+    return { error: "Error al enviar la oferta" };
+  }
+}
+
+// 2. Leer las peticiones que me han mandado
+export async function getPendingTrades() {
+  const { userId } = await auth();
+  if (!userId) return [];
+
+  try {
+    const { rows } = await sql`
+      SELECT 
+        t.id as trade_id,
+        t.sender_id,
+        u.username as sender_name,
+        t.sender_card_id,
+        c1.name as sender_card_name,
+        c1.images as sender_card_image,
+        t.receiver_card_id,
+        c2.name as receiver_card_name,
+        c2.images as receiver_card_image
+      FROM trades t
+      JOIN users u ON u.id = t.sender_id
+      JOIN cards c1 ON c1.id = t.sender_card_id
+      JOIN cards c2 ON c2.id = t.receiver_card_id
+      WHERE t.receiver_id = ${userId} AND t.status = 'pending'
+    `;
+
+    return rows.map(row => ({
+      ...row,
+      sender_card_image: typeof row.sender_card_image === 'string' ? JSON.parse(row.sender_card_image) : row.sender_card_image,
+      receiver_card_image: typeof row.receiver_card_image === 'string' ? JSON.parse(row.receiver_card_image) : row.receiver_card_image,
+    }));
+  } catch (error) {
+    console.error("Error leyendo trades:", error);
+    return [];
+  }
+}
+
+// 3. Aceptar un intercambio y cruzar las cartas
+export async function acceptTrade(tradeId: number) {
+  const { userId } = await auth();
+  if (!userId) return { error: "No autorizado" };
+
+  try {
+    const { rows } = await sql`SELECT * FROM trades WHERE id = ${tradeId} AND receiver_id = ${userId} AND status = 'pending'`;
+    if (rows.length === 0) return { error: "El intercambio ya no está disponible." };
+    const trade = rows[0];
+
+    // Comprobar si ambos aún tienen las cartas
+    const senderCheck = await sql`SELECT quantity FROM user_collection WHERE user_id = ${trade.sender_id} AND card_id = ${trade.sender_card_id} AND quantity > 0`;
+    const receiverCheck = await sql`SELECT quantity FROM user_collection WHERE user_id = ${userId} AND card_id = ${trade.receiver_card_id} AND quantity > 0`;
+    
+    if (senderCheck.rowCount === 0 || receiverCheck.rowCount === 0) {
+        await sql`UPDATE trades SET status = 'failed' WHERE id = ${tradeId}`;
+        return { error: "Alguien ya no tiene la carta prometida. Intercambio cancelado." };
+    }
+
+    // Restar las cartas
+    await sql`UPDATE user_collection SET quantity = quantity - 1 WHERE user_id = ${trade.sender_id} AND card_id = ${trade.sender_card_id}`;
+    await sql`UPDATE user_collection SET quantity = quantity - 1 WHERE user_id = ${userId} AND card_id = ${trade.receiver_card_id}`;
+
+    // Sumar las cartas al nuevo dueño
+    await sql`INSERT INTO user_collection (user_id, card_id, quantity) VALUES (${trade.sender_id}, ${trade.receiver_card_id}, 1) ON CONFLICT (user_id, card_id) DO UPDATE SET quantity = user_collection.quantity + 1`;
+    await sql`INSERT INTO user_collection (user_id, card_id, quantity) VALUES (${userId}, ${trade.sender_card_id}, 1) ON CONFLICT (user_id, card_id) DO UPDATE SET quantity = user_collection.quantity + 1`;
+
+    await sql`UPDATE trades SET status = 'accepted' WHERE id = ${tradeId}`;
+    return { success: true };
+  } catch (error) {
+    return { error: "Error en el servidor al procesar el intercambio." };
+  }
+}
+
+// 4. Rechazar intercambio
+export async function rejectTrade(tradeId: number) {
+  const { userId } = await auth();
+  if (!userId) return false;
+  await sql`UPDATE trades SET status = 'rejected' WHERE id = ${tradeId} AND receiver_id = ${userId}`;
+  return true;
+}

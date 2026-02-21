@@ -19,6 +19,7 @@ import {
   savePackToCollection,
   getSetsFromDB, // 👈 1. IMPORTAMOS LA NUEVA FUNCIÓN
   getFullCollection,
+  
 } from "./action";
 import { getCardsFromSet } from "../services/pokemon";
 import {
@@ -37,7 +38,7 @@ export default function Home() {
 
   // 👈 3. NUEVO ESTADO PARA GUARDAR LOS SETS DE LA BD
   const [dbSets, setDbSets] = useState<any[]>([]);
-
+  const [pendingTrades, setPendingTrades] = useState(0);
   const [selectedSet, setSelectedSet] = useState<string | null>(null);
   const [allCards, setAllCards] = useState<any[]>([]);
   const [userCollectionIds, setUserCollectionIds] = useState<string[]>([]);
@@ -135,7 +136,8 @@ export default function Home() {
         handleNextCard();
       }
     };
-
+// Comprobar si hay intercambios pendientes al entrar
+  
     window.addEventListener("keydown", handleKeyDown);
     
     // Limpiamos el evento para que no se duplique
