@@ -1,0 +1,143 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { searchCardsInDB } from "../app/action";
+import { searchCards } from "../services/pokemonApi";
+import CardDetailModal from "./CardDetailModal";
+
+interface Hit {
+  id: string;
+  name: string;
+  images?: { small?: string };
+  set?: { id: string; name: string };
+  rarity?: string;
+}
+
+export default function GlobalSearch() {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<Hit[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [selected, setSelected] = useState<any | null>(null);
+
+  // Keyboard: Ctrl/Cmd+K opens
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setOpen(true);
+      }
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Debounced search
+  useEffect(() => {
+    if (!query.trim()) { setResults([]); return; }
+    setLoading(true);
+    const handle = setTimeout(async () => {
+      // Lucene-like query → API directo. Plain → BD local rápida.
+      if (query.includes(":") || query.includes("[")) {
+        const res = await searchCards(query, 1, 24);
+        setResults(res.data as any);
+      } else {
+        const dbHits = await searchCardsInDB(query, 30);
+        setResults(dbHits as any);
+      }
+      setLoading(false);
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [query]);
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        title="Buscar carta (Ctrl+K)"
+        className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/5 px-3 py-2 rounded-xl text-xs text-gray-400 transition"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+          <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+        </svg>
+        <span className="hidden md:inline">Buscar</span>
+        <kbd className="hidden lg:inline text-[9px] bg-white/5 border border-white/10 px-1.5 py-0.5 rounded font-mono">⌘K</kbd>
+      </button>
+
+      <AnimatePresence>
+        {open && !selected && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] bg-black/80 backdrop-blur-xl p-4 md:pt-24 flex flex-col items-center"
+            onClick={() => setOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0, y: -10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.96, opacity: 0 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-3xl bg-[#0a0a0a] border border-white/10 rounded-2xl overflow-hidden flex flex-col max-h-[80vh]"
+            >
+              <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-gray-500">
+                  <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+                </svg>
+                <input
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Buscar cualquier carta del TCG..."
+                  className="bg-transparent text-white outline-none flex-1 text-sm placeholder:text-gray-600"
+                />
+                <button
+                  onClick={() => setOpen(false)}
+                  className="text-gray-500 hover:text-white text-xs px-2 py-1 rounded border border-white/10"
+                >Esc</button>
+              </div>
+
+              <div className="overflow-y-auto custom-scrollbar p-4">
+                {loading && <p className="text-xs text-gray-500 text-center py-8">Buscando…</p>}
+                {!loading && query && results.length === 0 && (
+                  <p className="text-xs text-gray-500 text-center py-8">Sin resultados.</p>
+                )}
+                {!loading && !query && (
+                  <div className="text-xs text-gray-500 px-2 py-4 leading-relaxed">
+                    <p className="mb-2">Ejemplos:</p>
+                    <ul className="space-y-1 font-mono">
+                      <li>· <code className="text-gray-300">charizard</code></li>
+                      <li>· <code className="text-gray-300">name:pikachu subtypes:vmax</code></li>
+                      <li>· <code className="text-gray-300">types:fire hp:[150 TO *]</code></li>
+                      <li>· <code className="text-gray-300">nationalPokedexNumbers:[1 TO 151]</code></li>
+                    </ul>
+                  </div>
+                )}
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                  {results.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => setSelected(c)}
+                      className="group bg-white/[0.02] hover:bg-white/5 border border-white/5 hover:border-white/10 rounded-xl p-1.5 transition text-left"
+                    >
+                      {c.images?.small && (
+                        <img src={c.images.small} alt={c.name} className="w-full h-auto rounded-md" />
+                      )}
+                      <p className="text-[10px] text-gray-300 truncate mt-1">{c.name}</p>
+                      <p className="text-[9px] text-gray-600 truncate">{c.set?.name}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <CardDetailModal card={selected} onClose={() => setSelected(null)} readOnly />
+    </>
+  );
+}

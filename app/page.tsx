@@ -1,0 +1,535 @@
+"use client";
+
+import { useUser } from "@clerk/nextjs";
+import { AnimatePresence, motion } from "framer-motion";
+import { useState, useEffect, useMemo } from "react";
+import {
+  getUserData,
+  updateCoins,
+  syncSetToDatabase,
+  savePackToCollection,
+  getSetsFromDB,
+  getFullCollection,
+  getProfileStats,
+} from "./action";
+import { getCardsFromSet } from "../services/pokemon";
+import { openStandardPack, openPremiumPack, openGoldenPack } from "../utils/packLogic";
+import { saveToCollection, getCollection } from "../utils/storage";
+import { useCurrency } from "../hooks/useGameCurrency";
+import PokemonCard from "../components/PokemonCard";
+import BackgroundParticles from "../components/BackgroundParticles";
+import AppHeader from "../components/AppHeader";
+
+type PackType = "STANDARD" | "PREMIUM" | "GOLDEN" | "SPECIAL";
+
+export default function Home() {
+  const { coins, setCoins, spendCoins } = useCurrency();
+  const { isSignedIn, isLoaded } = useUser();
+
+  const [dbSets, setDbSets] = useState<any[]>([]);
+  const [selectedSet, setSelectedSet] = useState<string | null>(null);
+  const [allCards, setAllCards] = useState<any[]>([]);
+  const [userCollectionIds, setUserCollectionIds] = useState<string[]>([]);
+  const [currentPackPrice, setCurrentPackPrice] = useState(0);
+  const [currentPackType, setCurrentPackType] = useState<PackType | null>(null);
+  const [currentPack, setCurrentPack] = useState<any[]>([]);
+  const [packIndex, setPackIndex] = useState(0);
+  const [isPackOpen, setIsPackOpen] = useState(false);
+  const [cardRevealed, setCardRevealed] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [stats, setStats] = useState<any>(null);
+
+  const currentSetObj = dbSets.find((s) => s.id === selectedSet);
+  const isSpecialSet = currentSetObj
+    ? currentSetObj.name.toLowerCase().includes("promos") ||
+      currentSetObj.name.toLowerCase().includes("gallery") ||
+      currentSetObj.series === "POP" ||
+      currentSetObj.series === "Other" ||
+      currentSetObj.total < 69
+    : false;
+
+  useEffect(() => {
+    (async () => {
+      const sets = await getSetsFromDB();
+      // Sort by release date desc when available
+      sets.sort((a: any, b: any) => {
+        const da = a.releaseDate ? new Date(a.releaseDate).getTime() : 0;
+        const db = b.releaseDate ? new Date(b.releaseDate).getTime() : 0;
+        return db - da;
+      });
+      setDbSets(sets);
+    })();
+  }, []);
+
+  useEffect(() => {
+    const syncUserData = async () => {
+      if (!isLoaded) return;
+      if (isSignedIn) {
+        const data = await getUserData();
+        if (data) setCoins(data.coins);
+        const myCards = await getFullCollection();
+        setUserCollectionIds(myCards.map((c: any) => c.id));
+        getProfileStats().then(setStats);
+      } else {
+        const localCards = getCollection();
+        setUserCollectionIds(localCards.map((c: any) => c.id));
+      }
+    };
+    syncUserData();
+  }, [isSignedIn, isLoaded, setCoins]);
+
+  useEffect(() => {
+    async function loadAndSync() {
+      if (!selectedSet) return;
+      setLoading(true);
+      try {
+        const cards = await getCardsFromSet(selectedSet);
+        if (cards && cards.length > 0) {
+          setAllCards(cards);
+          syncSetToDatabase(selectedSet, cards).catch((err) => console.error("sync:", err));
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadAndSync();
+  }, [selectedSet]);
+
+  const setsBySeries = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    dbSets.forEach((set) => {
+      const seriesName = set.series || "Otras";
+      if (!groups[seriesName]) groups[seriesName] = [];
+      groups[seriesName].push(set);
+    });
+    return groups;
+  }, [dbSets]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Space" && isPackOpen) {
+        e.preventDefault();
+        handleNextCard();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPackOpen, cardRevealed, packIndex, currentPack, isSignedIn]);
+
+  const handleSelectSet = (setId: string) => {
+    setSelectedSet(setId);
+    resetPackState();
+  };
+
+  const resetPackState = () => {
+    setCurrentPack([]);
+    setPackIndex(0);
+    setIsPackOpen(false);
+    setCardRevealed(false);
+  };
+
+  const handleBuyPack = async (type: PackType) => {
+    if (!allCards || allCards.length === 0) {
+      alert("Las cartas no se han cargado. Recarga la página.");
+      return;
+    }
+    let price = 0;
+    let newPack: any[] = [];
+    if (type === "STANDARD") { price = 50; if (coins >= price) newPack = openStandardPack(allCards); }
+    else if (type === "PREMIUM") { price = 250; if (coins >= price) newPack = openPremiumPack(allCards); }
+    else if (type === "GOLDEN" || type === "SPECIAL") { price = 2500; if (coins >= price) newPack = openGoldenPack(allCards, userCollectionIds); }
+
+    if (coins < price) { alert("No tienes suficientes monedas"); return; }
+
+    if (spendCoins(price)) {
+      if (isSignedIn) await updateCoins(coins - price);
+      setCurrentPackType(type);
+      setCurrentPack(newPack);
+      setCurrentPackPrice(price);
+      setPackIndex(0);
+      setCardRevealed(false);
+      setIsPackOpen(true);
+    }
+  };
+
+  const handleNextCard = async () => {
+    if (!cardRevealed) {
+      setCardRevealed(true);
+      return;
+    }
+    if (packIndex < 9) {
+      setCardRevealed(true);
+      setPackIndex((prev) => prev + 1);
+    } else {
+      if (isSignedIn) await savePackToCollection(currentPack, currentPackPrice);
+      else saveToCollection(currentPack);
+      const newPackIds = currentPack.map((c) => c.id);
+      setUserCollectionIds((prev) => [...prev, ...newPackIds]);
+      setIsPackOpen(false);
+    }
+  };
+
+  const handleBackToMenu = () => {
+    setSelectedSet(null);
+    setAllCards([]);
+    resetPackState();
+  };
+
+  // Count new cards in finished pack
+  const newCardsInPack = useMemo(() => {
+    if (!currentPack.length) return 0;
+    const collectedBefore = new Set(userCollectionIds);
+    const seen = new Set<string>();
+    let count = 0;
+    currentPack.forEach((c) => {
+      if (!collectedBefore.has(c.id) && !seen.has(c.id)) count++;
+      seen.add(c.id);
+    });
+    return count;
+  }, [currentPack, userCollectionIds]);
+
+  return (
+    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 bg-[#050505] text-[#ededed] overflow-hidden select-none">
+      <BackgroundParticles />
+
+      <AppHeader />
+
+      {/* HERO STATS (signed-in) */}
+      {!selectedSet && isSignedIn && stats && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-6xl grid grid-cols-2 md:grid-cols-4 gap-3 mb-12 relative z-10"
+        >
+          {[
+            { label: "Cartas totales", value: stats.totalCards, accent: "text-white" },
+            { label: "Únicas", value: stats.totalUnique, accent: "text-blue-300" },
+            { label: "Sets completos", value: `${stats.setsCompleted}/${stats.setsTotal}`, accent: "text-emerald-300" },
+            { label: "Valor colección", value: stats.totalValue.toLocaleString(), accent: "text-yellow-300" },
+          ].map((s) => (
+            <div key={s.label} className="surface rounded-2xl p-4">
+              <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider">{s.label}</p>
+              <p className={`text-xl md:text-2xl font-semibold mt-1 ${s.accent} tabular-nums`}>{s.value}</p>
+            </div>
+          ))}
+        </motion.div>
+      )}
+
+      {/* VIEW 1: SET SELECTION */}
+      {!selectedSet && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="w-full max-w-6xl flex flex-col gap-16 pb-24 relative z-10"
+        >
+          {Object.entries(setsBySeries).map(([seriesName, sets], idx) => (
+            <motion.div
+              key={seriesName}
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: idx * 0.08, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+              className="flex flex-col gap-6"
+            >
+              <div className="flex items-center gap-6">
+                <h2 className="text-xs font-medium text-gray-400 uppercase tracking-[0.3em]">{seriesName}</h2>
+                <div className="h-px bg-white/5 flex-1"></div>
+                <span className="text-xs text-gray-600 font-mono">{sets.length}</span>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
+                {sets.map((set) => (
+                  <motion.button
+                    key={set.id}
+                    whileHover={{ y: -4 }}
+                    transition={{ duration: 0.2 }}
+                    onClick={() => handleSelectSet(set.id)}
+                    className="group surface surface-hover p-5 md:p-7 rounded-2xl flex flex-col items-center gap-4 overflow-hidden"
+                  >
+                    {set.images?.logo ? (
+                      <img
+                        src={set.images.logo}
+                        alt={set.name}
+                        className="h-12 md:h-16 object-contain group-hover:scale-105 transition-transform duration-500 opacity-90 group-hover:opacity-100"
+                      />
+                    ) : (
+                      <div className="h-12 md:h-16 flex items-center text-gray-600 text-xs">{set.name}</div>
+                    )}
+                    <span className="font-medium text-[10px] md:text-xs text-gray-500 group-hover:text-gray-200 transition-colors text-center tracking-wide truncate w-full">
+                      {set.name}
+                    </span>
+                  </motion.button>
+                ))}
+              </div>
+            </motion.div>
+          ))}
+        </motion.div>
+      )}
+
+      {/* VIEW 2: PACK SHOP */}
+      {selectedSet && !isPackOpen && !currentPack.length && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.98 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+          className="w-full max-w-5xl flex flex-col items-center pt-4 relative z-10"
+        >
+          <button
+            onClick={handleBackToMenu}
+            className="mb-12 text-gray-500 hover:text-gray-200 transition flex items-center gap-2 text-xs font-medium uppercase tracking-[0.2em]"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+              <path d="m15 18-6-6 6-6" />
+            </svg>
+            Volver
+          </button>
+
+          {currentSetObj?.images?.logo && (
+            <img src={currentSetObj.images.logo} alt={currentSetObj.name} className="h-16 md:h-20 object-contain mb-12 opacity-90" />
+          )}
+
+          <div className={`grid grid-cols-1 ${isSpecialSet ? "max-w-md" : "md:grid-cols-3"} gap-4 md:gap-6 w-full px-2`}>
+            {isSpecialSet ? (
+              <PackCard
+                accent="blue"
+                badge="Edición limitada"
+                title="Promo Pack"
+                description={<>Garantiza una carta<br />que aún no posees.</>}
+                price={2500}
+                icon={
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                  </svg>
+                }
+                onClick={() => handleBuyPack("SPECIAL")}
+              />
+            ) : (
+              <>
+                <PackCard
+                  accent="white"
+                  title="Estándar"
+                  description={<>Probabilidades oficiales.<br />La opción clásica.</>}
+                  price={50}
+                  icon={
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
+                      <rect width="12" height="16" x="2" y="6" rx="2" />
+                      <path d="m22 16-2.5-9.4a2 2 0 0 0-2.4-1.4l-4.5 1.2" />
+                    </svg>
+                  }
+                  onClick={() => handleBuyPack("STANDARD")}
+                />
+                <PackCard
+                  accent="purple"
+                  badge="Élite"
+                  title="Premium"
+                  description={<>Sin cartas comunes.<br />2 Raras aseguradas.</>}
+                  price={250}
+                  icon={
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
+                      <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
+                    </svg>
+                  }
+                  onClick={() => handleBuyPack("PREMIUM")}
+                />
+                <PackCard
+                  accent="yellow"
+                  badge="Coleccionista"
+                  title="Leyenda"
+                  description={<>1 carta nueva<br />garantizada.</>}
+                  price={2500}
+                  icon={
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
+                      <path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14" />
+                    </svg>
+                  }
+                  onClick={() => handleBuyPack("GOLDEN")}
+                />
+              </>
+            )}
+          </div>
+
+          <AnimatePresence>
+            {loading && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 bg-[#050505]/90 z-[100] flex flex-col items-center justify-center backdrop-blur-xl"
+              >
+                <div className="w-10 h-10 border-2 border-white/20 border-t-white rounded-full animate-spin mb-6"></div>
+                <h2 className="text-xs font-medium text-gray-500 tracking-[0.3em] uppercase">Preparando cartas</h2>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+      )}
+
+      {/* VIEW 3: PACK OPENING */}
+      {isPackOpen && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="w-full max-w-6xl flex flex-col items-center relative min-h-[70vh] justify-center z-10"
+        >
+          <div className="relative w-full h-[450px] flex justify-center items-center perspective-1000">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={packIndex}
+                initial={{ x: 120, opacity: 0, rotateY: 60, scale: 0.92 }}
+                animate={{ x: 0, opacity: 1, rotateY: 0, scale: 1 }}
+                exit={{ x: -120, opacity: 0, rotateY: -60, scale: 0.92 }}
+                transition={{ type: "spring", stiffness: 200, damping: 25 }}
+                className="absolute z-20 w-64 sm:w-72 aspect-[2.5/3.5] cursor-pointer"
+                onClick={handleNextCard}
+              >
+                <div className="w-full h-full relative">
+                  {!userCollectionIds.includes(currentPack[packIndex].id) && cardRevealed && (
+                    <motion.div
+                      initial={{ scale: 0, x: -20 }}
+                      animate={{ scale: 1, x: 0 }}
+                      transition={{ type: "spring", bounce: 0.5 }}
+                      className="absolute -top-3 -left-3 z-50 bg-emerald-500 text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-lg"
+                    >
+                      Nueva
+                    </motion.div>
+                  )}
+                  <PokemonCard card={currentPack[packIndex]} reveal={cardRevealed || packIndex > 0} useHighRes={true} />
+                </div>
+              </motion.div>
+            </AnimatePresence>
+
+            {currentPackType === "GOLDEN" && packIndex === 9 && (
+              <motion.div
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="absolute top-[-40px] text-yellow-400 text-xs font-semibold tracking-[0.3em] uppercase"
+              >
+                Carta garantizada
+              </motion.div>
+            )}
+
+            <div className="absolute -bottom-16 text-gray-500 font-mono text-xs tracking-[0.3em] uppercase">
+              {packIndex + 1} / {currentPack.length}
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* VIEW 4: SUMMARY */}
+      {!isPackOpen && currentPack.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="flex flex-col items-center w-full max-w-7xl pb-24 pt-4 relative z-10"
+        >
+          <div className="flex flex-col md:flex-row gap-4 mb-12 items-center w-full justify-between">
+            <div>
+              <h2 className="text-2xl font-semibold text-white tracking-wide">Resumen</h2>
+              <p className="text-xs text-gray-500 mt-1">
+                {newCardsInPack > 0
+                  ? `${newCardsInPack} carta${newCardsInPack > 1 ? "s" : ""} nueva${newCardsInPack > 1 ? "s" : ""} añadida${newCardsInPack > 1 ? "s" : ""} a tu colección`
+                  : "Sin cartas nuevas en este sobre"}
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setCurrentPack([])} className="btn-ghost text-white px-5 py-2.5 rounded-xl text-sm font-medium">
+                Abrir otro
+              </button>
+              <button onClick={handleBackToMenu} className="btn-primary px-5 py-2.5 rounded-xl text-sm font-medium">
+                Finalizar
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 md:gap-6 w-full">
+            {currentPack.map((card, index) => {
+              const isNew = !userCollectionIds.slice(0, userCollectionIds.length - currentPack.length).includes(card.id);
+              return (
+                <motion.div
+                  key={index}
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.04 }}
+                  className="relative"
+                >
+                  {isNew && (
+                    <div className="absolute -top-2 -left-2 z-30 bg-emerald-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shadow-lg">
+                      Nueva
+                    </div>
+                  )}
+                  <PokemonCard card={card} reveal={true} useHighRes={true} />
+                </motion.div>
+              );
+            })}
+          </div>
+        </motion.div>
+      )}
+    </main>
+  );
+}
+
+interface PackCardProps {
+  accent: "white" | "purple" | "yellow" | "blue";
+  badge?: string;
+  title: string;
+  description: React.ReactNode;
+  price: number;
+  icon: React.ReactNode;
+  onClick: () => void;
+}
+
+function PackCard({ accent, badge, title, description, price, icon, onClick }: PackCardProps) {
+  const accents: Record<string, { border: string; iconColor: string; btn: string; badgeBg: string }> = {
+    white: {
+      border: "border-white/5",
+      iconColor: "text-gray-400",
+      btn: "btn-ghost text-white",
+      badgeBg: "bg-white/10 text-gray-300",
+    },
+    purple: {
+      border: "border-purple-500/20",
+      iconColor: "text-purple-400",
+      btn: "bg-purple-600 hover:bg-purple-500 text-white",
+      badgeBg: "bg-purple-500/15 text-purple-300",
+    },
+    yellow: {
+      border: "border-yellow-500/20",
+      iconColor: "text-yellow-400",
+      btn: "bg-yellow-500 hover:bg-yellow-400 text-black",
+      badgeBg: "bg-yellow-500/15 text-yellow-300",
+    },
+    blue: {
+      border: "border-blue-500/20",
+      iconColor: "text-blue-400",
+      btn: "bg-blue-600 hover:bg-blue-500 text-white",
+      badgeBg: "bg-blue-500/15 text-blue-300",
+    },
+  };
+  const a = accents[accent];
+
+  return (
+    <motion.button
+      whileHover={{ y: -6 }}
+      transition={{ duration: 0.25 }}
+      onClick={onClick}
+      className={`bg-[#111] ${a.border} border rounded-3xl p-6 md:p-8 flex flex-col items-center group relative overflow-hidden text-left`}
+    >
+      {badge && (
+        <div className={`absolute top-0 left-0 right-0 ${a.badgeBg} text-[10px] uppercase font-semibold text-center py-1.5 tracking-[0.25em]`}>
+          {badge}
+        </div>
+      )}
+      <div className={`${a.iconColor} mb-6 md:mb-8 ${badge ? "mt-6" : ""} group-hover:scale-110 transition-transform duration-500`}>
+        {icon}
+      </div>
+      <h3 className="text-lg md:text-xl font-semibold text-white mb-2 md:mb-3">{title}</h3>
+      <p className="text-[11px] md:text-xs text-gray-500 text-center mb-6 md:mb-8 leading-relaxed">{description}</p>
+      <div className={`mt-auto ${a.btn} font-medium py-2.5 px-6 rounded-xl w-full text-center transition text-sm`}>
+        {price.toLocaleString()} monedas
+      </div>
+    </motion.button>
+  );
+}
