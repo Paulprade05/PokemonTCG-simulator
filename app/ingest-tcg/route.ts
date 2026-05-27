@@ -10,13 +10,21 @@ function headers(): HeadersInit {
   return h;
 }
 
-async function fetchJson(url: string, retries = 3): Promise<any> {
+async function fetchJson(url: string, retries = 6): Promise<any> {
   for (let i = 0; i < retries; i++) {
-    const res = await fetch(url, { headers: headers(), cache: "no-store" });
+    let res: Response;
+    try {
+      res = await fetch(url, { headers: headers(), cache: "no-store" });
+    } catch (e) {
+      const wait = 2000 * (i + 1);
+      console.warn(`network err, retry in ${wait}ms`);
+      await new Promise((r) => setTimeout(r, wait));
+      continue;
+    }
     if (res.ok) return res.json();
-    if (res.status === 429) {
-      const wait = 1000 * (i + 1);
-      console.warn(`429, waiting ${wait}ms`);
+    if ([429, 500, 502, 503, 504].includes(res.status)) {
+      const wait = Math.min(60000, 3000 * Math.pow(2, i));
+      console.warn(`${res.status}, retry in ${wait}ms (${i + 1}/${retries})`);
       await new Promise((r) => setTimeout(r, wait));
       continue;
     }
@@ -162,4 +170,5 @@ export async function GET(request: Request) {
   }
 }
 
-export const maxDuration = 800; // seconds; Vercel limit on Pro
+export const maxDuration = 300; // Vercel Pro max; Hobby caps at 60. Use ?setId= to chunk.
+export const dynamic = "force-dynamic";
