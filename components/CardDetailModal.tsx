@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import TypeBadge, { EnergyCost } from "./TypeBadge";
 import { SELL_PRICES } from "../utils/constanst";
 import { getCardFromDB } from "../app/action";
-import { getCardByIdApi } from "../services/pokemonApi";
 
 interface CardDetailModalProps {
   card: any | null;
@@ -31,39 +30,10 @@ export default function CardDetailModal({
     setEnriched(null);
     if (!card?.id) return;
     setLoadingEnrich(true);
-    // 1) BD local rápido. 2) Si carece de rich data, completar via API.
-    (async () => {
-      const db: any = await getCardFromDB(card.id);
-      const dbHasRich =
-        db && (
-          (db.legalities && Object.keys(db.legalities).length > 0) ||
-          (db.abilities && db.abilities.length > 0) ||
-          (db.rules && db.rules.length > 0) ||
-          (db.cardmarket && Object.keys(db.cardmarket || {}).length > 0)
-        );
-      if (db && dbHasRich) {
-        setEnriched(db);
-      } else {
-        const api = await getCardByIdApi(card.id);
-        if (api && db) {
-          // Merge BD + API → API completa lo vacío.
-          const merged: any = { ...db };
-          Object.keys(api).forEach((k) => {
-            const cur = (merged as any)[k];
-            const empty = cur == null ||
-              (Array.isArray(cur) && cur.length === 0) ||
-              (typeof cur === "object" && !Array.isArray(cur) && Object.keys(cur || {}).length === 0);
-            if (empty) (merged as any)[k] = (api as any)[k];
-          });
-          setEnriched(merged);
-        } else if (api) {
-          setEnriched(api);
-        } else if (db) {
-          setEnriched(db);
-        }
-      }
-      setLoadingEnrich(false);
-    })();
+    // Solo BD. Sin fallback API.
+    getCardFromDB(card.id)
+      .then((db) => { if (db) setEnriched(db); })
+      .finally(() => setLoadingEnrich(false));
   }, [card?.id]);
 
   const isEmpty = (v: any) =>

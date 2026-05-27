@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { searchCardsInDB } from "../app/action";
-import { searchCards } from "../services/pokemonApi";
 import CardDetailModal from "./CardDetailModal";
 
 interface Hit {
@@ -39,16 +38,10 @@ export default function GlobalSearch() {
     if (!query.trim()) { setResults([]); return; }
     setLoading(true);
     const handle = setTimeout(async () => {
-      // Lucene-like query → API directo. Plain → BD local rápida.
-      if (query.includes(":") || query.includes("[")) {
-        const res = await searchCards(query, 1, 24);
-        setResults(res.data as any);
-      } else {
-        const dbHits = await searchCardsInDB(query, 30);
-        setResults(dbHits as any);
-      }
+      const dbHits = await searchCardsInDB(query, 50);
+      setResults(dbHits as any);
       setLoading(false);
-    }, 300);
+    }, 250);
     return () => clearTimeout(handle);
   }, [query]);
 
