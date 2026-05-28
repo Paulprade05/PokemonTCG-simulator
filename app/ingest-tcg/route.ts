@@ -131,6 +131,7 @@ export async function GET(request: Request) {
     let totalCards = 0;
     const targets = onlySetId ? allSets.filter((s) => s.id === onlySetId) : allSets;
 
+    const failedSets: string[] = [];
     for (const s of targets) {
       if (onlyMissing) {
         const { rows } = await sql`SELECT count(*)::int AS c FROM cards WHERE set_id = ${s.id}`;
@@ -143,26 +144,32 @@ export async function GET(request: Request) {
       let page = 1;
       let fetched = 0;
       console.log(`Ingest set ${s.id} (${s.total} cards expected)`);
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const url = `${API}/cards?q=set.id:${encodeURIComponent(s.id)}&page=${page}&pageSize=${PAGE_SIZE}&orderBy=number`;
-        const data = await fetchJson(url);
-        const cards: any[] = data.data || [];
-        if (cards.length === 0) break;
-        for (const c of cards) {
-          await upsertCard(c);
-          fetched++;
+      try {
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const url = `${API}/cards?q=set.id:${encodeURIComponent(s.id)}&page=${page}&pageSize=${PAGE_SIZE}&orderBy=number`;
+          const data = await fetchJson(url);
+          const cards: any[] = data.data || [];
+          if (cards.length === 0) break;
+          for (const c of cards) {
+            await upsertCard(c);
+            fetched++;
+          }
+          if (cards.length < PAGE_SIZE) break;
+          page++;
         }
-        if (cards.length < PAGE_SIZE) break;
-        page++;
+        console.log(`  -> ${s.id} done: ${fetched}`);
+        totalCards += fetched;
+      } catch (err: any) {
+        console.warn(`  -> ${s.id} FAILED: ${err?.message || err}. Skipping.`);
+        failedSets.push(s.id);
       }
-      console.log(`  -> ${s.id} done: ${fetched}`);
-      totalCards += fetched;
     }
 
     return NextResponse.json({
       setsProcessed: targets.length,
       cardsProcessed: totalCards,
+      failedSets,
     });
   } catch (e: any) {
     console.error("ingest-tcg error:", e);
