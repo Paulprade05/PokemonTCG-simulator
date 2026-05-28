@@ -47,6 +47,14 @@ export default function FriendsPage() {
 
   useEffect(() => { if (isLoaded) loadData(); }, [isLoaded, isSignedIn]);
 
+  // Bloquear scroll del fondo con el modal de intercambio abierto
+  useEffect(() => {
+    if (!tradeModalFriend) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [tradeModalFriend]);
+
   const handleAddFriend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!friendIdInput.trim()) return;

@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useState } from "react";
+import { useUser } from "@clerk/nextjs";
 import TypeBadge, { EnergyCost } from "./TypeBadge";
 import { SELL_PRICES } from "../utils/constanst";
 import { getCardFromDB, toggleWishlist, getWishlistIds } from "../app/action";
@@ -23,14 +24,28 @@ export default function CardDetailModal({
   onSellAll,
   onNavigateToCard,
 }: CardDetailModalProps) {
+  const { isSignedIn } = useUser();
   const [enriched, setEnriched] = useState<any | null>(null);
   const [loadingEnrich, setLoadingEnrich] = useState(false);
   const [wishlisted, setWishlisted] = useState(false);
 
   useEffect(() => {
-    if (!card?.id) return;
+    if (!card?.id || !isSignedIn) return;
     getWishlistIds().then((ids: string[]) => setWishlisted(ids.includes(card.id)));
-  }, [card?.id]);
+  }, [card?.id, isSignedIn]);
+
+  // Cerrar con Escape + bloquear scroll del fondo
+  useEffect(() => {
+    if (!card) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [card, onClose]);
 
   const handleToggleWishlist = async () => {
     if (!card?.id) return;
@@ -150,10 +165,11 @@ export default function CardDetailModal({
                   </button>
                 )
               )}
-              {/* Wishlist */}
+              {/* Wishlist (solo logueado) */}
+              {isSignedIn && (
               <button
                 onClick={handleToggleWishlist}
-                className={`absolute top-16 left-4 z-50 w-10 h-10 rounded-full border transition flex items-center justify-center ${
+                className={`absolute top-16 left-4 z-50 w-10 h-10 rounded-full border transition flex items-center justify-center press ${
                   wishlisted
                     ? "bg-pink-500/20 border-pink-500/40 text-pink-400"
                     : "bg-white/5 border-white/10 text-gray-500 hover:text-white"
@@ -165,6 +181,7 @@ export default function CardDetailModal({
                   <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
                 </svg>
               </button>
+              )}
               {c.regulationMark && (
                 <span className="absolute top-4 right-4 z-40 w-7 h-7 rounded-full bg-white/10 border border-white/10 text-white text-xs font-mono flex items-center justify-center">
                   {c.regulationMark}

@@ -33,6 +33,14 @@ export default function GlobalSearch() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Bloquear scroll del fondo mientras el buscador está abierto
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [open]);
+
   // Debounced search
   useEffect(() => {
     if (!query.trim()) { setResults([]); return; }

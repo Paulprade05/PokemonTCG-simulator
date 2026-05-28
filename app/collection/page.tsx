@@ -288,8 +288,19 @@ export default function CollectionPage() {
 
         {/* GRID */}
         {processedCards.length === 0 ? (
-          <div className="surface rounded-2xl py-20 text-center text-gray-500 text-sm">
-            No hay cartas que mostrar.
+          <div className="surface rounded-2xl py-16 md:py-20 px-6 text-center flex flex-col items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/5 flex items-center justify-center">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-7 h-7 text-gray-500">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-white font-medium">{cards.length === 0 ? "Aún no tienes cartas" : "Sin resultados"}</p>
+              <p className="text-gray-500 text-sm mt-1">{cards.length === 0 ? "Abre tu primer sobre para empezar" : "Prueba otros filtros"}</p>
+            </div>
+            {cards.length === 0 && (
+              <Link href="/" className="btn-primary press px-5 py-2.5 rounded-xl text-sm font-medium">Abrir sobres</Link>
+            )}
           </div>
         ) : (
           <motion.div
