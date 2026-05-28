@@ -12,6 +12,13 @@ export const metadata: Metadata = {
   description: "Abre sobres y colecciona cartas",
 };
 
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  themeColor: "#050505",
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{

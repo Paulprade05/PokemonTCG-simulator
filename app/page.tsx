@@ -623,7 +623,7 @@ export default function Home() {
                 animate={{ x: 0, opacity: 1, rotateY: 0, scale: 1 }}
                 exit={{ x: -120, opacity: 0, rotateY: -60, scale: 0.92 }}
                 transition={{ type: "spring", stiffness: 200, damping: 25 }}
-                className="absolute z-20 w-64 sm:w-72 aspect-[2.5/3.5] cursor-pointer"
+                className="absolute z-20 w-56 sm:w-72 aspect-[2.5/3.5] cursor-pointer"
                 onClick={handleNextCard}
               >
                 <div className="w-full h-full relative">
@@ -657,12 +657,12 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="mt-24 flex items-center gap-3">
+          <div className="mt-24 flex flex-wrap items-center justify-center gap-3 px-4">
             <button
               onClick={handleNextCard}
               className="btn-ghost text-white px-5 py-2.5 rounded-xl text-sm font-medium"
             >
-              Siguiente <kbd className="ml-1 text-[10px] opacity-60">espacio</kbd>
+              Siguiente <kbd className="ml-1 text-[10px] opacity-60 hidden sm:inline">espacio</kbd>
             </button>
             <button
               onClick={handleRevealAll}
@@ -694,7 +694,7 @@ export default function Home() {
                   : "Sin cartas nuevas en este sobre"}
               </p>
             </div>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-2 md:gap-3 w-full md:w-auto">
               {isSignedIn && dupeIdsInPack.length > 0 && !soldInfo && (
                 <button
                   onClick={handleSellPackDupes}
@@ -736,15 +736,15 @@ export default function Home() {
               animate={{ opacity: 1, scale: 1 }}
               className="w-full mb-8 surface rounded-2xl p-4 flex items-center gap-4 border border-yellow-500/20"
             >
-              <img src={bestPull.images?.small} alt={bestPull.name} className="h-24 rounded-lg" />
+              <img src={bestPull.images?.small} alt={bestPull.name} className="h-16 md:h-24 rounded-lg shrink-0" />
               <div className="flex-1 min-w-0">
-                <p className="text-yellow-400 text-[10px] font-medium uppercase tracking-[0.2em]">Mejor carta del sobre</p>
-                <h3 className="text-lg font-semibold text-white truncate">{bestPull.name}</h3>
-                <p className="text-xs text-gray-500">{bestPull.rarity}</p>
+                <p className="text-yellow-400 text-[9px] md:text-[10px] font-medium uppercase tracking-[0.2em]">Mejor carta del sobre</p>
+                <h3 className="text-base md:text-lg font-semibold text-white truncate">{bestPull.name}</h3>
+                <p className="text-[11px] md:text-xs text-gray-500">{bestPull.rarity}</p>
               </div>
-              <div className="text-right">
-                <p className="text-gray-500 text-[10px] uppercase tracking-wider">Valor</p>
-                <p className="text-2xl font-semibold text-emerald-400 tabular-nums">{SELL_PRICES[bestPull.rarity] || 10}</p>
+              <div className="text-right shrink-0">
+                <p className="text-gray-500 text-[9px] md:text-[10px] uppercase tracking-wider">Valor</p>
+                <p className="text-xl md:text-2xl font-semibold text-emerald-400 tabular-nums">{SELL_PRICES[bestPull.rarity] || 10}</p>
               </div>
             </motion.div>
           )}
