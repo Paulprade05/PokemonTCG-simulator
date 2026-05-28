@@ -465,6 +465,7 @@ export default function Home() {
                   <motion.button
                     key={set.id}
                     whileHover={{ y: -4 }}
+                    whileTap={{ scale: 0.96 }}
                     transition={{ duration: 0.2 }}
                     onClick={() => handleSelectSet(set.id)}
                     className="group surface surface-hover p-5 md:p-7 rounded-2xl flex flex-col items-center gap-4 overflow-hidden"
@@ -854,14 +855,14 @@ function PackCard({ accent, badge, title, description, price, icon, onClick, onM
       <div className="mt-auto w-full flex flex-col gap-2">
         <button
           onClick={onClick}
-          className={`${a.btn} font-medium py-2.5 px-6 rounded-xl w-full text-center transition text-sm`}
+          className={`${a.btn} press font-medium py-2.5 px-6 rounded-xl w-full text-center transition text-sm`}
         >
           {price.toLocaleString()} monedas
         </button>
         {onMulti && (
           <button
             onClick={onMulti}
-            className="bg-white/5 hover:bg-white/10 border border-white/5 text-gray-300 font-medium py-2 px-6 rounded-xl w-full text-center transition text-xs"
+            className="press bg-white/5 hover:bg-white/10 border border-white/5 text-gray-300 font-medium py-2 px-6 rounded-xl w-full text-center transition text-xs"
           >
             Abrir ×{multiCount} · {(price * multiCount).toLocaleString()}
           </button>

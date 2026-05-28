@@ -1,4 +1,3 @@
-// src/components/BackgroundParticles.tsx
 "use client";
 
 import { motion } from "framer-motion";
@@ -8,7 +7,8 @@ export default function BackgroundParticles() {
   const [particles, setParticles] = useState<any[]>([]);
 
   useEffect(() => {
-    const newParticles = Array.from({ length: 25 }).map((_, i) => ({
+    const count = window.innerWidth < 640 ? 14 : 25;
+    const newParticles = Array.from({ length: count }).map((_, i) => ({
       id: i,
       x: Math.random() * 100,
       y: Math.random() * 100,
@@ -21,6 +21,34 @@ export default function BackgroundParticles() {
 
   return (
     <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+      {/* Aurora blobs */}
+      <div
+        className="aurora-blob"
+        style={{
+          width: 520, height: 520, top: "-10%", left: "-8%",
+          background: "radial-gradient(circle, #6d28d9, transparent 70%)",
+          animation: "aurora-float 22s ease-in-out infinite",
+        }}
+      />
+      <div
+        className="aurora-blob"
+        style={{
+          width: 460, height: 460, bottom: "-12%", right: "-6%",
+          background: "radial-gradient(circle, #0ea5e9, transparent 70%)",
+          animation: "aurora-float 28s ease-in-out infinite reverse",
+        }}
+      />
+      <div
+        className="aurora-blob"
+        style={{
+          width: 380, height: 380, top: "40%", left: "55%",
+          background: "radial-gradient(circle, #10b981, transparent 70%)",
+          opacity: 0.12,
+          animation: "aurora-float 34s ease-in-out infinite",
+        }}
+      />
+
+      {/* Floating particles */}
       {particles.map((p) => (
         <motion.div
           key={p.id}
@@ -46,7 +74,9 @@ export default function BackgroundParticles() {
           }}
         />
       ))}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_transparent_0%,_#000_100%)] opacity-40"></div>
+
+      {/* Vignette + grain overlay */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_transparent_0%,_#000_100%)] opacity-50" />
     </div>
   );
 }
