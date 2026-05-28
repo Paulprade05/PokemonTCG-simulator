@@ -47,7 +47,6 @@ export default function Home() {
   const [soldInfo, setSoldInfo] = useState<{ earned: number; sold: number } | null>(null);
   const [sellingDupes, setSellingDupes] = useState(false);
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
-  const [showAchievements, setShowAchievements] = useState(false);
 
   const currentSetObj = dbSets.find((s) => s.id === selectedSet);
   const isSpecialSet = currentSetObj
@@ -357,86 +356,77 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* HERO STATS (signed-in) */}
+      {/* DASHBOARD (signed-in) — panel unificado */}
       {!selectedSet && isSignedIn && stats && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="w-full max-w-6xl grid grid-cols-2 md:grid-cols-4 gap-3 mb-12 relative z-10"
+          transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+          className="w-full max-w-6xl mb-10 relative z-10"
         >
-          {[
-            { label: "Cartas totales", value: stats.totalCards, accent: "text-white" },
-            { label: "Únicas", value: stats.totalUnique, accent: "text-blue-300" },
-            { label: "Sets completos", value: `${stats.setsCompleted}/${stats.setsTotal}`, accent: "text-emerald-300" },
-            { label: "Valor colección", value: stats.totalValue.toLocaleString(), accent: "text-yellow-300" },
-          ].map((s) => (
-            <div key={s.label} className="surface rounded-2xl p-4">
-              <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider">{s.label}</p>
-              <p className={`text-xl md:text-2xl font-semibold mt-1 ${s.accent} tabular-nums`}>{s.value}</p>
+          <div className="surface rounded-3xl p-5 md:p-6 overflow-hidden relative">
+            <div className="absolute -top-16 -right-16 w-48 h-48 bg-yellow-500/10 rounded-full blur-3xl pointer-events-none" />
+
+            <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-5 relative">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.3em] text-gray-500">Valor de tu colección</p>
+                <p className="text-3xl md:text-4xl font-semibold text-gradient mt-1 tabular-nums">
+                  {stats.totalValue.toLocaleString()}
+                  <span className="text-base text-gray-500 font-normal ml-2">monedas</span>
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2 md:gap-3 md:w-auto">
+                {[
+                  { label: "Cartas", value: stats.totalCards },
+                  { label: "Únicas", value: stats.totalUnique },
+                  { label: "Sets", value: `${stats.setsCompleted}/${stats.setsTotal}` },
+                ].map((s) => (
+                  <div key={s.label} className="bg-white/[0.03] border border-white/5 rounded-2xl px-3 md:px-5 py-2.5 text-center md:text-left">
+                    <p className="text-[9px] uppercase tracking-wider text-gray-500">{s.label}</p>
+                    <p className="text-base md:text-xl font-semibold text-white tabular-nums mt-0.5">{s.value}</p>
+                  </div>
+                ))}
+              </div>
             </div>
-          ))}
+
+            {/* Logros compactos */}
+            <div className="mt-5 pt-4 border-t border-white/5 flex items-center gap-3">
+              <span className="text-[10px] uppercase tracking-wider text-gray-500 shrink-0 hidden sm:inline">
+                Logros {achievementsDone}/{achievements.length}
+              </span>
+              <div className="flex gap-2 overflow-x-auto custom-scrollbar pb-1 flex-1">
+                {achievements.map((ach) => (
+                  <div
+                    key={ach.id}
+                    title={`${ach.name} — ${ach.desc}`}
+                    className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-lg border transition ${
+                      ach.done
+                        ? "bg-yellow-500/10 border-yellow-500/25"
+                        : "bg-white/[0.02] border-white/5 grayscale opacity-40"
+                    }`}
+                  >
+                    {ach.icon}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </motion.div>
       )}
 
-      {/* ACHIEVEMENTS (signed-in) */}
-      {!selectedSet && isSignedIn && stats && (
-        <div className="w-full max-w-6xl mb-12 relative z-10">
-          <button
-            onClick={() => setShowAchievements((v) => !v)}
-            className="w-full surface surface-hover rounded-2xl px-5 py-4 flex justify-between items-center"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-white/5 border border-white/5 flex items-center justify-center">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-yellow-400">
-                  <circle cx="12" cy="8" r="6" /><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11" />
-                </svg>
-              </div>
-              <div className="text-left">
-                <h3 className="font-semibold text-sm text-white">Logros</h3>
-                <p className="text-xs text-gray-500">{achievementsDone}/{achievements.length} desbloqueados</p>
-              </div>
-            </div>
-            <motion.svg
-              animate={{ rotate: showAchievements ? 180 : 0 }}
-              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-              className="w-4 h-4 text-gray-400"
-            >
-              <path d="m6 9 6 6 6-6" />
-            </motion.svg>
-          </button>
-
-          <AnimatePresence>
-            {showAchievements && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                className="overflow-hidden"
-              >
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
-                  {achievements.map((ach) => (
-                    <div
-                      key={ach.id}
-                      className={`surface rounded-2xl p-4 flex items-center gap-3 ${ach.done ? "border border-yellow-500/20" : "opacity-50"}`}
-                    >
-                      <span className={`text-2xl ${ach.done ? "" : "grayscale"}`}>{ach.icon}</span>
-                      <div className="min-w-0">
-                        <p className={`text-sm font-medium truncate ${ach.done ? "text-white" : "text-gray-400"}`}>{ach.name}</p>
-                        <p className="text-[10px] text-gray-500 truncate">{ach.desc}</p>
-                      </div>
-                      {ach.done && (
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-emerald-400 ml-auto shrink-0">
-                          <path d="M20 6 9 17l-5-5" />
-                        </svg>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+      {/* HERO INVITADO */}
+      {!selectedSet && isLoaded && !isSignedIn && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+          className="w-full max-w-6xl mb-10 text-center relative z-10"
+        >
+          <h1 className="text-3xl md:text-5xl font-semibold text-gradient tracking-tight">Abre. Colecciona. Completa.</h1>
+          <p className="text-gray-500 text-sm md:text-base mt-3 max-w-md mx-auto">
+            Elige una expansión y abre sobres con probabilidades reales. Inicia sesión para guardar tu colección.
+          </p>
+        </motion.div>
       )}
 
       {/* VIEW 1: SET SELECTION */}
@@ -444,7 +434,7 @@ export default function Home() {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="w-full max-w-6xl flex flex-col gap-16 pb-24 relative z-10"
+          className="w-full max-w-6xl flex flex-col gap-14 pb-24 relative z-10"
         >
           {Object.entries(setsBySeries).map(([seriesName, sets], idx) => (
             <motion.div
@@ -464,22 +454,26 @@ export default function Home() {
                 {sets.map((set) => (
                   <motion.button
                     key={set.id}
-                    whileHover={{ y: -4 }}
+                    whileHover={{ y: -5 }}
                     whileTap={{ scale: 0.96 }}
-                    transition={{ duration: 0.2 }}
+                    transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
                     onClick={() => handleSelectSet(set.id)}
-                    className="group surface surface-hover p-5 md:p-7 rounded-2xl flex flex-col items-center gap-4 overflow-hidden"
+                    className="group surface surface-hover p-6 md:p-8 rounded-3xl flex flex-col items-center justify-between gap-4 overflow-hidden relative min-h-[150px] md:min-h-[180px]"
                   >
-                    {set.images?.logo ? (
-                      <img
-                        src={set.images.logo}
-                        alt={set.name}
-                        className="h-12 md:h-16 object-contain group-hover:scale-105 transition-transform duration-500 opacity-90 group-hover:opacity-100"
-                      />
-                    ) : (
-                      <div className="h-12 md:h-16 flex items-center text-gray-600 text-xs">{set.name}</div>
-                    )}
-                    <span className="font-medium text-[10px] md:text-xs text-gray-500 group-hover:text-gray-200 transition-colors text-center tracking-wide truncate w-full">
+                    {/* sheen al hover */}
+                    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.06),transparent_60%)] pointer-events-none" />
+                    <div className="flex-1 flex items-center justify-center w-full relative z-10">
+                      {set.images?.logo ? (
+                        <img
+                          src={set.images.logo}
+                          alt={set.name}
+                          className="max-h-16 md:max-h-20 max-w-[80%] object-contain group-hover:scale-110 transition-transform duration-500 opacity-90 group-hover:opacity-100 drop-shadow-lg"
+                        />
+                      ) : (
+                        <div className="text-gray-500 text-sm text-center">{set.name}</div>
+                      )}
+                    </div>
+                    <span className="font-medium text-[11px] md:text-xs text-gray-500 group-hover:text-white transition-colors text-center tracking-wide truncate w-full relative z-10">
                       {set.name}
                     </span>
                   </motion.button>
