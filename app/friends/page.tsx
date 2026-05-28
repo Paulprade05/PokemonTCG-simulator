@@ -118,7 +118,7 @@ export default function FriendsPage() {
   if (!isLoaded || loading) return <Loader label="Red de entrenadores" />;
   if (!isSignedIn) {
     return (
-      <main className="min-h-screen bg-[#050505] text-[#ededed] flex flex-col items-center justify-center p-8 text-center">
+      <main className="min-h-screen text-zinc-800 flex flex-col items-center justify-center p-8 text-center">
         <h2 className="text-xl font-semibold mb-4">Inicia sesión para ver amigos</h2>
         <Link href="/" className="btn-primary px-6 py-2.5 rounded-xl font-medium text-sm">Volver</Link>
       </main>
@@ -140,7 +140,7 @@ export default function FriendsPage() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 bg-[#050505] text-[#ededed] select-none overflow-hidden">
+    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 text-zinc-800 select-none overflow-hidden">
       <BackgroundParticles />
 
       <AppHeader back={{ href: "/" }} title="Amigos" showFriendsLink={false} />

@@ -48,23 +48,23 @@ export default function BackgroundParticles() {
         }}
       />
 
-      {/* Floating particles */}
+      {/* Floating particles (violeta sutil sobre fondo claro) */}
       {particles.map((p) => (
         <motion.div
           key={p.id}
-          className="absolute rounded-full bg-white"
+          className="absolute rounded-full"
           style={{
             left: `${p.x}%`,
             top: `${p.y}%`,
-            width: p.size,
-            height: p.size,
-            opacity: 0.1,
-            boxShadow: `0 0 ${p.size * 3}px ${p.size}px rgba(255,255,255,0.6)`,
+            width: p.size + 1,
+            height: p.size + 1,
+            background: "rgba(124,58,237,0.5)",
+            opacity: 0.15,
           }}
           animate={{
             y: ["0%", "-30%", "0%"],
             x: ["0%", "10%", "0%"],
-            opacity: [0.1, 0.5, 0.1],
+            opacity: [0.1, 0.35, 0.1],
           }}
           transition={{
             duration: p.duration,
@@ -74,9 +74,6 @@ export default function BackgroundParticles() {
           }}
         />
       ))}
-
-      {/* Vignette + grain overlay */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_transparent_0%,_#000_100%)] opacity-50" />
     </div>
   );
 }

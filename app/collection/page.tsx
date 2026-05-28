@@ -146,7 +146,7 @@ export default function CollectionPage() {
   if (loading) return <Loader label="Cargando Colección" />;
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 bg-[#050505] text-[#ededed] select-none overflow-hidden">
+    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 text-zinc-800 select-none overflow-hidden">
       <BackgroundParticles />
 
       <AppHeader
@@ -336,12 +336,12 @@ export default function CollectionPage() {
                   {card.quantity > 1 ? (
                     <button
                       onClick={(e) => handleSellCard(e, card.id, card.rarity)}
-                      className="bg-white/10 hover:bg-white/20 text-white text-[10px] py-1 px-3 rounded-full border border-white/10 backdrop-blur-sm"
+                      className="chip ink text-[10px] py-1 px-3 rounded-full press hover:brightness-110"
                     >
                       Vender +{getPrice(card.rarity)}
                     </button>
                   ) : (
-                    <span className="text-[10px] text-gray-500 bg-white/5 px-2 py-1 rounded-full border border-white/5">Única</span>
+                    <span className="chip ink-soft text-[10px] px-2 py-1 rounded-full">Única</span>
                   )}
                 </div>
               </motion.div>

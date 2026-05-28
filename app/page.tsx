@@ -334,7 +334,7 @@ export default function Home() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 bg-[#050505] text-[#ededed] overflow-hidden select-none">
+    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 text-zinc-800 overflow-hidden select-none">
       <BackgroundParticles />
 
       <AppHeader />
@@ -422,8 +422,8 @@ export default function Home() {
           transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
           className="w-full max-w-6xl mb-10 text-center relative z-10"
         >
-          <h1 className="text-3xl md:text-5xl font-semibold text-gradient tracking-tight">Abre. Colecciona. Completa.</h1>
-          <p className="text-gray-500 text-sm md:text-base mt-3 max-w-md mx-auto">
+          <h1 className="text-4xl md:text-6xl font-bold text-gradient-ink tracking-tight">Abre. Colecciona. Completa.</h1>
+          <p className="ink-soft text-sm md:text-base mt-4 max-w-md mx-auto">
             Elige una expansión y abre sobres con probabilidades reales. Inicia sesión para guardar tu colección.
           </p>
         </motion.div>
@@ -444,10 +444,10 @@ export default function Home() {
               transition={{ delay: idx * 0.08, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
               className="flex flex-col gap-6"
             >
-              <div className="flex items-center gap-6">
-                <h2 className="text-xs font-medium text-gray-400 uppercase tracking-[0.3em]">{seriesName}</h2>
-                <div className="h-px bg-white/5 flex-1"></div>
-                <span className="text-xs text-gray-600 font-mono">{sets.length}</span>
+              <div className="flex items-center gap-4">
+                <h2 className="text-sm font-bold ink uppercase tracking-[0.2em]">{seriesName}</h2>
+                <div className="h-px bg-black/10 flex-1"></div>
+                <span className="text-xs ink-soft font-mono chip px-2 py-0.5">{sets.length}</span>
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
@@ -494,7 +494,7 @@ export default function Home() {
         >
           <button
             onClick={handleBackToMenu}
-            className="mb-12 text-gray-500 hover:text-gray-200 transition flex items-center gap-2 text-xs font-medium uppercase tracking-[0.2em]"
+            className="mb-12 ink-soft hover:ink transition flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] chip px-4 py-2 press"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
               <path d="m15 18-6-6 6-6" />
@@ -593,10 +593,10 @@ export default function Home() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-[#050505]/90 z-[100] flex flex-col items-center justify-center backdrop-blur-xl"
+                className="fixed inset-0 bg-white/60 z-[100] flex flex-col items-center justify-center backdrop-blur-xl"
               >
-                <div className="w-10 h-10 border-2 border-white/20 border-t-white rounded-full animate-spin mb-6"></div>
-                <h2 className="text-xs font-medium text-gray-500 tracking-[0.3em] uppercase">Preparando cartas</h2>
+                <div className="w-10 h-10 border-2 border-black/10 border-t-violet-600 rounded-full animate-spin mb-6"></div>
+                <h2 className="text-xs font-semibold ink-soft tracking-[0.3em] uppercase">Preparando cartas</h2>
               </motion.div>
             )}
           </AnimatePresence>
@@ -647,7 +647,7 @@ export default function Home() {
               </motion.div>
             )}
 
-            <div className="absolute -bottom-16 text-gray-500 font-mono text-xs tracking-[0.3em] uppercase">
+            <div className="absolute -bottom-16 ink-soft font-mono text-xs tracking-[0.3em] uppercase chip px-3 py-1">
               {packIndex + 1} / {currentPack.length}
             </div>
           </div>
@@ -655,13 +655,13 @@ export default function Home() {
           <div className="mt-24 flex flex-wrap items-center justify-center gap-3 px-4">
             <button
               onClick={handleNextCard}
-              className="btn-ghost text-white px-5 py-2.5 rounded-xl text-sm font-medium"
+              className="btn-accent press px-6 py-2.5 rounded-xl text-sm font-semibold"
             >
-              Siguiente <kbd className="ml-1 text-[10px] opacity-60 hidden sm:inline">espacio</kbd>
+              Siguiente <kbd className="ml-1 text-[10px] opacity-70 hidden sm:inline">espacio</kbd>
             </button>
             <button
               onClick={handleRevealAll}
-              className="text-gray-500 hover:text-gray-200 px-4 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2"
+              className="ink-soft hover:ink px-4 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2"
             >
               Revelar todo
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
@@ -682,8 +682,8 @@ export default function Home() {
         >
           <div className="flex flex-col md:flex-row gap-4 mb-12 items-center w-full justify-between">
             <div>
-              <h2 className="text-2xl font-semibold text-white tracking-wide">Resumen</h2>
-              <p className="text-xs text-gray-500 mt-1">
+              <h2 className="text-3xl font-bold ink tracking-tight">Resumen</h2>
+              <p className="text-xs ink-soft mt-1">
                 {newCardsInPack > 0
                   ? `${newCardsInPack} carta${newCardsInPack > 1 ? "s" : ""} nueva${newCardsInPack > 1 ? "s" : ""} añadida${newCardsInPack > 1 ? "s" : ""} a tu colección`
                   : "Sin cartas nuevas en este sobre"}
@@ -704,10 +704,10 @@ export default function Home() {
                   +{soldInfo.earned} por {soldInfo.sold} repetidas
                 </span>
               )}
-              <button onClick={() => setCurrentPack([])} className="btn-ghost text-white px-5 py-2.5 rounded-xl text-sm font-medium">
+              <button onClick={() => setCurrentPack([])} className="btn-ghost press px-5 py-2.5 rounded-xl text-sm font-medium">
                 Abrir otro
               </button>
-              <button onClick={handleBackToMenu} className="btn-primary px-5 py-2.5 rounded-xl text-sm font-medium">
+              <button onClick={handleBackToMenu} className="btn-accent press px-6 py-2.5 rounded-xl text-sm font-semibold">
                 Finalizar
               </button>
             </div>
@@ -718,9 +718,9 @@ export default function Home() {
             {rarityBreakdown.map(([rarity, count]) => (
               <span
                 key={rarity}
-                className="bg-white/5 border border-white/5 rounded-full px-3 py-1 text-[11px] text-gray-400"
+                className="chip px-3 py-1 text-[11px] ink-soft"
               >
-                {count}× <span className="text-gray-300">{rarity}</span>
+                {count}× <span className="ink font-medium">{rarity}</span>
               </span>
             ))}
           </div>

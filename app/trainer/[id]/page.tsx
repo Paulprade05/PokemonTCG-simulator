@@ -77,7 +77,7 @@ export default function TrainerProfilePage() {
   if (loading || !isLoaded) return <Loader label="Cargando entrenador" />;
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 bg-[#050505] text-[#ededed] select-none overflow-hidden">
+    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 text-zinc-800 select-none overflow-hidden">
       <BackgroundParticles />
       <AppHeader back={{ href: "/friends" }} title="Álbum de amigo" subtitle={trainerId} showCollectionLink={false} />
 
@@ -192,7 +192,7 @@ export default function TrainerProfilePage() {
                   <PokemonCard card={card} reveal={true} />
                 </div>
                 <div className="mt-2 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                  <span className="text-[10px] text-gray-500 bg-white/5 px-2 py-1 rounded-full border border-white/5">
+                  <span className="chip ink-soft text-[10px] px-2 py-1 rounded-full">
                     {card.quantity > 1 ? `${card.quantity} copias` : "Única"}
                   </span>
                 </div>
