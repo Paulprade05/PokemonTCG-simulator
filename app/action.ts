@@ -854,3 +854,57 @@ export async function searchCardsInDB(query: string, limit = 30) {
     return [];
   }
 }
+
+// --- SET COMPLETION BONUS ---
+// Grants one-time coin reward when user completes a full set.
+export async function claimSetCompletionBonuses() {
+  const { userId } = await auth();
+  if (!userId) return { granted: 0, sets: [] };
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS set_rewards (
+        user_id TEXT NOT NULL,
+        set_id TEXT NOT NULL,
+        rewarded_at TIMESTAMP DEFAULT NOW(),
+        PRIMARY KEY (user_id, set_id)
+      )
+    `;
+    // Unique owned cards per set
+    const { rows: owned } = await sql`
+      SELECT c.set_id, COUNT(*)::int AS owned
+      FROM user_collection uc
+      JOIN cards c ON uc.card_id = c.id
+      WHERE uc.user_id = ${userId}
+      GROUP BY c.set_id
+    `;
+    const { rows: setsRows } = await sql`SELECT id, total, name FROM sets`;
+    const totals: Record<string, { total: number; name: string }> = {};
+    setsRows.forEach((s: any) => { totals[s.id] = { total: s.total, name: s.name }; });
+
+    const { rows: already } = await sql`SELECT set_id FROM set_rewards WHERE user_id = ${userId}`;
+    const rewarded = new Set(already.map((r: any) => r.set_id));
+
+    const BONUS = 1000;
+    let granted = 0;
+    const completedSets: string[] = [];
+
+    for (const row of owned) {
+      const meta = totals[row.set_id];
+      if (!meta || !meta.total) continue;
+      if (row.owned >= meta.total && !rewarded.has(row.set_id)) {
+        await sql`INSERT INTO set_rewards (user_id, set_id) VALUES (${userId}, ${row.set_id}) ON CONFLICT DO NOTHING`;
+        granted += BONUS;
+        completedSets.push(meta.name);
+      }
+    }
+
+    if (granted > 0) {
+      await sql`UPDATE users SET coins = coins + ${granted} WHERE id = ${userId}`;
+      revalidatePath('/');
+    }
+    return { granted, sets: completedSets, bonusPerSet: BONUS };
+  } catch (e) {
+    console.error("claimSetCompletionBonuses error:", e);
+    return { granted: 0, sets: [] };
+  }
+}

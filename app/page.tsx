@@ -11,10 +11,12 @@ import {
   getSetsFromDB,
   getFullCollection,
   getProfileStats,
+  claimSetCompletionBonuses,
 } from "./action";
 import { getCardsFromSet } from "../services/pokemon";
 import { openStandardPack, openPremiumPack, openGoldenPack } from "../utils/packLogic";
 import { saveToCollection, getCollection } from "../utils/storage";
+import { SELL_PRICES } from "../utils/constanst";
 import { useCurrency } from "../hooks/useGameCurrency";
 import PokemonCard from "../components/PokemonCard";
 import BackgroundParticles from "../components/BackgroundParticles";
@@ -38,6 +40,7 @@ export default function Home() {
   const [cardRevealed, setCardRevealed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState<any>(null);
+  const [setBonus, setSetBonus] = useState<{ granted: number; sets: string[] } | null>(null);
 
   const currentSetObj = dbSets.find((s) => s.id === selectedSet);
   const isSpecialSet = currentSetObj
@@ -155,6 +158,25 @@ export default function Home() {
     }
   };
 
+  const finishPack = async () => {
+    if (isSignedIn) {
+      await savePackToCollection(currentPack, currentPackPrice);
+      // Bonus por completar sets
+      const res = await claimSetCompletionBonuses();
+      if (res.granted > 0) {
+        setSetBonus({ granted: res.granted, sets: res.sets });
+        setCoins((c) => c + res.granted);
+        setTimeout(() => setSetBonus(null), 6000);
+      }
+      getProfileStats().then(setStats);
+    } else {
+      saveToCollection(currentPack);
+    }
+    const newPackIds = currentPack.map((c) => c.id);
+    setUserCollectionIds((prev) => [...prev, ...newPackIds]);
+    setIsPackOpen(false);
+  };
+
   const handleNextCard = async () => {
     if (!cardRevealed) {
       setCardRevealed(true);
@@ -164,13 +186,22 @@ export default function Home() {
       setCardRevealed(true);
       setPackIndex((prev) => prev + 1);
     } else {
-      if (isSignedIn) await savePackToCollection(currentPack, currentPackPrice);
-      else saveToCollection(currentPack);
-      const newPackIds = currentPack.map((c) => c.id);
-      setUserCollectionIds((prev) => [...prev, ...newPackIds]);
-      setIsPackOpen(false);
+      await finishPack();
     }
   };
+
+  // Revelar todo: salta animación carta por carta y va al resumen.
+  const handleRevealAll = async () => {
+    await finishPack();
+  };
+
+  // Mejor carta del sobre (por valor de venta)
+  const bestPull = useMemo(() => {
+    if (!currentPack.length) return null;
+    return [...currentPack].sort(
+      (a, b) => (SELL_PRICES[b.rarity] || 0) - (SELL_PRICES[a.rarity] || 0),
+    )[0];
+  }, [currentPack]);
 
   const handleBackToMenu = () => {
     setSelectedSet(null);
@@ -196,6 +227,23 @@ export default function Home() {
       <BackgroundParticles />
 
       <AppHeader />
+
+      {/* SET COMPLETION BONUS TOAST */}
+      <AnimatePresence>
+        {setBonus && setBonus.granted > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed top-24 left-1/2 -translate-x-1/2 z-[200] bg-yellow-500/15 border border-yellow-500/30 backdrop-blur-xl px-6 py-4 rounded-2xl text-center max-w-sm"
+          >
+            <p className="text-yellow-300 text-sm font-semibold">¡Set completado!</p>
+            <p className="text-xs text-gray-300 mt-1">
+              {setBonus.sets.join(", ")} · +{setBonus.granted.toLocaleString()} monedas
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* HERO STATS (signed-in) */}
       {!selectedSet && isSignedIn && stats && (
@@ -312,6 +360,13 @@ export default function Home() {
                   title="Estándar"
                   description={<>Probabilidades oficiales.<br />La opción clásica.</>}
                   price={50}
+                  odds={[
+                    ["Hyper Rare", "0.5%"],
+                    ["Special Illust.", "2%"],
+                    ["Ultra Rare", "4%"],
+                    ["Illustration Rare", "8%"],
+                    ["Double Rare", "15.5%"],
+                  ]}
                   icon={
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
                       <rect width="12" height="16" x="2" y="6" rx="2" />
@@ -326,6 +381,12 @@ export default function Home() {
                   title="Premium"
                   description={<>Sin cartas comunes.<br />2 Raras aseguradas.</>}
                   price={250}
+                  odds={[
+                    ["Hyper Rare", "5%"],
+                    ["Special Illust.", "10%"],
+                    ["Ultra Rare", "25%"],
+                    ["Double Rare", "60%"],
+                  ]}
                   icon={
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
                       <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
@@ -339,6 +400,11 @@ export default function Home() {
                   title="Leyenda"
                   description={<>1 carta nueva<br />garantizada.</>}
                   price={2500}
+                  odds={[
+                    ["Carta nueva", "100%"],
+                    ["Slot Ultra Rare", "1×"],
+                    ["Slot Double Rare", "3×"],
+                  ]}
                   icon={
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
                       <path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14" />
@@ -414,6 +480,24 @@ export default function Home() {
               {packIndex + 1} / {currentPack.length}
             </div>
           </div>
+
+          <div className="mt-24 flex items-center gap-3">
+            <button
+              onClick={handleNextCard}
+              className="btn-ghost text-white px-5 py-2.5 rounded-xl text-sm font-medium"
+            >
+              Siguiente <kbd className="ml-1 text-[10px] opacity-60">espacio</kbd>
+            </button>
+            <button
+              onClick={handleRevealAll}
+              className="text-gray-500 hover:text-gray-200 px-4 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2"
+            >
+              Revelar todo
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                <path d="m13 17 5-5-5-5M6 17l5-5-5-5" />
+              </svg>
+            </button>
+          </div>
         </motion.div>
       )}
 
@@ -443,6 +527,25 @@ export default function Home() {
               </button>
             </div>
           </div>
+
+          {bestPull && (SELL_PRICES[bestPull.rarity] || 0) >= 50 && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="w-full mb-8 surface rounded-2xl p-4 flex items-center gap-4 border border-yellow-500/20"
+            >
+              <img src={bestPull.images?.small} alt={bestPull.name} className="h-24 rounded-lg" />
+              <div className="flex-1 min-w-0">
+                <p className="text-yellow-400 text-[10px] font-medium uppercase tracking-[0.2em]">Mejor carta del sobre</p>
+                <h3 className="text-lg font-semibold text-white truncate">{bestPull.name}</h3>
+                <p className="text-xs text-gray-500">{bestPull.rarity}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-gray-500 text-[10px] uppercase tracking-wider">Valor</p>
+                <p className="text-2xl font-semibold text-emerald-400 tabular-nums">{SELL_PRICES[bestPull.rarity] || 10}</p>
+              </div>
+            </motion.div>
+          )}
 
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 md:gap-6 w-full">
             {currentPack.map((card, index) => {
@@ -479,9 +582,10 @@ interface PackCardProps {
   price: number;
   icon: React.ReactNode;
   onClick: () => void;
+  odds?: [string, string][];
 }
 
-function PackCard({ accent, badge, title, description, price, icon, onClick }: PackCardProps) {
+function PackCard({ accent, badge, title, description, price, icon, onClick, odds }: PackCardProps) {
   const accents: Record<string, { border: string; iconColor: string; btn: string; badgeBg: string }> = {
     white: {
       border: "border-white/5",
@@ -526,7 +630,19 @@ function PackCard({ accent, badge, title, description, price, icon, onClick }: P
         {icon}
       </div>
       <h3 className="text-lg md:text-xl font-semibold text-white mb-2 md:mb-3">{title}</h3>
-      <p className="text-[11px] md:text-xs text-gray-500 text-center mb-6 md:mb-8 leading-relaxed">{description}</p>
+      <p className="text-[11px] md:text-xs text-gray-500 text-center mb-4 leading-relaxed">{description}</p>
+
+      {odds && odds.length > 0 && (
+        <div className="w-full mb-5 bg-white/[0.03] border border-white/5 rounded-xl p-3 space-y-1">
+          {odds.map(([label, pct]) => (
+            <div key={label} className="flex justify-between text-[10px]">
+              <span className="text-gray-500">{label}</span>
+              <span className={`font-mono ${a.iconColor}`}>{pct}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className={`mt-auto ${a.btn} font-medium py-2.5 px-6 rounded-xl w-full text-center transition text-sm`}>
         {price.toLocaleString()} monedas
       </div>
