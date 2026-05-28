@@ -65,35 +65,35 @@ export default function GlobalSearch() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[110] bg-black/80 backdrop-blur-xl p-4 md:pt-24 flex flex-col items-center"
+            className="fixed inset-0 z-[110] bg-black/80 backdrop-blur-xl flex md:items-start md:justify-center md:pt-24 md:p-4"
             onClick={() => setOpen(false)}
           >
             <motion.div
-              initial={{ scale: 0.96, opacity: 0, y: -10 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.96, opacity: 0 }}
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
               transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-3xl bg-[#0a0a0a] border border-white/10 rounded-2xl overflow-hidden flex flex-col max-h-[80vh]"
+              className="w-full h-[100dvh] md:h-auto md:max-h-[80vh] md:max-w-3xl bg-[#0a0a0a] md:border md:border-white/10 md:rounded-2xl overflow-hidden flex flex-col"
             >
-              <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-gray-500">
+              <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3 shrink-0">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-gray-500 shrink-0">
                   <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
                 </svg>
                 <input
                   autoFocus
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Buscar cualquier carta del TCG..."
-                  className="bg-transparent text-white outline-none flex-1 text-sm placeholder:text-gray-600"
+                  placeholder="Buscar carta..."
+                  className="bg-transparent text-white outline-none flex-1 text-base placeholder:text-gray-600 min-w-0"
                 />
                 <button
                   onClick={() => setOpen(false)}
-                  className="text-gray-500 hover:text-white text-xs px-2 py-1 rounded border border-white/10"
-                >Esc</button>
+                  className="text-gray-400 hover:text-white text-xs px-3 py-1.5 rounded-lg border border-white/10 shrink-0"
+                >Cerrar</button>
               </div>
 
-              <div className="overflow-y-auto custom-scrollbar p-4">
+              <div className="overflow-y-auto custom-scrollbar p-4 flex-1">
                 {loading && <p className="text-xs text-gray-500 text-center py-8">Buscando…</p>}
                 {!loading && query && results.length === 0 && (
                   <p className="text-xs text-gray-500 text-center py-8">Sin resultados.</p>
