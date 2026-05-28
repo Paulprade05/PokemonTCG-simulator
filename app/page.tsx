@@ -334,7 +334,7 @@ export default function Home() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 text-zinc-800 overflow-hidden select-none">
+    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 ink overflow-hidden select-none">
       <BackgroundParticles />
 
       <AppHeader />

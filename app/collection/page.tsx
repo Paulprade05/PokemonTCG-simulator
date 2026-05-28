@@ -146,7 +146,7 @@ export default function CollectionPage() {
   if (loading) return <Loader label="Cargando Colección" />;
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 text-zinc-800 select-none overflow-hidden">
+    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 ink select-none overflow-hidden">
       <BackgroundParticles />
 
       <AppHeader

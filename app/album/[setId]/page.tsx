@@ -67,7 +67,7 @@ export default function SetAlbumPage() {
   });
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 text-zinc-800 select-none overflow-hidden">
+    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 ink select-none overflow-hidden">
       <BackgroundParticles />
 
       <AppHeader
@@ -137,7 +137,7 @@ export default function SetAlbumPage() {
                 transition={{ delay: Math.min(idx * 0.01, 0.4) }}
                 className="w-full aspect-[2.5/3.5] bg-black/[0.03] border border-dashed border-black/15 rounded-2xl flex items-center justify-center hover:bg-black/[0.06] transition"
               >
-                <span className="text-zinc-400 font-mono text-lg md:text-2xl tabular-nums">
+                <span className="ink-soft font-mono text-lg md:text-2xl tabular-nums">
                   {String(blueprintCard.number).padStart(3, "0")}
                 </span>
               </motion.div>

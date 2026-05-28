@@ -131,6 +131,7 @@ export default function CardDetailModal({
             exit={{ scale: 0.96, opacity: 0 }}
             transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
             className="relative w-full max-w-5xl bg-[#0a0a0a] rounded-3xl overflow-y-auto border border-white/10 flex flex-col md:flex-row max-h-[90vh] custom-scrollbar"
+            data-lenis-prevent
             onClick={(e) => e.stopPropagation()}
           >
             <button

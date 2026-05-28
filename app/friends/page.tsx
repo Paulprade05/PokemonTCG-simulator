@@ -118,7 +118,7 @@ export default function FriendsPage() {
   if (!isLoaded || loading) return <Loader label="Red de entrenadores" />;
   if (!isSignedIn) {
     return (
-      <main className="min-h-screen text-zinc-800 flex flex-col items-center justify-center p-8 text-center">
+      <main className="min-h-screen ink flex flex-col items-center justify-center p-8 text-center">
         <h2 className="text-xl font-semibold mb-4">Inicia sesión para ver amigos</h2>
         <Link href="/" className="btn-primary px-6 py-2.5 rounded-xl font-medium text-sm">Volver</Link>
       </main>
@@ -140,7 +140,7 @@ export default function FriendsPage() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 text-zinc-800 select-none overflow-hidden">
+    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 ink select-none overflow-hidden">
       <BackgroundParticles />
 
       <AppHeader back={{ href: "/" }} title="Amigos" showFriendsLink={false} />
@@ -425,7 +425,7 @@ export default function FriendsPage() {
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-5 grid grid-cols-1 md:grid-cols-2 gap-4 custom-scrollbar">
+              <div className="flex-1 overflow-y-auto p-5 grid grid-cols-1 md:grid-cols-2 gap-4 custom-scrollbar" data-lenis-prevent>
                 {[
                   { label: "Tu oferta", cards: myCards, selected: selectedMyCard, set: setSelectedMyCard, accent: "emerald", dupColor: "bg-emerald-500/15 text-emerald-300" },
                   { label: "Quieres", cards: friendCards, selected: selectedFriendCard, set: setSelectedFriendCard, accent: "purple", dupColor: "bg-purple-500/15 text-purple-300" },

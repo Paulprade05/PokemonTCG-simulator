@@ -101,7 +101,7 @@ export default function GlobalSearch() {
                 >Cerrar</button>
               </div>
 
-              <div className="overflow-y-auto custom-scrollbar p-4 flex-1">
+              <div className="overflow-y-auto custom-scrollbar p-4 flex-1" data-lenis-prevent>
                 {loading && <p className="text-xs text-gray-500 text-center py-8">Buscando…</p>}
                 {!loading && query && results.length === 0 && (
                   <p className="text-xs text-gray-500 text-center py-8">Sin resultados.</p>

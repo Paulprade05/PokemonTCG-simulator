@@ -1,10 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  /* Tema CLARO vibrante — tarjetas oscuras flotantes sobre fondo luminoso */
-  --bg: #eae7f6;
-  --ink: #17151f;
-  --bg-elev: #141118;        /* tarjeta oscura */
+  /* Compartido */
+  --bg-elev: #141118;        /* tarjeta oscura (igual en ambos temas) */
   --bg-elev-2: #1d1a24;
   --foreground: #f4f3f8;     /* texto dentro de tarjetas oscuras */
   --muted: #7c7a88;
@@ -12,9 +10,40 @@
   --border-medium: rgba(255, 255, 255, 0.14);
   --accent: #7c3aed;
   --accent-2: #2563eb;
+}
+
+/* === TEMA CLARO (por defecto) === */
+:root, html[data-theme="light"] {
+  --bg: #eae7f6;
+  --ink: #17151f;
+  --ink-soft: #57546a;
   --shadow-card: 0 2px 6px rgba(60,40,120,0.10), 0 18px 40px -18px rgba(60,40,120,0.45);
   --shadow-pop: 0 24px 60px -16px rgba(60,40,120,0.55);
   --background: var(--bg);
+}
+html[data-theme="light"] body {
+  background:
+    radial-gradient(900px 500px at 12% -5%, rgba(236,72,153,0.28), transparent 60%),
+    radial-gradient(900px 500px at 88% 0%, rgba(37,99,235,0.26), transparent 60%),
+    radial-gradient(800px 600px at 50% 110%, rgba(16,185,129,0.22), transparent 60%),
+    linear-gradient(180deg, #f1eefb, var(--bg));
+}
+
+/* === TEMA OSCURO === */
+html[data-theme="dark"] {
+  --bg: #07070a;
+  --ink: #f1f0f6;
+  --ink-soft: #a3a1b3;
+  --shadow-card: 0 1px 2px rgba(0,0,0,0.5), 0 14px 36px -14px rgba(0,0,0,0.7);
+  --shadow-pop: 0 24px 60px -16px rgba(0,0,0,0.85);
+  --background: var(--bg);
+}
+html[data-theme="dark"] body {
+  background:
+    radial-gradient(900px 500px at 12% -5%, rgba(124,58,237,0.18), transparent 60%),
+    radial-gradient(900px 500px at 88% 0%, rgba(37,99,235,0.16), transparent 60%),
+    radial-gradient(800px 600px at 50% 110%, rgba(16,185,129,0.10), transparent 60%),
+    var(--bg);
 }
 
 @theme inline {
@@ -24,14 +53,7 @@
   --font-mono: var(--font-geist-mono);
 }
 
-html { scroll-behavior: smooth; }
-
 body {
-  background:
-    radial-gradient(900px 500px at 12% -5%, rgba(236,72,153,0.28), transparent 60%),
-    radial-gradient(900px 500px at 88% 0%, rgba(37,99,235,0.26), transparent 60%),
-    radial-gradient(800px 600px at 50% 110%, rgba(16,185,129,0.22), transparent 60%),
-    linear-gradient(180deg, #f1eefb, var(--bg));
   background-attachment: fixed;
   color: var(--ink);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
@@ -39,7 +61,14 @@ body {
   text-rendering: optimizeLegibility;
   overflow-x: hidden;
   -webkit-tap-highlight-color: transparent;
+  transition: background-color .4s ease;
 }
+
+/* Lenis */
+html.lenis, html.lenis body { height: auto; }
+.lenis.lenis-smooth { scroll-behavior: auto !important; }
+.lenis.lenis-smooth [data-lenis-prevent] { overscroll-behavior: contain; }
+.lenis.lenis-stopped { overflow: hidden; }
 
 button, a, select, input { -webkit-tap-highlight-color: transparent; }
 
@@ -154,7 +183,7 @@ button, a, select, input { -webkit-tap-highlight-color: transparent; }
     animation: text-shine 8s linear infinite;
   }
   .ink { color: var(--ink); }
-  .ink-soft { color: #57546a; }
+  .ink-soft { color: var(--ink-soft); }
 
   /* Scrollbar */
   .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }

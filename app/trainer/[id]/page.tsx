@@ -77,7 +77,7 @@ export default function TrainerProfilePage() {
   if (loading || !isLoaded) return <Loader label="Cargando entrenador" />;
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 text-zinc-800 select-none overflow-hidden">
+    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 ink select-none overflow-hidden">
       <BackgroundParticles />
       <AppHeader back={{ href: "/friends" }} title="Álbum de amigo" subtitle={trainerId} showCollectionLink={false} />
 

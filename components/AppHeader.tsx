@@ -6,6 +6,7 @@ import { SignedIn, SignedOut, SignInButton, UserButton, useUser } from "@clerk/n
 import { useCurrency } from "../hooks/useGameCurrency";
 import DailyReward from "./DailyReward";
 import GlobalSearch from "./GlobalSearch";
+import ThemeToggle from "./ThemeToggle";
 import { ReactNode } from "react";
 
 interface AppHeaderProps {
@@ -78,6 +79,8 @@ export default function AppHeader({
         </div>
 
         <GlobalSearch />
+
+        <ThemeToggle />
 
         {rightExtra}
 
