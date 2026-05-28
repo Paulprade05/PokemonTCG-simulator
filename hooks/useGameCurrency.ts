@@ -2,10 +2,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { STARTING_COINS } from '../utils/constanst';
 
 export const useCurrency = () => {
-  // Iniciamos con 500 o lo que haya en localStorage
-  const [coins, setCoins] = useState(2000); 
+  const [coins, setCoins] = useState(STARTING_COINS);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {

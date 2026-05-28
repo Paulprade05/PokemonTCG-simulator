@@ -12,11 +12,12 @@ import {
   getFullCollection,
   getProfileStats,
   claimSetCompletionBonuses,
+  sellPackDuplicates,
 } from "./action";
 import { getCardsFromSet } from "../services/pokemon";
 import { openStandardPack, openPremiumPack, openGoldenPack } from "../utils/packLogic";
 import { saveToCollection, getCollection } from "../utils/storage";
-import { SELL_PRICES } from "../utils/constanst";
+import { SELL_PRICES, PACK_PRICES, RARITY_RANK } from "../utils/constanst";
 import { useCurrency } from "../hooks/useGameCurrency";
 import PokemonCard from "../components/PokemonCard";
 import BackgroundParticles from "../components/BackgroundParticles";
@@ -41,6 +42,9 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState<any>(null);
   const [setBonus, setSetBonus] = useState<{ granted: number; sets: string[] } | null>(null);
+  const [prePackIds, setPrePackIds] = useState<string[]>([]);
+  const [soldInfo, setSoldInfo] = useState<{ earned: number; sold: number } | null>(null);
+  const [sellingDupes, setSellingDupes] = useState(false);
 
   const currentSetObj = dbSets.find((s) => s.id === selectedSet);
   const isSpecialSet = currentSetObj
@@ -139,16 +143,18 @@ export default function Home() {
       alert("Las cartas no se han cargado. Recarga la página.");
       return;
     }
-    let price = 0;
-    let newPack: any[] = [];
-    if (type === "STANDARD") { price = 50; if (coins >= price) newPack = openStandardPack(allCards); }
-    else if (type === "PREMIUM") { price = 250; if (coins >= price) newPack = openPremiumPack(allCards); }
-    else if (type === "GOLDEN" || type === "SPECIAL") { price = 2500; if (coins >= price) newPack = openGoldenPack(allCards, userCollectionIds); }
-
+    const price = PACK_PRICES[type];
     if (coins < price) { alert("No tienes suficientes monedas"); return; }
+
+    let newPack: any[] = [];
+    if (type === "STANDARD") newPack = openStandardPack(allCards);
+    else if (type === "PREMIUM") newPack = openPremiumPack(allCards);
+    else newPack = openGoldenPack(allCards, userCollectionIds);
 
     if (spendCoins(price)) {
       if (isSignedIn) await updateCoins(coins - price);
+      setPrePackIds([...userCollectionIds]); // snapshot ANTES del sobre
+      setSoldInfo(null);
       setCurrentPackType(type);
       setCurrentPack(newPack);
       setCurrentPackPrice(price);
@@ -209,18 +215,60 @@ export default function Home() {
     resetPackState();
   };
 
-  // Count new cards in finished pack
+  // Cartas nuevas (no estaban antes del sobre)
   const newCardsInPack = useMemo(() => {
     if (!currentPack.length) return 0;
-    const collectedBefore = new Set(userCollectionIds);
+    const before = new Set(prePackIds);
     const seen = new Set<string>();
     let count = 0;
     currentPack.forEach((c) => {
-      if (!collectedBefore.has(c.id) && !seen.has(c.id)) count++;
+      if (!before.has(c.id) && !seen.has(c.id)) count++;
       seen.add(c.id);
     });
     return count;
-  }, [currentPack, userCollectionIds]);
+  }, [currentPack, prePackIds]);
+
+  // Duplicados del sobre (ya poseídos antes) → vendibles
+  const dupeIdsInPack = useMemo(() => {
+    const before = new Set(prePackIds);
+    const seenNew = new Set<string>();
+    const dupes: string[] = [];
+    currentPack.forEach((c) => {
+      if (before.has(c.id)) dupes.push(c.id);
+      else if (seenNew.has(c.id)) dupes.push(c.id); // repetida dentro del mismo sobre
+      else seenNew.add(c.id);
+    });
+    return dupes;
+  }, [currentPack, prePackIds]);
+
+  const dupeValue = useMemo(
+    () => dupeIdsInPack.reduce((sum, id) => {
+      const card = currentPack.find((c) => c.id === id);
+      return sum + (SELL_PRICES[card?.rarity] || 10);
+    }, 0),
+    [dupeIdsInPack, currentPack],
+  );
+
+  // Desglose por rareza del sobre
+  const rarityBreakdown = useMemo(() => {
+    const counts: Record<string, number> = {};
+    currentPack.forEach((c) => { counts[c.rarity || "?"] = (counts[c.rarity || "?"] || 0) + 1; });
+    return Object.entries(counts).sort(
+      (a, b) => (RARITY_RANK[b[0]] || 0) - (RARITY_RANK[a[0]] || 0),
+    );
+  }, [currentPack]);
+
+  const handleSellPackDupes = async () => {
+    if (!isSignedIn || dupeIdsInPack.length === 0 || sellingDupes) return;
+    setSellingDupes(true);
+    const res = await sellPackDuplicates(dupeIdsInPack);
+    setSellingDupes(false);
+    if (res.earned > 0) {
+      setCoins((c) => c + res.earned);
+      setSoldInfo(res);
+      getProfileStats().then(setStats);
+    }
+  };
 
   return (
     <main className="flex min-h-screen flex-col items-center p-4 md:p-8 bg-[#050505] text-[#ededed] overflow-hidden select-none">
@@ -345,7 +393,7 @@ export default function Home() {
                 badge="Edición limitada"
                 title="Promo Pack"
                 description={<>Garantiza una carta<br />que aún no posees.</>}
-                price={2500}
+                price={PACK_PRICES.SPECIAL}
                 icon={
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
                     <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
@@ -359,7 +407,7 @@ export default function Home() {
                   accent="white"
                   title="Estándar"
                   description={<>Probabilidades oficiales.<br />La opción clásica.</>}
-                  price={50}
+                  price={PACK_PRICES.STANDARD}
                   odds={[
                     ["Hyper Rare", "0.5%"],
                     ["Special Illust.", "2%"],
@@ -380,7 +428,7 @@ export default function Home() {
                   badge="Élite"
                   title="Premium"
                   description={<>Sin cartas comunes.<br />2 Raras aseguradas.</>}
-                  price={250}
+                  price={PACK_PRICES.PREMIUM}
                   odds={[
                     ["Hyper Rare", "5%"],
                     ["Special Illust.", "10%"],
@@ -399,7 +447,7 @@ export default function Home() {
                   badge="Coleccionista"
                   title="Leyenda"
                   description={<>1 carta nueva<br />garantizada.</>}
-                  price={2500}
+                  price={PACK_PRICES.GOLDEN}
                   odds={[
                     ["Carta nueva", "100%"],
                     ["Slot Ultra Rare", "1×"],
@@ -519,6 +567,20 @@ export default function Home() {
               </p>
             </div>
             <div className="flex gap-3">
+              {isSignedIn && dupeIdsInPack.length > 0 && !soldInfo && (
+                <button
+                  onClick={handleSellPackDupes}
+                  disabled={sellingDupes}
+                  className="bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 px-5 py-2.5 rounded-xl text-sm font-medium transition disabled:opacity-50"
+                >
+                  {sellingDupes ? "Vendiendo..." : `Vender ${dupeIdsInPack.length} repetidas (+${dupeValue})`}
+                </button>
+              )}
+              {soldInfo && (
+                <span className="text-emerald-300 text-sm font-medium px-3 py-2.5">
+                  +{soldInfo.earned} por {soldInfo.sold} repetidas
+                </span>
+              )}
               <button onClick={() => setCurrentPack([])} className="btn-ghost text-white px-5 py-2.5 rounded-xl text-sm font-medium">
                 Abrir otro
               </button>
@@ -526,6 +588,18 @@ export default function Home() {
                 Finalizar
               </button>
             </div>
+          </div>
+
+          {/* DESGLOSE POR RAREZA */}
+          <div className="w-full flex flex-wrap gap-2 mb-8">
+            {rarityBreakdown.map(([rarity, count]) => (
+              <span
+                key={rarity}
+                className="bg-white/5 border border-white/5 rounded-full px-3 py-1 text-[11px] text-gray-400"
+              >
+                {count}× <span className="text-gray-300">{rarity}</span>
+              </span>
+            ))}
           </div>
 
           {bestPull && (SELL_PRICES[bestPull.rarity] || 0) >= 50 && (
@@ -549,7 +623,7 @@ export default function Home() {
 
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 md:gap-6 w-full">
             {currentPack.map((card, index) => {
-              const isNew = !userCollectionIds.slice(0, userCollectionIds.length - currentPack.length).includes(card.id);
+              const isNew = !prePackIds.includes(card.id);
               return (
                 <motion.div
                   key={index}

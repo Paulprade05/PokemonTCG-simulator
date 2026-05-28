@@ -4,7 +4,7 @@
   import { auth, currentUser } from "@clerk/nextjs/server";
   import { sql } from '@vercel/postgres';
   import { revalidatePath } from 'next/cache';
-  import { SELL_PRICES } from "../utils/constanst";
+  import { SELL_PRICES, STARTING_COINS, DAILY_BASE, DAILY_STREAK_STEP, DAILY_STREAK_CAP, SET_COMPLETION_BONUS } from "../utils/constanst";
   // --- 1. GESTIÓN DE USUARIO Y MONEDAS ---
 
   export async function getUserData() {
@@ -16,8 +16,8 @@
       if (rows.length > 0) return { coins: rows[0].coins };
 
       console.log(`🆕 Creando usuario: ${userId}`);
-      await sql`INSERT INTO users (id, coins) VALUES (${userId}, 500)`;
-      return { coins: 500 };
+      await sql`INSERT INTO users (id, coins) VALUES (${userId}, ${STARTING_COINS})`;
+      return { coins: STARTING_COINS };
     } catch (error) {
       console.error("❌ Error getUserData:", error);
       return null;
@@ -679,8 +679,8 @@ export async function claimDailyReward() {
       ? (now.getTime() - new Date(last).getTime()) / (1000 * 60 * 60) < 48
       : false;
     const newStreak = wasYesterday ? streak + 1 : 1;
-    const baseReward = 100;
-    const bonus = Math.min(newStreak * 10, 100);
+    const baseReward = DAILY_BASE;
+    const bonus = Math.min(newStreak * DAILY_STREAK_STEP, DAILY_STREAK_CAP);
     const totalReward = baseReward + bonus;
 
     await sql`
@@ -884,7 +884,7 @@ export async function claimSetCompletionBonuses() {
     const { rows: already } = await sql`SELECT set_id FROM set_rewards WHERE user_id = ${userId}`;
     const rewarded = new Set(already.map((r: any) => r.set_id));
 
-    const BONUS = 1000;
+    const BONUS = SET_COMPLETION_BONUS;
     let granted = 0;
     const completedSets: string[] = [];
 
@@ -906,5 +906,47 @@ export async function claimSetCompletionBonuses() {
   } catch (e) {
     console.error("claimSetCompletionBonuses error:", e);
     return { granted: 0, sets: [] };
+  }
+}
+
+// --- VENDER DUPLICADOS DE UN SOBRE (resumen) ---
+// Recibe ids de cartas que YA poseías antes del sobre (los duplicados ganados).
+// Vende 1 copia de cada (sin bajar de 1), acredita precio segun rareza.
+export async function sellPackDuplicates(cardIds: string[]) {
+  const { userId } = await auth();
+  if (!userId || !cardIds || cardIds.length === 0) return { earned: 0, sold: 0 };
+  try {
+    // Contar cuántas veces aparece cada id en el sobre
+    const counts: Record<string, number> = {};
+    cardIds.forEach((id) => { counts[id] = (counts[id] || 0) + 1; });
+
+    let earned = 0;
+    let sold = 0;
+    for (const [cardId, qtyToSell] of Object.entries(counts)) {
+      const { rows } = await sql`
+        SELECT uc.quantity, c.rarity
+        FROM user_collection uc JOIN cards c ON uc.card_id = c.id
+        WHERE uc.user_id = ${userId} AND uc.card_id = ${cardId}
+      `;
+      if (rows.length === 0) continue;
+      const have = rows[0].quantity;
+      const rarity = rows[0].rarity;
+      // No bajar de 1 copia
+      const sellable = Math.min(qtyToSell, Math.max(0, have - 1));
+      if (sellable <= 0) continue;
+      const price = SELL_PRICES[rarity as keyof typeof SELL_PRICES] || 10;
+      await sql`UPDATE user_collection SET quantity = quantity - ${sellable} WHERE user_id = ${userId} AND card_id = ${cardId}`;
+      earned += price * sellable;
+      sold += sellable;
+    }
+    if (earned > 0) {
+      await sql`UPDATE users SET coins = coins + ${earned} WHERE id = ${userId}`;
+      revalidatePath('/');
+      revalidatePath('/collection');
+    }
+    return { earned, sold };
+  } catch (e) {
+    console.error("sellPackDuplicates error:", e);
+    return { earned: 0, sold: 0 };
   }
 }

@@ -202,43 +202,64 @@ export const AVAILABLE_SETS = [
 // 💎 RANKING DE RAREZA (Para ordenar: 1 = Peor, 10 = Mejor)
 // src/utils/constanst.ts
 
-// --- PRECIOS DE VENTA (Economía ajustada) ---
+// --- PRECIOS DE VENTA (Economía rebalanceada → sink) ---
+// Diseño: vender TODO un sobre estándar rinde ~46💰 (coste 50) = leve pérdida.
+// Premium/Leyenda pérdida mayor en dinero, ganancia en colección. Jackpots siguen brillando.
 export const SELL_PRICES: Record<string, number> = {
-  // 🧱 Tier 1: Morralla (Reciclaje)
-  "Common": 3,
-  "Uncommon": 5,
-  "Rare": 10,
+  // 🧱 Tier 1: Morralla
+  "Common": 1,
+  "Uncommon": 3,
+  "Rare": 8,
 
-  // ✨ Tier 2: Cartas Brillantes y Promos
-  "Rare Holo": 20,
-  "Promo": 35,
-  "ACE SPEC Rare": 45,
+  // ✨ Tier 2: Brillantes y Promos
+  "Rare Holo": 15,
+  "Promo": 20,
+  "ACE SPEC Rare": 30,
 
-  // ⚔️ Tier 3: Hits Básicos (Casi pagan un sobre estándar de 50💰)
-  "Double Rare": 50,        // Las cartas "ex" normales
-  "Rare Holo V": 50,        // Las cartas "V" normales
-  "Amazing Rare": 65,
-  "Radiant Rare": 65,
+  // ⚔️ Tier 3: Hits básicos
+  "Double Rare": 30,        // ex modernas
+  "Rare Holo V": 30,        // V
+  "Amazing Rare": 40,
+  "Radiant Rare": 40,
 
-  // 🖼️ Tier 4: Hits Medios y Evoluciones (Ganancia pura)
-  "Shiny Rare": 75,
-  "Rare Shiny": 75,
-  "Trainer Gallery Rare Holo": 85, 
-  "Rare Holo VMAX": 100,
-  "Rare Holo VSTAR": 110,
-  "Illustration Rare": 140, // Art Rares (AR)
+  // 🖼️ Tier 4: Hits medios
+  "Shiny Rare": 45,
+  "Rare Shiny": 45,
+  "Trainer Gallery Rare Holo": 50,
+  "Rare Holo VMAX": 60,
+  "Rare Holo VSTAR": 70,
+  "Illustration Rare": 90,  // Art Rares (AR)
 
-  // 💎 Tier 5: Full Arts (Pagan casi un sobre Premium de 200💰)
-  "Ultra Rare": 190,        // Full Arts modernas
-  "Rare Ultra": 190,        // Full Arts clásicas/GX/EX
-  "Shiny Ultra Rare": 220,  // Full Arts variocolor
+  // 💎 Tier 5: Full Arts
+  "Ultra Rare": 120,
+  "Rare Ultra": 120,
+  "Shiny Ultra Rare": 140,
 
-  // 👑 Tier 6: Secretas y Persecuciones (El premio gordo)
-  "Special Illustration Rare": 550, // SAR / SIR (Las más buscadas hoy)
-  "Rare Rainbow": 650,              // Rainbow Rares
-  "Rare Secret": 750,               // Secretas genéricas
-  "Hyper Rare": 900                 // Cartas Doradas
+  // 👑 Tier 6: Secretas (jackpot)
+  "Special Illustration Rare": 300, // SAR / SIR
+  "Rare Rainbow": 350,
+  "Rare Secret": 400,
+  "Hyper Rare": 500                 // Doradas
 };
+
+// --- PRECIOS DE SOBRES ---
+export const PACK_PRICES = {
+  STANDARD: 50,
+  PREMIUM: 250,
+  GOLDEN: 1000,
+  SPECIAL: 1000,
+} as const;
+
+// Monedas iniciales (nuevo usuario / invitado)
+export const STARTING_COINS = 1000;
+
+// Recompensa diaria
+export const DAILY_BASE = 100;
+export const DAILY_STREAK_STEP = 10;
+export const DAILY_STREAK_CAP = 100;
+
+// Bonus por completar un set
+export const SET_COMPLETION_BONUS = 1000;
 
 // --- ORDEN DE RAREZA (Para ordenar el álbum de mejor a peor) ---
 // Cuanto mayor sea el número, más arriba aparecerá al filtrar por "Rareza"
