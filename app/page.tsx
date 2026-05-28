@@ -13,6 +13,7 @@ import {
   getProfileStats,
   claimSetCompletionBonuses,
   sellPackDuplicates,
+  getWishlistIds,
 } from "./action";
 import { getCardsFromSet } from "../services/pokemon";
 import { openStandardPack, openPremiumPack, openGoldenPack } from "../utils/packLogic";
@@ -45,6 +46,8 @@ export default function Home() {
   const [prePackIds, setPrePackIds] = useState<string[]>([]);
   const [soldInfo, setSoldInfo] = useState<{ earned: number; sold: number } | null>(null);
   const [sellingDupes, setSellingDupes] = useState(false);
+  const [wishlistIds, setWishlistIds] = useState<string[]>([]);
+  const [showAchievements, setShowAchievements] = useState(false);
 
   const currentSetObj = dbSets.find((s) => s.id === selectedSet);
   const isSpecialSet = currentSetObj
@@ -77,6 +80,7 @@ export default function Home() {
         const myCards = await getFullCollection();
         setUserCollectionIds(myCards.map((c: any) => c.id));
         getProfileStats().then(setStats);
+        getWishlistIds().then(setWishlistIds);
       } else {
         const localCards = getCollection();
         setUserCollectionIds(localCards.map((c: any) => c.id));
@@ -161,6 +165,51 @@ export default function Home() {
       setPackIndex(0);
       setCardRevealed(false);
       setIsPackOpen(true);
+    }
+  };
+
+  // Apertura múltiple (×N): salta animación, guarda todo, va al resumen.
+  const handleBuyMulti = async (type: PackType, count = 10) => {
+    if (!allCards || allCards.length === 0) {
+      alert("Las cartas no se han cargado. Recarga la página.");
+      return;
+    }
+    const price = PACK_PRICES[type] * count;
+    if (coins < price) { alert(`Necesitas ${price} monedas para ×${count}`); return; }
+
+    const ownedSnapshot = [...userCollectionIds];
+    const owned = new Set(ownedSnapshot);
+    const combined: any[] = [];
+    for (let i = 0; i < count; i++) {
+      let p: any[] = [];
+      if (type === "STANDARD") p = openStandardPack(allCards);
+      else if (type === "PREMIUM") p = openPremiumPack(allCards);
+      else p = openGoldenPack(allCards, Array.from(owned));
+      combined.push(...p);
+      p.forEach((c) => owned.add(c.id)); // golden garantiza nuevas distintas
+    }
+
+    if (spendCoins(price)) {
+      if (isSignedIn) {
+        await updateCoins(coins - price);
+        await savePackToCollection(combined, price, count);
+        const res = await claimSetCompletionBonuses();
+        if (res.granted > 0) {
+          setSetBonus({ granted: res.granted, sets: res.sets });
+          setCoins((c) => c + res.granted);
+          setTimeout(() => setSetBonus(null), 6000);
+        }
+        getProfileStats().then(setStats);
+      } else {
+        saveToCollection(combined);
+      }
+      setPrePackIds(ownedSnapshot);
+      setUserCollectionIds((prev) => [...prev, ...combined.map((c) => c.id)]);
+      setSoldInfo(null);
+      setCurrentPackType(type);
+      setCurrentPack(combined);
+      setCurrentPackPrice(price);
+      setIsPackOpen(false); // directo al resumen
     }
   };
 
@@ -249,6 +298,21 @@ export default function Home() {
     [dupeIdsInPack, currentPack],
   );
 
+  // Logros derivados de stats
+  const achievements = useMemo(() => {
+    const s = stats || {};
+    const def = [
+      { id: "first", name: "Primer sobre", desc: "Abre 1 sobre", done: (s.packsOpened || 0) >= 1, icon: "📦" },
+      { id: "collector", name: "Coleccionista", desc: "100 cartas únicas", done: (s.totalUnique || 0) >= 100, icon: "🗂️" },
+      { id: "hunter", name: "Cazador raro", desc: "10 cartas raras (IR+)", done: (s.rareHits || 0) >= 10, icon: "💎" },
+      { id: "rich", name: "Millonario", desc: "Colección por 10.000", done: (s.totalValue || 0) >= 10000, icon: "💰" },
+      { id: "setdone", name: "Maestro de set", desc: "Completa 1 set", done: (s.setsCompleted || 0) >= 1, icon: "🏆" },
+      { id: "veteran", name: "Veterano", desc: "Abre 100 sobres", done: (s.packsOpened || 0) >= 100, icon: "⭐" },
+    ];
+    return def;
+  }, [stats]);
+  const achievementsDone = achievements.filter((a) => a.done).length;
+
   // Desglose por rareza del sobre
   const rarityBreakdown = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -312,6 +376,67 @@ export default function Home() {
             </div>
           ))}
         </motion.div>
+      )}
+
+      {/* ACHIEVEMENTS (signed-in) */}
+      {!selectedSet && isSignedIn && stats && (
+        <div className="w-full max-w-6xl mb-12 relative z-10">
+          <button
+            onClick={() => setShowAchievements((v) => !v)}
+            className="w-full surface surface-hover rounded-2xl px-5 py-4 flex justify-between items-center"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/5 border border-white/5 flex items-center justify-center">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-yellow-400">
+                  <circle cx="12" cy="8" r="6" /><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11" />
+                </svg>
+              </div>
+              <div className="text-left">
+                <h3 className="font-semibold text-sm text-white">Logros</h3>
+                <p className="text-xs text-gray-500">{achievementsDone}/{achievements.length} desbloqueados</p>
+              </div>
+            </div>
+            <motion.svg
+              animate={{ rotate: showAchievements ? 180 : 0 }}
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+              className="w-4 h-4 text-gray-400"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </motion.svg>
+          </button>
+
+          <AnimatePresence>
+            {showAchievements && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                className="overflow-hidden"
+              >
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
+                  {achievements.map((ach) => (
+                    <div
+                      key={ach.id}
+                      className={`surface rounded-2xl p-4 flex items-center gap-3 ${ach.done ? "border border-yellow-500/20" : "opacity-50"}`}
+                    >
+                      <span className={`text-2xl ${ach.done ? "" : "grayscale"}`}>{ach.icon}</span>
+                      <div className="min-w-0">
+                        <p className={`text-sm font-medium truncate ${ach.done ? "text-white" : "text-gray-400"}`}>{ach.name}</p>
+                        <p className="text-[10px] text-gray-500 truncate">{ach.desc}</p>
+                      </div>
+                      {ach.done && (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-emerald-400 ml-auto shrink-0">
+                          <path d="M20 6 9 17l-5-5" />
+                        </svg>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       )}
 
       {/* VIEW 1: SET SELECTION */}
@@ -422,6 +547,7 @@ export default function Home() {
                     </svg>
                   }
                   onClick={() => handleBuyPack("STANDARD")}
+                  onMulti={() => handleBuyMulti("STANDARD", 10)}
                 />
                 <PackCard
                   accent="purple"
@@ -441,6 +567,7 @@ export default function Home() {
                     </svg>
                   }
                   onClick={() => handleBuyPack("PREMIUM")}
+                  onMulti={() => handleBuyMulti("PREMIUM", 10)}
                 />
                 <PackCard
                   accent="yellow"
@@ -459,6 +586,7 @@ export default function Home() {
                     </svg>
                   }
                   onClick={() => handleBuyPack("GOLDEN")}
+                  onMulti={() => handleBuyMulti("GOLDEN", 5)}
                 />
               </>
             )}
@@ -637,6 +765,11 @@ export default function Home() {
                       Nueva
                     </div>
                   )}
+                  {wishlistIds.includes(card.id) && (
+                    <div className="absolute -top-2 -right-2 z-30 bg-pink-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shadow-lg">
+                      Deseada
+                    </div>
+                  )}
                   <PokemonCard card={card} reveal={true} useHighRes={true} />
                 </motion.div>
               );
@@ -656,10 +789,12 @@ interface PackCardProps {
   price: number;
   icon: React.ReactNode;
   onClick: () => void;
+  onMulti?: () => void;
+  multiCount?: number;
   odds?: [string, string][];
 }
 
-function PackCard({ accent, badge, title, description, price, icon, onClick, odds }: PackCardProps) {
+function PackCard({ accent, badge, title, description, price, icon, onClick, onMulti, multiCount = 10, odds }: PackCardProps) {
   const accents: Record<string, { border: string; iconColor: string; btn: string; badgeBg: string }> = {
     white: {
       border: "border-white/5",
@@ -689,10 +824,9 @@ function PackCard({ accent, badge, title, description, price, icon, onClick, odd
   const a = accents[accent];
 
   return (
-    <motion.button
+    <motion.div
       whileHover={{ y: -6 }}
       transition={{ duration: 0.25 }}
-      onClick={onClick}
       className={`bg-[#111] ${a.border} border rounded-3xl p-6 md:p-8 flex flex-col items-center group relative overflow-hidden text-left`}
     >
       {badge && (
@@ -717,9 +851,22 @@ function PackCard({ accent, badge, title, description, price, icon, onClick, odd
         </div>
       )}
 
-      <div className={`mt-auto ${a.btn} font-medium py-2.5 px-6 rounded-xl w-full text-center transition text-sm`}>
-        {price.toLocaleString()} monedas
+      <div className="mt-auto w-full flex flex-col gap-2">
+        <button
+          onClick={onClick}
+          className={`${a.btn} font-medium py-2.5 px-6 rounded-xl w-full text-center transition text-sm`}
+        >
+          {price.toLocaleString()} monedas
+        </button>
+        {onMulti && (
+          <button
+            onClick={onMulti}
+            className="bg-white/5 hover:bg-white/10 border border-white/5 text-gray-300 font-medium py-2 px-6 rounded-xl w-full text-center transition text-xs"
+          >
+            Abrir ×{multiCount} · {(price * multiCount).toLocaleString()}
+          </button>
+        )}
       </div>
-    </motion.button>
+    </motion.div>
   );
 }

@@ -4,7 +4,7 @@
   import { auth, currentUser } from "@clerk/nextjs/server";
   import { sql } from '@vercel/postgres';
   import { revalidatePath } from 'next/cache';
-  import { SELL_PRICES, STARTING_COINS, DAILY_BASE, DAILY_STREAK_STEP, DAILY_STREAK_CAP, SET_COMPLETION_BONUS } from "../utils/constanst";
+  import { SELL_PRICES, RARITY_RANK, STARTING_COINS, DAILY_BASE, DAILY_STREAK_STEP, DAILY_STREAK_CAP, SET_COMPLETION_BONUS } from "../utils/constanst";
   // --- 1. GESTIÓN DE USUARIO Y MONEDAS ---
 
   export async function getUserData() {
@@ -43,7 +43,7 @@
  // --- 2. GESTIÓN DE LA COLECCIÓN ---
 
 // 👇 Añadimos "packPrice" como segundo parámetro (puedes cambiar el 100 por lo que cuesten tus sobres)
-export async function savePackToCollection(cards: any[], packPrice: number = 100) {
+export async function savePackToCollection(cards: any[], packPrice: number = 100, packCount: number = 1) {
   const { userId } = await auth();
   if (!userId) return { success: false, error: "No logueado" };
 
@@ -85,8 +85,8 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
 
     // 🚨 NUEVO: SUMAR A LAS ESTADÍSTICAS DEL JUGADOR 🚨
     await sql`
-      UPDATE users 
-      SET packs_opened = COALESCE(packs_opened, 0) + 1,
+      UPDATE users
+      SET packs_opened = COALESCE(packs_opened, 0) + ${packCount},
           money_spent = COALESCE(money_spent, 0) + ${packPrice}
       WHERE id = ${userId}
     `;
@@ -728,6 +728,9 @@ export async function getProfileStats() {
       WHERE uc.user_id = ${userId}
     `;
     const { rows: setsRows } = await sql`SELECT id, total FROM sets`;
+    const { rows: userRows } = await sql`SELECT packs_opened, money_spent FROM users WHERE id = ${userId}`;
+    const packsOpened = userRows[0]?.packs_opened || 0;
+    const moneySpent = userRows[0]?.money_spent || 0;
     const totalsBySet: Record<string, number> = {};
     setsRows.forEach((s: any) => { totalsBySet[s.id] = s.total; });
 
@@ -750,12 +753,21 @@ export async function getProfileStats() {
       if (total && owned >= total) setsCompleted += 1;
     });
 
+    // Conteo de rarezas tier alto para logros
+    let rareHits = 0;
+    cards.forEach((row: any) => {
+      if ((RARITY_RANK[row.rarity] || 0) >= 70) rareHits += 1; // Illustration Rare+
+    });
+
     return {
       totalValue,
       totalCards,
       totalUnique,
       setsCompleted,
       setsTotal: setsRows.length,
+      packsOpened,
+      moneySpent,
+      rareHits,
     };
   } catch (e) {
     console.error("Error stats:", e);
@@ -948,5 +960,70 @@ export async function sellPackDuplicates(cardIds: string[]) {
   } catch (e) {
     console.error("sellPackDuplicates error:", e);
     return { earned: 0, sold: 0 };
+  }
+}
+
+// --- WISHLIST ---
+export async function toggleWishlist(cardId: string) {
+  const { userId } = await auth();
+  if (!userId) return { error: "No logueado" };
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS wishlist (
+        user_id TEXT NOT NULL,
+        card_id TEXT NOT NULL,
+        added_at TIMESTAMP DEFAULT NOW(),
+        PRIMARY KEY (user_id, card_id)
+      )
+    `;
+    const { rows } = await sql`SELECT 1 FROM wishlist WHERE user_id = ${userId} AND card_id = ${cardId}`;
+    if (rows.length > 0) {
+      await sql`DELETE FROM wishlist WHERE user_id = ${userId} AND card_id = ${cardId}`;
+      return { wishlisted: false };
+    }
+    await sql`INSERT INTO wishlist (user_id, card_id) VALUES (${userId}, ${cardId}) ON CONFLICT DO NOTHING`;
+    return { wishlisted: true };
+  } catch (e) {
+    console.error("toggleWishlist error:", e);
+    return { error: "Error servidor" };
+  }
+}
+
+export async function getWishlistIds() {
+  const { userId } = await auth();
+  if (!userId) return [];
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS wishlist (
+        user_id TEXT NOT NULL,
+        card_id TEXT NOT NULL,
+        added_at TIMESTAMP DEFAULT NOW(),
+        PRIMARY KEY (user_id, card_id)
+      )
+    `;
+    const { rows } = await sql`SELECT card_id FROM wishlist WHERE user_id = ${userId}`;
+    return rows.map((r: any) => r.card_id);
+  } catch (e) {
+    return [];
+  }
+}
+
+export async function getWishlistCards() {
+  const { userId } = await auth();
+  if (!userId) return [];
+  try {
+    const { rows } = await sql`
+      SELECT c.id, c.name, c.rarity, c.images, c.set_id,
+             EXISTS(SELECT 1 FROM user_collection uc WHERE uc.user_id = ${userId} AND uc.card_id = c.id) AS owned
+      FROM wishlist w JOIN cards c ON w.card_id = c.id
+      WHERE w.user_id = ${userId}
+      ORDER BY w.added_at DESC
+    `;
+    return rows.map((r: any) => ({
+      ...r,
+      images: typeof r.images === 'string' ? JSON.parse(r.images) : r.images,
+    }));
+  } catch (e) {
+    return [];
   }
 }
