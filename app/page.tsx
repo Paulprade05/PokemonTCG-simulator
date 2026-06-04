@@ -477,6 +477,8 @@ export default function Home() {
                         <img
                           src={set.images.logo}
                           alt={set.name}
+                          loading="lazy"
+                          decoding="async"
                           className="max-h-16 md:max-h-20 max-w-[80%] object-contain group-hover:scale-110 transition-transform duration-500 opacity-90 group-hover:opacity-100 drop-shadow-lg"
                         />
                       ) : (

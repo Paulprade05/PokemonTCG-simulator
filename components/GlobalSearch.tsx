@@ -142,6 +142,8 @@ export default function GlobalSearch() {
                         <img
                           src={c.images.small}
                           alt={c.name}
+                          loading="lazy"
+                          decoding="async"
                           className={`w-full h-auto rounded-md transition ${c.owned ? "" : "grayscale opacity-60 group-hover:opacity-90"}`}
                         />
                       )}

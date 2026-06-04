@@ -33,7 +33,7 @@ export default function CollectionPage() {
   const [filterRarity, setFilterRarity] = useState("all");
   const [selectedCard, setSelectedCard] = useState<any | null>(null);
   const [page, setPage] = useState(1);
-  const PAGE_SIZE = 25;
+  const PAGE_SIZE = 24;
 
   const rarityOptions = useMemo(() => {
     const set = new Set<string>();

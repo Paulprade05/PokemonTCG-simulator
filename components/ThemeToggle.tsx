@@ -2,22 +2,40 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useUser } from "@clerk/nextjs";
+import { getUserTheme, setUserTheme } from "../app/action";
 
 type Theme = "light" | "dark";
 
 export default function ThemeToggle() {
+  const { isSignedIn, isLoaded } = useUser();
   const [theme, setTheme] = useState<Theme>("light");
 
+  // Cargar tema actual del DOM (puesto por script no-flash)
   useEffect(() => {
     const cur = (document.documentElement.getAttribute("data-theme") as Theme) || "light";
     setTheme(cur);
   }, []);
+
+  // Si está logueado, sincronizar desde BD (sobrescribe localStorage si difiere)
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) return;
+    getUserTheme().then((t) => {
+      if (t && t !== theme) {
+        setTheme(t);
+        document.documentElement.setAttribute("data-theme", t);
+        try { localStorage.setItem("theme", t); } catch {}
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSignedIn, isLoaded]);
 
   const toggle = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";
     setTheme(next);
     document.documentElement.setAttribute("data-theme", next);
     try { localStorage.setItem("theme", next); } catch {}
+    if (isSignedIn) setUserTheme(next).catch(() => {});
   };
 
   return (

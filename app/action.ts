@@ -1052,3 +1052,36 @@ export async function getWishlistCards() {
     return [];
   }
 }
+
+// --- USER THEME PREFERENCE (persistido por usuario) ---
+export async function getUserTheme(): Promise<"light" | "dark" | null> {
+  const { userId } = await auth();
+  if (!userId) return null;
+  try {
+    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT`;
+    const { rows } = await sql`SELECT theme FROM users WHERE id = ${userId}`;
+    const t = rows[0]?.theme;
+    if (t === "light" || t === "dark") return t;
+    return null;
+  } catch (e) {
+    console.error("getUserTheme error:", e);
+    return null;
+  }
+}
+
+export async function setUserTheme(theme: "light" | "dark") {
+  const { userId } = await auth();
+  if (!userId) return { error: "No logueado" };
+  if (theme !== "light" && theme !== "dark") return { error: "Tema inválido" };
+  try {
+    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT`;
+    await sql`
+      INSERT INTO users (id, theme) VALUES (${userId}, ${theme})
+      ON CONFLICT (id) DO UPDATE SET theme = ${theme}
+    `;
+    return { success: true };
+  } catch (e) {
+    console.error("setUserTheme error:", e);
+    return { error: "Error servidor" };
+  }
+}

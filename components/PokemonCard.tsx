@@ -1,7 +1,7 @@
 // src/components/PokemonCard.tsx
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, memo } from "react";
 import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
 
 const CARD_BACK = "https://tcg.pokemon.com/assets/img/global/tcg-card-back-2x.jpg";
@@ -39,7 +39,7 @@ interface PokemonCardProps {
   interactive?: boolean; // tilt 3D + tracking — desactivar en grids
 }
 
-export default function PokemonCard({
+function PokemonCardInner({
   card,
   reveal = false,
   useHighRes = false,
@@ -129,8 +129,10 @@ export default function PokemonCard({
         >
           {imageUrl && (
             <img
-              src={imageUrl} 
+              src={imageUrl}
               alt={card.name}
+              loading="lazy"
+              decoding="async"
               className="w-full h-full object-contain drop-shadow-xl"
             />
           )}
@@ -175,9 +177,18 @@ export default function PokemonCard({
           className="absolute w-full h-full rounded-[4.5%] overflow-hidden shadow-xl backface-hidden border border-white/10"
           style={{ transform: "rotateY(180deg)", backfaceVisibility: "hidden" }}
         >
-          <img src={CARD_BACK} alt="Card Back" className="w-full h-full object-cover" />
+          <img src={CARD_BACK} alt="Card Back" loading="lazy" decoding="async" className="w-full h-full object-cover" />
         </div>
       </motion.div>
     </div>
   );
 }
+
+const PokemonCard = memo(PokemonCardInner, (a, b) =>
+  a.card?.id === b.card?.id &&
+  a.card?.quantity === b.card?.quantity &&
+  a.reveal === b.reveal &&
+  a.useHighRes === b.useHighRes &&
+  a.interactive === b.interactive,
+);
+export default PokemonCard;
