@@ -837,14 +837,29 @@ export async function getCardFromDB(cardId: string) {
 // --- SEARCH CARDS IN DB (replaces live API in GlobalSearch) ---
 export async function searchCardsInDB(query: string, limit = 30) {
   try {
+    const { userId } = await auth();
     const term = `%${query.toLowerCase()}%`;
-    const { rows } = await sql`
-      SELECT id, name, rarity, images, set_id
-      FROM cards
-      WHERE LOWER(name) LIKE ${term}
-      ORDER BY name ASC
-      LIMIT ${limit}
-    `;
+    let rows: any[];
+    if (userId) {
+      const res = await sql`
+        SELECT c.id, c.name, c.rarity, c.images, c.set_id,
+               EXISTS(SELECT 1 FROM user_collection uc WHERE uc.user_id = ${userId} AND uc.card_id = c.id) AS owned
+        FROM cards c
+        WHERE LOWER(c.name) LIKE ${term}
+        ORDER BY c.name ASC
+        LIMIT ${limit}
+      `;
+      rows = res.rows;
+    } else {
+      const res = await sql`
+        SELECT id, name, rarity, images, set_id, false AS owned
+        FROM cards
+        WHERE LOWER(name) LIKE ${term}
+        ORDER BY name ASC
+        LIMIT ${limit}
+      `;
+      rows = res.rows;
+    }
     const setIds = Array.from(new Set(rows.map((r: any) => r.set_id)));
     const setMap: Record<string, any> = {};
     if (setIds.length > 0) {
@@ -860,6 +875,7 @@ export async function searchCardsInDB(query: string, limit = 30) {
       rarity: r.rarity,
       images: typeof r.images === 'string' ? JSON.parse(r.images) : r.images,
       set: setMap[r.set_id] || { id: r.set_id },
+      owned: r.owned,
     }));
   } catch (e) {
     console.error("searchCardsInDB error:", e);

@@ -11,6 +11,7 @@ interface Hit {
   images?: { small?: string };
   set?: { id: string; name: string };
   rarity?: string;
+  owned?: boolean;
 }
 
 export default function GlobalSearch() {
@@ -122,12 +123,17 @@ export default function GlobalSearch() {
                     <button
                       key={c.id}
                       onClick={() => setSelected(c)}
-                      className="group bg-white/[0.02] hover:bg-white/5 border border-white/5 hover:border-white/10 rounded-xl p-1.5 transition text-left"
+                      className="group bg-white/[0.02] hover:bg-white/5 border border-white/5 hover:border-white/10 rounded-xl p-1.5 transition text-left press"
+                      title={c.owned ? "" : "No la posees"}
                     >
                       {c.images?.small && (
-                        <img src={c.images.small} alt={c.name} className="w-full h-auto rounded-md" />
+                        <img
+                          src={c.images.small}
+                          alt={c.name}
+                          className={`w-full h-auto rounded-md transition ${c.owned ? "" : "grayscale opacity-60 group-hover:opacity-90"}`}
+                        />
                       )}
-                      <p className="text-[10px] text-gray-300 truncate mt-1">{c.name}</p>
+                      <p className={`text-[10px] truncate mt-1 ${c.owned ? "text-gray-200" : "text-gray-500"}`}>{c.name}</p>
                       <p className="text-[9px] text-gray-600 truncate">{c.set?.name}</p>
                     </button>
                   ))}

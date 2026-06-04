@@ -105,16 +105,13 @@ export default function SetAlbumPage() {
 
         {/* GRID 3x3 BLUEPRINT */}
         <div className="grid grid-cols-3 md:grid-cols-3 lg:grid-cols-3 gap-3 md:gap-5 max-w-4xl mx-auto w-full">
-          {sortedCards.map((blueprintCard, idx) => {
+          {sortedCards.map((blueprintCard) => {
             const ownedCard = ownedCards.get(blueprintCard.id);
 
             if (ownedCard) {
               return (
-                <motion.div
+                <div
                   key={blueprintCard.id}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: Math.min(idx * 0.01, 0.4) }}
                   className="relative group"
                 >
                   {ownedCard.quantity > 1 && (
@@ -125,22 +122,19 @@ export default function SetAlbumPage() {
                   <div className="transition transform group-hover:-translate-y-1 duration-300">
                     <PokemonCard card={ownedCard} reveal={true} />
                   </div>
-                </motion.div>
+                </div>
               );
             }
 
             return (
-              <motion.div
+              <div
                 key={blueprintCard.id}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: Math.min(idx * 0.01, 0.4) }}
                 className="w-full aspect-[2.5/3.5] bg-black/[0.03] border border-dashed border-black/15 rounded-2xl flex items-center justify-center hover:bg-black/[0.06] transition"
               >
                 <span className="ink-soft font-mono text-lg md:text-2xl tabular-nums">
                   {String(blueprintCard.number).padStart(3, "0")}
                 </span>
-              </motion.div>
+              </div>
             );
           })}
         </div>

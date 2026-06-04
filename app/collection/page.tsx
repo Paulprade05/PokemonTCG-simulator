@@ -303,17 +303,10 @@ export default function CollectionPage() {
             )}
           </div>
         ) : (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 md:gap-6"
-          >
-            {processedCards.map((card, idx) => (
-              <motion.div
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 md:gap-6">
+            {processedCards.map((card) => (
+              <div
                 key={card.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: Math.min(idx * 0.015, 0.5) }}
                 className="relative group cursor-zoom-in"
                 onClick={() => setSelectedCard(card)}
               >
@@ -344,9 +337,9 @@ export default function CollectionPage() {
                     <span className="chip ink-soft text-[10px] px-2 py-1 rounded-full">Única</span>
                   )}
                 </div>
-              </motion.div>
+              </div>
             ))}
-          </motion.div>
+          </div>
         )}
       </div>
 

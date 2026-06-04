@@ -120,6 +120,7 @@ export default function Home() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === "Space" && isPackOpen) {
+        if (e.repeat) return; // ignora auto-repeat al mantener pulsado
         e.preventDefault();
         handleNextCard();
       }
