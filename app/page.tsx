@@ -47,6 +47,7 @@ export default function Home() {
   const [soldInfo, setSoldInfo] = useState<{ earned: number; sold: number } | null>(null);
   const [sellingDupes, setSellingDupes] = useState(false);
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
+  const [openSeries, setOpenSeries] = useState<Record<string, boolean>>({});
   const finishingRef = useRef(false);
 
   const currentSetObj = dbSets.find((s) => s.id === selectedSet);
@@ -444,7 +445,7 @@ export default function Home() {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="w-full max-w-6xl flex flex-col gap-14 pb-24 relative z-10"
+          className="w-full max-w-6xl flex flex-col gap-4 pb-24 relative z-10"
         >
           {Object.entries(setsBySeries).map(([seriesName, sets], idx) => (
             <motion.div
@@ -452,45 +453,68 @@ export default function Home() {
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: idx * 0.08, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-              className="flex flex-col gap-6"
+              className="flex flex-col gap-2"
             >
-              <div className="flex items-center gap-4">
-                <h2 className="text-sm font-bold ink uppercase tracking-[0.2em]">{seriesName}</h2>
-                <div className="h-px bg-black/10 flex-1"></div>
-                <span className="text-xs ink-soft font-mono chip px-2 py-0.5">{sets.length}</span>
-              </div>
+              <button
+                onClick={() => setOpenSeries((s) => ({ ...s, [seriesName]: !s[seriesName] }))}
+                className="w-full surface surface-hover rounded-2xl px-4 md:px-5 py-3 md:py-4 flex items-center justify-between press"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="text-sm font-bold uppercase tracking-[0.2em] truncate">{seriesName}</span>
+                  <span className="text-xs ink-soft font-mono chip px-2 py-0.5 shrink-0">{sets.length}</span>
+                </div>
+                <motion.svg
+                  animate={{ rotate: openSeries[seriesName] ? 180 : 0 }}
+                  transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                  className="w-4 h-4 ink-soft"
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </motion.svg>
+              </button>
 
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
-                {sets.map((set) => (
-                  <motion.button
-                    key={set.id}
-                    whileHover={{ y: -5 }}
-                    whileTap={{ scale: 0.96 }}
-                    transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-                    onClick={() => handleSelectSet(set.id)}
-                    className="group surface surface-hover p-6 md:p-8 rounded-3xl flex flex-col items-center justify-between gap-4 overflow-hidden relative min-h-[150px] md:min-h-[180px]"
+              <AnimatePresence initial={false}>
+                {openSeries[seriesName] && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                    className="overflow-hidden"
                   >
-                    {/* sheen al hover */}
-                    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.06),transparent_60%)] pointer-events-none" />
-                    <div className="flex-1 flex items-center justify-center w-full relative z-10">
-                      {set.images?.logo ? (
-                        <img
-                          src={set.images.logo}
-                          alt={set.name}
-                          loading="lazy"
-                          decoding="async"
-                          className="max-h-16 md:max-h-20 max-w-[80%] object-contain group-hover:scale-110 transition-transform duration-500 opacity-90 group-hover:opacity-100 drop-shadow-lg"
-                        />
-                      ) : (
-                        <div className="text-gray-500 text-sm text-center">{set.name}</div>
-                      )}
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4 pt-3">
+                      {sets.map((set) => (
+                        <motion.button
+                          key={set.id}
+                          whileHover={{ y: -5 }}
+                          whileTap={{ scale: 0.96 }}
+                          transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                          onClick={() => handleSelectSet(set.id)}
+                          className="group surface surface-hover p-6 md:p-8 rounded-3xl flex flex-col items-center justify-between gap-4 overflow-hidden relative min-h-[150px] md:min-h-[180px]"
+                        >
+                          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.06),transparent_60%)] pointer-events-none" />
+                          <div className="flex-1 flex items-center justify-center w-full relative z-10">
+                            {set.images?.logo ? (
+                              <img
+                                src={set.images.logo}
+                                alt={set.name}
+                                loading="lazy"
+                                decoding="async"
+                                className="max-h-16 md:max-h-20 max-w-[80%] object-contain group-hover:scale-110 transition-transform duration-500 opacity-90 group-hover:opacity-100 drop-shadow-lg"
+                              />
+                            ) : (
+                              <div className="text-gray-500 text-sm text-center">{set.name}</div>
+                            )}
+                          </div>
+                          <span className="font-medium text-[11px] md:text-xs text-gray-500 group-hover:text-white transition-colors text-center tracking-wide truncate w-full relative z-10">
+                            {set.name}
+                          </span>
+                        </motion.button>
+                      ))}
                     </div>
-                    <span className="font-medium text-[11px] md:text-xs text-gray-500 group-hover:text-white transition-colors text-center tracking-wide truncate w-full relative z-10">
-                      {set.name}
-                    </span>
-                  </motion.button>
-                ))}
-              </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           ))}
         </motion.div>
