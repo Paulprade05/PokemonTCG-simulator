@@ -14,25 +14,33 @@ interface Hit {
   owned?: boolean;
 }
 
+const PAGE_SIZE = 10;
+
 export default function GlobalSearch() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Hit[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<any | null>(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  // Keyboard: Ctrl/Cmd+K opens
+  // Keyboard: Ctrl/Cmd+K opens, Esc cierra, ← → paginan
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setOpen(true);
       }
+      if (!open) return;
       if (e.key === "Escape") setOpen(false);
+      if (e.key === "ArrowLeft" && total > PAGE_SIZE) setPage((p) => Math.max(1, p - 1));
+      if (e.key === "ArrowRight" && total > PAGE_SIZE) setPage((p) => Math.min(Math.ceil(total / PAGE_SIZE), p + 1));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [open, total]);
 
   // Bloquear scroll del fondo mientras el buscador está abierto
   useEffect(() => {
@@ -42,17 +50,21 @@ export default function GlobalSearch() {
     return () => { document.body.style.overflow = prev; };
   }, [open]);
 
-  // Debounced search
+  // Reset page on query change
+  useEffect(() => { setPage(1); }, [query]);
+
+  // Debounced search (with pagination)
   useEffect(() => {
-    if (!query.trim()) { setResults([]); return; }
+    if (!query.trim()) { setResults([]); setTotal(0); return; }
     setLoading(true);
     const handle = setTimeout(async () => {
-      const dbHits = await searchCardsInDB(query, 50);
-      setResults(dbHits as any);
+      const res: any = await searchCardsInDB(query, page, PAGE_SIZE);
+      setResults(res.data || []);
+      setTotal(res.total || 0);
       setLoading(false);
     }, 250);
     return () => clearTimeout(handle);
-  }, [query]);
+  }, [query, page]);
 
   return (
     <>
@@ -118,7 +130,7 @@ export default function GlobalSearch() {
                     </ul>
                   </div>
                 )}
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
                   {results.map((c) => (
                     <button
                       key={c.id}
@@ -138,6 +150,36 @@ export default function GlobalSearch() {
                     </button>
                   ))}
                 </div>
+
+                {/* PAGINACIÓN */}
+                {total > PAGE_SIZE && (
+                  <div className="flex items-center justify-center gap-3 mt-5">
+                    <button
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={page === 1}
+                      className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition press"
+                      aria-label="Anterior"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-gray-300">
+                        <path d="m15 18-6-6 6-6" />
+                      </svg>
+                    </button>
+                    <span className="text-xs text-gray-300 tabular-nums bg-white/5 px-3 py-2 rounded-lg border border-white/10">
+                      {page} / {totalPages}
+                      <span className="text-gray-500 ml-2">· {total}</span>
+                    </span>
+                    <button
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={page === totalPages}
+                      className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition press"
+                      aria-label="Siguiente"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-gray-300">
+                        <path d="m9 18 6-6-6-6" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
               </div>
             </motion.div>
           </motion.div>

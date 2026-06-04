@@ -32,6 +32,8 @@ export default function CollectionPage() {
   const [filterSet, setFilterSet] = useState("all");
   const [filterRarity, setFilterRarity] = useState("all");
   const [selectedCard, setSelectedCard] = useState<any | null>(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 25;
 
   const rarityOptions = useMemo(() => {
     const set = new Set<string>();
@@ -89,6 +91,15 @@ export default function CollectionPage() {
     });
     return result;
   }, [cards, searchTerm, filterSet, filterRarity, sortBy]);
+
+  const totalPages = Math.max(1, Math.ceil(processedCards.length / PAGE_SIZE));
+  const pagedCards = useMemo(
+    () => processedCards.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [processedCards, page],
+  );
+
+  // Reset page on filter/search change
+  useEffect(() => { setPage(1); }, [searchTerm, filterSet, filterRarity, sortBy]);
 
   const getPrice = (rarity: string) => SELL_PRICES[rarity] || 10;
 
@@ -303,7 +314,7 @@ export default function CollectionPage() {
           </div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 md:gap-6">
-            {processedCards.map((card) => (
+            {pagedCards.map((card) => (
               <div
                 key={card.id}
                 className="relative group cursor-zoom-in"
@@ -338,6 +349,36 @@ export default function CollectionPage() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* PAGINACIÓN */}
+        {processedCards.length > PAGE_SIZE && (
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <button
+              onClick={() => { setPage((p) => Math.max(1, p - 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+              disabled={page === 1}
+              className="btn-ghost press w-10 h-10 rounded-xl flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
+              aria-label="Anterior"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                <path d="m15 18-6-6 6-6" />
+              </svg>
+            </button>
+            <span className="chip ink px-4 py-2 text-sm font-medium tabular-nums">
+              {page} / {totalPages}
+              <span className="ink-soft text-xs ml-2">· {processedCards.length} cartas</span>
+            </span>
+            <button
+              onClick={() => { setPage((p) => Math.min(totalPages, p + 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+              disabled={page === totalPages}
+              className="btn-ghost press w-10 h-10 rounded-xl flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
+              aria-label="Siguiente"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+            </button>
           </div>
         )}
       </div>

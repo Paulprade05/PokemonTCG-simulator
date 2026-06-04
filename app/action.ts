@@ -835,10 +835,18 @@ export async function getCardFromDB(cardId: string) {
 }
 
 // --- SEARCH CARDS IN DB (replaces live API in GlobalSearch) ---
-export async function searchCardsInDB(query: string, limit = 30) {
+export async function searchCardsInDB(query: string, page = 1, pageSize = 10) {
   try {
     const { userId } = await auth();
     const term = `%${query.toLowerCase()}%`;
+    const offset = Math.max(0, (page - 1) * pageSize);
+
+    // Total
+    const { rows: countRows } = await sql`
+      SELECT count(*)::int AS total FROM cards WHERE LOWER(name) LIKE ${term}
+    `;
+    const total = countRows[0]?.total || 0;
+
     let rows: any[];
     if (userId) {
       const res = await sql`
@@ -847,7 +855,7 @@ export async function searchCardsInDB(query: string, limit = 30) {
         FROM cards c
         WHERE LOWER(c.name) LIKE ${term}
         ORDER BY c.name ASC
-        LIMIT ${limit}
+        LIMIT ${pageSize} OFFSET ${offset}
       `;
       rows = res.rows;
     } else {
@@ -856,7 +864,7 @@ export async function searchCardsInDB(query: string, limit = 30) {
         FROM cards
         WHERE LOWER(name) LIKE ${term}
         ORDER BY name ASC
-        LIMIT ${limit}
+        LIMIT ${pageSize} OFFSET ${offset}
       `;
       rows = res.rows;
     }
@@ -869,7 +877,7 @@ export async function searchCardsInDB(query: string, limit = 30) {
       );
       setRows.forEach((s: any) => { setMap[s.id] = s; });
     }
-    return rows.map((r: any) => ({
+    const data = rows.map((r: any) => ({
       id: r.id,
       name: r.name,
       rarity: r.rarity,
@@ -877,9 +885,10 @@ export async function searchCardsInDB(query: string, limit = 30) {
       set: setMap[r.set_id] || { id: r.set_id },
       owned: r.owned,
     }));
+    return { data, total, page, pageSize };
   } catch (e) {
     console.error("searchCardsInDB error:", e);
-    return [];
+    return { data: [], total: 0, page, pageSize };
   }
 }
 
