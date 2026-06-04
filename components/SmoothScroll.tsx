@@ -8,8 +8,8 @@ export default function SmoothScroll() {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
     const lenis = new Lenis({
-      duration: 0.8,
-      easing: (t) => 1 - Math.pow(1 - t, 3),
+      duration: 0.6,
+      easing: (t) => 1 - Math.pow(1 - t, 2.5),
       smoothWheel: true,
       touchMultiplier: 1.5,
       wheelMultiplier: 1,
