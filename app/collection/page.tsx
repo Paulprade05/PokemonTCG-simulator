@@ -147,7 +147,6 @@ export default function CollectionPage() {
 
   return (
     <main className="flex min-h-screen flex-col items-center p-4 md:p-8 ink select-none overflow-hidden">
-      <BackgroundParticles />
 
       <AppHeader
         back={{ href: "/" }}
@@ -323,7 +322,7 @@ export default function CollectionPage() {
                   </div>
                 )}
                 <div className="transition transform group-hover:-translate-y-1 duration-300 pointer-events-none">
-                  <PokemonCard card={card} reveal={true} />
+                  <PokemonCard card={card} reveal={true} interactive={false} />
                 </div>
                 <div className="mt-2 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                   {card.quantity > 1 ? (

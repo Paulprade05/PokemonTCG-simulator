@@ -2,7 +2,7 @@
 
 import { useUser } from "@clerk/nextjs";
 import { AnimatePresence, motion } from "framer-motion";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   getUserData,
   updateCoins,
@@ -47,6 +47,7 @@ export default function Home() {
   const [soldInfo, setSoldInfo] = useState<{ earned: number; sold: number } | null>(null);
   const [sellingDupes, setSellingDupes] = useState(false);
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
+  const finishingRef = useRef(false);
 
   const currentSetObj = dbSets.find((s) => s.id === selectedSet);
   const isSpecialSet = currentSetObj
@@ -143,6 +144,7 @@ export default function Home() {
   };
 
   const handleBuyPack = async (type: PackType) => {
+    if (finishingRef.current) return;
     if (!allCards || allCards.length === 0) {
       alert("Las cartas no se han cargado. Recarga la página.");
       return;
@@ -170,8 +172,11 @@ export default function Home() {
 
   // Apertura múltiple (×N): salta animación, guarda todo, va al resumen.
   const handleBuyMulti = async (type: PackType, count = 10) => {
+    if (finishingRef.current) return;
+    finishingRef.current = true;
     if (!allCards || allCards.length === 0) {
       alert("Las cartas no se han cargado. Recarga la página.");
+      finishingRef.current = false;
       return;
     }
     const price = PACK_PRICES[type] * count;
@@ -211,9 +216,12 @@ export default function Home() {
       setCurrentPackPrice(price);
       setIsPackOpen(false); // directo al resumen
     }
+    finishingRef.current = false;
   };
 
   const finishPack = async () => {
+    if (finishingRef.current) return;
+    finishingRef.current = true;
     if (isSignedIn) {
       await savePackToCollection(currentPack, currentPackPrice);
       // Bonus por completar sets
@@ -230,6 +238,7 @@ export default function Home() {
     const newPackIds = currentPack.map((c) => c.id);
     setUserCollectionIds((prev) => [...prev, ...newPackIds]);
     setIsPackOpen(false);
+    finishingRef.current = false;
   };
 
   const handleNextCard = async () => {
@@ -766,7 +775,7 @@ export default function Home() {
                       Deseada
                     </div>
                   )}
-                  <PokemonCard card={card} reveal={true} useHighRes={true} />
+                  <PokemonCard card={card} reveal={true} useHighRes={true} interactive={false} />
                 </motion.div>
               );
             })}

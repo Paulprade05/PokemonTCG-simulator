@@ -68,7 +68,6 @@ export default function SetAlbumPage() {
 
   return (
     <main className="flex min-h-screen flex-col items-center p-4 md:p-8 ink select-none overflow-hidden">
-      <BackgroundParticles />
 
       <AppHeader
         back={{ href: "/collection" }}
@@ -120,7 +119,7 @@ export default function SetAlbumPage() {
                     </div>
                   )}
                   <div className="transition transform group-hover:-translate-y-1 duration-300">
-                    <PokemonCard card={ownedCard} reveal={true} />
+                    <PokemonCard card={ownedCard} reveal={true} interactive={false} />
                   </div>
                 </div>
               );

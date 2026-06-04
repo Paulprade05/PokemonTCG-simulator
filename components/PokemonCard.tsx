@@ -36,12 +36,14 @@ interface PokemonCardProps {
   card: any;
   reveal?: boolean;
   useHighRes?: boolean;
+  interactive?: boolean; // tilt 3D + tracking — desactivar en grids
 }
 
-export default function PokemonCard({ 
-  card, 
-  reveal = false, 
-  useHighRes = false
+export default function PokemonCard({
+  card,
+  reveal = false,
+  useHighRes = false,
+  interactive = true,
 }: PokemonCardProps) {
   const [isFlipped, setIsFlipped] = useState(!reveal);
   const [isHovered, setIsHovered] = useState(false);
@@ -49,7 +51,7 @@ export default function PokemonCard({
   const rarityGlow = getRarityGlow(card.rarity);
   const cardRef = useRef<HTMLDivElement>(null);
 
-  // Mouse Position for 3D Tilt
+  // Mouse Position for 3D Tilt (solo si interactivo)
   const x = useMotionValue(0);
   const y = useMotionValue(0);
 
@@ -64,7 +66,7 @@ export default function PokemonCard({
   }, [reveal]);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!cardRef.current || isFlipped) return;
+    if (!interactive || !cardRef.current || isFlipped) return;
     const rect = cardRef.current.getBoundingClientRect();
     const width = rect.width;
     const height = rect.height;
@@ -77,6 +79,7 @@ export default function PokemonCard({
   };
 
   const handleMouseLeave = () => {
+    if (!interactive) return;
     x.set(0);
     y.set(0);
     setIsHovered(false);
@@ -110,13 +113,13 @@ export default function PokemonCard({
         initial={false}
         animate={{ rotateY: isFlipped ? 180 : 0 }}
         transition={{ duration: 0.8, type: "spring", stiffness: 100, damping: 20 }}
-        style={{ 
+        style={{
           transformStyle: "preserve-3d",
-          rotateX: isFlipped ? 0 : rotateX,
-          rotateY: isFlipped ? undefined : rotateYFront, 
-          filter: !isFlipped && rarityGlow
+          rotateX: interactive && !isFlipped ? rotateX : 0,
+          rotateY: interactive && !isFlipped ? rotateYFront : undefined,
+          filter: interactive && !isFlipped && rarityGlow
             ? `drop-shadow(0px 0px ${isHovered ? 30 : 18}px ${rarityGlow}) drop-shadow(0px 12px 18px rgba(0,0,0,0.5))`
-            : "drop-shadow(0px 15px 25px rgba(0,0,0,0.6))"
+            : "drop-shadow(0px 8px 18px rgba(0,0,0,0.45))"
         }}
       >
         {/* --- FRONT FACE --- */}
@@ -132,8 +135,8 @@ export default function PokemonCard({
             />
           )}
           
-          {hasHoloEffect && (
-            <motion.div 
+          {hasHoloEffect && interactive && (
+            <motion.div
               className="absolute inset-0 z-20 mix-blend-color-dodge transition-opacity duration-300 pointer-events-none"
               style={{
                 backgroundImage: `linear-gradient(115deg, transparent 20%, rgba(255,255,255,0.4) 45%, rgba(255,200,255,0.4) 50%, rgba(200,255,255,0.4) 55%, transparent 80%)`,

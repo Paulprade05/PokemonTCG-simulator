@@ -191,7 +191,7 @@ export default function CardDetailModal({
               <img
                 src={c.images?.large}
                 alt={c.name}
-                className="object-contain max-h-[40vh] md:max-h-[65vh] drop-shadow-2xl"
+                className={`object-contain max-h-[40vh] md:max-h-[65vh] drop-shadow-2xl ${c.owned === false ? "grayscale opacity-70" : ""}`}
               />
             </div>
 
