@@ -362,17 +362,15 @@ export default function CardDetailModal({
                     <p className="text-gray-500 text-[10px] font-semibold uppercase tracking-wider px-4 pt-3">Ataques</p>
                     <div className="flex flex-col divide-y divide-white/5">
                       {c.attacks.map((atk: any, i: number) => (
-                        <div key={i} className="p-4 flex gap-3 items-start">
-                          <div className="shrink-0">
-                            <EnergyCost cost={atk.cost || []} />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex justify-between items-baseline gap-2">
-                              <span className="text-sm font-semibold text-white truncate">{atk.name}</span>
-                              {atk.damage && <span className="text-base font-mono font-bold text-rose-300">{atk.damage}</span>}
+                        <div key={i} className="p-4 flex flex-col gap-2">
+                          <div className="flex items-center gap-3">
+                            <div className="shrink-0">
+                              <EnergyCost cost={atk.cost || []} />
                             </div>
-                            {atk.text && <p className="text-[12px] text-gray-400 mt-1 leading-snug">{atk.text}</p>}
+                            <span className="text-sm font-semibold text-white truncate flex-1">{atk.name}</span>
+                            {atk.damage && <span className="text-base font-mono font-bold text-rose-300 shrink-0">{atk.damage}</span>}
                           </div>
+                          {atk.text && <p className="text-[12px] text-gray-400 leading-snug">{atk.text}</p>}
                         </div>
                       ))}
                     </div>
