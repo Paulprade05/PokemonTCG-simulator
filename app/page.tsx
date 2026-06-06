@@ -21,8 +21,6 @@ import { saveToCollection, getCollection } from "../utils/storage";
 import { SELL_PRICES, PACK_PRICES, RARITY_RANK } from "../utils/constanst";
 import { useCurrency } from "../hooks/useGameCurrency";
 import PokemonCard from "../components/PokemonCard";
-import BackgroundParticles from "../components/BackgroundParticles";
-import AppHeader from "../components/AppHeader";
 
 type PackType = "STANDARD" | "PREMIUM" | "GOLDEN" | "SPECIAL";
 
@@ -345,11 +343,7 @@ export default function Home() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 ink overflow-hidden select-none">
-      <BackgroundParticles />
-
-      <AppHeader />
-
+    <div className="flex flex-col items-center select-none w-full">
       {/* SET COMPLETION BONUS TOAST */}
       <AnimatePresence>
         {setBonus && setBonus.granted > 0 && (
@@ -808,7 +802,7 @@ export default function Home() {
           </div>
         </motion.div>
       )}
-    </main>
+    </div>
   );
 }
 

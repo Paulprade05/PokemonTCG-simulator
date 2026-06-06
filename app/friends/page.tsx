@@ -1,497 +1,403 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useUser } from "@clerk/nextjs";
 import { AnimatePresence, motion } from "framer-motion";
+import { syncUserName } from "../action";
 import {
-  getFriendsList, sendFriendRequest, acceptFriendRequest, removeFriend,
-  syncUserName, getPendingTrades, acceptTrade, rejectTrade, sendTradeRequest,
-  getFullCollection, getTrainerCollection,
-  getCompletedTrades, markTradeAsRead,
-} from "../action";
-import AppHeader from "../../components/AppHeader";
-import BackgroundParticles from "../../components/BackgroundParticles";
+  getSocialOverview, addFriend, acceptFriend, removeFriendship, searchUsersByName,
+  getIncomingTradeOffers, getOutgoingTradeOffers, getTradeHistory,
+  acceptTradeOffer, declineTradeOffer, cancelTradeOffer,
+} from "../social";
+import PageHeader from "../../components/PageHeader";
 import Loader from "../../components/Loader";
+import TradeBuilder from "../../components/social/TradeBuilder";
 
-export default function FriendsPage() {
+type Tab = "amigos" | "recibidas" | "enviadas" | "historial";
+
+export default function SocialPage() {
   const { user, isLoaded, isSignedIn } = useUser();
+  const [tab, setTab] = useState<Tab>("amigos");
+  const [loading, setLoading] = useState(true);
+
   const [friends, setFriends] = useState<any[]>([]);
   const [requests, setRequests] = useState<any[]>([]);
-  const [tradeRequests, setTradeRequests] = useState<any[]>([]);
-  const [completedTrades, setCompletedTrades] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [friendIdInput, setFriendIdInput] = useState("");
-  const [expandedFriendId, setExpandedFriendId] = useState<string | null>(null);
+  const [incoming, setIncoming] = useState<any[]>([]);
+  const [outgoing, setOutgoing] = useState<any[]>([]);
+  const [history, setHistory] = useState<any[]>([]);
 
-  const [tradeModalFriend, setTradeModalFriend] = useState<any | null>(null);
-  const [myCards, setMyCards] = useState<any[]>([]);
-  const [friendCards, setFriendCards] = useState<any[]>([]);
-  const [selectedMyCard, setSelectedMyCard] = useState<any | null>(null);
-  const [selectedFriendCard, setSelectedFriendCard] = useState<any | null>(null);
-  const [isSendingTrade, setIsSendingTrade] = useState(false);
+  const [tradeFriend, setTradeFriend] = useState<any | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
 
-  const loadData = async () => {
+  const refresh = useCallback(async () => {
     if (!isSignedIn) return;
-    setLoading(true);
-    await syncUserName();
-    const [friendsData, tradesData, completedData] = await Promise.all([
-      getFriendsList(), getPendingTrades(), getCompletedTrades(),
+    const [ov, inc, out, hist] = await Promise.all([
+      getSocialOverview(), getIncomingTradeOffers(), getOutgoingTradeOffers(), getTradeHistory(),
     ]);
-    setFriends(friendsData.accepted);
-    setRequests(friendsData.pendingRequests);
-    setTradeRequests(tradesData);
-    setCompletedTrades(completedData);
+    setFriends(ov.friends);
+    setRequests(ov.requests);
+    setIncoming(inc as any[]);
+    setOutgoing(out as any[]);
+    setHistory(hist as any[]);
     setLoading(false);
-  };
+  }, [isSignedIn]);
 
-  useEffect(() => { if (isLoaded) loadData(); }, [isLoaded, isSignedIn]);
-
-  // Bloquear scroll del fondo con el modal de intercambio abierto
   useEffect(() => {
-    if (!tradeModalFriend) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
-  }, [tradeModalFriend]);
+    if (!isLoaded) return;
+    if (!isSignedIn) { setLoading(false); return; }
+    syncUserName().then(refresh);
+  }, [isLoaded, isSignedIn, refresh]);
 
-  const handleAddFriend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!friendIdInput.trim()) return;
-    const res = await sendFriendRequest(friendIdInput.trim());
-    if (res.error) alert(res.error);
-    else { alert("Petición enviada"); setFriendIdInput(""); }
-  };
+  if (!isLoaded || loading) return <Loader label="Cargando red social" />;
 
-  const handleAcceptFriend = async (id: any) => { await acceptFriendRequest(id); loadData(); };
-  const handleRemoveFriend = async (id: any) => {
-    if (!confirm("¿Eliminar este amigo o petición?")) return;
-    await removeFriend(id); loadData();
-  };
-  const toggleExpand = (id: string) => setExpandedFriendId(expandedFriendId === id ? null : id);
-
-  const handleOpenTradeModal = async (friend: any) => {
-    setTradeModalFriend(friend);
-    setSelectedMyCard(null);
-    setSelectedFriendCard(null);
-    const [mine, theirs] = await Promise.all([
-      getFullCollection(), getTrainerCollection(friend.friend_id),
-    ]);
-    const sortCards = (cards: any[]) =>
-      cards.filter((c) => c.quantity > 0).sort((a, b) => {
-        if (a.quantity > 1 && b.quantity === 1) return -1;
-        if (a.quantity === 1 && b.quantity > 1) return 1;
-        if (b.quantity !== a.quantity) return b.quantity - a.quantity;
-        return a.name.localeCompare(b.name);
-      });
-    setMyCards(sortCards(mine));
-    setFriendCards(sortCards(theirs));
-  };
-
-  const submitTradeOffer = async () => {
-    if (!selectedMyCard || !selectedFriendCard) return;
-    setIsSendingTrade(true);
-    const res = await sendTradeRequest(tradeModalFriend.friend_id, selectedMyCard.id, selectedFriendCard.id);
-    setIsSendingTrade(false);
-    if (res.error) alert(res.error);
-    else { alert("Oferta enviada"); setTradeModalFriend(null); }
-  };
-
-  const handleAcceptTrade = async (tradeId: number) => {
-    if (!confirm("¿Aceptar este intercambio?")) return;
-    const res = await acceptTrade(tradeId);
-    if (res.error) alert(res.error);
-    else { alert("Intercambio completado"); loadData(); }
-  };
-  const handleRejectTrade = async (tradeId: number) => { await rejectTrade(tradeId); loadData(); };
-  const handleCounterOffer = async (trade: any) => {
-    await rejectTrade(trade.trade_id);
-    const friendData = friends.find((f) => f.friend_id === trade.sender_id);
-    if (friendData) handleOpenTradeModal(friendData);
-    else alert("Este usuario ya no está en tu lista.");
-  };
-  const handleDismissTrade = async (tradeId: number) => {
-    await markTradeAsRead(tradeId);
-    setCompletedTrades((prev) => prev.filter((t) => t.trade_id !== tradeId));
-  };
-
-  if (!isLoaded || loading) return <Loader label="Red de entrenadores" />;
   if (!isSignedIn) {
     return (
-      <main className="min-h-screen ink flex flex-col items-center justify-center p-8 text-center">
-        <h2 className="text-xl font-semibold mb-4">Inicia sesión para ver amigos</h2>
-        <Link href="/" className="btn-primary px-6 py-2.5 rounded-xl font-medium text-sm">Volver</Link>
-      </main>
+      <div className="flex flex-col items-center justify-center text-center py-24">
+        <h2 className="text-xl font-bold mb-2">Inicia sesión para conectar</h2>
+        <p className="ink-soft text-sm mb-5">Añade amigos e intercambia cartas.</p>
+        <Link href="/" className="btn-accent press px-6 py-2.5 rounded-xl text-sm font-semibold">Volver al inicio</Link>
+      </div>
     );
   }
 
-  const RankBadge = ({ index }: { index: number }) => {
-    if (index > 2) return null;
-    const styles = [
-      "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
-      "bg-gray-300/10 text-gray-200 border-gray-300/20",
-      "bg-orange-500/15 text-orange-300 border-orange-500/30",
-    ];
-    return (
-      <span className={`absolute top-3 right-3 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${styles[index]}`}>
-        #{index + 1}
-      </span>
-    );
+  const tabs: { id: Tab; label: string; badge?: number }[] = [
+    { id: "amigos", label: "Amigos", badge: requests.length || undefined },
+    { id: "recibidas", label: "Recibidas", badge: incoming.length || undefined },
+    { id: "enviadas", label: "Enviadas", badge: outgoing.length || undefined },
+    { id: "historial", label: "Historial" },
+  ];
+
+  return (
+    <div className="w-full">
+      <PageHeader
+        title="Social"
+        subtitle="Amigos e intercambios"
+        actions={
+          <button onClick={() => setShowAdd(true)} className="btn-accent press px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M19 8v6M22 11h-6" />
+            </svg>
+            <span className="hidden sm:inline">Añadir</span>
+          </button>
+        }
+      />
+
+      {/* Tabs */}
+      <div className="flex gap-1 p-1 surface rounded-2xl mb-6 overflow-x-auto no-scrollbar">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`relative flex-1 min-w-fit px-4 py-2.5 rounded-xl text-sm font-medium transition whitespace-nowrap ${tab === t.id ? "ink" : "ink-soft hover:ink"}`}
+          >
+            {tab === t.id && (
+              <motion.span layoutId="social-tab" className="absolute inset-0 rounded-xl bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] border border-[color-mix(in_srgb,var(--accent)_28%,transparent)]" transition={{ type: "spring", stiffness: 400, damping: 32 }} />
+            )}
+            <span className="relative z-10 flex items-center justify-center gap-2">
+              {t.label}
+              {t.badge ? <span className="bg-[var(--accent)] text-[#04110c] text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">{t.badge}</span> : null}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={tab}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.25 }}
+        >
+          {tab === "amigos" && (
+            <AmigosTab
+              friends={friends} requests={requests} myId={user?.id}
+              onAccept={async (id: number) => { await acceptFriend(id); refresh(); }}
+              onRemove={async (id: number) => { if (confirm("¿Eliminar?")) { await removeFriendship(id); refresh(); } }}
+              onTrade={(f: any) => setTradeFriend(f)}
+            />
+          )}
+          {tab === "recibidas" && (
+            <IncomingTab
+              offers={incoming}
+              onAccept={async (id: number) => { const r: any = await acceptTradeOffer(id); if (r?.error) alert(r.error); refresh(); }}
+              onDecline={async (id: number) => { await declineTradeOffer(id); refresh(); }}
+            />
+          )}
+          {tab === "enviadas" && (
+            <OutgoingTab offers={outgoing} onCancel={async (id: number) => { await cancelTradeOffer(id); refresh(); }} />
+          )}
+          {tab === "historial" && <HistoryTab items={history} />}
+        </motion.div>
+      </AnimatePresence>
+
+      <TradeBuilder friend={tradeFriend} onClose={() => setTradeFriend(null)} onSent={() => { setTradeFriend(null); setTab("enviadas"); refresh(); }} />
+      <AddFriendSheet open={showAdd} onClose={() => setShowAdd(false)} onChanged={refresh} myId={user?.id} />
+    </div>
+  );
+}
+
+/* ---------- AMIGOS ---------- */
+function AmigosTab({ friends, requests, myId, onAccept, onRemove, onTrade }: any) {
+  const medal = ["🥇", "🥈", "🥉"];
+  return (
+    <div className="flex flex-col gap-5">
+      {requests.length > 0 && (
+        <div className="surface rounded-2xl p-4">
+          <p className="text-xs font-semibold uppercase tracking-wider ink-soft mb-3">Peticiones · {requests.length}</p>
+          <div className="flex flex-col gap-2">
+            {requests.map((r: any) => (
+              <div key={r.id} className="surface-2 rounded-xl p-3 flex items-center justify-between">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Avatar name={r.requester_name} />
+                  <span className="font-medium text-sm truncate">{r.requester_name}</span>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => onAccept(r.id)} className="btn-accent press px-3 py-1.5 rounded-lg text-xs font-semibold">Aceptar</button>
+                  <button onClick={() => onRemove(r.id)} className="btn-ghost press px-3 py-1.5 rounded-lg text-xs">Ignorar</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {friends.map((f: any, i: number) => (
+          <motion.div
+            key={f.friend_id}
+            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i * 0.03, 0.3) }}
+            className={`surface surface-hover rounded-2xl p-4 relative overflow-hidden ${f.isMe ? "ring-accent" : ""}`}
+          >
+            {i < 3 && <span className="absolute top-3 right-3 text-lg">{medal[i]}</span>}
+            <div className="flex items-center gap-3 mb-3">
+              <Avatar name={f.friend_name} highlight={f.isMe} />
+              <div className="min-w-0">
+                <p className="font-semibold text-sm truncate">{f.friend_name}{f.isMe && <span className="ink-faint font-normal"> · tú</span>}</p>
+                <p className="text-[11px] ink-faint">{f.stats.unique} únicas · {f.stats.cards} cartas</p>
+              </div>
+            </div>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[10px] uppercase tracking-wider ink-faint">Valor</span>
+              <span className="text-sm font-bold accent tabular-nums">{f.stats.value.toLocaleString()} 💰</span>
+            </div>
+            <div className="flex gap-2">
+              <Link href={f.isMe ? "/collection" : `/trainer/${f.friend_id}`} className="flex-1 btn-ghost press text-center text-xs font-medium py-2 rounded-lg">
+                Ver álbum
+              </Link>
+              {!f.isMe && (
+                <>
+                  <button onClick={() => onTrade(f)} className="flex-1 btn-accent press text-xs font-semibold py-2 rounded-lg">Intercambiar</button>
+                  <button onClick={() => onRemove(f.friendship_id)} className="btn-ghost press px-3 py-2 rounded-lg" title="Eliminar">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
+                      <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    </svg>
+                  </button>
+                </>
+              )}
+            </div>
+          </motion.div>
+        ))}
+      </div>
+
+      {friends.length <= 1 && requests.length === 0 && (
+        <div className="surface rounded-2xl py-16 text-center">
+          <p className="font-medium">Aún no tienes amigos</p>
+          <p className="ink-soft text-sm mt-1">Pulsa "Añadir" para buscar entrenadores.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- OFFER CARDS ---------- */
+function OfferCards({ cards, label, tint }: { cards: any[]; label: string; tint: string }) {
+  return (
+    <div className="flex-1 min-w-0">
+      <p className={`text-[10px] uppercase tracking-wider font-semibold mb-1.5 ${tint}`}>{label}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {cards.map((c: any, i: number) => (
+          <img key={i} src={c?.images?.small} alt={c?.name} title={c?.name} loading="lazy" className="w-12 rounded-md" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function IncomingTab({ offers, onAccept, onDecline }: any) {
+  if (offers.length === 0) return <EmptyState text="No tienes ofertas pendientes" />;
+  return (
+    <div className="flex flex-col gap-3">
+      {offers.map((o: any) => (
+        <div key={o.id} className="surface rounded-2xl p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Avatar name={o.senderName} small />
+            <p className="text-sm"><strong>{o.senderName}</strong> <span className="ink-soft">te propone</span></p>
+          </div>
+          <div className="flex items-center gap-3 surface-2 rounded-xl p-3 mb-3">
+            <OfferCards cards={o.offered} label="Recibes" tint="accent" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 ink-faint shrink-0">
+              <path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4" />
+            </svg>
+            <OfferCards cards={o.requested} label="Entregas" tint="text-cyan-400" />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => onAccept(o.id)} className="flex-1 btn-accent press py-2.5 rounded-xl text-sm font-semibold">Aceptar</button>
+            <button onClick={() => onDecline(o.id)} className="btn-ghost press px-5 py-2.5 rounded-xl text-sm">Rechazar</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OutgoingTab({ offers, onCancel }: any) {
+  if (offers.length === 0) return <EmptyState text="No tienes ofertas enviadas" />;
+  return (
+    <div className="flex flex-col gap-3">
+      {offers.map((o: any) => (
+        <div key={o.id} className="surface rounded-2xl p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Avatar name={o.receiverName} small />
+            <p className="text-sm"><span className="ink-soft">Esperando a</span> <strong>{o.receiverName}</strong></p>
+            <span className="ml-auto chip text-[10px] px-2 py-0.5 ink-soft">Pendiente</span>
+          </div>
+          <div className="flex items-center gap-3 surface-2 rounded-xl p-3 mb-3">
+            <OfferCards cards={o.offered} label="Ofreces" tint="accent" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 ink-faint shrink-0">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
+            <OfferCards cards={o.requested} label="Pides" tint="text-cyan-400" />
+          </div>
+          <button onClick={() => onCancel(o.id)} className="btn-ghost press w-full py-2.5 rounded-xl text-sm">Cancelar oferta</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function HistoryTab({ items }: any) {
+  if (items.length === 0) return <EmptyState text="Sin intercambios todavía" />;
+  const label: Record<string, { t: string; c: string }> = {
+    accepted: { t: "Aceptado", c: "accent" },
+    declined: { t: "Rechazado", c: "text-rose-400" },
+    cancelled: { t: "Cancelado", c: "ink-faint" },
+  };
+  return (
+    <div className="surface rounded-2xl divide-y divide-[var(--border)]">
+      {items.map((it: any) => (
+        <div key={it.id} className="flex items-center gap-3 p-4">
+          <div className={`w-2 h-2 rounded-full ${it.status === "accepted" ? "bg-[var(--accent)]" : it.status === "declined" ? "bg-rose-400" : "bg-[var(--ink-faint)]"}`} />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm truncate">
+              {it.iAmSender ? "Enviaste a" : "Recibiste de"} <strong>{it.otherName}</strong>
+            </p>
+            <p className="text-[11px] ink-faint">{it.offeredCount} ↔ {it.requestedCount} cartas</p>
+          </div>
+          <span className={`text-xs font-semibold ${label[it.status]?.c}`}>{label[it.status]?.t}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ---------- ADD FRIEND ---------- */
+function AddFriendSheet({ open, onClose, onChanged, myId }: any) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<any[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    if (!q.trim() || q.trim().length < 2) { setResults([]); return; }
+    setSearching(true);
+    const h = setTimeout(async () => {
+      const r = await searchUsersByName(q);
+      setResults(r as any[]);
+      setSearching(false);
+    }, 300);
+    return () => clearTimeout(h);
+  }, [q]);
+
+  const doAdd = async (identifier: string) => {
+    const r: any = await addFriend(identifier);
+    if (r?.error) alert(r.error);
+    else { alert("Petición enviada"); onChanged(); }
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 ink select-none overflow-hidden">
-
-      <AppHeader back={{ href: "/" }} title="Amigos" showFriendsLink={false} />
-
-      <div className="w-full max-w-6xl flex flex-col gap-6 pb-24 relative z-10">
-        {/* COMPLETED TRADE NOTIFICATIONS */}
-        <AnimatePresence>
-          {completedTrades.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="surface rounded-2xl p-5 border border-emerald-500/20"
-            >
-              <h3 className="text-emerald-400 font-medium text-sm mb-4 flex items-center gap-2 uppercase tracking-wider">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                  <path d="M20 6 9 17l-5-5" />
-                </svg>
-                Actualizaciones de ofertas
-              </h3>
-              <div className="flex flex-col gap-2">
-                {completedTrades.map((trade) => (
-                  <div key={trade.trade_id} className="bg-white/5 border border-white/5 p-4 rounded-xl flex flex-col sm:flex-row justify-between items-center gap-3">
-                    <div className="flex-1 text-sm text-gray-300">
-                      {trade.status === "accepted" && <p><strong className="text-white">{trade.receiver_name}</strong> aceptó. Recibiste <strong>{trade.receiver_card_name}</strong> por tu {trade.sender_card_name}.</p>}
-                      {trade.status === "rejected" && <p><strong className="text-white">{trade.receiver_name}</strong> rechazó tu oferta por {trade.receiver_card_name}.</p>}
-                      {trade.status === "failed" && <p>Intercambio con <strong className="text-white">{trade.receiver_name}</strong> falló (cartas vendidas).</p>}
-                    </div>
-                    <button onClick={() => handleDismissTrade(trade.trade_id)} className="btn-ghost text-white px-4 py-2 rounded-xl text-xs font-medium">Entendido</button>
-                  </div>
-                ))}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* PENDING TRADE REQUESTS */}
-        {tradeRequests.length > 0 && (
+    <AnimatePresence>
+      {open && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[100] flex items-end md:items-center justify-center bg-black/80 backdrop-blur-md md:p-6" onClick={onClose}>
           <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="surface rounded-2xl p-5 border border-purple-500/20"
+            initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }}
+            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md bg-[var(--surface)] border border-[var(--border)] rounded-t-3xl md:rounded-3xl p-5 shadow-2xl"
           >
-            <h3 className="text-purple-300 font-medium text-sm mb-4 flex items-center gap-2 uppercase tracking-wider">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                <path d="M17 1l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3" />
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold">Añadir amigo</h3>
+              <button onClick={onClose} className="w-9 h-9 rounded-xl btn-ghost press flex items-center justify-center">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M18 6 6 18M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            <div className="input-field rounded-xl px-3 py-2.5 flex items-center gap-2 mb-3">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint">
+                <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
               </svg>
-              Ofertas recibidas · {tradeRequests.length}
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {tradeRequests.map((trade) => (
-                <div key={trade.trade_id} className="bg-white/5 border border-white/5 p-4 rounded-xl flex flex-col">
-                  <p className="text-xs text-gray-400 mb-3"><strong className="text-white">{trade.sender_name}</strong> propone:</p>
-                  <div className="flex justify-between items-center bg-black/30 p-3 rounded-xl mb-4">
-                    <div className="text-center w-1/3">
-                      <p className="text-[9px] text-gray-500 font-medium mb-2 uppercase tracking-wider">Recibes</p>
-                      <img src={trade.sender_card_image?.small} alt="" className="w-16 h-auto mx-auto rounded-md" />
-                      <p className="text-[10px] text-emerald-400 font-medium mt-2 truncate">{trade.sender_card_name}</p>
-                    </div>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-gray-600">
-                      <path d="M5 12h14M13 6l6 6-6 6" />
-                    </svg>
-                    <div className="text-center w-1/3">
-                      <p className="text-[9px] text-gray-500 font-medium mb-2 uppercase tracking-wider">Entregas</p>
-                      <img src={trade.receiver_card_image?.small} alt="" className="w-16 h-auto mx-auto rounded-md opacity-80" />
-                      <p className="text-[10px] text-rose-400 font-medium mt-2 truncate">{trade.receiver_card_name}</p>
-                    </div>
+              <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nombre de entrenador…"
+                className="bg-transparent outline-none text-sm flex-1" />
+            </div>
+
+            <div className="flex flex-col gap-1.5 min-h-[60px]">
+              {searching && <p className="text-xs ink-faint text-center py-3">Buscando…</p>}
+              {!searching && q.length >= 2 && results.length === 0 && (
+                <p className="text-xs ink-faint text-center py-3">Sin resultados</p>
+              )}
+              {results.map((u: any) => (
+                <div key={u.id} className="surface-2 rounded-xl p-2.5 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Avatar name={u.username} small />
+                    <span className="text-sm font-medium truncate">{u.username}</span>
                   </div>
-                  <div className="flex gap-2 mt-auto">
-                    <button onClick={() => handleAcceptTrade(trade.trade_id)} className="flex-1 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-300 text-xs font-medium py-2 rounded-xl transition">Aceptar</button>
-                    <button onClick={() => handleCounterOffer(trade)} className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 text-white text-xs font-medium py-2 rounded-xl transition">Contraoferta</button>
-                    <button onClick={() => handleRejectTrade(trade.trade_id)} className="bg-white/5 hover:bg-rose-500/20 border border-white/10 hover:border-rose-500/30 text-gray-400 hover:text-rose-300 px-3 py-2 rounded-xl transition" aria-label="Rechazar">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
-                        <path d="M18 6 6 18M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
+                  {u.relation === "accepted" ? <span className="text-[10px] ink-faint">Amigos</span>
+                    : u.relation === "pending" ? <span className="text-[10px] ink-faint">Pendiente</span>
+                    : <button onClick={() => doAdd(u.id)} className="btn-accent press px-3 py-1.5 rounded-lg text-xs font-semibold">Añadir</button>}
                 </div>
               ))}
             </div>
+
+            <div className="mt-4 pt-4 border-t border-[var(--border)]">
+              <p className="text-[10px] uppercase tracking-wider ink-faint mb-2">Tu ID</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 surface-2 rounded-lg px-3 py-2 text-[11px] ink-soft truncate font-mono">{myId}</code>
+                <button onClick={() => { navigator.clipboard.writeText(myId || ""); alert("Copiado"); }} className="btn-ghost press px-3 py-2 rounded-lg text-xs">Copiar</button>
+              </div>
+            </div>
           </motion.div>
-        )}
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
 
-        {/* MAIN GRID */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* LEFT: ID + add */}
-          <div className="lg:col-span-1 space-y-4">
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="surface rounded-2xl p-5"
-            >
-              <p className="text-gray-500 text-[10px] font-medium uppercase tracking-wider mb-3">Tu ID de entrenador</p>
-              <div className="bg-black/30 p-3 rounded-xl border border-white/5 flex flex-col gap-2">
-                <span className="text-xs text-gray-300 break-all select-all font-mono">{user?.id}</span>
-                <button
-                  onClick={() => { navigator.clipboard.writeText(user?.id || ""); alert("ID copiado"); }}
-                  className="btn-ghost text-white text-xs px-3 py-2 rounded-lg w-full transition font-medium flex items-center justify-center gap-2"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
-                    <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                  </svg>
-                  Copiar
-                </button>
-              </div>
-            </motion.div>
+/* ---------- helpers ---------- */
+function Avatar({ name, highlight, small }: { name: string; highlight?: boolean; small?: boolean }) {
+  const letter = (name || "?").charAt(0).toUpperCase();
+  const size = small ? "w-8 h-8 text-xs" : "w-10 h-10 text-sm";
+  return (
+    <div className={`${size} rounded-full flex items-center justify-center font-bold shrink-0 ${highlight ? "btn-accent" : "surface-2 ink-soft"}`}>
+      {letter}
+    </div>
+  );
+}
 
-            <motion.form
-              onSubmit={handleAddFriend}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1 }}
-              className="surface rounded-2xl p-5 flex flex-col gap-3"
-            >
-              <h3 className="font-semibold text-sm text-white">Añadir amigo</h3>
-              <input
-                type="text"
-                placeholder="Pega su ID..."
-                value={friendIdInput}
-                onChange={(e) => setFriendIdInput(e.target.value)}
-                className="bg-white/5 text-sm text-white px-3 py-2.5 rounded-xl border border-white/5 focus:border-white/20 outline-none placeholder:text-gray-600 transition"
-              />
-              <button type="submit" className="btn-primary py-2.5 rounded-xl font-medium text-sm">Enviar petición</button>
-            </motion.form>
-
-            {requests.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="surface rounded-2xl p-5 border border-yellow-500/20"
-              >
-                <h3 className="text-yellow-300 font-medium text-xs uppercase tracking-wider mb-3">Peticiones · {requests.length}</h3>
-                <div className="flex flex-col gap-2">
-                  {requests.map((req) => (
-                    <div key={req.id} className="bg-white/5 p-3 rounded-xl border border-white/5 flex justify-between items-center">
-                      <span className="text-xs font-medium truncate flex-1">{req.requester_name}</span>
-                      <div className="flex gap-1">
-                        <button onClick={() => handleAcceptFriend(req.id)} className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 px-2.5 py-1 rounded-lg text-xs">✓</button>
-                        <button onClick={() => handleRemoveFriend(req.id)} className="bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 px-2.5 py-1 rounded-lg text-xs">✕</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </div>
-
-          {/* RIGHT: Ranking */}
-          <div className="lg:col-span-2">
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.15 }}
-              className="surface rounded-2xl p-5"
-            >
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-semibold text-sm text-white uppercase tracking-wider">Ranking de entrenadores</h3>
-                <span className="text-xs text-gray-500">{friends.length} jugadores</span>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                {friends.map((friend, index) => {
-                  const isMe = friend.friend_id === user?.id;
-                  const isExpanded = expandedFriendId === friend.friend_id;
-                  return (
-                    <div
-                      key={friend.friend_id}
-                      className={`rounded-xl border flex flex-col relative overflow-hidden transition ${
-                        isMe ? "bg-emerald-500/5 border-emerald-500/20" : "bg-white/[0.02] border-white/5 hover:border-white/10"
-                      }`}
-                    >
-                      <RankBadge index={index} />
-                      <div onClick={() => toggleExpand(friend.friend_id)} className="p-4 flex items-center gap-4 cursor-pointer">
-                        <div className={`w-10 h-10 flex-shrink-0 rounded-xl flex items-center justify-center border ${
-                          isMe ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : "bg-white/5 border-white/10 text-gray-400"
-                        }`}>
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
-                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
-                          </svg>
-                        </div>
-                        <div className="flex-1 min-w-0 pr-12">
-                          <p className={`font-medium text-sm truncate ${isMe ? "text-emerald-300" : "text-white"}`}>
-                            {friend.friend_name}{isMe && <span className="ml-2 text-[10px] text-gray-500">(tú)</span>}
-                          </p>
-                          <p className="text-[11px] text-gray-500">{friend.stats?.value || 0} monedas · {friend.stats?.unique || 0} únicas</p>
-                        </div>
-                        <motion.svg
-                          animate={{ rotate: isExpanded ? 180 : 0 }}
-                          viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                          className="w-4 h-4 text-gray-500"
-                        >
-                          <path d="m6 9 6 6 6-6" />
-                        </motion.svg>
-                      </div>
-
-                      <AnimatePresence>
-                        {isExpanded && (
-                          <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: "auto", opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-                            className="overflow-hidden bg-black/20"
-                          >
-                            <div className="p-4 border-t border-white/5">
-                              <div className="grid grid-cols-3 md:grid-cols-6 gap-2 mb-4">
-                                {[
-                                  { label: "Valor", v: friend.stats?.value || 0, color: "text-emerald-400" },
-                                  { label: "Únicas", v: friend.stats?.unique || 0, color: "text-white" },
-                                  { label: "Cartas", v: friend.stats?.cards || 0, color: "text-gray-300" },
-                                  { label: "Favs", v: friend.stats?.favs || 0, color: "text-rose-400" },
-                                  { label: "Sobres", v: friend.stats?.packs || 0, color: "text-blue-300" },
-                                  { label: "Gastado", v: friend.stats?.spent || 0, color: "text-purple-300" },
-                                ].map((stat) => (
-                                  <div key={stat.label} className="bg-white/[0.03] border border-white/5 rounded-xl p-2 text-center">
-                                    <p className="text-[9px] text-gray-500 uppercase tracking-wider mb-1">{stat.label}</p>
-                                    <p className={`font-semibold text-sm ${stat.color} tabular-nums`}>{stat.v}</p>
-                                  </div>
-                                ))}
-                              </div>
-                              <div className="flex flex-wrap gap-2">
-                                <Link
-                                  href={isMe ? "/collection" : `/trainer/${friend.friend_id}`}
-                                  className="flex-1 btn-ghost text-center text-xs font-medium py-2.5 px-3 rounded-xl min-w-[120px]"
-                                >
-                                  {isMe ? "Mi álbum" : "Ver álbum"}
-                                </Link>
-                                {!isMe && (
-                                  <button onClick={() => handleOpenTradeModal(friend)} className="flex-1 bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/20 text-purple-300 text-xs font-medium py-2.5 px-3 rounded-xl transition min-w-[120px]">
-                                    Intercambiar
-                                  </button>
-                                )}
-                                {!isMe && (
-                                  <button onClick={() => handleRemoveFriend(friend.friendship_id)} className="bg-white/5 hover:bg-rose-500/20 border border-white/5 text-gray-500 hover:text-rose-300 px-3 py-2.5 rounded-xl transition" aria-label="Eliminar">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
-                                      <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                                    </svg>
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  );
-                })}
-                {friends.length === 0 && (
-                  <p className="text-center text-gray-500 text-xs py-8">Aún no tienes amigos. Comparte tu ID.</p>
-                )}
-              </div>
-            </motion.div>
-          </div>
-        </div>
-      </div>
-
-      {/* TRADE MODAL */}
-      <AnimatePresence>
-        {tradeModalFriend && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl"
-          >
-            <motion.div
-              initial={{ scale: 0.96, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.96, opacity: 0 }}
-              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-              className="bg-[#0a0a0a] w-full max-w-5xl max-h-[90vh] rounded-3xl border border-white/10 flex flex-col overflow-hidden"
-            >
-              <div className="px-5 py-4 border-b border-white/5 flex justify-between items-center">
-                <div>
-                  <p className="text-[10px] text-gray-500 uppercase tracking-wider">Intercambio</p>
-                  <h2 className="font-semibold text-base text-white">{tradeModalFriend.friend_name}</h2>
-                </div>
-                <button onClick={() => setTradeModalFriend(null)} className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 flex items-center justify-center transition">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                    <path d="M18 6 6 18M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-5 grid grid-cols-1 md:grid-cols-2 gap-4 custom-scrollbar" data-lenis-prevent>
-                {[
-                  { label: "Tu oferta", cards: myCards, selected: selectedMyCard, set: setSelectedMyCard, accent: "emerald", dupColor: "bg-emerald-500/15 text-emerald-300" },
-                  { label: "Quieres", cards: friendCards, selected: selectedFriendCard, set: setSelectedFriendCard, accent: "purple", dupColor: "bg-purple-500/15 text-purple-300" },
-                ].map((side, i) => (
-                  <div key={i} className="bg-white/[0.02] border border-white/5 rounded-2xl p-4">
-                    <h3 className="font-medium text-xs uppercase tracking-wider text-center mb-3 text-gray-400">{side.label}</h3>
-                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 h-72 overflow-y-auto custom-scrollbar pr-1">
-                      {side.cards.length === 0 ? (
-                        <p className="col-span-full text-center text-xs text-gray-600 py-12">Sin cartas</p>
-                      ) : side.cards.map((c: any) => {
-                        const isDuplicate = c.quantity > 1;
-                        const isSelected = side.selected?.id === c.id;
-                        const ring = side.accent === "emerald" ? "border-emerald-400 shadow-emerald-500/30" : "border-purple-400 shadow-purple-500/30";
-                        return (
-                          <div
-                            key={c.id}
-                            onClick={() => side.set(c)}
-                            className={`relative cursor-pointer rounded-lg border-2 transition ${
-                              isSelected ? `${ring} shadow-lg scale-[1.03] z-10` :
-                              isDuplicate ? "border-transparent hover:border-white/20" :
-                              "border-transparent hover:border-white/10 opacity-50 hover:opacity-90"
-                            }`}
-                          >
-                            <div className={`absolute -top-1.5 -right-1.5 text-[9px] font-bold w-5 h-5 flex items-center justify-center rounded-full border border-black z-20 ${
-                              isDuplicate ? side.dupColor : "bg-white/10 text-gray-400"
-                            }`}>
-                              {c.quantity}
-                            </div>
-                            <img src={c.images.small} alt={c.name} className="w-full h-auto rounded-md" />
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="px-5 py-4 border-t border-white/5 flex flex-col sm:flex-row items-center gap-3">
-                <div className="flex items-center gap-3 text-xs flex-1 w-full bg-white/[0.03] px-4 py-2.5 rounded-xl border border-white/5">
-                  <div className="flex-1">
-                    <p className="text-[9px] text-gray-500 uppercase tracking-wider">Ofreces</p>
-                    <p className={selectedMyCard ? "text-emerald-300 truncate" : "text-gray-600"}>{selectedMyCard?.name || "—"}</p>
-                  </div>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-gray-600">
-                    <path d="M5 12h14M13 6l6 6-6 6" />
-                  </svg>
-                  <div className="flex-1">
-                    <p className="text-[9px] text-gray-500 uppercase tracking-wider">Pides</p>
-                    <p className={selectedFriendCard ? "text-purple-300 truncate" : "text-gray-600"}>{selectedFriendCard?.name || "—"}</p>
-                  </div>
-                </div>
-                <button
-                  onClick={submitTradeOffer}
-                  disabled={!selectedMyCard || !selectedFriendCard || isSendingTrade}
-                  className={`py-2.5 px-6 rounded-xl font-medium text-sm transition w-full sm:w-auto ${
-                    !selectedMyCard || !selectedFriendCard
-                      ? "bg-white/5 text-gray-600 cursor-not-allowed"
-                      : "btn-primary"
-                  }`}
-                >
-                  {isSendingTrade ? "Enviando..." : "Enviar oferta"}
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </main>
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="surface rounded-2xl py-16 text-center">
+      <p className="ink-soft text-sm">{text}</p>
+    </div>
   );
 }

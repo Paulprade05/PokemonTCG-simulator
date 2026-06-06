@@ -8,8 +8,7 @@ import { getSetsFromDB, getFullCollection } from "../../action";
 import { getCardsFromSet } from "../../../services/pokemon";
 import { getCollection } from "../../../utils/storage";
 import PokemonCard from "../../../components/PokemonCard";
-import AppHeader from "../../../components/AppHeader";
-import BackgroundParticles from "../../../components/BackgroundParticles";
+import PageHeader from "../../../components/PageHeader";
 import Loader from "../../../components/Loader";
 
 export default function SetAlbumPage() {
@@ -67,15 +66,14 @@ export default function SetAlbumPage() {
   });
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 ink select-none overflow-hidden">
-
-      <AppHeader
-        back={{ href: "/collection" }}
-        centerLogo={setInfo?.images?.logo}
-        title={setInfo ? undefined : "Álbum"}
+    <div className="select-none w-full">
+      <PageHeader
+        back="/collection"
+        logo={setInfo?.images?.logo}
+        title={setInfo?.name || "Álbum"}
       />
 
-      <div className="w-full max-w-7xl flex flex-col gap-6 pb-24 relative z-10">
+      <div className="w-full flex flex-col gap-6">
         {/* PROGRESS */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
@@ -138,6 +136,6 @@ export default function SetAlbumPage() {
           })}
         </div>
       </div>
-    </main>
+    </div>
   );
 }

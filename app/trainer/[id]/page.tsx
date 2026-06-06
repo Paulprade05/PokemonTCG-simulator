@@ -7,8 +7,7 @@ import { useUser } from "@clerk/nextjs";
 import { getTrainerCollection, getSetsFromDB } from "../../action";
 import { RARITY_RANK, SELL_PRICES } from "../../../utils/constanst";
 import PokemonCard from "../../../components/PokemonCard";
-import AppHeader from "../../../components/AppHeader";
-import BackgroundParticles from "../../../components/BackgroundParticles";
+import PageHeader from "../../../components/PageHeader";
 import Loader from "../../../components/Loader";
 import CardDetailModal from "../../../components/CardDetailModal";
 
@@ -77,10 +76,10 @@ export default function TrainerProfilePage() {
   if (loading || !isLoaded) return <Loader label="Cargando entrenador" />;
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 ink select-none overflow-hidden">
-      <AppHeader back={{ href: "/friends" }} title="Álbum de amigo" subtitle={trainerId} showCollectionLink={false} />
+    <div className="select-none w-full">
+      <PageHeader back="/friends" title="Álbum de entrenador" subtitle={trainerId} />
 
-      <div className="w-full max-w-7xl flex flex-col gap-6 pb-24 relative z-10">
+      <div className="w-full flex flex-col gap-6">
         <div>
           <button
             onClick={() => setShowStats(!showStats)}
@@ -199,6 +198,6 @@ export default function TrainerProfilePage() {
       </div>
 
       <CardDetailModal card={selectedCard} onClose={() => setSelectedCard(null)} readOnly />
-    </main>
+    </div>
   );
 }

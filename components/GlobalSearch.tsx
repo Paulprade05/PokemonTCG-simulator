@@ -16,7 +16,7 @@ interface Hit {
 
 const PAGE_SIZE = 10;
 
-export default function GlobalSearch() {
+export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | "bar" }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Hit[]>([]);
@@ -68,17 +68,30 @@ export default function GlobalSearch() {
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        title="Buscar carta (Ctrl+K)"
-        className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/5 px-3 py-2 rounded-xl text-xs text-gray-400 transition"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-          <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
-        </svg>
-        <span className="hidden md:inline">Buscar</span>
-        <kbd className="hidden lg:inline text-[9px] bg-white/5 border border-white/10 px-1.5 py-0.5 rounded font-mono">⌘K</kbd>
-      </button>
+      {variant === "bar" ? (
+        <button
+          onClick={() => setOpen(true)}
+          title="Buscar carta (Ctrl+K)"
+          className="input-field w-full flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-sm ink-soft hover:ink transition"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint">
+            <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+          </svg>
+          <span className="flex-1 text-left">Buscar cualquier carta…</span>
+          <kbd className="text-[10px] chip px-1.5 py-0.5 font-mono">⌘K</kbd>
+        </button>
+      ) : (
+        <button
+          onClick={() => setOpen(true)}
+          title="Buscar carta (Ctrl+K)"
+          className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center rounded-xl btn-ghost press"
+          aria-label="Buscar"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+            <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+          </svg>
+        </button>
+      )}
 
       <AnimatePresence>
         {open && !selected && (

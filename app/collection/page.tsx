@@ -14,8 +14,7 @@ import { getCollection, saveCollectionRaw } from "../../utils/storage";
 import { useCurrency } from "../../hooks/useGameCurrency";
 import { RARITY_RANK, SELL_PRICES } from "../../utils/constanst";
 import PokemonCard from "../../components/PokemonCard";
-import AppHeader from "../../components/AppHeader";
-import BackgroundParticles from "../../components/BackgroundParticles";
+import PageHeader from "../../components/PageHeader";
 import Loader from "../../components/Loader";
 import CardDetailModal from "../../components/CardDetailModal";
 import Link from "next/link";
@@ -157,26 +156,24 @@ export default function CollectionPage() {
   if (loading) return <Loader label="Cargando Colección" />;
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 md:p-8 ink select-none overflow-hidden">
-
-      <AppHeader
-        back={{ href: "/" }}
-        title="Mi Álbum"
-        showCollectionLink={false}
-        rightExtra={
+    <div className="select-none w-full">
+      <PageHeader
+        title="Mi Colección"
+        subtitle="Tus cartas, progreso y estadísticas"
+        actions={
           <button
             onClick={handleSellAllDuplicates}
-            className="hidden sm:flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-300 px-3 py-2 rounded-xl text-xs font-medium transition"
+            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
               <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
             </svg>
-            <span>Limpiar duplicados</span>
+            <span className="hidden sm:inline">Limpiar duplicados</span>
           </button>
         }
       />
 
-      <div className="w-full max-w-7xl flex flex-col gap-6 pb-24 relative z-10">
+      <div className="w-full flex flex-col gap-6">
         {/* PROGRESS PANEL */}
         <div>
           <button
@@ -389,6 +386,6 @@ export default function CollectionPage() {
         onToggleFavorite={handleToggleFavInModal}
         onSellAll={handleSellAllFromModal}
       />
-    </main>
+    </div>
   );
 }
