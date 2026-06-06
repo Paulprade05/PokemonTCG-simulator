@@ -367,17 +367,17 @@ export default function Home() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-          className="w-full max-w-6xl mb-10 relative z-10"
+          className="w-full mb-10 relative z-10"
         >
           <div className="surface rounded-3xl p-5 md:p-6 overflow-hidden relative">
-            <div className="absolute -top-16 -right-16 w-48 h-48 bg-yellow-500/10 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute -top-20 -right-20 w-56 h-56 rounded-full blur-3xl pointer-events-none" style={{ background: "radial-gradient(circle, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%)" }} />
 
             <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-5 relative">
               <div>
-                <p className="text-[10px] uppercase tracking-[0.3em] text-gray-500">Valor de tu colección</p>
-                <p className="text-3xl md:text-4xl font-semibold text-gradient mt-1 tabular-nums">
+                <p className="text-[10px] uppercase tracking-[0.3em] ink-faint">Valor de tu colección</p>
+                <p className="text-3xl md:text-4xl font-bold text-gradient mt-1 tabular-nums">
                   {stats.totalValue.toLocaleString()}
-                  <span className="text-base text-gray-500 font-normal ml-2">monedas</span>
+                  <span className="text-base ink-faint font-normal ml-2">monedas</span>
                 </p>
               </div>
               <div className="grid grid-cols-3 gap-2 md:gap-3 md:w-auto">
@@ -386,28 +386,26 @@ export default function Home() {
                   { label: "Únicas", value: stats.totalUnique },
                   { label: "Sets", value: `${stats.setsCompleted}/${stats.setsTotal}` },
                 ].map((s) => (
-                  <div key={s.label} className="bg-white/[0.03] border border-white/5 rounded-2xl px-3 md:px-5 py-2.5 text-center md:text-left">
-                    <p className="text-[9px] uppercase tracking-wider text-gray-500">{s.label}</p>
-                    <p className="text-base md:text-xl font-semibold text-white tabular-nums mt-0.5">{s.value}</p>
+                  <div key={s.label} className="surface-2 rounded-2xl px-3 md:px-5 py-2.5 text-center md:text-left">
+                    <p className="text-[9px] uppercase tracking-wider ink-faint">{s.label}</p>
+                    <p className="text-base md:text-xl font-bold tabular-nums mt-0.5">{s.value}</p>
                   </div>
                 ))}
               </div>
             </div>
 
             {/* Logros compactos */}
-            <div className="mt-5 pt-4 border-t border-white/5 flex items-center gap-3">
-              <span className="text-[10px] uppercase tracking-wider text-gray-500 shrink-0 hidden sm:inline">
+            <div className="mt-5 pt-4 border-t border-[var(--border)] flex items-center gap-3">
+              <span className="text-[10px] uppercase tracking-wider ink-faint shrink-0 hidden sm:inline">
                 Logros {achievementsDone}/{achievements.length}
               </span>
-              <div className="flex gap-2 overflow-x-auto custom-scrollbar pb-1 flex-1">
+              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 flex-1">
                 {achievements.map((ach) => (
                   <div
                     key={ach.id}
                     title={`${ach.name} — ${ach.desc}`}
                     className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-lg border transition ${
-                      ach.done
-                        ? "bg-yellow-500/10 border-yellow-500/25"
-                        : "bg-white/[0.02] border-white/5 grayscale opacity-40"
+                      ach.done ? "ring-accent border-transparent" : "surface-2 grayscale opacity-40"
                     }`}
                   >
                     {ach.icon}
@@ -500,7 +498,7 @@ export default function Home() {
                               <div className="text-gray-500 text-sm text-center">{set.name}</div>
                             )}
                           </div>
-                          <span className="font-medium text-[11px] md:text-xs text-gray-500 group-hover:text-white transition-colors text-center tracking-wide truncate w-full relative z-10">
+                          <span className="font-medium text-[11px] md:text-xs ink-soft group-hover:ink transition-colors text-center tracking-wide truncate w-full relative z-10">
                             {set.name}
                           </span>
                         </motion.button>
@@ -820,74 +818,50 @@ interface PackCardProps {
 }
 
 function PackCard({ accent, badge, title, description, price, icon, onClick, onMulti, multiCount = 10, odds }: PackCardProps) {
-  const accents: Record<string, { border: string; iconColor: string; btn: string; badgeBg: string }> = {
-    white: {
-      border: "border-white/5",
-      iconColor: "text-gray-400",
-      btn: "btn-ghost text-white",
-      badgeBg: "bg-white/10 text-gray-300",
-    },
-    purple: {
-      border: "border-purple-500/20",
-      iconColor: "text-purple-400",
-      btn: "bg-purple-600 hover:bg-purple-500 text-white",
-      badgeBg: "bg-purple-500/15 text-purple-300",
-    },
-    yellow: {
-      border: "border-yellow-500/20",
-      iconColor: "text-yellow-400",
-      btn: "bg-yellow-500 hover:bg-yellow-400 text-black",
-      badgeBg: "bg-yellow-500/15 text-yellow-300",
-    },
-    blue: {
-      border: "border-blue-500/20",
-      iconColor: "text-blue-400",
-      btn: "bg-blue-600 hover:bg-blue-500 text-white",
-      badgeBg: "bg-blue-500/15 text-blue-300",
-    },
+  const accents: Record<string, { iconColor: string; btn: string; badgeBg: string; glow: string }> = {
+    white:  { iconColor: "ink-soft",        btn: "btn-ghost",                                  badgeBg: "chip ink-soft",                       glow: "rgba(148,163,184,0.18)" },
+    purple: { iconColor: "text-purple-400", btn: "bg-purple-600 hover:bg-purple-500 text-white", badgeBg: "bg-purple-500/15 text-purple-300 border border-purple-500/20", glow: "rgba(168,85,247,0.22)" },
+    yellow: { iconColor: "text-amber-400",  btn: "bg-amber-500 hover:bg-amber-400 text-black",   badgeBg: "bg-amber-500/15 text-amber-300 border border-amber-500/20",   glow: "rgba(245,158,11,0.22)" },
+    blue:   { iconColor: "text-sky-400",    btn: "bg-sky-600 hover:bg-sky-500 text-white",       badgeBg: "bg-sky-500/15 text-sky-300 border border-sky-500/20",         glow: "rgba(56,189,248,0.22)" },
   };
   const a = accents[accent];
 
   return (
     <motion.div
       whileHover={{ y: -6 }}
+      whileTap={{ scale: 0.98 }}
       transition={{ duration: 0.25 }}
-      className={`bg-[#111] ${a.border} border rounded-3xl p-6 md:p-8 flex flex-col items-center group relative overflow-hidden text-left`}
+      className="surface surface-hover rounded-3xl p-6 md:p-8 flex flex-col items-center group relative overflow-hidden text-left"
     >
+      <div className="absolute -top-16 left-1/2 -translate-x-1/2 w-40 h-40 rounded-full blur-3xl pointer-events-none opacity-60 group-hover:opacity-100 transition-opacity" style={{ background: `radial-gradient(circle, ${a.glow}, transparent 70%)` }} />
       {badge && (
         <div className={`absolute top-0 left-0 right-0 ${a.badgeBg} text-[10px] uppercase font-semibold text-center py-1.5 tracking-[0.25em]`}>
           {badge}
         </div>
       )}
-      <div className={`${a.iconColor} mb-6 md:mb-8 ${badge ? "mt-6" : ""} group-hover:scale-110 transition-transform duration-500`}>
+      <div className={`${a.iconColor} mb-6 md:mb-8 ${badge ? "mt-6" : ""} group-hover:scale-110 transition-transform duration-500 relative z-10`}>
         {icon}
       </div>
-      <h3 className="text-lg md:text-xl font-semibold text-white mb-2 md:mb-3">{title}</h3>
-      <p className="text-[11px] md:text-xs text-gray-500 text-center mb-4 leading-relaxed">{description}</p>
+      <h3 className="text-lg md:text-xl font-bold mb-2 md:mb-3 relative z-10">{title}</h3>
+      <p className="text-[11px] md:text-xs ink-soft text-center mb-4 leading-relaxed relative z-10">{description}</p>
 
       {odds && odds.length > 0 && (
-        <div className="w-full mb-5 bg-white/[0.03] border border-white/5 rounded-xl p-3 space-y-1">
+        <div className="w-full mb-5 surface-2 rounded-xl p-3 space-y-1 relative z-10">
           {odds.map(([label, pct]) => (
             <div key={label} className="flex justify-between text-[10px]">
-              <span className="text-gray-500">{label}</span>
+              <span className="ink-faint">{label}</span>
               <span className={`font-mono ${a.iconColor}`}>{pct}</span>
             </div>
           ))}
         </div>
       )}
 
-      <div className="mt-auto w-full flex flex-col gap-2">
-        <button
-          onClick={onClick}
-          className={`${a.btn} press font-medium py-2.5 px-6 rounded-xl w-full text-center transition text-sm`}
-        >
+      <div className="mt-auto w-full flex flex-col gap-2 relative z-10">
+        <button onClick={onClick} className={`${a.btn} press font-semibold py-2.5 px-6 rounded-xl w-full text-center transition text-sm`}>
           {price.toLocaleString()} monedas
         </button>
         {onMulti && (
-          <button
-            onClick={onMulti}
-            className="press bg-white/5 hover:bg-white/10 border border-white/5 text-gray-300 font-medium py-2 px-6 rounded-xl w-full text-center transition text-xs"
-          >
+          <button onClick={onMulti} className="press btn-ghost font-medium py-2 px-6 rounded-xl w-full text-center transition text-xs">
             Abrir ×{multiCount} · {(price * multiCount).toLocaleString()}
           </button>
         )}
