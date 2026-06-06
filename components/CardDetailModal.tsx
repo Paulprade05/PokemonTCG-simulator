@@ -114,16 +114,6 @@ export default function CardDetailModal({
     return p.holofoil?.market ?? p.holofoil?.mid ?? p.normal?.market ?? p.normal?.mid ?? p.reverseHolofoil?.market ?? p.reverseHolofoil?.mid
       ?? (Object.keys(p)[0] ? (p[Object.keys(p)[0]].market ?? p[Object.keys(p)[0]].mid) : null);
   };
-  const getCardmarketPrice = (): number | null => {
-    const p = c?.cardmarket?.prices;
-    return p?.trendPrice ?? p?.averageSellPrice ?? p?.lowPrice ?? null;
-  };
-
-  const legalityColor = (v?: string) => {
-    if (v === "Legal") return "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
-    if (v === "Banned") return "bg-rose-500/15 text-rose-300 border-rose-500/30";
-    return "bg-white/5 text-gray-400 border-white/10";
-  };
 
   return (
     <AnimatePresence>
@@ -140,7 +130,7 @@ export default function CardDetailModal({
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.97, opacity: 0 }}
             transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            className="relative w-full max-w-5xl bg-[#0a0a0e] rounded-3xl overflow-hidden border border-white/10 shadow-2xl flex flex-col md:flex-row max-h-[92vh]"
+            className="relative w-full max-w-5xl bg-[var(--surface)] rounded-3xl overflow-hidden border border-[var(--border)] shadow-2xl flex flex-col md:flex-row max-h-[92vh]"
             data-lenis-prevent
             onClick={(e) => e.stopPropagation()}
           >
@@ -155,10 +145,10 @@ export default function CardDetailModal({
             {/* CLOSE */}
             <button
               onClick={onClose}
-              className="absolute top-3 right-3 md:top-4 md:right-4 w-9 h-9 flex items-center justify-center z-50 bg-white/5 hover:bg-white/15 border border-white/10 rounded-full transition press"
+              className="absolute top-3 right-3 md:top-4 md:right-4 w-9 h-9 flex items-center justify-center z-50 btn-ghost rounded-full transition press"
               aria-label="Cerrar"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-white">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
                 <path d="M18 6 6 18M6 6l12 12" />
               </svg>
             </button>
@@ -168,8 +158,8 @@ export default function CardDetailModal({
               className="relative w-full md:w-[44%] p-5 md:p-8 pt-14 md:pt-10 flex items-center justify-center"
               style={{
                 background: aura
-                  ? `radial-gradient(circle at 50% 35%, ${aura.halo.replace(/[\d.]+\)$/, "0.18)")}, transparent 70%), #0e0d14`
-                  : "#0e0d14",
+                  ? `radial-gradient(circle at 50% 35%, ${aura.halo.replace(/[\d.]+\)$/, "0.18)")}, transparent 70%), var(--surface-2)`
+                  : "var(--surface-2)",
               }}
             >
               {/* Floating action buttons */}
@@ -180,7 +170,7 @@ export default function CardDetailModal({
                     className={`w-10 h-10 rounded-full border transition flex items-center justify-center press ${
                       c.is_favorite
                         ? "bg-rose-500/25 border-rose-500/50 text-rose-300"
-                        : "bg-white/5 border-white/10 text-gray-500 hover:text-white"
+                        : "btn-ghost ink-soft hover:ink"
                     }`}
                     aria-label="Favorito"
                   >
@@ -198,7 +188,7 @@ export default function CardDetailModal({
                     className={`w-10 h-10 rounded-full border transition flex items-center justify-center press ${
                       wishlisted
                         ? "bg-pink-500/25 border-pink-500/50 text-pink-300"
-                        : "bg-white/5 border-white/10 text-gray-500 hover:text-white"
+                        : "btn-ghost ink-soft hover:ink"
                     }`}
                     aria-label="Deseos"
                     title={wishlisted ? "Quitar de deseos" : "Añadir a deseos"}
@@ -209,13 +199,6 @@ export default function CardDetailModal({
                   </button>
                 )}
               </div>
-
-              {/* Regulation mark */}
-              {c.regulationMark && (
-                <span className="absolute top-4 right-4 z-40 w-7 h-7 rounded-full bg-white/10 border border-white/15 text-white text-xs font-mono flex items-center justify-center">
-                  {c.regulationMark}
-                </span>
-              )}
 
               {/* Card image with halo */}
               <div className="relative">
@@ -238,14 +221,14 @@ export default function CardDetailModal({
             </div>
 
             {/* RIGHT — DETAILS */}
-            <div className="w-full md:w-[56%] flex flex-col bg-[#0a0a0e] overflow-y-auto custom-scrollbar relative" data-lenis-prevent>
+            <div className="w-full md:w-[56%] flex flex-col bg-[var(--surface)] overflow-y-auto custom-scrollbar relative" data-lenis-prevent>
               <div className="p-5 md:p-7 flex flex-col gap-4 relative">
                 {/* HEADER */}
                 <div>
                   <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <span className="text-[10px] uppercase tracking-[0.25em] text-gray-500 font-semibold">{c.supertype || "Pokémon"}</span>
+                    <span className="text-[10px] uppercase tracking-[0.25em] ink-faint font-semibold">{c.supertype || "Pokémon"}</span>
                     {c.subtypes?.slice(0, 3).map((s: string) => (
-                      <span key={s} className="text-[10px] uppercase tracking-wider text-gray-400 chip px-2 py-0.5 border border-white/5">{s}</span>
+                      <span key={s} className="text-[10px] uppercase tracking-wider ink-soft chip px-2 py-0.5">{s}</span>
                     ))}
                     {c.rarity && aura && (
                       <span className={`text-[10px] uppercase tracking-wider font-semibold border rounded-full px-2 py-0.5 ${aura.chip}`}>
@@ -254,9 +237,9 @@ export default function CardDetailModal({
                     )}
                   </div>
                   <div className="flex items-baseline justify-between gap-3">
-                    <h2 className="text-2xl md:text-4xl font-bold text-white tracking-tight">{c.name}</h2>
+                    <h2 className="text-2xl md:text-4xl font-bold tracking-tight">{c.name}</h2>
                     {c.hp && (
-                      <span className="text-rose-300 font-mono text-base md:text-lg font-bold shrink-0">HP {c.hp}</span>
+                      <span className="text-rose-400 font-mono text-base md:text-lg font-bold shrink-0">HP {c.hp}</span>
                     )}
                   </div>
                   {c.types?.length > 0 && (
@@ -267,19 +250,13 @@ export default function CardDetailModal({
                 </div>
 
                 {/* PRICES */}
-                <div className="grid grid-cols-3 gap-2">
-                  <PriceTile label="Venta" value={`${getMarketPrice()}`} unit="💰" accent="text-emerald-400" />
+                <div className="grid grid-cols-2 gap-2">
+                  <PriceTile label="Valor de venta" value={`${getMarketPrice()}`} unit="💰" accent="accent" />
                   {(() => {
                     const tcg = getTcgPrice();
-                    return tcg != null
-                      ? <PriceTile label="TCGplayer" value={`$${tcg.toFixed(2)}`} accent="text-blue-300" />
-                      : <PriceTile label="TCGplayer" value="—" accent="text-gray-500" />;
-                  })()}
-                  {(() => {
-                    const cm = getCardmarketPrice();
-                    return cm != null
-                      ? <PriceTile label="Cardmarket" value={`€${cm.toFixed(2)}`} accent="text-purple-300" />
-                      : <PriceTile label="Cardmarket" value="—" accent="text-gray-500" />;
+                    return (
+                      <PriceTile label="Valor real" value={tcg != null ? `$${tcg.toFixed(2)}` : "—"} accent={tcg != null ? "text-sky-400" : "ink-faint"} />
+                    );
                   })()}
                 </div>
 
@@ -293,63 +270,20 @@ export default function CardDetailModal({
                   </button>
                 )}
                 {readOnly && c.quantity != null && (
-                  <div className="text-center text-[11px] uppercase tracking-wider text-gray-500">
+                  <div className="text-center text-[11px] uppercase tracking-wider ink-faint">
                     {c.quantity > 1 ? `Posee ${c.quantity} copias` : "Copia única"}
-                  </div>
-                )}
-
-                {/* LEGALITIES */}
-                {c.legalities && (
-                  <div className="flex gap-1.5 flex-wrap">
-                    {(["standard", "expanded", "unlimited"] as const).map((fmt) => {
-                      const v = c.legalities[fmt];
-                      if (!v) return null;
-                      return (
-                        <span key={fmt} className={`text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-full border font-semibold ${legalityColor(v)}`}>
-                          {fmt} · {v}
-                        </span>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* EVOLUTION */}
-                {(c.evolvesFrom || c.evolvesTo?.length > 0) && (
-                  <div className="bg-white/[0.03] border border-white/5 rounded-2xl p-3 flex items-center gap-2 text-xs flex-wrap">
-                    <span className="text-gray-500 uppercase tracking-wider text-[9px] font-semibold mr-1">Evolución</span>
-                    {c.evolvesFrom && (
-                      <>
-                        <span className="text-gray-300">{c.evolvesFrom}</span>
-                        <Arrow />
-                      </>
-                    )}
-                    <span className="text-white font-semibold">{c.name}</span>
-                    {c.evolvesTo?.map((next: string, i: number) => (
-                      <span key={i} className="flex items-center gap-2">
-                        <Arrow />
-                        <span className="text-gray-300">{next}</span>
-                      </span>
-                    ))}
                   </div>
                 )}
 
                 {/* ABILITIES */}
                 {c.abilities?.length > 0 && (
                   <div className="bg-gradient-to-br from-purple-500/10 to-transparent border border-purple-500/20 rounded-2xl p-4">
-                    <p className="text-purple-300 text-[10px] font-semibold uppercase tracking-wider mb-3 flex items-center gap-2">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
-                        <path d="M12 2 4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z" />
-                      </svg>
-                      Habilidades
-                    </p>
+                    <p className="text-purple-400 text-[10px] font-semibold uppercase tracking-wider mb-3">Habilidades</p>
                     <div className="flex flex-col gap-3">
                       {c.abilities.map((ab: any, i: number) => (
                         <div key={i}>
-                          <div className="flex items-baseline gap-2 mb-1">
-                            <span className="text-purple-200 text-[10px] uppercase tracking-wider chip px-1.5 py-0.5">{ab.type}</span>
-                            <span className="text-sm font-semibold text-white">{ab.name}</span>
-                          </div>
-                          <p className="text-[12px] text-gray-300 leading-relaxed">{ab.text}</p>
+                          <span className="text-sm font-semibold">{ab.name}</span>
+                          <p className="text-[12px] ink-soft leading-relaxed mt-0.5">{ab.text}</p>
                         </div>
                       ))}
                     </div>
@@ -358,19 +292,17 @@ export default function CardDetailModal({
 
                 {/* ATTACKS */}
                 {c.attacks?.length > 0 && (
-                  <div className="bg-white/[0.03] border border-white/5 rounded-2xl overflow-hidden">
-                    <p className="text-gray-500 text-[10px] font-semibold uppercase tracking-wider px-4 pt-3">Ataques</p>
-                    <div className="flex flex-col divide-y divide-white/5">
+                  <div className="surface-2 rounded-2xl overflow-hidden">
+                    <p className="ink-faint text-[10px] font-semibold uppercase tracking-wider px-4 pt-3">Ataques</p>
+                    <div className="flex flex-col divide-y divide-[var(--border)]">
                       {c.attacks.map((atk: any, i: number) => (
                         <div key={i} className="p-4 flex flex-col gap-2">
                           <div className="flex items-center gap-3">
-                            <div className="shrink-0">
-                              <EnergyCost cost={atk.cost || []} />
-                            </div>
-                            <span className="text-sm font-semibold text-white truncate flex-1">{atk.name}</span>
-                            {atk.damage && <span className="text-base font-mono font-bold text-rose-300 shrink-0">{atk.damage}</span>}
+                            <div className="shrink-0"><EnergyCost cost={atk.cost || []} /></div>
+                            <span className="text-sm font-semibold truncate flex-1">{atk.name}</span>
+                            {atk.damage && <span className="text-base font-mono font-bold text-rose-400 shrink-0">{atk.damage}</span>}
                           </div>
-                          {atk.text && <p className="text-[12px] text-gray-400 leading-snug">{atk.text}</p>}
+                          {atk.text && <p className="text-[12px] ink-soft leading-snug">{atk.text}</p>}
                         </div>
                       ))}
                     </div>
@@ -384,103 +316,46 @@ export default function CardDetailModal({
                       ? c.weaknesses.map((w: any, i: number) => (
                           <div key={i} className="flex items-center gap-1">
                             <TypeBadge type={w.type} size="xs" />
-                            <span className="text-[11px] text-rose-300 font-semibold">{w.value}</span>
+                            <span className="text-[11px] text-rose-400 font-semibold">{w.value}</span>
                           </div>
                         ))
-                      : <span className="text-gray-600 text-xs">—</span>}
+                      : <span className="ink-faint text-xs">—</span>}
                   </StatTile>
                   <StatTile label="Resistencia">
                     {c.resistances?.length > 0
                       ? c.resistances.map((w: any, i: number) => (
                           <div key={i} className="flex items-center gap-1">
                             <TypeBadge type={w.type} size="xs" />
-                            <span className="text-[11px] text-emerald-300 font-semibold">{w.value}</span>
+                            <span className="text-[11px] text-emerald-400 font-semibold">{w.value}</span>
                           </div>
                         ))
-                      : <span className="text-gray-600 text-xs">—</span>}
+                      : <span className="ink-faint text-xs">—</span>}
                   </StatTile>
                   <StatTile label="Retirada">
                     {c.retreatCost?.length > 0
                       ? <EnergyCost cost={c.retreatCost} />
-                      : <span className="text-gray-600 text-xs">—</span>}
+                      : <span className="ink-faint text-xs">—</span>}
                   </StatTile>
                 </div>
 
-                {/* ANCIENT TRAIT */}
-                {c.ancientTrait && (
-                  <div className="bg-amber-500/10 border border-amber-500/25 rounded-2xl p-3">
-                    <p className="text-amber-300 text-[10px] font-semibold uppercase tracking-wider mb-1">Rasgo Antiguo · {c.ancientTrait.name}</p>
-                    <p className="text-[12px] text-gray-300 leading-snug">{c.ancientTrait.text}</p>
-                  </div>
-                )}
-
-                {/* RULES */}
-                {c.rules?.length > 0 && (
-                  <div className="bg-amber-500/10 border border-amber-500/25 rounded-2xl p-3">
-                    <p className="text-amber-300 text-[10px] font-semibold uppercase tracking-wider mb-2">Reglas</p>
-                    {c.rules.map((r: string, i: number) => (
-                      <p key={i} className="text-[12px] text-gray-300 leading-snug mb-1 last:mb-0">· {r}</p>
-                    ))}
-                  </div>
-                )}
-
-                {/* FLAVOR */}
-                {c.flavorText && (
-                  <p className="text-[12px] text-gray-400 italic leading-relaxed border-l-2 border-white/10 pl-3">
-                    "{c.flavorText}"
-                  </p>
-                )}
-
-                {/* META */}
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 pt-2">
-                  <Meta label="Artista" value={c.artist || "—"} />
-                  <Meta label="Número" value={`#${c.number || "—"}${c.set?.printedTotal ? `/${c.set.printedTotal}` : ""}`} />
-                  {c.set?.ptcgoCode && <Meta label="PTCGO" value={c.set.ptcgoCode} />}
-                  {c.nationalPokedexNumbers?.length > 0 && (
-                    <Meta className="col-span-2 md:col-span-3" label="Pokédex Nacional" value={c.nationalPokedexNumbers.map((n: number) => `#${n}`).join(" · ")} />
-                  )}
-                </div>
-
-                {/* SET FOOTER */}
+                {/* FOOTER compacto: set + número + artista */}
                 {c.set && (
-                  <div className="border-t border-white/5 pt-4 mt-1 flex items-center gap-3">
-                    {c.set.images?.symbol && (
-                      <img src={c.set.images.symbol} alt="" loading="lazy" className="w-7 h-7 object-contain opacity-80" />
-                    )}
+                  <div className="border-t border-[var(--border)] pt-4 mt-1 flex items-center gap-3">
                     {c.set.images?.logo && (
-                      <img src={c.set.images.logo} alt="" loading="lazy" className="h-8 object-contain opacity-90" />
+                      <img src={c.set.images.logo} alt="" loading="lazy" className="h-7 object-contain opacity-90" />
                     )}
                     <div className="flex-1 min-w-0 text-[11px]">
-                      <p className="text-white font-medium truncate">{c.set.name}</p>
-                      <p className="text-gray-500 font-mono">
-                        {c.set.series}
-                        {c.set.releaseDate && ` · ${c.set.releaseDate}`}
-                        {c.set.total && ` · ${c.set.total} cartas`}
+                      <p className="font-medium truncate">{c.set.name}</p>
+                      <p className="ink-faint font-mono">
+                        #{c.number || "—"}{c.set.printedTotal ? `/${c.set.printedTotal}` : ""}
+                        {c.artist ? ` · ${c.artist}` : ""}
                       </p>
                     </div>
                   </div>
                 )}
 
-                {/* EXTERNAL */}
-                {(c.tcgplayer?.url || c.cardmarket?.url) && (
-                  <div className="flex gap-2 text-[11px]">
-                    {c.tcgplayer?.url && (
-                      <a href={c.tcgplayer.url} target="_blank" rel="noreferrer"
-                         className="flex-1 bg-white/5 hover:bg-white/10 border border-white/5 px-3 py-2.5 rounded-xl text-center text-blue-300 transition press font-medium">
-                        TCGplayer ↗
-                      </a>
-                    )}
-                    {c.cardmarket?.url && (
-                      <a href={c.cardmarket.url} target="_blank" rel="noreferrer"
-                         className="flex-1 bg-white/5 hover:bg-white/10 border border-white/5 px-3 py-2.5 rounded-xl text-center text-purple-300 transition press font-medium">
-                        Cardmarket ↗
-                      </a>
-                    )}
-                  </div>
-                )}
-
                 {loadingEnrich && (
-                  <p className="text-[9px] text-gray-600 uppercase tracking-wider animate-pulse text-center">Cargando detalles…</p>
+                  <p className="text-[9px] ink-faint uppercase tracking-wider animate-pulse text-center">Cargando detalles…</p>
                 )}
               </div>
             </div>
@@ -499,18 +374,10 @@ function Heart({ filled }: { filled?: boolean }) {
   );
 }
 
-function Arrow() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3 h-3 text-gray-600">
-      <path d="M5 12h14M13 6l6 6-6 6" />
-    </svg>
-  );
-}
-
 function PriceTile({ label, value, unit, accent }: { label: string; value: string; unit?: string; accent: string }) {
   return (
-    <div className="bg-white/[0.04] border border-white/5 rounded-2xl px-3 py-2.5">
-      <p className="text-[9px] uppercase tracking-wider text-gray-500 font-semibold">{label}</p>
+    <div className="surface-2 rounded-2xl px-3 py-2.5">
+      <p className="text-[9px] uppercase tracking-wider ink-faint font-semibold">{label}</p>
       <p className={`text-base md:text-lg font-bold ${accent} tabular-nums leading-tight mt-0.5`}>
         {value}{unit && <span className="text-xs ml-1">{unit}</span>}
       </p>
@@ -520,18 +387,9 @@ function PriceTile({ label, value, unit, accent }: { label: string; value: strin
 
 function StatTile({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="bg-white/[0.04] border border-white/5 rounded-2xl p-3">
-      <p className="text-[9px] uppercase tracking-wider text-gray-500 font-semibold mb-1.5">{label}</p>
+    <div className="surface-2 rounded-2xl p-3">
+      <p className="text-[9px] uppercase tracking-wider ink-faint font-semibold mb-1.5">{label}</p>
       <div className="flex flex-col gap-1">{children}</div>
-    </div>
-  );
-}
-
-function Meta({ label, value, className = "" }: { label: string; value: string; className?: string }) {
-  return (
-    <div className={className}>
-      <p className="text-[9px] uppercase tracking-wider text-gray-500 font-semibold">{label}</p>
-      <p className="text-[12px] text-gray-300 mt-0.5 truncate">{value}</p>
     </div>
   );
 }

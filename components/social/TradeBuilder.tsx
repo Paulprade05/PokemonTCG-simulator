@@ -78,12 +78,11 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
     onSent();
   };
 
-  const Column = ({
-    title, cards, selected, side, q, setQ, accent,
-  }: {
-    title: string; cards: TCard[]; selected: Record<string, number>;
-    side: "offer" | "request"; q: string; setQ: (v: string) => void; accent: string;
-  }) => (
+  // Render como función (NO como <Column/>) para evitar remontaje y pérdida de foco al filtrar.
+  const renderColumn = (
+    title: string, cards: TCard[], selected: Record<string, number>,
+    side: "offer" | "request", q: string, setQ: (v: string) => void, accent: string,
+  ) => (
     <div className="surface-2 rounded-2xl p-3 flex flex-col min-h-0">
       <div className="flex items-center justify-between mb-2 px-1">
         <h4 className="text-xs font-semibold uppercase tracking-wider ink-soft">{title}</h4>
@@ -158,8 +157,8 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
               </div>
             ) : (
               <div className="flex-1 overflow-y-auto p-4 grid grid-cols-1 md:grid-cols-2 gap-3" data-lenis-prevent>
-                <Column title="Ofreces" cards={filteredMine} selected={offer} side="offer" q={qMine} setQ={setQMine} accent="accent" />
-                <Column title="Pides" cards={filteredTheirs} selected={request} side="request" q={qTheirs} setQ={setQTheirs} accent="text-cyan-400" />
+                {renderColumn("Ofreces", filteredMine, offer, "offer", qMine, setQMine, "accent")}
+                {renderColumn("Pides", filteredTheirs, request, "request", qTheirs, setQTheirs, "text-cyan-400")}
               </div>
             )}
 

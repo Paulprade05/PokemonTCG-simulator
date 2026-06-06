@@ -11,7 +11,7 @@ const themeInit = `(function(){try{var t=localStorage.getItem('theme');if(!t){t=
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Aurora Deck · Pokémon TCG",
+  title: "Pokémon TCG Simulator",
   description: "Abre sobres, colecciona e intercambia cartas Pokémon",
 };
 

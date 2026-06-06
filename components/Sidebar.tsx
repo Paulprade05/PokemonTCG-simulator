@@ -44,8 +44,8 @@ export default function Sidebar() {
           </svg>
         </div>
         <div className="leading-tight">
-          <p className="text-sm font-bold tracking-tight ink">Aurora Deck</p>
-          <p className="text-[10px] ink-faint">Pokémon TCG</p>
+          <p className="text-sm font-bold tracking-tight ink">Pokémon TCG</p>
+          <p className="text-[10px] ink-faint">Simulator</p>
         </div>
       </Link>
 

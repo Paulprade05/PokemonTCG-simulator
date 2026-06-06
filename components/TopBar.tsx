@@ -25,7 +25,7 @@ export default function TopBar() {
             <rect x="3" y="5" width="18" height="14" rx="3" /><path d="M3 12h18" /><circle cx="12" cy="12" r="2.4" fill="currentColor" />
           </svg>
         </div>
-        <span className="text-sm font-bold tracking-tight">Aurora Deck</span>
+        <span className="text-sm font-bold tracking-tight">Pokémon TCG</span>
       </div>
 
       {/* Search grows on desktop */}
