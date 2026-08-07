@@ -12,6 +12,9 @@ import {
 } from "../action";
 import { getCollection, saveCollectionRaw } from "../../utils/storage";
 import { useCurrency } from "../../hooks/useGameCurrency";
+import { useHaptics } from "../../hooks/useHaptics";
+import { useToast } from "../../components/ui/Toast";
+import ConfirmSheet from "../../components/ui/ConfirmSheet";
 import { RARITY_RANK, SELL_PRICES } from "../../utils/constanst";
 import PokemonCard from "../../components/PokemonCard";
 import PageHeader from "../../components/PageHeader";
@@ -31,8 +34,12 @@ export default function CollectionPage() {
   const [filterSet, setFilterSet] = useState("all");
   const [filterRarity, setFilterRarity] = useState("all");
   const [selectedCard, setSelectedCard] = useState<any | null>(null);
+  const [confirmDuplicates, setConfirmDuplicates] = useState(false);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 24;
+
+  const haptic = useHaptics();
+  const toast = useToast();
 
   const rarityOptions = useMemo(() => {
     const set = new Set<string>();
@@ -102,11 +109,24 @@ export default function CollectionPage() {
 
   const getPrice = (rarity: string) => SELL_PRICES[rarity] || 10;
 
+  /** Duplicados vendibles (las favoritas quedan protegidas) y su valor. */
+  const duplicateInfo = useMemo(() => {
+    const list = cards.filter((card) => card.quantity > 1 && !card.is_favorite);
+    let total = 0;
+    let units = 0;
+    list.forEach((card) => {
+      total += (card.quantity - 1) * getPrice(card.rarity);
+      units += card.quantity - 1;
+    });
+    return { list, total, units };
+  }, [cards]);
+
   const handleSellCard = async (e: React.MouseEvent, cardId: string, rarity: string) => {
     e.stopPropagation();
     const card = cards.find((c) => c.id === cardId);
     if (!card || card.quantity <= 1) return;
     const price = getPrice(rarity);
+    haptic("success");
     const updatedCards = cards.map((c) => (c.id === cardId ? { ...c, quantity: c.quantity - 1 } : c));
     setCards(updatedCards);
     addCoins(price);
@@ -114,22 +134,32 @@ export default function CollectionPage() {
     else saveCollectionRaw(updatedCards);
   };
 
-  const handleSellAllDuplicates = async () => {
-    const duplicates = cards.filter((card) => card.quantity > 1 && !card.is_favorite);
-    if (duplicates.length === 0) {
-      alert("No tienes duplicados (o están protegidos como favoritas).");
+  /** Abre la hoja de confirmación (sustituye a confirm()). */
+  const requestSellAllDuplicates = () => {
+    haptic("tap");
+    if (duplicateInfo.list.length === 0) {
+      toast("No tienes duplicados (o están protegidos como favoritas).", "info");
       return;
     }
-    let totalGanancias = 0;
-    duplicates.forEach((card) => { totalGanancias += (card.quantity - 1) * getPrice(card.rarity); });
-    if (!confirm(`¿Vender todos los duplicados por ${totalGanancias} monedas?`)) return;
+    setConfirmDuplicates(true);
+  };
+
+  const handleSellAllDuplicates = async () => {
+    const duplicates = duplicateInfo.list;
+    if (duplicates.length === 0) return;
+    const totalGanancias = duplicateInfo.total;
     const newCollection = cards.map((card) =>
       card.quantity > 1 && !card.is_favorite ? { ...card, quantity: 1 } : card,
     );
     setCards(newCollection);
     addCoins(totalGanancias);
-    if (isSignedIn) await Promise.all(duplicates.map((c) => sellAllDuplicatesAction(c.id, getPrice(c.rarity))));
-    else saveCollectionRaw(newCollection);
+    try {
+      if (isSignedIn) await Promise.all(duplicates.map((c) => sellAllDuplicatesAction(c.id, getPrice(c.rarity))));
+      else saveCollectionRaw(newCollection);
+      toast(`+${totalGanancias} monedas por ${duplicateInfo.units} cartas`, "success");
+    } catch {
+      toast("No se pudo completar la venta", "error");
+    }
   };
 
   const handleSellAllFromModal = async () => {
@@ -142,15 +172,29 @@ export default function CollectionPage() {
     setCards((prev) => prev.map((c) => (c.id === selectedCard.id ? { ...c, quantity: 1 } : c)));
     if (isSignedIn) await sellAllDuplicatesAction(selectedCard.id, unitPrice);
     else saveCollectionRaw(cards.map((c) => (c.id === selectedCard.id ? { ...c, quantity: 1 } : c)));
+    toast(`+${totalValue} monedas por ${duplicates} duplicadas`, "success");
   };
 
   const handleToggleFavInModal = async () => {
     if (!selectedCard) return;
+    const cardId = selectedCard.id;
     const newStatus = !selectedCard.is_favorite;
+    haptic("select");
     setSelectedCard({ ...selectedCard, is_favorite: newStatus });
-    setCards((prev) => prev.map((c) => (c.id === selectedCard.id ? { ...c, is_favorite: newStatus } : c)));
-    const res = await toggleFavorite(selectedCard.id);
-    if (res?.error) alert(res.error);
+    setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, is_favorite: newStatus } : c)));
+    const res = await toggleFavorite(cardId);
+    if (res?.error) {
+      // Deshacemos el cambio optimista para no mentir sobre el estado real.
+      setSelectedCard((prev: any) => (prev && prev.id === cardId ? { ...prev, is_favorite: !newStatus } : prev));
+      setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, is_favorite: !newStatus } : c)));
+      toast(res.error, "error");
+    }
+  };
+
+  const goToPage = (next: number) => {
+    haptic("tap");
+    setPage(next);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   if (loading) return <Loader label="Cargando Colección" />;
@@ -162,8 +206,12 @@ export default function CollectionPage() {
         subtitle="Tus cartas, progreso y estadísticas"
         actions={
           <button
-            onClick={handleSellAllDuplicates}
-            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press"
+            onClick={requestSellAllDuplicates}
+            // En móvil el texto va oculto con `hidden` (display:none), que lo
+            // saca del árbol de accesibilidad: sin esta etiqueta el botón
+            // quedaría sin nombre para un lector de pantalla.
+            aria-label="Limpiar duplicados"
+            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press touch-target justify-center"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
               <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
@@ -177,7 +225,8 @@ export default function CollectionPage() {
         {/* PROGRESS PANEL */}
         <div>
           <button
-            onClick={() => setShowStats(!showStats)}
+            onClick={() => { haptic("tap"); setShowStats(!showStats); }}
+            aria-expanded={showStats}
             className="w-full surface surface-hover rounded-2xl px-5 py-4 flex justify-between items-center group"
           >
             <div className="flex items-center gap-3">
@@ -223,9 +272,9 @@ export default function CollectionPage() {
                           {stat.logo && <img src={stat.logo} alt={stat.name} className="h-7 object-contain opacity-90" />}
                           <div className="flex-1 min-w-0">
                             <h3 className="font-medium text-sm truncate">{stat.name}</h3>
-                            <p className="text-[10px] ink-faint font-mono">{stat.owned}/{stat.total}</p>
+                            <p className="text-[10px] ink-faint font-mono tnum">{stat.owned}/{stat.total}</p>
                           </div>
-                          <span className="text-xs font-semibold ink-soft">{stat.percentage}%</span>
+                          <span className="text-xs font-semibold ink-soft tnum">{stat.percentage}%</span>
                         </div>
                         <div className="w-full h-1.5 surface-2 rounded-full overflow-hidden">
                           <div
@@ -242,46 +291,88 @@ export default function CollectionPage() {
           </AnimatePresence>
         </div>
 
-        {/* TOOLBAR */}
-        <div className="surface rounded-2xl px-3 py-3 flex flex-wrap gap-2 items-center">
-          <div className="input-field flex items-center gap-2 px-3 py-2 rounded-xl flex-1 min-w-[180px]">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint">
+        {/* TOOLBAR — se queda pegada bajo la TopBar (y bajo el notch) al hacer scroll */}
+        <div
+          className="surface rounded-2xl px-3 py-3 flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:items-center sticky z-40"
+          style={{ top: "calc(var(--sat) + var(--topbar-h) + 8px)" }}
+        >
+          <div className="input-field flex items-center gap-2 px-3 py-2 rounded-xl flex-1 sm:min-w-[180px]">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint shrink-0">
               <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
             </svg>
             <input
-              type="text"
+              type="search"
+              inputMode="search"
+              enterKeyHint="search"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              aria-label="Buscar en tu colección"
               placeholder="Buscar..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="bg-transparent outline-none text-sm flex-1 placeholder:opacity-50"
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              className="bg-transparent outline-none text-sm flex-1 min-w-0 placeholder:opacity-50 [&::-webkit-search-cancel-button]:hidden"
             />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => { haptic("tap"); setSearchTerm(""); }}
+                aria-label="Limpiar búsqueda"
+                className="ink-faint hover:ink shrink-0 -mr-1 press flex h-9 w-9 items-center justify-center rounded-full"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </div>
-          <select value={filterSet} onChange={(e) => setFilterSet(e.target.value)} className="input-field px-3 py-2 rounded-xl text-xs cursor-pointer">
-            <option value="all">Todas las expansiones</option>
-            {dbSets.map((set) => (<option key={set.id} value={set.id}>{set.name}</option>))}
-          </select>
-          <select value={filterRarity} onChange={(e) => setFilterRarity(e.target.value)} className="input-field px-3 py-2 rounded-xl text-xs cursor-pointer">
-            <option value="all">Toda rareza</option>
-            {rarityOptions.map((r) => (<option key={r} value={r}>{r}</option>))}
-          </select>
-          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="input-field px-3 py-2 rounded-xl text-xs cursor-pointer">
-            <option value="rarity_desc">Rareza</option>
-            <option value="quantity_desc">Cantidad</option>
-            <option value="name_asc">Nombre</option>
-          </select>
+
+          {/* En móvil los selectores se desplazan en horizontal en vez de apilarse */}
+          <div className="flex gap-2 scroll-x sm:overflow-visible sm:contents -mx-1 px-1 sm:mx-0 sm:px-0" data-lenis-prevent>
+            <select
+              value={filterSet}
+              onChange={(e) => { haptic("select"); setFilterSet(e.target.value); }}
+              aria-label="Filtrar por expansión"
+              className="input-field px-3 py-2 rounded-xl text-xs cursor-pointer shrink-0"
+            >
+              <option value="all">Todas las expansiones</option>
+              {dbSets.map((set) => (<option key={set.id} value={set.id}>{set.name}</option>))}
+            </select>
+            <select
+              value={filterRarity}
+              onChange={(e) => { haptic("select"); setFilterRarity(e.target.value); }}
+              aria-label="Filtrar por rareza"
+              className="input-field px-3 py-2 rounded-xl text-xs cursor-pointer shrink-0"
+            >
+              <option value="all">Toda rareza</option>
+              {rarityOptions.map((r) => (<option key={r} value={r}>{r}</option>))}
+            </select>
+            <select
+              value={sortBy}
+              onChange={(e) => { haptic("select"); setSortBy(e.target.value); }}
+              aria-label="Ordenar por"
+              className="input-field px-3 py-2 rounded-xl text-xs cursor-pointer shrink-0"
+            >
+              <option value="rarity_desc">Rareza</option>
+              <option value="quantity_desc">Cantidad</option>
+              <option value="name_asc">Nombre</option>
+            </select>
+          </div>
         </div>
 
         {/* GRID */}
         {processedCards.length === 0 ? (
           <div className="surface rounded-2xl py-16 md:py-20 px-6 text-center flex flex-col items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/5 flex items-center justify-center">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-7 h-7 text-gray-500">
+            <div className="w-14 h-14 rounded-2xl surface-2 flex items-center justify-center">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-7 h-7 ink-faint">
                 <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
               </svg>
             </div>
             <div>
-              <p className="text-white font-medium">{cards.length === 0 ? "Aún no tienes cartas" : "Sin resultados"}</p>
-              <p className="text-gray-500 text-sm mt-1">{cards.length === 0 ? "Abre tu primer sobre para empezar" : "Prueba otros filtros"}</p>
+              <p className="ink font-medium">{cards.length === 0 ? "Aún no tienes cartas" : "Sin resultados"}</p>
+              <p className="ink-soft text-sm mt-1">{cards.length === 0 ? "Abre tu primer sobre para empezar" : "Prueba otros filtros"}</p>
             </div>
             {cards.length === 0 && (
               <Link href="/" className="btn-primary press px-5 py-2.5 rounded-xl text-sm font-medium">Abrir sobres</Link>
@@ -293,10 +384,28 @@ export default function CollectionPage() {
               <div
                 key={card.id}
                 className="relative group cursor-zoom-in"
-                onClick={() => setSelectedCard(card)}
+                tabIndex={0}
+                aria-label={`Ver ${card.name}`}
+                onClick={() => { haptic("select"); setSelectedCard(card); }}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    haptic("select");
+                    setSelectedCard(card);
+                  }
+                }}
               >
                 {card.quantity > 1 && (
-                  <div className="absolute -top-2 -right-2 z-30 bg-white text-black text-[10px] font-bold w-6 h-6 flex items-center justify-center rounded-full border border-white/20 shadow-lg">
+                  <div
+                    className="absolute -top-2 -right-2 z-30 text-[10px] font-bold w-6 h-6 flex items-center justify-center rounded-full tnum"
+                    style={{
+                      background: "var(--ink)",
+                      color: "var(--bg)",
+                      border: "1px solid var(--border-strong)",
+                      boxShadow: "var(--shadow-sm)",
+                    }}
+                  >
                     {card.quantity}
                   </div>
                 )}
@@ -310,11 +419,12 @@ export default function CollectionPage() {
                 <div className="transition transform group-hover:-translate-y-1 duration-300 pointer-events-none">
                   <PokemonCard card={card} reveal={true} interactive={false} />
                 </div>
-                <div className="mt-2 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                {/* En táctil no hay hover: la acción se muestra siempre en móvil */}
+                <div className="mt-2 flex justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity duration-300">
                   {card.quantity > 1 ? (
                     <button
                       onClick={(e) => handleSellCard(e, card.id, card.rarity)}
-                      className="chip ink text-[10px] py-1 px-3 rounded-full press hover:brightness-110"
+                      className="chip ink text-[10px] min-h-8 px-3 rounded-full press hover:brightness-110"
                     >
                       Vender +{getPrice(card.rarity)}
                     </button>
@@ -331,23 +441,23 @@ export default function CollectionPage() {
         {processedCards.length > PAGE_SIZE && (
           <div className="flex items-center justify-center gap-3 pt-2">
             <button
-              onClick={() => { setPage((p) => Math.max(1, p - 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+              onClick={() => goToPage(Math.max(1, page - 1))}
               disabled={page === 1}
-              className="btn-ghost press w-10 h-10 rounded-xl flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
+              className="btn-ghost press touch-target w-11 h-11 rounded-xl flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
               aria-label="Anterior"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
                 <path d="m15 18-6-6 6-6" />
               </svg>
             </button>
-            <span className="chip ink px-4 py-2 text-sm font-medium tabular-nums">
+            <span className="chip ink px-4 py-2 text-sm font-medium tnum">
               {page} / {totalPages}
               <span className="ink-soft text-xs ml-2">· {processedCards.length} cartas</span>
             </span>
             <button
-              onClick={() => { setPage((p) => Math.min(totalPages, p + 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+              onClick={() => goToPage(Math.min(totalPages, page + 1))}
               disabled={page === totalPages}
-              className="btn-ghost press w-10 h-10 rounded-xl flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
+              className="btn-ghost press touch-target w-11 h-11 rounded-xl flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
               aria-label="Siguiente"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
@@ -357,6 +467,16 @@ export default function CollectionPage() {
           </div>
         )}
       </div>
+
+      <ConfirmSheet
+        open={confirmDuplicates}
+        title="Vender duplicados"
+        description={`Se venderán ${duplicateInfo.units} cartas repetidas por ${duplicateInfo.total} monedas. Las favoritas no se tocan.`}
+        confirmLabel={`Vender por ${duplicateInfo.total}`}
+        destructive
+        onConfirm={handleSellAllDuplicates}
+        onClose={() => setConfirmDuplicates(false)}
+      />
 
       <CardDetailModal
         card={selectedCard}

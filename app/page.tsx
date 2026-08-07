@@ -1,8 +1,9 @@
 "use client";
 
 import { useUser } from "@clerk/nextjs";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, type PanInfo } from "framer-motion";
 import { useState, useEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   getUserData,
   updateCoins,
@@ -20,13 +21,47 @@ import { openStandardPack, openPremiumPack, openGoldenPack } from "../utils/pack
 import { saveToCollection, getCollection } from "../utils/storage";
 import { SELL_PRICES, PACK_PRICES, RARITY_RANK } from "../utils/constanst";
 import { useCurrency } from "../hooks/useGameCurrency";
+import { useHaptics } from "../hooks/useHaptics";
+import { useToast } from "../components/ui/Toast";
+import { useImmersive } from "../components/AppShell";
 import PokemonCard from "../components/PokemonCard";
 
 type PackType = "STANDARD" | "PREMIUM" | "GOLDEN" | "SPECIAL";
 
+/**
+ * Ancho de la carta calculado sobre el viewport real (--app-height ya descuenta
+ * la barra dinámica de Safari). 56px de cabecera + 96px de pie reservados;
+ * 0.714 es 2.5/3.5, la proporción de una carta.
+ */
+// Los 20px extra son aire: sin ellos la carta ocupaba el 99,96% de la zona
+// central y quedaba pegada a la cabecera y al pie.
+const CARD_WIDTH =
+  "min(82vw, 360px, calc((var(--app-height) - var(--sat) - var(--sab) - 56px - 96px - 20px) * 0.714))";
+
+/** Rareza a partir de la cual la revelación merece aura a pantalla completa. */
+const AURA_RANK = 70;
+
+const cardVariants = {
+  enter: (dir: number) => ({
+    x: dir > 0 ? 120 : -120,
+    opacity: 0,
+    rotateY: dir > 0 ? 60 : -60,
+    scale: 0.92,
+  }),
+  center: { x: 0, opacity: 1, rotateY: 0, scale: 1 },
+  exit: (dir: number) => ({
+    x: dir > 0 ? -120 : 120,
+    opacity: 0,
+    rotateY: dir > 0 ? -60 : 60,
+    scale: 0.92,
+  }),
+};
+
 export default function Home() {
   const { coins, setCoins, spendCoins } = useCurrency();
   const { isSignedIn, isLoaded } = useUser();
+  const haptic = useHaptics();
+  const toast = useToast();
 
   const [dbSets, setDbSets] = useState<any[]>([]);
   const [selectedSet, setSelectedSet] = useState<string | null>(null);
@@ -46,7 +81,36 @@ export default function Home() {
   const [sellingDupes, setSellingDupes] = useState(false);
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
   const [openSeries, setOpenSeries] = useState<Record<string, boolean>>({});
+  const [direction, setDirection] = useState(1);
   const finishingRef = useRef(false);
+  /** true mientras se arrastra la carta: evita que el gesto dispare el onClick. */
+  const draggingRef = useRef(false);
+
+  // La apertura ocupa toda la pantalla: escondemos la barra de pestañas.
+  useImmersive(isPackOpen);
+
+  // El portal necesita document.body, que no existe en el render del servidor.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  // La vista de apertura ocupa toda la pantalla: el documento de debajo no debe
+  // poder desplazarse, igual que hacen el resto de overlays del proyecto.
+  useEffect(() => {
+    if (!isPackOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [isPackOpen]);
+
+  const lastIndex = Math.max(0, currentPack.length - 1);
+  const currentCard = currentPack[packIndex];
+  /** Las cartas anteriores a la actual ya se vieron; la actual depende del flip. */
+  const revealedCount = cardRevealed ? packIndex + 1 : packIndex;
+  const currentRevealed = cardRevealed || packIndex > 0;
+  const showAura =
+    currentRevealed && (RARITY_RANK[currentCard?.rarity] || 0) >= AURA_RANK;
 
   const currentSetObj = dbSets.find((s) => s.id === selectedSet);
   const isSpecialSet = currentSetObj
@@ -119,10 +183,14 @@ export default function Home() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "Space" && isPackOpen) {
-        if (e.repeat) return; // ignora auto-repeat al mantener pulsado
+      if (!isPackOpen) return;
+      if (e.repeat) return; // ignora auto-repeat al mantener pulsado
+      if (e.code === "Space" || e.code === "ArrowRight") {
         e.preventDefault();
         handleNextCard();
+      } else if (e.code === "ArrowLeft") {
+        e.preventDefault();
+        handlePrevCard();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -140,16 +208,21 @@ export default function Home() {
     setPackIndex(0);
     setIsPackOpen(false);
     setCardRevealed(false);
+    setDirection(1);
   };
 
   const handleBuyPack = async (type: PackType) => {
     if (finishingRef.current) return;
     if (!allCards || allCards.length === 0) {
-      alert("Las cartas no se han cargado. Recarga la página.");
+      toast("Las cartas no se han cargado. Recarga la página.", "error");
       return;
     }
     const price = PACK_PRICES[type];
-    if (coins < price) { alert("No tienes suficientes monedas"); return; }
+    if (coins < price) {
+      haptic("warning");
+      toast("No tienes suficientes monedas", "error");
+      return;
+    }
 
     let newPack: any[] = [];
     if (type === "STANDARD") newPack = openStandardPack(allCards);
@@ -174,12 +247,17 @@ export default function Home() {
     if (finishingRef.current) return;
     finishingRef.current = true;
     if (!allCards || allCards.length === 0) {
-      alert("Las cartas no se han cargado. Recarga la página.");
+      toast("Las cartas no se han cargado. Recarga la página.", "error");
       finishingRef.current = false;
       return;
     }
     const price = PACK_PRICES[type] * count;
-    if (coins < price) { alert(`Necesitas ${price} monedas para ×${count}`); return; }
+    if (coins < price) {
+      haptic("warning");
+      toast(`Necesitas ${price.toLocaleString()} monedas para ×${count}`, "error");
+      finishingRef.current = false; // sin esto el botón quedaba bloqueado
+      return;
+    }
 
     const ownedSnapshot = [...userCollectionIds];
     const owned = new Set(ownedSnapshot);
@@ -214,6 +292,7 @@ export default function Home() {
       setCurrentPack(combined);
       setCurrentPackPrice(price);
       setIsPackOpen(false); // directo al resumen
+      haptic("success");
     }
     finishingRef.current = false;
   };
@@ -221,36 +300,74 @@ export default function Home() {
   const finishPack = async () => {
     if (finishingRef.current) return;
     finishingRef.current = true;
-    if (isSignedIn) {
-      await savePackToCollection(currentPack, currentPackPrice);
-      // Bonus por completar sets
-      const res = await claimSetCompletionBonuses();
-      if (res.granted > 0) {
-        setSetBonus({ granted: res.granted, sets: res.sets });
-        setCoins((c) => c + res.granted);
-        setTimeout(() => setSetBonus(null), 6000);
+    try {
+      if (isSignedIn) {
+        await savePackToCollection(currentPack, currentPackPrice);
+        // Bonus por completar sets
+        const res = await claimSetCompletionBonuses();
+        if (res.granted > 0) {
+          setSetBonus({ granted: res.granted, sets: res.sets });
+          setCoins((c) => c + res.granted);
+          setTimeout(() => setSetBonus(null), 6000);
+        }
+        getProfileStats().then(setStats);
+      } else {
+        saveToCollection(currentPack);
       }
-      getProfileStats().then(setStats);
-    } else {
-      saveToCollection(currentPack);
+      const newPackIds = currentPack.map((c) => c.id);
+      setUserCollectionIds((prev) => [...prev, ...newPackIds]);
+      haptic("success");
+    } catch (err) {
+      // Una caída de red al guardar no puede dejar el sobre a medias: se avisa
+      // y se sale igualmente al resumen, con las cartas ya en pantalla.
+      console.error("Error guardando el sobre:", err);
+      toast("No se pudo guardar el sobre en la nube", "error");
+    } finally {
+      // Sin este finally, un fallo dejaba finishingRef en true y los botones de
+      // compra bloqueados para el resto de la sesión.
+      setIsPackOpen(false);
+      finishingRef.current = false;
     }
-    const newPackIds = currentPack.map((c) => c.id);
-    setUserCollectionIds((prev) => [...prev, ...newPackIds]);
-    setIsPackOpen(false);
-    finishingRef.current = false;
   };
 
   const handleNextCard = async () => {
     if (!cardRevealed) {
+      haptic("heavy");
       setCardRevealed(true);
       return;
     }
-    if (packIndex < 9) {
+    if (packIndex < lastIndex) {
+      const next = currentPack[packIndex + 1];
+      // Las cartas siguientes salen ya reveladas: la vibración fuerte se
+      // reserva para las que además encienden el aura.
+      haptic((RARITY_RANK[next?.rarity] || 0) >= AURA_RANK ? "heavy" : "tap");
+      setDirection(1);
       setCardRevealed(true);
       setPackIndex((prev) => prev + 1);
     } else {
       await finishPack();
     }
+  };
+
+  const handlePrevCard = () => {
+    if (packIndex <= 0) return; // no hay carta anterior
+    haptic("tap");
+    setDirection(-1);
+    setCardRevealed(true); // las anteriores ya se revelaron
+    setPackIndex((prev) => prev - 1);
+  };
+
+  const handleCardTap = () => {
+    if (draggingRef.current) return; // el gesto ya ha decidido
+    handleNextCard();
+  };
+
+  const handleCardDragEnd = (_e: unknown, info: PanInfo) => {
+    const { offset, velocity } = info;
+    if (offset.x < -70 || velocity.x < -420) handleNextCard();
+    else if ((offset.x > 70 || velocity.x > 420) && packIndex > 0) handlePrevCard();
+    // el click sintético llega justo después del dragend
+    setTimeout(() => { draggingRef.current = false; }, 60);
   };
 
   // Revelar todo: salta animación carta por carta y va al resumen.
@@ -353,8 +470,8 @@ export default function Home() {
             exit={{ opacity: 0, y: -20 }}
             className="fixed top-24 left-1/2 -translate-x-1/2 z-[200] bg-yellow-500/15 border border-yellow-500/30 backdrop-blur-xl px-6 py-4 rounded-2xl text-center max-w-sm"
           >
-            <p className="text-yellow-300 text-sm font-semibold">¡Set completado!</p>
-            <p className="text-xs text-gray-300 mt-1">
+            <p className="text-sm font-semibold" style={{ color: "var(--warn)" }}>¡Set completado!</p>
+            <p className="text-xs ink-soft mt-1">
               {setBonus.sets.join(", ")} · +{setBonus.granted.toLocaleString()} monedas
             </p>
           </motion.div>
@@ -495,7 +612,7 @@ export default function Home() {
                                 className="max-h-16 md:max-h-20 max-w-[80%] object-contain group-hover:scale-110 transition-transform duration-500 opacity-90 group-hover:opacity-100 drop-shadow-lg"
                               />
                             ) : (
-                              <div className="text-gray-500 text-sm text-center">{set.name}</div>
+                              <div className="ink-faint text-sm text-center">{set.name}</div>
                             )}
                           </div>
                           <span className="font-medium text-[11px] md:text-xs ink-soft group-hover:ink transition-colors text-center tracking-wide truncate w-full relative z-10">
@@ -621,9 +738,13 @@ export default function Home() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-white/60 z-[100] flex flex-col items-center justify-center backdrop-blur-xl"
+                className="fixed inset-0 z-[100] flex flex-col items-center justify-center backdrop-blur-xl"
+                style={{ background: "color-mix(in srgb, var(--bg) 70%, transparent)" }}
               >
-                <div className="w-10 h-10 border-2 border-black/10 border-t-violet-600 rounded-full animate-spin mb-6"></div>
+                <div
+                  className="w-10 h-10 border-2 rounded-full animate-spin mb-6"
+                  style={{ borderColor: "var(--border)", borderTopColor: "var(--accent)" }}
+                ></div>
                 <h2 className="text-xs font-semibold ink-soft tracking-[0.3em] uppercase">Preparando cartas</h2>
               </motion.div>
             )}
@@ -631,74 +752,165 @@ export default function Home() {
         </motion.div>
       )}
 
-      {/* VIEW 3: PACK OPENING */}
-      {isPackOpen && (
+      {/* VIEW 3: PACK OPENING — inmersiva a pantalla completa.
+          Va en un portal a <body> a propósito: app/template.tsx envuelve cada
+          ruta en un motion.div con transform, y un ancestro transformado crea
+          bloque contenedor para los position:fixed, que dejarían de cubrir la
+          pantalla. El portal la saca de ese árbol. */}
+      {mounted &&
+        isPackOpen &&
+        currentCard &&
+        createPortal(
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="w-full max-w-6xl flex flex-col items-center relative min-h-[70vh] justify-center z-10"
+          data-lenis-prevent
+          className="fixed inset-0 z-[120] flex flex-col items-center overflow-hidden"
+          style={{
+            height: "var(--app-height)",
+            paddingTop: "var(--sat)",
+            paddingBottom: "var(--sab)",
+            background: "var(--bg)",
+          }}
         >
-          <div className="relative w-full h-[450px] flex justify-center items-center perspective-1000">
-            <AnimatePresence mode="wait">
+          {/* AURA de rareza a pantalla completa (sólo en revelaciones buenas) */}
+          <AnimatePresence>
+            {showAura && (
               <motion.div
-                key={packIndex}
-                initial={{ x: 120, opacity: 0, rotateY: 60, scale: 0.92 }}
-                animate={{ x: 0, opacity: 1, rotateY: 0, scale: 1 }}
-                exit={{ x: -120, opacity: 0, rotateY: -60, scale: 0.92 }}
-                transition={{ type: "spring", stiffness: 200, damping: 25 }}
-                className="absolute z-20 w-56 sm:w-72 aspect-[2.5/3.5] cursor-pointer"
-                onClick={handleNextCard}
-              >
-                <div className="w-full h-full relative">
-                  {!userCollectionIds.includes(currentPack[packIndex].id) && cardRevealed && (
-                    <motion.div
-                      initial={{ scale: 0, x: -20 }}
-                      animate={{ scale: 1, x: 0 }}
-                      transition={{ type: "spring", bounce: 0.5 }}
-                      className="absolute -top-3 -left-3 z-50 bg-emerald-500 text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-lg"
-                    >
-                      Nueva
-                    </motion.div>
-                  )}
-                  <PokemonCard card={currentPack[packIndex]} reveal={cardRevealed || packIndex > 0} useHighRes={true} />
-                </div>
-              </motion.div>
-            </AnimatePresence>
+                key={`aura-${packIndex}`}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: [0, 0.9, 0.55] }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 1.2, ease: "easeOut" }}
+                className="pointer-events-none absolute inset-0 z-0"
+                style={{
+                  background:
+                    "radial-gradient(circle at 50% 48%, color-mix(in srgb, var(--accent) 45%, transparent), color-mix(in srgb, var(--accent-2) 14%, transparent) 45%, transparent 72%)",
+                }}
+              />
+            )}
+          </AnimatePresence>
 
-            {currentPackType === "GOLDEN" && packIndex === 9 && (
+          {/* CABECERA (56px): salir + progreso segmentado + contador */}
+          <div className="w-full max-w-2xl h-14 shrink-0 flex items-center gap-3 px-3 md:px-4 relative z-20">
+            <button
+              onClick={handleRevealAll}
+              aria-label="Guardar el sobre y salir"
+              className="chip press touch-target w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-4 h-4">
+                <path d="m15 18-6-6 6-6" />
+              </svg>
+            </button>
+
+            <div className="flex-1 flex items-center gap-1" aria-hidden="true">
+              {currentPack.map((_, i) => (
+                <div
+                  key={i}
+                  className="h-1 flex-1 rounded-full overflow-hidden"
+                  style={{ background: "var(--border-strong)" }}
+                >
+                  <motion.div
+                    initial={false}
+                    animate={{ scaleX: i < revealedCount ? 1 : 0 }}
+                    transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                    className="h-full w-full origin-left"
+                    style={{ background: "var(--accent)" }}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <span className="tnum ink-soft font-mono text-[11px] tracking-[0.2em] shrink-0">
+              {packIndex + 1} / {currentPack.length}
+            </span>
+          </div>
+
+          {/* ZONA DE CARTA */}
+          <div className="relative flex-1 w-full flex items-center justify-center px-4">
+            {currentPackType === "GOLDEN" && packIndex === lastIndex && (
               <motion.div
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="absolute top-[-40px] text-yellow-400 text-xs font-semibold tracking-[0.3em] uppercase"
+                className="absolute top-1 left-0 right-0 text-center accent text-[10px] md:text-xs font-semibold tracking-[0.3em] uppercase z-20"
               >
                 Carta garantizada
               </motion.div>
             )}
 
-            <div className="absolute -bottom-16 ink-soft font-mono text-xs tracking-[0.3em] uppercase chip px-3 py-1">
-              {packIndex + 1} / {currentPack.length}
-            </div>
+            <motion.div
+              drag="x"
+              dragDirectionLock
+              dragConstraints={{ left: 0, right: 0 }}
+              dragElastic={0.35}
+              dragMomentum={false}
+              onDragStart={() => { draggingRef.current = true; }}
+              onDragEnd={handleCardDragEnd}
+              onClick={handleCardTap}
+              whileTap={{ scale: 0.985 }}
+              className="relative z-20 cursor-pointer"
+              style={{ width: CARD_WIDTH }}
+            >
+              {/* la perspectiva va en el padre directo de la carta animada */}
+              <div className="relative w-full aspect-[2.5/3.5] perspective-1000">
+                <AnimatePresence mode="wait" custom={direction}>
+                  <motion.div
+                    key={packIndex}
+                    custom={direction}
+                    variants={cardVariants}
+                    initial="enter"
+                    animate="center"
+                    exit="exit"
+                    transition={{ type: "spring", stiffness: 200, damping: 25 }}
+                    className="absolute inset-0"
+                  >
+                    {!userCollectionIds.includes(currentCard.id) && cardRevealed && (
+                      <motion.div
+                        initial={{ scale: 0, x: -20 }}
+                        animate={{ scale: 1, x: 0 }}
+                        transition={{ type: "spring", bounce: 0.5 }}
+                        className="absolute -top-3 -left-3 z-50 bg-emerald-500 text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-lg"
+                      >
+                        Nueva
+                      </motion.div>
+                    )}
+                    <PokemonCard card={currentCard} reveal={currentRevealed} useHighRes={true} />
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+            </motion.div>
           </div>
 
-          <div className="mt-24 flex flex-wrap items-center justify-center gap-3 px-4">
-            <button
-              onClick={handleNextCard}
-              className="btn-accent press px-6 py-2.5 rounded-xl text-sm font-semibold"
-            >
-              Siguiente <kbd className="ml-1 text-[10px] opacity-70 hidden sm:inline">espacio</kbd>
-            </button>
-            <button
-              onClick={handleRevealAll}
-              className="ink-soft hover:ink px-4 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2"
-            >
-              Revelar todo
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                <path d="m13 17 5-5-5-5M6 17l5-5-5-5" />
-              </svg>
-            </button>
+          {/* PIE (96px): texto contextual + acciones */}
+          <div className="w-full max-w-2xl h-24 shrink-0 flex flex-col items-center justify-center gap-3 px-4 relative z-20">
+            <p className="ink-faint text-[11px] uppercase tracking-[0.2em] text-center">
+              {!cardRevealed
+                ? "Toca la carta para darle la vuelta"
+                : packIndex < lastIndex
+                  ? "Desliza o toca para continuar"
+                  : "Toca para guardar el sobre"}
+            </p>
+            <div className="flex items-center justify-center gap-2 w-full">
+              <button
+                onClick={handleNextCard}
+                className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold"
+              >
+                Siguiente <kbd className="ml-1 text-[10px] opacity-70 hidden sm:inline">espacio</kbd>
+              </button>
+              <button
+                onClick={handleRevealAll}
+                className="ink-soft hover:ink press touch-target px-4 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2"
+              >
+                Revelar todo
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                  <path d="m13 17 5-5-5-5M6 17l5-5-5-5" />
+                </svg>
+              </button>
+            </div>
           </div>
-        </motion.div>
-      )}
+        </motion.div>,
+          document.body,
+        )}
 
       {/* VIEW 4: SUMMARY */}
       {!isPackOpen && currentPack.length > 0 && (
@@ -762,11 +974,11 @@ export default function Home() {
               <img src={bestPull.images?.small} alt={bestPull.name} className="h-16 md:h-24 rounded-lg shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-yellow-400 text-[9px] md:text-[10px] font-medium uppercase tracking-[0.2em]">Mejor carta del sobre</p>
-                <h3 className="text-base md:text-lg font-semibold text-white truncate">{bestPull.name}</h3>
-                <p className="text-[11px] md:text-xs text-gray-500">{bestPull.rarity}</p>
+                <h3 className="text-base md:text-lg font-semibold ink truncate">{bestPull.name}</h3>
+                <p className="text-[11px] md:text-xs ink-faint">{bestPull.rarity}</p>
               </div>
               <div className="text-right shrink-0">
-                <p className="text-gray-500 text-[9px] md:text-[10px] uppercase tracking-wider">Valor</p>
+                <p className="ink-faint text-[9px] md:text-[10px] uppercase tracking-wider">Valor</p>
                 <p className="text-xl md:text-2xl font-semibold text-emerald-400 tabular-nums">{SELL_PRICES[bestPull.rarity] || 10}</p>
               </div>
             </motion.div>

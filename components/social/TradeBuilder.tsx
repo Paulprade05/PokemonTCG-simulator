@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
 import { getTradableCollection, createTradeOffer } from "../../app/social";
+import { useToast } from "../ui/Toast";
 
 interface Friend { friend_id: string; friend_name: string; }
 interface TradeBuilderProps {
@@ -16,6 +17,7 @@ interface TCard { id: string; name: string; rarity: string; quantity: number; im
 
 export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderProps) {
   const { user } = useUser();
+  const toast = useToast();
   const [mine, setMine] = useState<TCard[]>([]);
   const [theirs, setTheirs] = useState<TCard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,7 +76,7 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
     setSending(true);
     const res: any = await createTradeOffer(friend.friend_id, offeredIds, requestedIds);
     setSending(false);
-    if (res?.error) { alert(res.error); return; }
+    if (res?.error) { toast(res.error, "error"); return; }
     onSent();
   };
 

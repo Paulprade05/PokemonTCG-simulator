@@ -1,11 +1,16 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { AnimatePresence, motion, useDragControls, type PanInfo } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import TypeBadge, { EnergyCost } from "./TypeBadge";
 import { SELL_PRICES } from "../utils/constanst";
 import { getCardFromDB, toggleWishlist, getWishlistIds } from "../app/action";
+import { useHaptics } from "../hooks/useHaptics";
+
+// Umbrales del gesto de cierre (los mismos que usa components/ui/Sheet).
+const CLOSE_OFFSET = 110;
+const CLOSE_VELOCITY = 520;
 
 interface CardDetailModalProps {
   card: any | null;
@@ -46,6 +51,30 @@ export default function CardDetailModal({
   const [enriched, setEnriched] = useState<any | null>(null);
   const [loadingEnrich, setLoadingEnrich] = useState(false);
   const [wishlisted, setWishlisted] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const haptic = useHaptics();
+  const detailsRef = useRef<HTMLDivElement>(null);
+
+  // El gesto de arrastre sólo existe en móvil; en md+ el diálogo sigue centrado.
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const sync = () => setIsMobile(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  const handleDragEnd = (_: unknown, info: PanInfo) => {
+    if (info.offset.y > CLOSE_OFFSET || info.velocity.y > CLOSE_VELOCITY) {
+      haptic("tap");
+      onClose();
+    }
+  };
+
+  // El arrastre arranca sólo desde el asa. Si escuchara en todo el panel,
+  // capturaría el gesto vertical de la columna de detalles y su contenido por
+  // debajo del pliegue quedaría inalcanzable.
+  const dragControls = useDragControls();
 
   useEffect(() => {
     if (!card?.id || !isSignedIn) return;
@@ -122,18 +151,56 @@ export default function CardDetailModal({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-md p-3 md:p-6"
+          className="fixed inset-0 z-[100] flex items-end justify-center md:items-center bg-black/85 backdrop-blur-md md:p-6"
           onClick={onClose}
         >
           <motion.div
-            initial={{ scale: 0.97, opacity: 0, y: 8 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.97, opacity: 0 }}
-            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            className="relative w-full max-w-5xl bg-[var(--surface)] rounded-3xl overflow-hidden border border-[var(--border)] shadow-2xl flex flex-col md:flex-row max-h-[92vh]"
+            initial={isMobile ? { y: "100%" } : { scale: 0.97, opacity: 0, y: 8 }}
+            animate={isMobile ? { y: 0 } : { scale: 1, opacity: 1, y: 0 }}
+            exit={isMobile ? { y: "100%" } : { scale: 0.97, opacity: 0 }}
+            transition={
+              isMobile
+                ? { type: "spring", stiffness: 380, damping: 38, mass: 0.9 }
+                : { duration: 0.3, ease: [0.16, 1, 0.3, 1] }
+            }
+            /* Móvil: hoja inferior arrastrable. md+: diálogo centrado, sin drag. */
+            drag={isMobile ? "y" : false}
+            dragListener={false}
+            dragControls={dragControls}
+            dragConstraints={{ top: 0, bottom: 0 }}
+            dragElastic={{ top: 0, bottom: 0.55 }}
+            onDragEnd={handleDragEnd}
+            className="relative w-full max-w-5xl bg-[var(--surface)] overflow-hidden border border-[var(--border)] shadow-2xl flex flex-col md:flex-row"
+            style={{
+              borderRadius: isMobile ? "28px 28px 0 0" : "1.5rem",
+              maxHeight: isMobile
+                ? "calc(var(--app-height) - var(--sat) - 12px)"
+                : "92vh",
+              // Con el teclado desplegado ya no hay barra de gestos que esquivar.
+              paddingBottom: isMobile
+                ? "max(0px, calc(var(--sab) - var(--keyboard)))"
+                : undefined,
+            }}
             data-lenis-prevent
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Asa del gesto (sólo móvil): es el único punto que inicia el
+                arrastre, con una zona táctil holgada alrededor. */}
+            {isMobile && (
+              <div
+                role="button"
+                aria-label="Arrastra hacia abajo para cerrar"
+                onPointerDown={(e) => dragControls.start(e)}
+                className="absolute top-0 left-1/2 -translate-x-1/2 z-50 flex h-7 w-24 cursor-grab items-center justify-center active:cursor-grabbing"
+                style={{ touchAction: "none" }}
+              >
+                <div
+                  className="h-1.5 w-11 rounded-full"
+                  style={{ background: "var(--border-strong)" }}
+                />
+              </div>
+            )}
+
             {/* Ambient glow per rarity */}
             {aura && (
               <div
@@ -221,7 +288,13 @@ export default function CardDetailModal({
             </div>
 
             {/* RIGHT — DETAILS */}
-            <div className="w-full md:w-[56%] flex flex-col bg-[var(--surface)] overflow-y-auto custom-scrollbar relative" data-lenis-prevent>
+            {/* Sin touchAction restringido: 'pan-y' excluye 'pinch-zoom' y
+                anulaba el gesto de ampliar dentro del modal. */}
+            <div
+              ref={detailsRef}
+              className="w-full md:w-[56%] flex flex-col bg-[var(--surface)] scroll-area custom-scrollbar relative"
+              data-lenis-prevent
+            >
               <div className="p-5 md:p-7 flex flex-col gap-4 relative">
                 {/* HEADER */}
                 <div>

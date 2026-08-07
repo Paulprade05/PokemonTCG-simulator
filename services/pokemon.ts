@@ -2,6 +2,7 @@
 'use server'
 
 import { sql } from '@vercel/postgres';
+import { loadLocalCards } from './localData';
 
 export async function getCardsFromSet(setId: string) {
   try {
@@ -19,8 +20,8 @@ export async function getCardsFromSet(setId: string) {
     `;
 
     if (rows.length === 0) {
-      console.warn(`⚠️ No encontré cartas para ${setId} en la BD. ¿Has ejecutado el seed-local?`);
-      return [];
+      console.warn(`⚠️ No encontré cartas para ${setId} en la BD. Uso el JSON local.`);
+      return loadLocalCards(setId);
     }
     
     // 2. MAPEO DE DATOS (Transformación)
@@ -46,7 +47,8 @@ export async function getCardsFromSet(setId: string) {
     }));
 
   } catch (error) {
-    console.error("❌ Error leyendo base de datos:", error);
-    return [];
+    // Sin Postgres configurado seguimos sirviendo las cartas del repositorio.
+    console.error("❌ Error leyendo base de datos, uso el JSON local:", error);
+    return loadLocalCards(setId);
   }
 }

@@ -6,7 +6,7 @@ import { motion } from "framer-motion";
 import { SignedIn } from "@clerk/nextjs";
 import { NAV_ITEMS } from "./nav-items";
 
-export default function BottomNav() {
+export default function BottomNav({ hidden = false }: { hidden?: boolean }) {
   const pathname = usePathname();
 
   const renderItem = (it: (typeof NAV_ITEMS)[number]) => {
@@ -15,7 +15,7 @@ export default function BottomNav() {
       <Link
         key={it.href}
         href={it.href}
-        className="relative flex flex-col items-center justify-center gap-1 flex-1 py-2 press"
+        className="relative flex flex-col items-center justify-center gap-1 flex-1 py-2 press touch-target"
       >
         <div className="relative">
           {active && (
@@ -38,8 +38,15 @@ export default function BottomNav() {
 
   return (
     <nav
-      className="md:hidden fixed bottom-0 left-0 right-0 z-40 glass border-t border-[var(--border)] flex items-stretch px-2"
-      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      aria-hidden={hidden}
+      // La transición va con CSS en vez de framer: es trivial y así no depende
+      // del bucle de animación.
+      className={`md:hidden fixed bottom-0 left-0 right-0 z-40 glass border-t border-[var(--border)] flex items-stretch px-2 transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+        hidden
+          ? "translate-y-full opacity-0 pointer-events-none"
+          : "translate-y-0 opacity-100"
+      }`}
+      style={{ paddingBottom: "var(--sab)" }}
     >
       {NAV_ITEMS.map((it) =>
         it.requireAuth ? <SignedIn key={it.href}>{renderItem(it)}</SignedIn> : renderItem(it),

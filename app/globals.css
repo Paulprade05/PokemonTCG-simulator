@@ -254,3 +254,86 @@ html.lenis, html.lenis body { height: auto; }
     repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.15) 3px, rgba(255,255,255,0.15) 4px);
   background-size: 200% auto, 12px 12px; animation: holo-shimmer 4s linear infinite; mix-blend-mode: color-dodge; pointer-events: none;
 }
+
+/* ============================================================
+   MOBILE / PWA — safe areas, viewport real y teclado
+   Añadido para la app instalada en iPhone. No redefine ningún
+   token del design system v2: sólo aporta los que faltaban.
+   ============================================================ */
+
+:root {
+  /* Insets del dispositivo. Sólo devuelven valores reales con
+     viewport-fit=cover, que se activa en app/layout.tsx. */
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+
+  /* Alto real del viewport y del teclado; los escribe useViewport(). */
+  --app-height: 100dvh;
+  --keyboard: 0px;
+
+  /* Alturas del cromo fijo (TopBar h-16, BottomNav ~59px). */
+  --topbar-h: 4rem;
+  --tabbar-h: 59px;
+
+  /* Hueco inferior para que la barra de pestañas no tape contenido. */
+  --content-bottom: calc(var(--tabbar-h) + var(--sab) + 12px);
+}
+
+/* Con el teclado abierto la barra se retira: el hueco pasa a ser mínimo. */
+html[data-keyboard="open"] {
+  --content-bottom: 16px;
+}
+
+/* iOS hace zoom automático si la fuente de un campo baja de 16px. */
+input, select, textarea { font-size: 16px; }
+
+/* Comportamiento de app nativa sólo cuando está instalada: en el navegador
+   se respeta el pull-to-refresh y el rebote que el usuario espera. */
+@media (display-mode: standalone) {
+  body {
+    overscroll-behavior-y: none;
+    -webkit-touch-callout: none;
+  }
+}
+
+/* Elimina el retardo de 300 ms del doble toque en los controles. */
+button, a, [role="button"] { touch-action: manipulation; }
+
+/* Foco visible por teclado sin ensuciar el toque. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* framer-motion no lee la media query: se le indica en AppShell. Aquí
+   cortamos también las animaciones infinitas, que la regla previa no cubría. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-iteration-count: 1 !important; }
+}
+
+@layer utilities {
+  .pt-safe { padding-top: var(--sat); }
+  .pb-safe { padding-bottom: var(--sab); }
+  .px-safe { padding-left: max(var(--sal), 1rem); padding-right: max(var(--sar), 1rem); }
+  .pb-nav  { padding-bottom: var(--content-bottom); }
+  .h-dvh-app { height: var(--app-height); }
+  .min-h-dvh-app { min-height: var(--app-height); }
+  .touch-target { min-width: 44px; min-height: 44px; }
+
+  /* Contenedor scrollable aislado: no arrastra la página ni pelea con Lenis. */
+  .scroll-area {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
+  .scroll-x {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .scroll-x::-webkit-scrollbar { display: none; }
+  .tnum { font-variant-numeric: tabular-nums; }
+}

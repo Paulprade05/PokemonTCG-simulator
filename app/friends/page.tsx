@@ -13,8 +13,18 @@ import {
 import PageHeader from "../../components/PageHeader";
 import Loader from "../../components/Loader";
 import TradeBuilder from "../../components/social/TradeBuilder";
+import Sheet from "../../components/ui/Sheet";
+import ConfirmSheet from "../../components/ui/ConfirmSheet";
+import { useToast } from "../../components/ui/Toast";
+import { useHaptics } from "../../hooks/useHaptics";
+import { useImmersive } from "../../components/AppShell";
 
 type Tab = "amigos" | "recibidas" | "enviadas" | "historial";
+
+/** Baja pendiente de confirmar: una petición ignorada o una amistad eliminada. */
+type PendingRemove = { id: number; name: string; kind: "friend" | "request" };
+/** Oferta enviada pendiente de confirmar su cancelación. */
+type PendingCancel = { id: number; name: string };
 
 export default function SocialPage() {
   const { user, isLoaded, isSignedIn } = useUser();
@@ -29,6 +39,14 @@ export default function SocialPage() {
 
   const [tradeFriend, setTradeFriend] = useState<any | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [pendingRemove, setPendingRemove] = useState<PendingRemove | null>(null);
+  const [pendingCancel, setPendingCancel] = useState<PendingCancel | null>(null);
+
+  const toast = useToast();
+  const haptic = useHaptics();
+
+  // Mientras hay una capa a pantalla completa encima, la barra de pestañas sobra.
+  useImmersive(showAdd || !!tradeFriend);
 
   const refresh = useCallback(async () => {
     if (!isSignedIn) return;
@@ -48,6 +66,51 @@ export default function SocialPage() {
     if (!isSignedIn) { setLoading(false); return; }
     syncUserName().then(refresh);
   }, [isLoaded, isSignedIn, refresh]);
+
+  /* ---- acciones ---- */
+
+  const handleAcceptFriend = useCallback(async (id: number, name: string) => {
+    haptic("select");
+    const r: any = await acceptFriend(id);
+    if (r?.error) toast(r.error, "error");
+    else toast(`Ahora eres amigo de ${name}`, "success");
+    refresh();
+  }, [haptic, toast, refresh]);
+
+  const handleRemoveConfirmed = useCallback(async () => {
+    if (!pendingRemove) return;
+    const { id, name, kind } = pendingRemove;
+    haptic("warning");
+    const r: any = await removeFriendship(id);
+    if (r?.error) toast(r.error, "error");
+    else toast(kind === "request" ? `Petición de ${name} ignorada` : `${name} ya no está en tus amigos`, "info");
+    refresh();
+  }, [pendingRemove, haptic, toast, refresh]);
+
+  const handleAcceptTrade = useCallback(async (id: number) => {
+    haptic("select");
+    const r: any = await acceptTradeOffer(id);
+    if (r?.error) toast(r.error, "error");
+    else toast("Intercambio completado", "success");
+    refresh();
+  }, [haptic, toast, refresh]);
+
+  const handleDeclineTrade = useCallback(async (id: number) => {
+    haptic("warning");
+    const r: any = await declineTradeOffer(id);
+    if (r?.error) toast(r.error, "error");
+    else toast("Oferta rechazada", "info");
+    refresh();
+  }, [haptic, toast, refresh]);
+
+  const handleCancelConfirmed = useCallback(async () => {
+    if (!pendingCancel) return;
+    haptic("warning");
+    const r: any = await cancelTradeOffer(pendingCancel.id);
+    if (r?.error) toast(r.error, "error");
+    else toast("Oferta cancelada", "info");
+    refresh();
+  }, [pendingCancel, haptic, toast, refresh]);
 
   if (!isLoaded || loading) return <Loader label="Cargando red social" />;
 
@@ -74,7 +137,11 @@ export default function SocialPage() {
         title="Social"
         subtitle="Amigos e intercambios"
         actions={
-          <button onClick={() => setShowAdd(true)} className="btn-accent press px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2">
+          <button
+            onClick={() => { haptic("tap"); setShowAdd(true); }}
+            aria-label="Añadir amigo"
+            className="btn-accent press touch-target px-4 py-2 rounded-xl text-sm font-semibold flex items-center justify-center gap-2"
+          >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
               <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M19 8v6M22 11h-6" />
             </svg>
@@ -83,12 +150,13 @@ export default function SocialPage() {
         }
       />
 
-      {/* Tabs */}
-      <div className="flex gap-1 p-1 surface rounded-2xl mb-6 overflow-x-auto no-scrollbar">
+      {/* Tabs — scroll horizontal propio, hay que apartar a Lenis */}
+      <div data-lenis-prevent className="flex gap-1 p-1 surface rounded-2xl mb-6 overflow-x-auto no-scrollbar overscroll-x-contain">
         {tabs.map((t) => (
           <button
             key={t.id}
-            onClick={() => setTab(t.id)}
+            onClick={() => { if (t.id !== tab) haptic("select"); setTab(t.id); }}
+            aria-pressed={tab === t.id}
             className={`relative flex-1 min-w-fit px-4 py-2.5 rounded-xl text-sm font-medium transition whitespace-nowrap ${tab === t.id ? "ink" : "ink-soft hover:ink"}`}
           >
             {tab === t.id && (
@@ -96,7 +164,7 @@ export default function SocialPage() {
             )}
             <span className="relative z-10 flex items-center justify-center gap-2">
               {t.label}
-              {t.badge ? <span className="bg-[var(--accent)] text-[#04110c] text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">{t.badge}</span> : null}
+              {t.badge ? <span className="bg-[var(--accent)] text-[#04110c] text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center tnum">{t.badge}</span> : null}
             </span>
           </button>
         ))}
@@ -113,27 +181,68 @@ export default function SocialPage() {
           {tab === "amigos" && (
             <AmigosTab
               friends={friends} requests={requests} myId={user?.id}
-              onAccept={async (id: number) => { await acceptFriend(id); refresh(); }}
-              onRemove={async (id: number) => { if (confirm("¿Eliminar?")) { await removeFriendship(id); refresh(); } }}
-              onTrade={(f: any) => setTradeFriend(f)}
+              onAccept={handleAcceptFriend}
+              onRemove={(id: number, name: string, kind: "friend" | "request") => {
+                haptic("tap");
+                setPendingRemove({ id, name, kind });
+              }}
+              onTrade={(f: any) => { haptic("tap"); setTradeFriend(f); }}
             />
           )}
           {tab === "recibidas" && (
             <IncomingTab
               offers={incoming}
-              onAccept={async (id: number) => { const r: any = await acceptTradeOffer(id); if (r?.error) alert(r.error); refresh(); }}
-              onDecline={async (id: number) => { await declineTradeOffer(id); refresh(); }}
+              onAccept={handleAcceptTrade}
+              onDecline={handleDeclineTrade}
             />
           )}
           {tab === "enviadas" && (
-            <OutgoingTab offers={outgoing} onCancel={async (id: number) => { await cancelTradeOffer(id); refresh(); }} />
+            <OutgoingTab
+              offers={outgoing}
+              onCancel={(id: number, name: string) => { haptic("tap"); setPendingCancel({ id, name }); }}
+            />
           )}
           {tab === "historial" && <HistoryTab items={history} />}
         </motion.div>
       </AnimatePresence>
 
-      <TradeBuilder friend={tradeFriend} onClose={() => setTradeFriend(null)} onSent={() => { setTradeFriend(null); setTab("enviadas"); refresh(); }} />
+      <TradeBuilder
+        friend={tradeFriend}
+        onClose={() => setTradeFriend(null)}
+        onSent={() => {
+          haptic("success");
+          toast("Oferta enviada", "success");
+          setTradeFriend(null);
+          setTab("enviadas");
+          refresh();
+        }}
+      />
       <AddFriendSheet open={showAdd} onClose={() => setShowAdd(false)} onChanged={refresh} myId={user?.id} />
+
+      <ConfirmSheet
+        open={!!pendingRemove}
+        title={pendingRemove?.kind === "request" ? "Ignorar petición" : "Eliminar amigo"}
+        description={
+          pendingRemove?.kind === "request"
+            ? `Se descartará la petición de ${pendingRemove?.name}. Podrá volver a enviarte otra más adelante.`
+            : `${pendingRemove?.name} dejará de aparecer en tu lista de amigos. Tus cartas no se ven afectadas.`
+        }
+        confirmLabel={pendingRemove?.kind === "request" ? "Ignorar" : "Eliminar"}
+        destructive
+        onConfirm={handleRemoveConfirmed}
+        onClose={() => setPendingRemove(null)}
+      />
+
+      <ConfirmSheet
+        open={!!pendingCancel}
+        title="Cancelar oferta"
+        description={`Retirarás el intercambio que enviaste a ${pendingCancel?.name}.`}
+        confirmLabel="Cancelar oferta"
+        cancelLabel="Mantener"
+        destructive
+        onConfirm={handleCancelConfirmed}
+        onClose={() => setPendingCancel(null)}
+      />
     </div>
   );
 }
@@ -148,14 +257,14 @@ function AmigosTab({ friends, requests, myId, onAccept, onRemove, onTrade }: any
           <p className="text-xs font-semibold uppercase tracking-wider ink-soft mb-3">Peticiones · {requests.length}</p>
           <div className="flex flex-col gap-2">
             {requests.map((r: any) => (
-              <div key={r.id} className="surface-2 rounded-xl p-3 flex items-center justify-between">
+              <div key={r.id} className="surface-2 rounded-xl p-3 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
                   <Avatar name={r.requester_name} />
                   <span className="font-medium text-sm truncate">{r.requester_name}</span>
                 </div>
-                <div className="flex gap-2">
-                  <button onClick={() => onAccept(r.id)} className="btn-accent press px-3 py-1.5 rounded-lg text-xs font-semibold">Aceptar</button>
-                  <button onClick={() => onRemove(r.id)} className="btn-ghost press px-3 py-1.5 rounded-lg text-xs">Ignorar</button>
+                <div className="flex gap-2 shrink-0">
+                  <button onClick={() => onAccept(r.id, r.requester_name)} className="btn-accent press px-3 py-2 rounded-lg text-xs font-semibold">Aceptar</button>
+                  <button onClick={() => onRemove(r.id, r.requester_name, "request")} className="btn-ghost press px-3 py-2 rounded-lg text-xs">Ignorar</button>
                 </div>
               </div>
             ))}
@@ -175,7 +284,7 @@ function AmigosTab({ friends, requests, myId, onAccept, onRemove, onTrade }: any
               <Avatar name={f.friend_name} highlight={f.isMe} />
               <div className="min-w-0">
                 <p className="font-semibold text-sm truncate">{f.friend_name}{f.isMe && <span className="ink-faint font-normal"> · tú</span>}</p>
-                <p className="text-[11px] ink-faint">{f.stats.unique} únicas · {f.stats.cards} cartas</p>
+                <p className="text-[11px] ink-faint tnum">{f.stats.unique} únicas · {f.stats.cards} cartas</p>
               </div>
             </div>
             <div className="flex items-center justify-between mb-3">
@@ -183,13 +292,18 @@ function AmigosTab({ friends, requests, myId, onAccept, onRemove, onTrade }: any
               <span className="text-sm font-bold accent tabular-nums">{f.stats.value.toLocaleString()} 💰</span>
             </div>
             <div className="flex gap-2">
-              <Link href={f.isMe ? "/collection" : `/trainer/${f.friend_id}`} className="flex-1 btn-ghost press text-center text-xs font-medium py-2 rounded-lg">
+              <Link href={f.isMe ? "/collection" : `/trainer/${f.friend_id}`} className="flex-1 btn-ghost press text-center text-xs font-medium py-2.5 rounded-lg">
                 Ver álbum
               </Link>
               {!f.isMe && (
                 <>
-                  <button onClick={() => onTrade(f)} className="flex-1 btn-accent press text-xs font-semibold py-2 rounded-lg">Intercambiar</button>
-                  <button onClick={() => onRemove(f.friendship_id)} className="btn-ghost press px-3 py-2 rounded-lg" title="Eliminar">
+                  <button onClick={() => onTrade(f)} className="flex-1 btn-accent press text-xs font-semibold py-2.5 rounded-lg">Intercambiar</button>
+                  <button
+                    onClick={() => onRemove(f.friendship_id, f.friend_name, "friend")}
+                    className="btn-ghost press touch-target px-3 py-2 rounded-lg flex items-center justify-center"
+                    title="Eliminar"
+                    aria-label={`Eliminar a ${f.friend_name}`}
+                  >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
                       <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
                     </svg>
@@ -243,8 +357,8 @@ function IncomingTab({ offers, onAccept, onDecline }: any) {
             <OfferCards cards={o.requested} label="Entregas" tint="text-cyan-400" />
           </div>
           <div className="flex gap-2">
-            <button onClick={() => onAccept(o.id)} className="flex-1 btn-accent press py-2.5 rounded-xl text-sm font-semibold">Aceptar</button>
-            <button onClick={() => onDecline(o.id)} className="btn-ghost press px-5 py-2.5 rounded-xl text-sm">Rechazar</button>
+            <button onClick={() => onAccept(o.id)} className="flex-1 btn-accent press touch-target py-2.5 rounded-xl text-sm font-semibold">Aceptar</button>
+            <button onClick={() => onDecline(o.id)} className="btn-ghost press touch-target px-5 py-2.5 rounded-xl text-sm">Rechazar</button>
           </div>
         </div>
       ))}
@@ -270,7 +384,7 @@ function OutgoingTab({ offers, onCancel }: any) {
             </svg>
             <OfferCards cards={o.requested} label="Pides" tint="text-cyan-400" />
           </div>
-          <button onClick={() => onCancel(o.id)} className="btn-ghost press w-full py-2.5 rounded-xl text-sm">Cancelar oferta</button>
+          <button onClick={() => onCancel(o.id, o.receiverName)} className="btn-ghost press touch-target w-full py-2.5 rounded-xl text-sm">Cancelar oferta</button>
         </div>
       ))}
     </div>
@@ -288,14 +402,14 @@ function HistoryTab({ items }: any) {
     <div className="surface rounded-2xl divide-y divide-[var(--border)]">
       {items.map((it: any) => (
         <div key={it.id} className="flex items-center gap-3 p-4">
-          <div className={`w-2 h-2 rounded-full ${it.status === "accepted" ? "bg-[var(--accent)]" : it.status === "declined" ? "bg-rose-400" : "bg-[var(--ink-faint)]"}`} />
+          <div className={`w-2 h-2 rounded-full shrink-0 ${it.status === "accepted" ? "bg-[var(--accent)]" : it.status === "declined" ? "bg-rose-400" : "bg-[var(--ink-faint)]"}`} />
           <div className="flex-1 min-w-0">
             <p className="text-sm truncate">
               {it.iAmSender ? "Enviaste a" : "Recibiste de"} <strong>{it.otherName}</strong>
             </p>
-            <p className="text-[11px] ink-faint">{it.offeredCount} ↔ {it.requestedCount} cartas</p>
+            <p className="text-[11px] ink-faint tnum">{it.offeredCount} ↔ {it.requestedCount} cartas</p>
           </div>
-          <span className={`text-xs font-semibold ${label[it.status]?.c}`}>{label[it.status]?.t}</span>
+          <span className={`text-xs font-semibold shrink-0 ${label[it.status]?.c}`}>{label[it.status]?.t}</span>
         </div>
       ))}
     </div>
@@ -307,9 +421,18 @@ function AddFriendSheet({ open, onClose, onChanged, myId }: any) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
+  const [adding, setAdding] = useState<string | null>(null);
+
+  const toast = useToast();
+  const haptic = useHaptics();
+
+  // Al cerrar dejamos la hoja limpia para la próxima vez que se abra.
+  useEffect(() => {
+    if (!open) { setQ(""); setResults([]); setSearching(false); setAdding(null); }
+  }, [open]);
 
   useEffect(() => {
-    if (!q.trim() || q.trim().length < 2) { setResults([]); return; }
+    if (!q.trim() || q.trim().length < 2) { setResults([]); setSearching(false); return; }
     setSearching(true);
     const h = setTimeout(async () => {
       const r = await searchUsersByName(q);
@@ -319,67 +442,106 @@ function AddFriendSheet({ open, onClose, onChanged, myId }: any) {
     return () => clearTimeout(h);
   }, [q]);
 
-  const doAdd = async (identifier: string) => {
+  const doAdd = async (identifier: string, name: string) => {
+    haptic("select");
+    setAdding(identifier);
     const r: any = await addFriend(identifier);
-    if (r?.error) alert(r.error);
-    else { alert("Petición enviada"); onChanged(); }
+    setAdding(null);
+    if (r?.error) { toast(r.error, "error"); return; }
+    toast(`Petición enviada a ${name}`, "success");
+    // Refleja el nuevo estado sin obligar a repetir la búsqueda.
+    setResults((prev) => prev.map((u) => (u.id === identifier ? { ...u, relation: "pending" } : u)));
+    onChanged();
+  };
+
+  const copyId = async () => {
+    haptic("tap");
+    try {
+      await navigator.clipboard.writeText(myId || "");
+      toast("ID copiado", "success");
+    } catch {
+      toast("No se pudo copiar, mantén pulsado el ID", "error");
+    }
   };
 
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[100] flex items-end md:items-center justify-center bg-black/80 backdrop-blur-md md:p-6" onClick={onClose}>
-          <motion.div
-            initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }}
-            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md bg-[var(--surface)] border border-[var(--border)] rounded-t-3xl md:rounded-3xl p-5 shadow-2xl"
+    <Sheet open={open} onClose={onClose} label="Añadir amigo">
+      {/* Sheet ya añade la safe area inferior (y la descuenta si sube el teclado),
+          así que aquí basta con el respiro visual. */}
+      <div className="px-5 pt-2 pb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold ink">Añadir amigo</h3>
+          <button
+            onClick={onClose}
+            aria-label="Cerrar"
+            className="touch-target rounded-xl btn-ghost press flex items-center justify-center"
           >
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold">Añadir amigo</h3>
-              <button onClick={onClose} className="w-9 h-9 rounded-xl btn-ghost press flex items-center justify-center">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M18 6 6 18M6 6l12 12" /></svg>
-              </button>
-            </div>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
 
-            <div className="input-field rounded-xl px-3 py-2.5 flex items-center gap-2 mb-3">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint">
-                <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
-              </svg>
-              <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Nombre de entrenador…"
-                className="bg-transparent outline-none text-sm flex-1" />
-            </div>
+        <div className="input-field rounded-xl px-3 py-2.5 flex items-center gap-2 mb-3">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint shrink-0">
+            <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+          </svg>
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+            placeholder="Nombre de entrenador…"
+            aria-label="Buscar entrenador"
+            type="search"
+            inputMode="search"
+            enterKeyHint="search"
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            className="bg-transparent outline-none text-base flex-1 min-w-0 ink"
+          />
+          {q && (
+            <button onClick={() => setQ("")} aria-label="Limpiar búsqueda" className="press ink-faint shrink-0 flex h-9 w-9 items-center justify-center rounded-full">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          )}
+        </div>
 
-            <div className="flex flex-col gap-1.5 min-h-[60px]">
-              {searching && <p className="text-xs ink-faint text-center py-3">Buscando…</p>}
-              {!searching && q.length >= 2 && results.length === 0 && (
-                <p className="text-xs ink-faint text-center py-3">Sin resultados</p>
-              )}
-              {results.map((u: any) => (
-                <div key={u.id} className="surface-2 rounded-xl p-2.5 flex items-center justify-between">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <Avatar name={u.username} small />
-                    <span className="text-sm font-medium truncate">{u.username}</span>
-                  </div>
-                  {u.relation === "accepted" ? <span className="text-[10px] ink-faint">Amigos</span>
-                    : u.relation === "pending" ? <span className="text-[10px] ink-faint">Pendiente</span>
-                    : <button onClick={() => doAdd(u.id)} className="btn-accent press px-3 py-1.5 rounded-lg text-xs font-semibold">Añadir</button>}
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-4 pt-4 border-t border-[var(--border)]">
-              <p className="text-[10px] uppercase tracking-wider ink-faint mb-2">Tu ID</p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 surface-2 rounded-lg px-3 py-2 text-[11px] ink-soft truncate font-mono">{myId}</code>
-                <button onClick={() => { navigator.clipboard.writeText(myId || ""); alert("Copiado"); }} className="btn-ghost press px-3 py-2 rounded-lg text-xs">Copiar</button>
+        <div className="flex flex-col gap-1.5 min-h-[60px]">
+          {searching && <p className="text-xs ink-faint text-center py-3">Buscando…</p>}
+          {!searching && q.length >= 2 && results.length === 0 && (
+            <p className="text-xs ink-faint text-center py-3">Sin resultados</p>
+          )}
+          {results.map((u: any) => (
+            <div key={u.id} className="surface-2 rounded-xl p-2.5 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Avatar name={u.username} small />
+                <span className="text-sm font-medium truncate">{u.username}</span>
               </div>
+              {u.relation === "accepted" ? <span className="text-[10px] ink-faint shrink-0">Amigos</span>
+                : u.relation === "pending" ? <span className="text-[10px] ink-faint shrink-0">Pendiente</span>
+                : (
+                  <button
+                    onClick={() => doAdd(u.id, u.username)}
+                    disabled={adding === u.id}
+                    className="btn-accent press px-3 py-2 rounded-lg text-xs font-semibold shrink-0 disabled:opacity-60"
+                  >
+                    {adding === u.id ? "Enviando…" : "Añadir"}
+                  </button>
+                )}
             </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+          ))}
+        </div>
+
+        <div className="mt-4 pt-4 border-t border-[var(--border)]">
+          <p className="text-[10px] uppercase tracking-wider ink-faint mb-2">Tu ID</p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 surface-2 rounded-lg px-3 py-2 text-[11px] ink-soft truncate font-mono select-all">{myId}</code>
+            <button onClick={copyId} className="btn-ghost press touch-target px-3 py-2 rounded-lg text-xs shrink-0">Copiar</button>
+          </div>
+        </div>
+      </div>
+    </Sheet>
   );
 }
 

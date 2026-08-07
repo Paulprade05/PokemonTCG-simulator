@@ -5,6 +5,7 @@
   import { sql } from '@vercel/postgres';
   import { revalidatePath } from 'next/cache';
   import { SELL_PRICES, RARITY_RANK, STARTING_COINS, DAILY_BASE, DAILY_STREAK_STEP, DAILY_STREAK_CAP, SET_COMPLETION_BONUS } from "../utils/constanst";
+  import { loadLocalSets } from "../services/localData";
   // --- 1. GESTIÓN DE USUARIO Y MONEDAS ---
 
   export async function getUserData() {
@@ -293,14 +294,18 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
         ORDER BY release_date DESC NULLS LAST
       `;
       
+      // Si la tabla está vacía todavía no se ha ejecutado el seed.
+      if (rows.length === 0) return loadLocalSets();
+
       return rows.map(set => ({
         ...set,
         releaseDate: set.release_date,
         images: typeof set.images === 'string' ? JSON.parse(set.images) : set.images
       }));
     } catch (error) {
-      console.error("Error al obtener sets:", error);
-      return [];
+      // Sin Postgres configurado servimos el catálogo del repositorio.
+      console.error("Error al obtener sets, uso el JSON local:", error);
+      return loadLocalSets();
     }
   }
   // Añade esto al final de tu src/app/action.ts
