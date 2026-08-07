@@ -3,6 +3,7 @@
 import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
 import BottomNav from "./BottomNav";
+import InstallPrompt from "./pwa/InstallPrompt";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
@@ -16,6 +17,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       <BottomNav />
+      <InstallPrompt />
     </div>
   );
 }

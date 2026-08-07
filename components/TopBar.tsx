@@ -17,6 +17,12 @@ export default function TopBar() {
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
       className="sticky top-0 z-30 flex items-center gap-2 md:gap-3 px-3 md:px-6 h-16 glass border-b border-[var(--border)]"
+      // Con viewport-fit=cover el contenido pinta bajo la barra de estado:
+      // desplazamos la cabecera para que no quede tapada por el notch.
+      style={{
+        paddingTop: "env(safe-area-inset-top)",
+        height: "calc(4rem + env(safe-area-inset-top))",
+      }}
     >
       {/* Brand on mobile */}
       <div className="md:hidden flex items-center gap-2 mr-auto">
