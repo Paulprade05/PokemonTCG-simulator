@@ -1,7 +1,7 @@
 "use client";
 
 import { useUser } from "@clerk/nextjs";
-import { AnimatePresence, motion, type PanInfo } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -22,6 +22,7 @@ import { saveToCollection, getCollection } from "../utils/storage";
 import { SELL_PRICES, PACK_PRICES, RARITY_RANK } from "../utils/constanst";
 import { useCurrency } from "../hooks/useGameCurrency";
 import { useHaptics } from "../hooks/useHaptics";
+import { useSwipe, touchActionFor } from "../hooks/useSwipe";
 import { useToast } from "../components/ui/Toast";
 import { useImmersive } from "../components/AppShell";
 import PokemonCard from "../components/PokemonCard";
@@ -83,8 +84,8 @@ export default function Home() {
   const [openSeries, setOpenSeries] = useState<Record<string, boolean>>({});
   const [direction, setDirection] = useState(1);
   const finishingRef = useRef(false);
-  /** true mientras se arrastra la carta: evita que el gesto dispare el onClick. */
-  const draggingRef = useRef(false);
+  /** Elemento que captura los gestos de la carta durante la apertura. */
+  const cardGestureRef = useRef<HTMLDivElement>(null);
 
   // La apertura ocupa toda la pantalla: escondemos la barra de pestañas.
   useImmersive(isPackOpen);
@@ -358,17 +359,24 @@ export default function Home() {
   };
 
   const handleCardTap = () => {
-    if (draggingRef.current) return; // el gesto ya ha decidido
+    // Tras un deslizamiento el navegador emite un click sintético: se ignora.
+    if (didSwipeRef.current) return;
     handleNextCard();
   };
 
-  const handleCardDragEnd = (_e: unknown, info: PanInfo) => {
-    const { offset, velocity } = info;
-    if (offset.x < -70 || velocity.x < -420) handleNextCard();
-    else if ((offset.x > 70 || velocity.x > 420) && packIndex > 0) handlePrevCard();
-    // el click sintético llega justo después del dragend
-    setTimeout(() => { draggingRef.current = false; }, 60);
-  };
+  // Gestos de la carta: izquierda/derecha para pasar, abajo para saltar al
+  // resumen. El giro acompaña al arrastre para dar tacto de carta física.
+  const didSwipeRef = useSwipe(cardGestureRef, {
+    axis: "both",
+    rotate: 6,
+    enabled: isPackOpen,
+    onSwipeLeft: () => handleNextCard(),
+    onSwipeRight: packIndex > 0 ? () => handlePrevCard() : undefined,
+    onSwipeDown: () => {
+      haptic("select");
+      handleRevealAll();
+    },
+  });
 
   // Revelar todo: salta animación carta por carta y va al resumen.
   const handleRevealAll = async () => {
@@ -838,18 +846,18 @@ export default function Home() {
               </motion.div>
             )}
 
-            <motion.div
-              drag="x"
-              dragDirectionLock
-              dragConstraints={{ left: 0, right: 0 }}
-              dragElastic={0.35}
-              dragMomentum={false}
-              onDragStart={() => { draggingRef.current = true; }}
-              onDragEnd={handleCardDragEnd}
+            {/* El gesto va con useSwipe (eventos de puntero) y no con el drag
+                de framer: así el arrastre se pinta escribiendo el transform,
+                sin re-render por movimiento, y sigue el dedo con fidelidad. */}
+            <div
+              ref={cardGestureRef}
               onClick={handleCardTap}
-              whileTap={{ scale: 0.985 }}
-              className="relative z-20 cursor-pointer"
-              style={{ width: CARD_WIDTH }}
+              className="relative z-20 cursor-pointer select-none"
+              style={{
+                width: CARD_WIDTH,
+                touchAction: touchActionFor("both"),
+                willChange: "transform",
+              }}
             >
               {/* la perspectiva va en el padre directo de la carta animada */}
               <div className="relative w-full aspect-[2.5/3.5] perspective-1000">
@@ -878,7 +886,7 @@ export default function Home() {
                   </motion.div>
                 </AnimatePresence>
               </div>
-            </motion.div>
+            </div>
           </div>
 
           {/* PIE (96px): texto contextual + acciones */}

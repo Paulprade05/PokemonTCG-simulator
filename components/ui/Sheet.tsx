@@ -1,8 +1,9 @@
 "use client";
 
-import { AnimatePresence, motion, type PanInfo } from "framer-motion";
-import { useEffect, type ReactNode } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useRef, type ReactNode } from "react";
 import { useHaptics } from "../../hooks/useHaptics";
+import { useSwipe, touchActionFor } from "../../hooks/useSwipe";
 
 interface SheetProps {
   open: boolean;
@@ -52,12 +53,23 @@ export default function Sheet({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  const handleDragEnd = (_: unknown, info: PanInfo) => {
-    if (info.offset.y > CLOSE_OFFSET || info.velocity.y > CLOSE_VELOCITY) {
+  // El arrastre sale del asa, no del panel entero: si escuchara en todo el
+  // panel se comería el scroll vertical del contenido.
+  const handleRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useSwipe(handleRef, {
+    axis: "y",
+    threshold: CLOSE_OFFSET,
+    velocity: CLOSE_VELOCITY,
+    // Se tira del asa pero se mueve el panel entero, para que acompañe al dedo.
+    follow: true,
+    followTarget: panelRef,
+    enabled: open,
+    onSwipeDown: () => {
       haptic("tap");
       onClose();
-    }
-  };
+    },
+  });
 
   return (
     <AnimatePresence>
@@ -76,6 +88,7 @@ export default function Sheet({
           />
 
           <motion.div
+            ref={panelRef}
             role="dialog"
             aria-modal="true"
             aria-label={label}
@@ -90,14 +103,15 @@ export default function Sheet({
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", stiffness: 380, damping: 38, mass: 0.9 }}
-            drag="y"
-            dragDirectionLock
-            dragConstraints={{ top: 0, bottom: 0 }}
-            dragElastic={{ top: 0, bottom: 0.55 }}
-            onDragEnd={handleDragEnd}
           >
             {!hideHandle && (
-              <div className="flex shrink-0 justify-center pt-3 pb-1">
+              <div
+                ref={handleRef}
+                role="button"
+                aria-label="Arrastra hacia abajo para cerrar"
+                className="flex shrink-0 cursor-grab justify-center pt-3 pb-2 active:cursor-grabbing"
+                style={{ touchAction: touchActionFor("y") }}
+              >
                 <div
                   className="h-1.5 w-11 rounded-full"
                   style={{ background: "var(--border-strong)" }}

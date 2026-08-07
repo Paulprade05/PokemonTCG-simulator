@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
@@ -12,6 +12,7 @@ import PageHeader from "../../../components/PageHeader";
 import Loader from "../../../components/Loader";
 import Sheet from "../../../components/ui/Sheet";
 import { useHaptics } from "../../../hooks/useHaptics";
+import { useSwipe, touchActionFor } from "../../../hooks/useSwipe";
 
 type Filter = "all" | "owned" | "missing";
 
@@ -23,6 +24,13 @@ const FILTERS: { id: Filter; label: string }[] = [
 
 /** Número de carta normalizado a 3 dígitos (011, 004…) conservando sufijos. */
 const padNumber = (n: unknown) => String(n ?? "").padStart(3, "0");
+
+/** La ficha mezcla el blueprint del set con la copia del usuario. */
+const mergeDetail = (blueprintCard: any, ownedCard: any) => ({
+  ...blueprintCard,
+  ...ownedCard,
+  number: blueprintCard.number ?? ownedCard?.number,
+});
 
 export default function SetAlbumPage() {
   const params = useParams();
@@ -86,6 +94,67 @@ export default function SetAlbumPage() {
     return sortedCards;
   }, [sortedCards, ownedCards, filter]);
 
+  // Recorrido de la hoja de detalle: sólo cartas poseídas y sólo las que el
+  // filtro activo deja a la vista, para que el gesto no salte a algo que no
+  // está en pantalla.
+  const navCards = useMemo(
+    () => visibleCards.filter((c) => ownedCards.has(c.id)),
+    [visibleCards, ownedCards],
+  );
+
+  const detailIndex = useMemo(
+    () => (detail ? navCards.findIndex((c) => c.id === detail.id) : -1),
+    [detail, navCards],
+  );
+
+  const canPrev = detailIndex > 0;
+  const canNext = detailIndex >= 0 && detailIndex < navCards.length - 1;
+
+  /** Avanza (+1) o retrocede (-1) por `navCards`. En los extremos no hace nada. */
+  const step = useCallback(
+    (delta: number) => {
+      if (detailIndex < 0) return;
+      const nextCard = navCards[detailIndex + delta];
+      if (!nextCard) return;
+      haptic("tap");
+      setDetail(mergeDetail(nextCard, ownedCards.get(nextCard.id)));
+    },
+    [detailIndex, navCards, ownedCards, haptic],
+  );
+
+  // El gesto se engancha sólo a la imagen: si escuchara en toda la hoja se
+  // comería el scroll vertical de la ficha.
+  const detailImageRef = useRef<HTMLDivElement>(null);
+  useSwipe(detailImageRef, {
+    axis: "x",
+    threshold: 64,
+    velocity: 420,
+    follow: true,
+    rotate: 4,
+    resistance: 0.3,
+    enabled: !!detail,
+    // Sin manejador en el extremo: el hook aplica resistencia y no dispara nada.
+    ...(canNext ? { onSwipeLeft: () => step(1) } : {}),
+    ...(canPrev ? { onSwipeRight: () => step(-1) } : {}),
+  });
+
+  // Mismo recorrido con teclado, para quien no tiene pantalla táctil.
+  useEffect(() => {
+    if (!detail) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        step(1);
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        step(-1);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [detail, step]);
+
   if (loading) return <Loader label="Abriendo álbum" />;
 
   const total = setInfo?.total || allSetCards.length || 1;
@@ -108,7 +177,7 @@ export default function SetAlbumPage() {
 
   const openDetail = (blueprintCard: any, ownedCard: any) => {
     haptic("tap");
-    setDetail({ ...blueprintCard, ...ownedCard, number: blueprintCard.number ?? ownedCard.number });
+    setDetail(mergeDetail(blueprintCard, ownedCard));
   };
 
   const detailImage = detail?.images?.large || detail?.images?.small;
@@ -172,7 +241,7 @@ export default function SetAlbumPage() {
                 type="button"
                 onClick={() => changeFilter(f.id)}
                 aria-pressed={active}
-                className={`press touch-target relative rounded-xl px-1 py-2 flex flex-col items-center justify-center gap-0.5 transition-colors ${
+                className={`press touch-target relative min-w-0 rounded-xl px-0.5 py-2 flex flex-col items-center justify-center gap-0.5 transition-colors ${
                   active ? "ink" : "ink-soft"
                 }`}
                 style={
@@ -263,7 +332,89 @@ export default function SetAlbumPage() {
         label={detail ? `Detalle de ${detail.name}` : "Detalle de carta"}
       >
         {detail && (
-          <div className="px-4 pb-5 pt-2 sm:px-6">
+          <div className="px-4 pb-5 pt-2 sm:px-6 flex flex-col gap-4">
+            {/* Contenedor estable del gesto: no lleva `key`, así los listeners
+                sobreviven al cambio de carta. */}
+            <div
+              ref={detailImageRef}
+              className="mx-auto w-full max-w-[280px] sm:max-w-[320px]"
+              style={{ touchAction: touchActionFor("x"), willChange: "transform" }}
+            >
+              {detailImage && (
+                <motion.img
+                  key={detail.id}
+                  src={detailImage}
+                  alt={detail.name}
+                  draggable={false}
+                  initial={{ opacity: 0, scale: 0.97 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                  className="block w-full rounded-2xl object-contain"
+                  style={{ boxShadow: "var(--shadow-lg)" }}
+                />
+              )}
+            </div>
+
+            {/* POSICIÓN EN EL RECORRIDO */}
+            {detailIndex >= 0 && (
+              <div className="flex items-center justify-center gap-2 sm:gap-3">
+                {navCards.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => canPrev && step(-1)}
+                    aria-disabled={!canPrev}
+                    aria-label="Carta anterior"
+                    className={`press ink-soft shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${canPrev ? "" : "opacity-35"}`}
+                    style={{ border: "1px solid var(--border)" }}
+                  >
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M15 18l-6-6 6-6" />
+                    </svg>
+                  </button>
+                )}
+
+                <p className="text-[11px] ink-faint text-center min-w-0" aria-live="polite">
+                  <span className="tnum">{detailIndex + 1}</span> de{" "}
+                  <span className="tnum">{navCards.length}</span> conseguidas
+                </p>
+
+                {navCards.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => canNext && step(1)}
+                    aria-disabled={!canNext}
+                    aria-label="Carta siguiente"
+                    className={`press ink-soft shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${canNext ? "" : "opacity-35"}`}
+                    style={{ border: "1px solid var(--border)" }}
+                  >
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M9 6l6 6-6 6" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            )}
+
             <AnimatePresence initial={false}>
               <motion.div
                 key={detail.id}
@@ -272,15 +423,6 @@ export default function SetAlbumPage() {
                 transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
                 className="flex flex-col gap-4"
               >
-                {detailImage && (
-                  <img
-                    src={detailImage}
-                    alt={detail.name}
-                    className="w-full max-w-[280px] sm:max-w-[320px] mx-auto rounded-2xl object-contain"
-                    style={{ boxShadow: "var(--shadow-lg)" }}
-                  />
-                )}
-
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-[11px] ink-faint font-mono tnum">
@@ -318,16 +460,16 @@ export default function SetAlbumPage() {
                     <dd className="text-xs font-medium ink text-right tnum">{detail.quantity || 1}</dd>
                   </div>
                 </dl>
-
-                <button
-                  type="button"
-                  onClick={() => setDetail(null)}
-                  className="btn-ghost press touch-target w-full rounded-xl py-3 text-sm font-medium"
-                >
-                  Cerrar
-                </button>
               </motion.div>
             </AnimatePresence>
+
+            <button
+              type="button"
+              onClick={() => setDetail(null)}
+              className="btn-ghost press touch-target w-full rounded-xl py-3 text-sm font-medium"
+            >
+              Cerrar
+            </button>
           </div>
         )}
       </Sheet>

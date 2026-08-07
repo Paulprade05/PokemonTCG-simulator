@@ -1,16 +1,20 @@
 "use client";
 
-import { AnimatePresence, motion, useDragControls, type PanInfo } from "framer-motion";
-import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import TypeBadge, { EnergyCost } from "./TypeBadge";
 import { SELL_PRICES } from "../utils/constanst";
 import { getCardFromDB, toggleWishlist, getWishlistIds } from "../app/action";
 import { useHaptics } from "../hooks/useHaptics";
+import { useSwipe, touchActionFor } from "../hooks/useSwipe";
 
 // Umbrales del gesto de cierre (los mismos que usa components/ui/Sheet).
 const CLOSE_OFFSET = 110;
 const CLOSE_VELOCITY = 520;
+// Umbrales del gesto de navegación entre cartas.
+const NAV_OFFSET = 70;
+const NAV_VELOCITY = 420;
 
 interface CardDetailModalProps {
   card: any | null;
@@ -19,6 +23,12 @@ interface CardDetailModalProps {
   onToggleFavorite?: () => void;
   onSellAll?: () => void;
   onNavigateToCard?: (cardId: string) => void;
+  /** Lista visible desde la que se abrió la carta (para navegar deslizando). */
+  cards?: any[];
+  /** Índice de `card` dentro de `cards`. */
+  index?: number;
+  /** Se pide moverse a otra posición de `cards`. */
+  onIndexChange?: (index: number) => void;
 }
 
 // Halo / acento por rareza
@@ -46,6 +56,9 @@ export default function CardDetailModal({
   readOnly,
   onToggleFavorite,
   onSellAll,
+  cards,
+  index,
+  onIndexChange,
 }: CardDetailModalProps) {
   const { isSignedIn } = useUser();
   const [enriched, setEnriched] = useState<any | null>(null);
@@ -54,6 +67,8 @@ export default function CardDetailModal({
   const [isMobile, setIsMobile] = useState(false);
   const haptic = useHaptics();
   const detailsRef = useRef<HTMLDivElement>(null);
+  const handleRef = useRef<HTMLDivElement>(null);
+  const imageColRef = useRef<HTMLDivElement>(null);
 
   // El gesto de arrastre sólo existe en móvil; en md+ el diálogo sigue centrado.
   useEffect(() => {
@@ -64,17 +79,63 @@ export default function CardDetailModal({
     return () => mq.removeEventListener("change", sync);
   }, []);
 
-  const handleDragEnd = (_: unknown, info: PanInfo) => {
-    if (info.offset.y > CLOSE_OFFSET || info.velocity.y > CLOSE_VELOCITY) {
+  // ── Navegación entre las cartas de la lista que abrió el modal ──────────
+  const navList = cards ?? null;
+  const navIndex =
+    navList && typeof index === "number" && index >= 0 && index < navList.length
+      ? index
+      : -1;
+  const hasNav = navIndex >= 0 && navList!.length > 1 && !!onIndexChange;
+  const canPrev = hasNav && navIndex > 0;
+  const canNext = hasNav && navIndex < navList!.length - 1;
+
+  const goPrev = useCallback(() => {
+    if (!canPrev) return;
+    haptic("tap");
+    onIndexChange?.(navIndex - 1);
+  }, [canPrev, haptic, navIndex, onIndexChange]);
+
+  const goNext = useCallback(() => {
+    if (!canNext) return;
+    haptic("tap");
+    onIndexChange?.(navIndex + 1);
+  }, [canNext, haptic, navIndex, onIndexChange]);
+
+  // El gesto de cierre sale del asa, no del panel entero: si escuchara en todo
+  // el panel se comería el scroll vertical de la columna de detalles y su
+  // contenido por debajo del pliegue quedaría inalcanzable.
+  useSwipe(handleRef, {
+    axis: "y",
+    threshold: CLOSE_OFFSET,
+    velocity: CLOSE_VELOCITY,
+    follow: false,
+    enabled: isMobile && !!card,
+    onSwipeDown: () => {
       haptic("tap");
       onClose();
-    }
-  };
+    },
+  });
 
-  // El arrastre arranca sólo desde el asa. Si escuchara en todo el panel,
-  // capturaría el gesto vertical de la columna de detalles y su contenido por
-  // debajo del pliegue quedaría inalcanzable.
-  const dragControls = useDragControls();
+  // Deslizar sobre la imagen cambia de carta. Va en la columna izquierda y no
+  // en el panel de detalles para no robarle su scroll. En los extremos el
+  // manejador queda sin definir y el hook aplica resistencia.
+  const imageSwipedRef = useSwipe(imageColRef, {
+    axis: "x",
+    threshold: NAV_OFFSET,
+    velocity: NAV_VELOCITY,
+    follow: true,
+    rotate: 3,
+    enabled: !!card && hasNav,
+    onSwipeLeft: canNext ? goNext : undefined,
+    onSwipeRight: canPrev ? goPrev : undefined,
+  });
+
+  /** Los botones viven dentro de la zona del gesto: ignoran el click sintético. */
+  const afterSwipeGuard = (fn?: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (imageSwipedRef.current) return;
+    fn?.();
+  };
 
   useEffect(() => {
     if (!card?.id || !isSignedIn) return;
@@ -92,6 +153,19 @@ export default function CardDetailModal({
       document.body.style.overflow = prevOverflow;
     };
   }, [card, onClose]);
+
+  // Flechas del teclado: el equivalente de escritorio al deslizamiento.
+  // Va en su propio efecto para no reenganchar el de Escape (que guarda y
+  // restaura el overflow del body) en cada render.
+  useEffect(() => {
+    if (!card || !hasNav) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") { e.preventDefault(); goPrev(); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); goNext(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [card, hasNav, goPrev, goNext]);
 
   const handleToggleWishlist = async () => {
     if (!card?.id) return;
@@ -155,6 +229,9 @@ export default function CardDetailModal({
           onClick={onClose}
         >
           <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Detalle de ${c.name}`}
             initial={isMobile ? { y: "100%" } : { scale: 0.97, opacity: 0, y: 8 }}
             animate={isMobile ? { y: 0 } : { scale: 1, opacity: 1, y: 0 }}
             exit={isMobile ? { y: "100%" } : { scale: 0.97, opacity: 0 }}
@@ -163,13 +240,8 @@ export default function CardDetailModal({
                 ? { type: "spring", stiffness: 380, damping: 38, mass: 0.9 }
                 : { duration: 0.3, ease: [0.16, 1, 0.3, 1] }
             }
-            /* Móvil: hoja inferior arrastrable. md+: diálogo centrado, sin drag. */
-            drag={isMobile ? "y" : false}
-            dragListener={false}
-            dragControls={dragControls}
-            dragConstraints={{ top: 0, bottom: 0 }}
-            dragElastic={{ top: 0, bottom: 0.55 }}
-            onDragEnd={handleDragEnd}
+            /* Móvil: hoja inferior que se cierra arrastrando el asa (useSwipe).
+               md+: diálogo centrado, sin gesto. */
             className="relative w-full max-w-5xl bg-[var(--surface)] overflow-hidden border border-[var(--border)] shadow-2xl flex flex-col md:flex-row"
             style={{
               borderRadius: isMobile ? "28px 28px 0 0" : "1.5rem",
@@ -188,11 +260,11 @@ export default function CardDetailModal({
                 arrastre, con una zona táctil holgada alrededor. */}
             {isMobile && (
               <div
+                ref={handleRef}
                 role="button"
                 aria-label="Arrastra hacia abajo para cerrar"
-                onPointerDown={(e) => dragControls.start(e)}
                 className="absolute top-0 left-1/2 -translate-x-1/2 z-50 flex h-7 w-24 cursor-grab items-center justify-center active:cursor-grabbing"
-                style={{ touchAction: "none" }}
+                style={{ touchAction: touchActionFor("y") }}
               >
                 <div
                   className="h-1.5 w-11 rounded-full"
@@ -222,18 +294,22 @@ export default function CardDetailModal({
 
             {/* LEFT — CARD IMAGE PANEL */}
             <div
+              ref={imageColRef}
               className="relative w-full md:w-[44%] p-5 md:p-8 pt-14 md:pt-10 flex items-center justify-center"
               style={{
                 background: aura
                   ? `radial-gradient(circle at 50% 35%, ${aura.halo.replace(/[\d.]+\)$/, "0.18)")}, transparent 70%), var(--surface-2)`
                   : "var(--surface-2)",
+                // touchActionFor mantiene el pinch-zoom; el scroll vertical de
+                // la página sigue siendo del navegador.
+                touchAction: hasNav ? touchActionFor("x") : undefined,
               }}
             >
               {/* Floating action buttons */}
               <div className="absolute top-4 left-4 z-40 flex flex-col gap-2">
                 {!readOnly && onToggleFavorite && (
                   <button
-                    onClick={onToggleFavorite}
+                    onClick={afterSwipeGuard(onToggleFavorite)}
                     className={`w-10 h-10 rounded-full border transition flex items-center justify-center press ${
                       c.is_favorite
                         ? "bg-rose-500/25 border-rose-500/50 text-rose-300"
@@ -251,7 +327,7 @@ export default function CardDetailModal({
                 )}
                 {isSignedIn && (
                   <button
-                    onClick={handleToggleWishlist}
+                    onClick={afterSwipeGuard(handleToggleWishlist)}
                     className={`w-10 h-10 rounded-full border transition flex items-center justify-center press ${
                       wishlisted
                         ? "bg-pink-500/25 border-pink-500/50 text-pink-300"
@@ -276,6 +352,7 @@ export default function CardDetailModal({
                   />
                 )}
                 <motion.img
+                  key={c.id}
                   initial={{ scale: 0.96, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
                   transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
@@ -285,6 +362,38 @@ export default function CardDetailModal({
                   className={`relative object-contain max-h-[40vh] md:max-h-[68vh] drop-shadow-[0_25px_50px_rgba(0,0,0,0.6)] ${c.owned === false ? "grayscale opacity-70" : ""}`}
                 />
               </div>
+
+              {/* Navegación explícita, para quien no descubra el gesto */}
+              {hasNav && (
+                <>
+                  <button
+                    onClick={afterSwipeGuard(goPrev)}
+                    disabled={!canPrev}
+                    aria-label="Carta anterior"
+                    className="absolute left-2 top-1/2 -translate-y-1/2 z-40 w-10 h-10 rounded-full btn-ghost press flex items-center justify-center disabled:opacity-25 disabled:cursor-not-allowed"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                      <path d="m15 18-6-6 6-6" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={afterSwipeGuard(goNext)}
+                    disabled={!canNext}
+                    aria-label="Carta siguiente"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 z-40 w-10 h-10 rounded-full btn-ghost press flex items-center justify-center disabled:opacity-25 disabled:cursor-not-allowed"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                      <path d="m9 18 6-6-6-6" />
+                    </svg>
+                  </button>
+                  <span
+                    aria-hidden="true"
+                    className="absolute bottom-2 left-1/2 -translate-x-1/2 z-40 chip ink-soft text-[10px] px-2.5 py-1 rounded-full tnum pointer-events-none"
+                  >
+                    {navIndex + 1} / {navList!.length}
+                  </span>
+                </>
+              )}
             </div>
 
             {/* RIGHT — DETAILS */}

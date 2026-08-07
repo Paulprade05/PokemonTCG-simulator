@@ -15,6 +15,7 @@ import TopBar from "./TopBar";
 import BottomNav from "./BottomNav";
 import InstallPrompt from "./pwa/InstallPrompt";
 import { ToastProvider } from "./ui/Toast";
+import EdgeBackGesture from "./ui/EdgeBackGesture";
 import { useViewport } from "../hooks/useViewport";
 
 interface ShellContextValue {
@@ -68,6 +69,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </main>
             </div>
             <BottomNav hidden={immersive || isKeyboardOpen} />
+            <EdgeBackGesture disabled={immersive} />
             {!immersive && <InstallPrompt />}
           </div>
         </ToastProvider>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
 import {
@@ -15,6 +15,7 @@ import { useCurrency } from "../../hooks/useGameCurrency";
 import { useHaptics } from "../../hooks/useHaptics";
 import { useToast } from "../../components/ui/Toast";
 import ConfirmSheet from "../../components/ui/ConfirmSheet";
+import Sheet from "../../components/ui/Sheet";
 import { RARITY_RANK, SELL_PRICES } from "../../utils/constanst";
 import PokemonCard from "../../components/PokemonCard";
 import PageHeader from "../../components/PageHeader";
@@ -34,9 +35,21 @@ export default function CollectionPage() {
   const [filterSet, setFilterSet] = useState("all");
   const [filterRarity, setFilterRarity] = useState("all");
   const [selectedCard, setSelectedCard] = useState<any | null>(null);
+  const [actionCard, setActionCard] = useState<any | null>(null);
   const [confirmDuplicates, setConfirmDuplicates] = useState(false);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 24;
+
+  // Estado de la pulsación larga sobre la rejilla. En un ref para no
+  // re-renderizar 24 cartas en cada movimiento del dedo.
+  const longPressRef = useRef<{ timer: number | null; x: number; y: number; fired: boolean }>({
+    timer: null,
+    x: 0,
+    y: 0,
+    fired: false,
+  });
+  const LONG_PRESS_MS = 450;
+  const LONG_PRESS_SLOP = 10;
 
   const haptic = useHaptics();
   const toast = useToast();
@@ -121,17 +134,25 @@ export default function CollectionPage() {
     return { list, total, units };
   }, [cards]);
 
-  const handleSellCard = async (e: React.MouseEvent, cardId: string, rarity: string) => {
-    e.stopPropagation();
+  /** Vende una copia suelta. La comparte el botón de la rejilla y la hoja de acciones. */
+  const sellOneCopy = async (cardId: string, rarity: string) => {
     const card = cards.find((c) => c.id === cardId);
     if (!card || card.quantity <= 1) return;
     const price = getPrice(rarity);
     haptic("success");
     const updatedCards = cards.map((c) => (c.id === cardId ? { ...c, quantity: c.quantity - 1 } : c));
     setCards(updatedCards);
+    setSelectedCard((prev: any) =>
+      prev && prev.id === cardId ? { ...prev, quantity: prev.quantity - 1 } : prev,
+    );
     addCoins(price);
     if (isSignedIn) await sellCardAction(cardId, price);
     else saveCollectionRaw(updatedCards);
+  };
+
+  const handleSellCard = async (e: React.MouseEvent, cardId: string, rarity: string) => {
+    e.stopPropagation();
+    await sellOneCopy(cardId, rarity);
   };
 
   /** Abre la hoja de confirmación (sustituye a confirm()). */
@@ -175,12 +196,11 @@ export default function CollectionPage() {
     toast(`+${totalValue} monedas por ${duplicates} duplicadas`, "success");
   };
 
-  const handleToggleFavInModal = async () => {
-    if (!selectedCard) return;
-    const cardId = selectedCard.id;
-    const newStatus = !selectedCard.is_favorite;
+  /** Alterna deseada/favorita. La comparten el modal y la hoja de acciones. */
+  const applyToggleFavorite = async (cardId: string, current: boolean) => {
+    const newStatus = !current;
     haptic("select");
-    setSelectedCard({ ...selectedCard, is_favorite: newStatus });
+    setSelectedCard((prev: any) => (prev && prev.id === cardId ? { ...prev, is_favorite: newStatus } : prev));
     setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, is_favorite: newStatus } : c)));
     const res = await toggleFavorite(cardId);
     if (res?.error) {
@@ -190,6 +210,85 @@ export default function CollectionPage() {
       toast(res.error, "error");
     }
   };
+
+  const handleToggleFavInModal = async () => {
+    if (!selectedCard) return;
+    await applyToggleFavorite(selectedCard.id, selectedCard.is_favorite);
+  };
+
+  // ── Pulsación larga en la rejilla ───────────────────────────────────────
+  const cancelLongPress = () => {
+    const lp = longPressRef.current;
+    if (lp.timer != null) {
+      window.clearTimeout(lp.timer);
+      lp.timer = null;
+    }
+  };
+
+  const startLongPress = (e: React.PointerEvent, card: any) => {
+    if (e.button !== 0) return;
+    const lp = longPressRef.current;
+    cancelLongPress();
+    lp.fired = false;
+    lp.x = e.clientX;
+    lp.y = e.clientY;
+    lp.timer = window.setTimeout(() => {
+      lp.timer = null;
+      lp.fired = true;
+      haptic("heavy");
+      setActionCard(card);
+    }, LONG_PRESS_MS);
+  };
+
+  /** Más de 10px de recorrido es un scroll, no una pulsación. */
+  const moveLongPress = (e: React.PointerEvent) => {
+    const lp = longPressRef.current;
+    if (lp.timer == null) return;
+    if (Math.abs(e.clientX - lp.x) > LONG_PRESS_SLOP || Math.abs(e.clientY - lp.y) > LONG_PRESS_SLOP) {
+      cancelLongPress();
+    }
+  };
+
+  const openDetail = (card: any) => {
+    // Tras una pulsación larga el navegador emite un click: lo ignoramos para
+    // no abrir el detalle por debajo de la hoja de acciones.
+    if (longPressRef.current.fired) {
+      longPressRef.current.fired = false;
+      return;
+    }
+    haptic("select");
+    openCardDetail(card);
+  };
+
+  useEffect(() => () => cancelLongPress(), []);
+
+  /**
+   * Recorrido del modal: se congela al abrirlo. Si se leyera de processedCards
+   * en vivo, marcar una favorita reordenaría la lista (las favoritas van
+   * primero) y el gesto saltaría a una carta cualquiera. Se guardan sólo los
+   * ids; la carta se re-lee de la colección viva al navegar.
+   */
+  const [navIds, setNavIds] = useState<string[]>([]);
+
+  const openCardDetail = (card: any) => {
+    setNavIds(processedCards.map((c) => c.id));
+    setSelectedCard(card);
+  };
+
+  const selectedIndex = selectedCard ? navIds.indexOf(selectedCard.id) : -1;
+
+  const goToNavIndex = (i: number) => {
+    const id = navIds[i];
+    if (!id) return;
+    const live = cards.find((c) => c.id === id);
+    if (live) setSelectedCard(live);
+  };
+
+  // La carta de la hoja de acciones se lee de la colección viva, para que
+  // vender o marcar favorita se refleje sin cerrarla.
+  const actionCardLive = actionCard
+    ? cards.find((c) => c.id === actionCard.id) || actionCard
+    : null;
 
   const goToPage = (next: number) => {
     haptic("tap");
@@ -386,13 +485,29 @@ export default function CollectionPage() {
                 className="relative group cursor-zoom-in"
                 tabIndex={0}
                 aria-label={`Ver ${card.name}`}
-                onClick={() => { haptic("select"); setSelectedCard(card); }}
+                onClick={() => openDetail(card)}
+                onPointerDown={(e) => startLongPress(e, card)}
+                onPointerMove={moveLongPress}
+                onPointerUp={cancelLongPress}
+                onPointerCancel={cancelLongPress}
+                onContextMenu={(e) => {
+                  // Sólo tapamos el menú nativo cuando la pulsación larga es
+                  // nuestra; con el ratón el menú del navegador sigue saliendo.
+                  const lp = longPressRef.current;
+                  if (lp.timer != null || lp.fired) e.preventDefault();
+                }}
                 onKeyDown={(e) => {
                   if (e.target !== e.currentTarget) return;
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
                     haptic("select");
                     setSelectedCard(card);
+                  }
+                  // Equivalente de teclado a la pulsación larga.
+                  if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+                    e.preventDefault();
+                    haptic("heavy");
+                    setActionCard(card);
                   }
                 }}
               >
@@ -424,6 +539,8 @@ export default function CollectionPage() {
                   {card.quantity > 1 ? (
                     <button
                       onClick={(e) => handleSellCard(e, card.id, card.rarity)}
+                      // El botón no arma la pulsación larga de la carta.
+                      onPointerDown={(e) => e.stopPropagation()}
                       className="chip ink text-[10px] min-h-8 px-3 rounded-full press hover:brightness-110"
                     >
                       Vender +{getPrice(card.rarity)}
@@ -478,11 +595,103 @@ export default function CollectionPage() {
         onClose={() => setConfirmDuplicates(false)}
       />
 
+      {/* ACCIONES RÁPIDAS (pulsación larga sobre una carta) */}
+      <Sheet
+        open={!!actionCardLive}
+        onClose={() => setActionCard(null)}
+        label={actionCardLive ? `Acciones para ${actionCardLive.name}` : "Acciones"}
+      >
+        {actionCardLive && (
+          <div className="px-5 pt-1 pb-6">
+            <div className="flex items-center gap-3">
+              {actionCardLive.images?.small && (
+                <img
+                  src={actionCardLive.images.small}
+                  alt=""
+                  className="w-12 rounded-lg shrink-0"
+                  style={{ boxShadow: "var(--shadow-sm)" }}
+                />
+              )}
+              <div className="min-w-0">
+                <p className="ink font-semibold text-[15px] truncate">{actionCardLive.name}</p>
+                <p className="ink-faint text-[11px] truncate">
+                  {actionCardLive.rarity || "Sin rareza"}
+                  {actionCardLive.quantity > 1 ? ` · ${actionCardLive.quantity} copias` : " · copia única"}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 flex flex-col gap-2.5">
+              <button
+                onClick={() => {
+                  haptic("select");
+                  setActionCard(null);
+                  openCardDetail(actionCardLive);
+                }}
+                className="btn-ghost press rounded-2xl py-3.5 text-sm font-medium flex items-center justify-center gap-2 touch-target"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                  <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3M11 8v6M8 11h6" />
+                </svg>
+                Ver detalle
+              </button>
+
+              {actionCardLive.quantity > 1 && (
+                <button
+                  onClick={async () => {
+                    const { id, rarity, name } = actionCardLive;
+                    setActionCard(null);
+                    await sellOneCopy(id, rarity);
+                    toast(`+${getPrice(rarity)} monedas por ${name}`, "success");
+                  }}
+                  className="btn-ghost press rounded-2xl py-3.5 text-sm font-medium flex items-center justify-center gap-2 touch-target"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                    <circle cx="12" cy="12" r="9" /><path d="M12 7v10M9.5 9.5h4a1.8 1.8 0 0 1 0 3.5h-3a1.8 1.8 0 0 0 0 3.5h4" />
+                  </svg>
+                  Vender una copia · +{getPrice(actionCardLive.rarity)}
+                </button>
+              )}
+
+              <button
+                onClick={() => {
+                  const { id, is_favorite } = actionCardLive;
+                  setActionCard(null);
+                  applyToggleFavorite(id, is_favorite);
+                }}
+                className="btn-ghost press rounded-2xl py-3.5 text-sm font-medium flex items-center justify-center gap-2 touch-target"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill={actionCardLive.is_favorite ? "currentColor" : "none"}
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  className="w-4 h-4"
+                >
+                  <path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 5.5 5.5 5.5 0 0 1 21.5 12c-2.5 4.5-9.5 9-9.5 9z" />
+                </svg>
+                {actionCardLive.is_favorite ? "Quitar de deseados" : "Añadir a deseados"}
+              </button>
+
+              <button
+                onClick={() => setActionCard(null)}
+                className="btn-ghost press rounded-2xl py-3.5 text-sm font-medium ink-soft touch-target"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+      </Sheet>
+
       <CardDetailModal
         card={selectedCard}
         onClose={() => setSelectedCard(null)}
         onToggleFavorite={handleToggleFavInModal}
         onSellAll={handleSellAllFromModal}
+        cards={navIds}
+        index={selectedIndex}
+        onIndexChange={goToNavIndex}
       />
     </div>
   );
