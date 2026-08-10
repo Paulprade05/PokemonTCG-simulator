@@ -17,6 +17,7 @@ import InstallPrompt from "./pwa/InstallPrompt";
 import { ToastProvider } from "./ui/Toast";
 import EdgeBackGesture from "./ui/EdgeBackGesture";
 import { useViewport } from "../hooks/useViewport";
+import { CurrencyProvider } from "../hooks/useGameCurrency";
 
 interface ShellContextValue {
   /** Oculta el cromo para las vistas a pantalla completa. */
@@ -59,6 +60,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
           quien tenga "reducir movimiento" activo salte a los estados finales. */}
       <MotionConfig reducedMotion="user">
         <ToastProvider>
+          {/* El saldo vive aquí para que la barra superior, la home, la
+              colección y la recompensa diaria compartan el mismo número. */}
+          <CurrencyProvider>
           <div className="min-h-dvh-app">
             <Sidebar />
             {/* Content column offset by sidebar on desktop */}
@@ -72,6 +76,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <EdgeBackGesture disabled={immersive} />
             {!immersive && <InstallPrompt />}
           </div>
+          </CurrencyProvider>
         </ToastProvider>
       </MotionConfig>
     </ShellContext.Provider>

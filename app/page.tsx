@@ -6,7 +6,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   getUserData,
-  updateCoins,
+  spendCoinsAction,
   syncSetToDatabase,
   savePackToCollection,
   getSetsFromDB,
@@ -233,20 +233,28 @@ export default function Home() {
     else if (type === "PREMIUM") newPack = openPremiumPack(allCards);
     else newPack = openGoldenPack(allCards, userCollectionIds);
 
-    if (!spendCoins(price)) return;
-
     // Cierre mientras el cobro viaja al servidor: sin él, un doble toque
-    // compraba dos sobres y sólo se descontaba uno (updateCoins es absoluto).
+    // compraba dos sobres y se descontaba uno solo.
     finishingRef.current = true;
     setBusy(true);
     try {
-      if (isSignedIn) await updateCoins(coins - price);
+      if (isSignedIn) {
+        // Con sesión manda el servidor: cobra de forma atómica y devuelve el
+        // saldo resultante, que es el que adopta el cliente. Si no hay fondos
+        // o falla, no se abre nada y no se ha descontado nada.
+        const balance = await spendCoinsAction(price);
+        if (balance === null) {
+          toast("No se pudo completar la compra", "error");
+          haptic("warning");
+          return;
+        }
+        setCoins(balance);
+      } else if (!spendCoins(price)) {
+        // Invitado: el saldo sólo vive en este dispositivo.
+        return;
+      }
     } catch (err) {
-      // Si el cobro no llega al servidor no se abre el sobre: se devuelven las
-      // monedas y se avisa. Abrirlo igualmente regalaba cartas que la nube
-      // nunca registraría, o cobraba dos veces al recargar.
       console.error("Error descontando monedas:", err);
-      addCoins(price);
       toast("No se pudo completar la compra", "error");
       haptic("warning");
       return;
@@ -322,14 +330,21 @@ export default function Home() {
         p.forEach((c) => owned.add(c.id)); // golden garantiza nuevas distintas
       }
 
-      if (!spendCoins(price)) return;
-
       let saved = true;
       try {
         if (isSignedIn) {
-          await updateCoins(coins - price);
+          // Cobro atómico primero: si no hay fondos o falla, no se entrega nada.
+          const balance = await spendCoinsAction(price);
+          if (balance === null) {
+            toast("No se pudo completar la compra", "error");
+            haptic("warning");
+            return;
+          }
+          setCoins(balance);
           await savePackToCollection(combined, price, count);
           await refreshAfterPack();
+        } else if (!spendCoins(price)) {
+          return;
         } else {
           saveToCollection(combined);
         }

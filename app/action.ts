@@ -25,13 +25,51 @@
     }
   }
 
+  /**
+   * Cobro atómico. Es la única forma correcta de gastar monedas.
+   *
+   * La alternativa que había (escribir un total absoluto calculado en el
+   * cliente) tenía dos agujeros: se fiaba del saldo que dijera el navegador, y
+   * pisaba cualquier ingreso que hubiera ocurrido entretanto —reclamas la
+   * recompensa diaria (+100) y al comprar un sobre acto seguido el total viejo
+   * borraba esos 100—. Aquí la resta la hace la base de datos, la condición
+   * `coins >= price` impide saldos negativos y dobles cobros, y se devuelve el
+   * saldo resultante para que el cliente adopte el del servidor.
+   *
+   * Devuelve el saldo tras el cobro, o null si no hay sesión, fondos o falla.
+   */
+  export async function spendCoinsAction(price: number): Promise<number | null> {
+    const { userId } = await auth();
+    if (!userId) return null;
+    if (!Number.isFinite(price) || price <= 0) return null;
+
+    try {
+      const { rows } = await sql`
+        UPDATE users
+        SET coins = coins - ${price}
+        WHERE id = ${userId} AND coins >= ${price}
+        RETURNING coins
+      `;
+      if (rows.length === 0) return null; // fondos insuficientes
+      revalidatePath('/');
+      return Number(rows[0].coins);
+    } catch (error) {
+      console.error("❌ Error spendCoinsAction:", error);
+      return null;
+    }
+  }
+
+  /**
+   * @deprecated Escribe un total absoluto que viene del cliente: se fía de él y
+   * pisa ingresos concurrentes. Para gastar usa `spendCoinsAction`.
+   */
   export async function updateCoins(newAmount: number) {
     const { userId } = await auth();
     if (!userId) throw new Error("No autorizado");
 
     try {
       await sql`UPDATE users SET coins = ${newAmount} WHERE id = ${userId}`;
-      revalidatePath('/'); 
+      revalidatePath('/');
       return true;
     } catch (error) {
       console.error("❌ Error updateCoins:", error);
@@ -519,154 +557,10 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
       return { error: "Error al eliminar amigo" };
     }
   }
-  // --- 5. SISTEMA DE INTERCAMBIOS ---
+  // El sistema de intercambios antiguo (tabla `trades`) vivía aquí. Se retiró:
+  // ninguna migración crea esa tabla y no quedaba ningún consumidor. El sistema
+  // vigente es app/social.ts, sobre la tabla `trade_offers`.
 
-// --- 5. SISTEMA DE INTERCAMBIOS ---
-
-// 1. Enviar una oferta de intercambio
-export async function sendTradeRequest(friendId: string, myCardId: string, friendCardId: string) {
-  const { userId } = await auth();
-  if (!userId) return { error: "No autorizado" };
-
-  try {
-    await sql`
-      INSERT INTO trades (sender_id, receiver_id, sender_card_id, receiver_card_id, status)
-      VALUES (${userId}, ${friendId}, ${myCardId}, ${friendCardId}, 'pending')
-    `;
-    return { success: true };
-  } catch (error) {
-    console.error("Error enviando trade:", error);
-    return { error: "Error al enviar la oferta" };
-  }
-}
-
-// 2. Leer las peticiones que me han mandado
-export async function getPendingTrades() {
-  const { userId } = await auth();
-  if (!userId) return [];
-
-  try {
-    const { rows } = await sql`
-      SELECT 
-        t.id as trade_id,
-        t.sender_id,
-        u.username as sender_name,
-        t.sender_card_id,
-        c1.name as sender_card_name,
-        c1.images as sender_card_image,
-        t.receiver_card_id,
-        c2.name as receiver_card_name,
-        c2.images as receiver_card_image
-      FROM trades t
-      JOIN users u ON u.id = t.sender_id
-      JOIN cards c1 ON c1.id = t.sender_card_id
-      JOIN cards c2 ON c2.id = t.receiver_card_id
-      WHERE t.receiver_id = ${userId} AND t.status = 'pending'
-    `;
-
-    return rows.map(row => ({
-      ...row,
-      sender_card_image: typeof row.sender_card_image === 'string' ? JSON.parse(row.sender_card_image) : row.sender_card_image,
-      receiver_card_image: typeof row.receiver_card_image === 'string' ? JSON.parse(row.receiver_card_image) : row.receiver_card_image,
-    }));
-  } catch (error) {
-    console.error("Error leyendo trades:", error);
-    return [];
-  }
-}
-
-// 3. Aceptar un intercambio y cruzar las cartas
-export async function acceptTrade(tradeId: number) {
-  const { userId } = await auth();
-  if (!userId) return { error: "No autorizado" };
-
-  try {
-    const { rows } = await sql`SELECT * FROM trades WHERE id = ${tradeId} AND receiver_id = ${userId} AND status = 'pending'`;
-    if (rows.length === 0) return { error: "El intercambio ya no está disponible." };
-    const trade = rows[0];
-
-    // Comprobar si ambos aún tienen las cartas
-    const senderCheck = await sql`SELECT quantity FROM user_collection WHERE user_id = ${trade.sender_id} AND card_id = ${trade.sender_card_id} AND quantity > 0`;
-    const receiverCheck = await sql`SELECT quantity FROM user_collection WHERE user_id = ${userId} AND card_id = ${trade.receiver_card_id} AND quantity > 0`;
-    
-    if (senderCheck.rowCount === 0 || receiverCheck.rowCount === 0) {
-        await sql`UPDATE trades SET status = 'failed' WHERE id = ${tradeId}`;
-        return { error: "Alguien ya no tiene la carta prometida. Intercambio cancelado." };
-    }
-
-    // Restar las cartas
-    await sql`UPDATE user_collection SET quantity = quantity - 1 WHERE user_id = ${trade.sender_id} AND card_id = ${trade.sender_card_id}`;
-    await sql`UPDATE user_collection SET quantity = quantity - 1 WHERE user_id = ${userId} AND card_id = ${trade.receiver_card_id}`;
-
-    // Limpiar filas que se hayan quedado a 0: si no queda ninguna copia,
-    // la carta deja de estar en la colección (si no, contaría como poseída).
-    await sql`
-      DELETE FROM user_collection
-      WHERE quantity <= 0
-        AND (
-          (user_id = ${trade.sender_id} AND card_id = ${trade.sender_card_id})
-          OR (user_id = ${userId} AND card_id = ${trade.receiver_card_id})
-        )
-    `;
-
-    // Sumar las cartas al nuevo dueño
-    await sql`INSERT INTO user_collection (user_id, card_id, quantity) VALUES (${trade.sender_id}, ${trade.receiver_card_id}, 1) ON CONFLICT (user_id, card_id) DO UPDATE SET quantity = user_collection.quantity + 1`;
-    await sql`INSERT INTO user_collection (user_id, card_id, quantity) VALUES (${userId}, ${trade.sender_card_id}, 1) ON CONFLICT (user_id, card_id) DO UPDATE SET quantity = user_collection.quantity + 1`;
-
-    await sql`UPDATE trades SET status = 'accepted' WHERE id = ${tradeId}`;
-    return { success: true };
-  } catch (error) {
-    return { error: "Error en el servidor al procesar el intercambio." };
-  }
-}
-
-// 4. Rechazar intercambio
-export async function rejectTrade(tradeId: number) {
-  const { userId } = await auth();
-  if (!userId) return false;
-  await sql`UPDATE trades SET status = 'rejected' WHERE id = ${tradeId} AND receiver_id = ${userId}`;
-  return true;
-}
-// 5. Leer notificaciones de mis ofertas respondidas
-export async function getCompletedTrades() {
-  const { userId } = await auth();
-  if (!userId) return [];
-
-  try {
-    const { rows } = await sql`
-      SELECT 
-        t.id as trade_id,
-        t.receiver_id,
-        COALESCE(u.username, 'Entrenador') as receiver_name,
-        t.status,
-        c1.name as sender_card_name,
-        c2.name as receiver_card_name
-      FROM trades t
-      JOIN users u ON u.id = t.receiver_id
-      JOIN cards c1 ON c1.id = t.sender_card_id
-      JOIN cards c2 ON c2.id = t.receiver_card_id
-      WHERE t.sender_id = ${userId} 
-        AND t.status IN ('accepted', 'rejected', 'failed') 
-        AND t.is_read = FALSE
-    `;
-    return rows;
-  } catch (error) {
-    console.error("Error leyendo trades completados:", error);
-    return [];
-  }
-}
-
-// 6. Marcar notificación como leída
-export async function markTradeAsRead(tradeId: number) {
-  const { userId } = await auth();
-  if (!userId) return false;
-  try {
-    await sql`UPDATE trades SET is_read = TRUE WHERE id = ${tradeId} AND sender_id = ${userId}`;
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
 // --- DAILY REWARD ---
 export async function claimDailyReward() {
   const { userId } = await auth();
