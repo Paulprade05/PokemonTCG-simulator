@@ -8,6 +8,7 @@ import { SELL_PRICES } from "../utils/constanst";
 import { getCardFromDB, toggleWishlist, getWishlistIds } from "../app/action";
 import { useHaptics } from "../hooks/useHaptics";
 import { useSwipe, touchActionFor } from "../hooks/useSwipe";
+import CardZoom from "./ui/CardZoom";
 
 // Umbrales del gesto de cierre (los mismos que usa components/ui/Sheet).
 const CLOSE_OFFSET = 110;
@@ -69,6 +70,10 @@ export default function CardDetailModal({
   const detailsRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<HTMLDivElement>(null);
   const imageColRef = useRef<HTMLDivElement>(null);
+  /** Contenedor de la carta que recibe el balanceo 3D. */
+  const tiltRef = useRef<HTMLDivElement>(null);
+  /** Vista de sólo la carta, a pantalla completa. */
+  const [zoomed, setZoomed] = useState(false);
 
   // El gesto de arrastre sólo existe en móvil; en md+ el diálogo sigue centrado.
   useEffect(() => {
@@ -119,13 +124,41 @@ export default function CardDetailModal({
   // Deslizar sobre la imagen cambia de carta. Va en la columna izquierda y no
   // en el panel de detalles para no robarle su scroll. En los extremos el
   // manejador queda sin definir y el hook aplica resistencia.
+  /**
+   * Balanceo 3D de la carta mientras se arrastra: la carta gira sobre su eje
+   * vertical siguiendo al dedo, como si la sostuvieras. Se pinta a mano en vez
+   * de con el `follow` del hook porque eso sólo hace traslación y giro plano.
+   */
+  const applyTilt = useCallback((dx: number, dy: number) => {
+    const el = tiltRef.current;
+    if (!el) return;
+    const clamp = (v: number, max: number) => Math.max(-max, Math.min(max, v));
+    const rotY = clamp(dx * 0.2, 26);
+    const rotX = clamp(-dy * 0.12, 14);
+    el.style.transition = "";
+    el.style.transform = `perspective(900px) rotateY(${rotY}deg) rotateX(${rotX}deg) translateX(${dx * 0.3}px)`;
+  }, []);
+
+  /** Al soltar vuelve al centro con un rebote: de ahí el balanceo. */
+  const resetTilt = useCallback(() => {
+    const el = tiltRef.current;
+    if (!el) return;
+    el.style.transition = "transform 0.55s cubic-bezier(0.22, 1.35, 0.36, 1)";
+    el.style.transform = "";
+    window.setTimeout(() => {
+      if (el) el.style.transition = "";
+    }, 580);
+  }, []);
+
   const imageSwipedRef = useSwipe(imageColRef, {
     axis: "x",
     threshold: NAV_OFFSET,
     velocity: NAV_VELOCITY,
-    follow: true,
-    rotate: 3,
-    enabled: !!card && hasNav,
+    // El movimiento lo pinta applyTilt, no el hook.
+    follow: false,
+    enabled: !!card,
+    onMove: applyTilt,
+    onEnd: resetTilt,
     onSwipeLeft: canNext ? goNext : undefined,
     onSwipeRight: canPrev ? goPrev : undefined,
   });
@@ -219,7 +252,8 @@ export default function CardDetailModal({
   };
 
   return (
-    <AnimatePresence>
+    <>
+      <AnimatePresence>
       {c && (
         <motion.div
           initial={{ opacity: 0 }}
@@ -344,7 +378,7 @@ export default function CardDetailModal({
               </div>
 
               {/* Card image with halo */}
-              <div className="relative">
+              <div ref={tiltRef} className="relative" style={{ willChange: "transform" }}>
                 {aura && (
                   <div
                     className="absolute inset-0 -m-6 rounded-3xl blur-2xl opacity-70 pointer-events-none"
@@ -359,7 +393,14 @@ export default function CardDetailModal({
                   src={c.images?.large}
                   alt={c.name}
                   loading="eager"
-                  className={`relative object-contain max-h-[40vh] md:max-h-[68vh] drop-shadow-[0_25px_50px_rgba(0,0,0,0.6)] ${c.owned === false ? "grayscale opacity-70" : ""}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    // Un arrastre acaba en click sintético: no abrir el zoom.
+                    if (imageSwipedRef.current) return;
+                    haptic("tap");
+                    setZoomed(true);
+                  }}
+                  className={`relative cursor-zoom-in object-contain max-h-[40vh] md:max-h-[68vh] drop-shadow-[0_25px_50px_rgba(0,0,0,0.6)] ${c.owned === false ? "grayscale opacity-70" : ""}`}
                 />
               </div>
 
@@ -544,7 +585,19 @@ export default function CardDetailModal({
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+      </AnimatePresence>
+
+      {/* Sólo la carta, a pantalla completa */}
+      <CardZoom
+        open={zoomed && !!c}
+        src={c?.images?.large}
+        alt={c?.name}
+        caption={c?.name}
+        onClose={() => setZoomed(false)}
+        onPrev={canPrev ? goPrev : undefined}
+        onNext={canNext ? goNext : undefined}
+      />
+    </>
   );
 }
 

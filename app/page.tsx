@@ -647,7 +647,7 @@ export default function Home() {
         >
           <button
             onClick={handleBackToMenu}
-            className="mb-12 ink-soft hover:ink transition flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] chip px-4 py-2 press"
+            className="mb-5 md:mb-10 ink-soft hover:ink transition flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] chip px-4 py-2 press"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
               <path d="m15 18-6-6 6-6" />
@@ -656,10 +656,19 @@ export default function Home() {
           </button>
 
           {currentSetObj?.images?.logo && (
-            <img src={currentSetObj.images.logo} alt={currentSetObj.name} className="h-16 md:h-20 object-contain mb-12 opacity-90" />
+            <img src={currentSetObj.images.logo} alt={currentSetObj.name} className="h-14 md:h-20 object-contain mb-5 md:mb-10 opacity-90" />
           )}
 
-          <div className={`grid grid-cols-1 ${isSpecialSet ? "max-w-md" : "md:grid-cols-3"} gap-4 md:gap-6 w-full px-2`}>
+          {/* En móvil, carrusel horizontal con anclaje: los tres sobres caben
+              "en la misma línea" y se pasan deslizando, en vez de apilarse en
+              una columna kilométrica. En md+ vuelve a ser una rejilla. */}
+          <div
+            className={
+              isSpecialSet
+                ? "w-full max-w-md px-2"
+                : "w-full flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:grid md:grid-cols-3 md:gap-6 md:overflow-visible md:px-2 md:pb-0"
+            }
+          >
             {isSpecialSet ? (
               <PackCard
                 accent="blue"
@@ -1051,7 +1060,7 @@ function PackCard({ accent, badge, title, description, price, icon, onClick, onM
       whileHover={{ y: -6 }}
       whileTap={{ scale: 0.98 }}
       transition={{ duration: 0.25 }}
-      className="surface surface-hover rounded-3xl p-6 md:p-8 flex flex-col items-center group relative overflow-hidden text-left"
+      className="surface surface-hover rounded-3xl p-5 md:p-8 flex flex-col items-center group relative overflow-hidden text-left w-[76vw] max-w-[300px] shrink-0 snap-center md:w-auto md:max-w-none md:shrink"
     >
       <div className="absolute -top-16 left-1/2 -translate-x-1/2 w-40 h-40 rounded-full blur-3xl pointer-events-none opacity-60 group-hover:opacity-100 transition-opacity" style={{ background: `radial-gradient(circle, ${a.glow}, transparent 70%)` }} />
       {badge && (
@@ -1059,21 +1068,28 @@ function PackCard({ accent, badge, title, description, price, icon, onClick, onM
           {badge}
         </div>
       )}
-      <div className={`${a.iconColor} mb-6 md:mb-8 ${badge ? "mt-6" : ""} group-hover:scale-110 transition-transform duration-500 relative z-10`}>
+      <div className={`${a.iconColor} mb-3 md:mb-8 ${badge ? "mt-6" : ""} group-hover:scale-110 transition-transform duration-500 relative z-10`}>
         {icon}
       </div>
-      <h3 className="text-lg md:text-xl font-bold mb-2 md:mb-3 relative z-10">{title}</h3>
-      <p className="text-[11px] md:text-xs ink-soft text-center mb-4 leading-relaxed relative z-10">{description}</p>
+      <h3 className="text-lg md:text-xl font-bold mb-1.5 md:mb-3 relative z-10">{title}</h3>
+      <p className="text-[11px] md:text-xs ink-soft text-center mb-3 md:mb-4 leading-relaxed relative z-10">{description}</p>
 
+      {/* Las probabilidades van plegadas: interesan, pero no como para triplicar
+          el alto de la tarjeta en un móvil. */}
       {odds && odds.length > 0 && (
-        <div className="w-full mb-5 surface-2 rounded-xl p-3 space-y-1 relative z-10">
-          {odds.map(([label, pct]) => (
-            <div key={label} className="flex justify-between text-[10px]">
-              <span className="ink-faint">{label}</span>
-              <span className={`font-mono ${a.iconColor}`}>{pct}</span>
-            </div>
-          ))}
-        </div>
+        <details className="w-full mb-3 md:mb-5 relative z-10 group/odds">
+          <summary className="chip ink-faint cursor-pointer list-none rounded-lg px-3 py-1.5 text-center text-[10px] font-semibold tracking-wide uppercase [&::-webkit-details-marker]:hidden">
+            Probabilidades
+          </summary>
+          <div className="surface-2 mt-2 space-y-1 rounded-xl p-3">
+            {odds.map(([label, pct]) => (
+              <div key={label} className="flex justify-between text-[10px]">
+                <span className="ink-faint">{label}</span>
+                <span className={`font-mono ${a.iconColor}`}>{pct}</span>
+              </div>
+            ))}
+          </div>
+        </details>
       )}
 
       <div className="mt-auto w-full flex flex-col gap-2 relative z-10">

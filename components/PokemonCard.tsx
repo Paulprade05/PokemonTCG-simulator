@@ -87,19 +87,6 @@ function PokemonCardInner({
 
   const imageUrl = useHighRes ? card.images?.large : card.images?.small;
 
-  const getPrice = (tcgplayer: any) => {
-    if(!tcgplayer || !tcgplayer.prices) return null;
-    const p = tcgplayer.prices;
-    if(p.holofoil?.mid) return p.holofoil.mid;
-    if(p.normal?.mid) return p.normal.mid;
-    if(p.reverseHolofoil?.mid) return p.reverseHolofoil.mid;
-    const firstKey = Object.keys(p)[0];
-    if(firstKey && p[firstKey]?.mid) return p[firstKey].mid;
-    return null;
-  };
-
-  const price = getPrice(card.tcgplayer);
-
   return (
     <div 
       className="relative w-full aspect-[2.5/3.5] group perspective-1000"
@@ -153,23 +140,8 @@ function PokemonCardInner({
             />
           )}
 
-          {/* CARD INFO OVERLAY (Mobile Friendly) */}
-          {!isFlipped && (
-            <div 
-              className="absolute bottom-0 left-0 w-full p-3 bg-black/70 backdrop-blur-md border-t border-white/10 z-30 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
-            >
-              <div className="flex flex-col gap-1 text-xs">
-                <div className="flex justify-between items-center">
-                  <span className="text-white/90 font-bold truncate mr-2">{card.name}</span>
-                  {price && <span className="text-emerald-400 font-bold shrink-0">${price.toFixed(2)}</span>}
-                </div>
-                <div className="flex justify-between items-center text-[10px] text-gray-400">
-                  <span className="truncate mr-2">{card.artist || "Unknown Artist"}</span>
-                  <span className="text-white/70 bg-white/10 px-1.5 py-0.5 rounded shrink-0">{card.rarity || "Unknown"}</span>
-                </div>
-              </div>
-            </div>
-          )}
+          {/* Sin franja de datos encima de la ilustración: tapaba el arte de la
+              carta. Nombre, artista y rareza se leen en el detalle. */}
         </div>
 
         {/* --- BACK FACE --- */}

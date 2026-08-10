@@ -114,8 +114,15 @@ export function useSwipe(
 
     const onPointerDown = (e: PointerEvent) => {
       if (!cfg().enabled) return;
-      // Ignoramos el ratón derecho y los gestos multi-táctil (pinch-zoom).
-      if (e.button !== 0 || active) return;
+      if (e.button !== 0) return;
+      // Segundo dedo: es un pellizco para ampliar, no un deslizamiento.
+      // Se abandona el gesto y se devuelve el control al navegador.
+      if (active) {
+        active = false;
+        locked = null;
+        release(true);
+        return;
+      }
       active = true;
       pointerId = e.pointerId;
       startX = lastX = e.clientX;
@@ -246,5 +253,9 @@ export function useSwipe(
 export function touchActionFor(axis: SwipeAxis): string {
   if (axis === "x") return "pan-y pinch-zoom";
   if (axis === "y") return "pan-x pinch-zoom";
-  return "none";
+  // Para ambos ejes no se puede escribir "none" sin perder el pellizco: la
+  // especificación no deja combinarlo. Se cede el paneo vertical al navegador
+  // (que en un contenedor sin scroll no hace nada) a cambio de conservar el
+  // zoom, y el hook ya abandona el gesto en cuanto aparece un segundo dedo.
+  return "pan-y pinch-zoom";
 }
