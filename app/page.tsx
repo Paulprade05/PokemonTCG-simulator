@@ -26,6 +26,7 @@ import { useSwipe, touchActionFor } from "../hooks/useSwipe";
 import { useToast } from "../components/ui/Toast";
 import { useImmersive } from "../components/AppShell";
 import PokemonCard from "../components/PokemonCard";
+import { formatNumber } from "../utils/format";
 
 type PackType = "STANDARD" | "PREMIUM" | "GOLDEN" | "SPECIAL";
 
@@ -255,7 +256,7 @@ export default function Home() {
     const price = PACK_PRICES[type] * count;
     if (coins < price) {
       haptic("warning");
-      toast(`Necesitas ${price.toLocaleString()} monedas para ×${count}`, "error");
+      toast(`Necesitas ${formatNumber(price)} monedas para ×${count}`, "error");
       finishingRef.current = false; // sin esto el botón quedaba bloqueado
       return;
     }
@@ -480,7 +481,7 @@ export default function Home() {
           >
             <p className="text-sm font-semibold" style={{ color: "var(--warn)" }}>¡Set completado!</p>
             <p className="text-xs ink-soft mt-1">
-              {setBonus.sets.join(", ")} · +{setBonus.granted.toLocaleString()} monedas
+              {setBonus.sets.join(", ")} · +{formatNumber(setBonus.granted)} monedas
             </p>
           </motion.div>
         )}
@@ -501,7 +502,7 @@ export default function Home() {
               <div>
                 <p className="text-[10px] uppercase tracking-[0.3em] ink-faint">Valor de tu colección</p>
                 <p className="text-3xl md:text-4xl font-bold text-gradient mt-1 tabular-nums">
-                  {stats.totalValue.toLocaleString()}
+                  {formatNumber(stats.totalValue)}
                   <span className="text-base ink-faint font-normal ml-2">monedas</span>
                 </p>
               </div>
@@ -519,18 +520,27 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Logros compactos */}
-            <div className="mt-5 pt-4 border-t border-[var(--border)] flex items-center gap-3">
-              <span className="text-[10px] uppercase tracking-wider ink-faint shrink-0 hidden sm:inline">
-                Logros {achievementsDone}/{achievements.length}
-              </span>
-              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 flex-1">
+            {/* Logros compactos. La etiqueta se muestra también en móvil: sin
+                ella la fila queda como seis cuadrados grises sin explicación. */}
+            <div className="mt-5 pt-4 border-t border-[var(--border)]">
+              <div className="mb-2 flex items-baseline justify-between gap-2">
+                <span className="text-[10px] uppercase tracking-wider ink-faint">
+                  Logros
+                </span>
+                <span className="tnum text-[11px] font-semibold ink-soft">
+                  {achievementsDone} de {achievements.length}
+                </span>
+              </div>
+              <div className="grid grid-cols-6 gap-1.5 sm:flex sm:gap-2">
                 {achievements.map((ach) => (
                   <div
                     key={ach.id}
                     title={`${ach.name} — ${ach.desc}`}
-                    className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-lg border transition ${
-                      ach.done ? "ring-accent border-transparent" : "surface-2 grayscale opacity-40"
+                    aria-label={`${ach.name}: ${ach.done ? "conseguido" : "pendiente"}`}
+                    className={`flex aspect-square items-center justify-center rounded-xl border text-base transition sm:aspect-auto sm:h-9 sm:w-9 sm:text-lg ${
+                      ach.done
+                        ? "ring-accent border-transparent"
+                        : "surface-2 opacity-30 saturate-0"
                     }`}
                   >
                     {ach.icon}
@@ -1094,11 +1104,11 @@ function PackCard({ accent, badge, title, description, price, icon, onClick, onM
 
       <div className="mt-auto w-full flex flex-col gap-2 relative z-10">
         <button onClick={onClick} className={`${a.btn} press font-semibold py-2.5 px-6 rounded-xl w-full text-center transition text-sm`}>
-          {price.toLocaleString()} monedas
+          {formatNumber(price)} monedas
         </button>
         {onMulti && (
           <button onClick={onMulti} className="press btn-ghost font-medium py-2 px-6 rounded-xl w-full text-center transition text-xs">
-            Abrir ×{multiCount} · {(price * multiCount).toLocaleString()}
+            Abrir ×{multiCount} · {formatNumber(price * multiCount)}
           </button>
         )}
       </div>

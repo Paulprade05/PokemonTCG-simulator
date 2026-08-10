@@ -6,6 +6,7 @@ import { useCurrency } from "../hooks/useGameCurrency";
 import GlobalSearch from "./GlobalSearch";
 import ThemeToggle from "./ThemeToggle";
 import DailyReward from "./DailyReward";
+import { formatNumber } from "../utils/format";
 
 export default function TopBar() {
   const { coins } = useCurrency();
@@ -55,7 +56,7 @@ export default function TopBar() {
             <circle cx="12" cy="12" r="9" /><path d="M12 16v-8M9 12h6" />
           </svg>
           <span className="font-semibold text-xs md:text-sm tabular-nums">
-            {!isLoaded ? "..." : coins.toLocaleString()}
+            {!isLoaded ? "..." : formatNumber(coins)}
           </span>
         </div>
 

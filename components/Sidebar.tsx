@@ -4,10 +4,18 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import { SignedIn } from "@clerk/nextjs";
+import { useEffect, useState } from "react";
 import { NAV_ITEMS } from "./nav-items";
 
 export default function Sidebar() {
   const pathname = usePathname();
+
+  // El año se calcula tras montar, nunca durante el render: el servidor de
+  // Vercel corre en UTC y el navegador en la zona del usuario, así que en
+  // Nochevieja emitirían años distintos y React abortaría la hidratación. Si
+  // además la ruta se prerrenderiza, el año quedaría congelado al del build.
+  const [year, setYear] = useState<number | null>(null);
+  useEffect(() => setYear(new Date().getFullYear()), []);
 
   const renderItem = (it: (typeof NAV_ITEMS)[number]) => {
     const active = it.match(pathname);
@@ -57,7 +65,7 @@ export default function Sidebar() {
       </nav>
 
       <div className="mt-auto px-3">
-        <p className="text-[10px] ink-faint">v2 · {new Date().getFullYear()}</p>
+        <p className="text-[10px] ink-faint">v2{year ? ` · ${year}` : ""}</p>
       </div>
     </aside>
   );

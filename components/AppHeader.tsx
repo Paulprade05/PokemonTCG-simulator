@@ -8,6 +8,7 @@ import DailyReward from "./DailyReward";
 import GlobalSearch from "./GlobalSearch";
 import ThemeToggle from "./ThemeToggle";
 import { ReactNode } from "react";
+import { formatNumber } from "../utils/format";
 
 interface AppHeaderProps {
   back?: { href: string; label?: string };
@@ -74,7 +75,7 @@ export default function AppHeader({
             <circle cx="12" cy="12" r="10" /><path d="M12 16v-8M9 12h6" />
           </svg>
           <span className="font-semibold tracking-wide text-xs md:text-sm tabular-nums">
-            {!isLoaded ? "..." : coins.toLocaleString()}
+            {!isLoaded ? "..." : formatNumber(coins)}
           </span>
         </div>
 

@@ -18,6 +18,7 @@ import ConfirmSheet from "../../components/ui/ConfirmSheet";
 import { useToast } from "../../components/ui/Toast";
 import { useHaptics } from "../../hooks/useHaptics";
 import { useImmersive } from "../../components/AppShell";
+import { formatNumber } from "../../utils/format";
 
 type Tab = "amigos" | "recibidas" | "enviadas" | "historial";
 
@@ -289,7 +290,7 @@ function AmigosTab({ friends, requests, myId, onAccept, onRemove, onTrade }: any
             </div>
             <div className="flex items-center justify-between mb-3">
               <span className="text-[10px] uppercase tracking-wider ink-faint">Valor</span>
-              <span className="text-sm font-bold accent tabular-nums">{f.stats.value.toLocaleString()} 💰</span>
+              <span className="text-sm font-bold accent tabular-nums">{formatNumber(f.stats.value)} 💰</span>
             </div>
             <div className="flex gap-2">
               <Link href={f.isMe ? "/collection" : `/trainer/${f.friend_id}`} className="flex-1 btn-ghost press text-center text-xs font-medium py-2.5 rounded-lg">
