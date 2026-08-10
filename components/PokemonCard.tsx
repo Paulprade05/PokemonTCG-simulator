@@ -61,9 +61,33 @@ function PokemonCardInner({
   const rotateX = useTransform(mouseYSpring, [-0.5, 0.5], ["15deg", "-15deg"]);
   const rotateYFront = useTransform(mouseXSpring, [-0.5, 0.5], ["-15deg", "15deg"]);
 
+  /**
+   * Con la carta ya girada y quieta, se abandona el contexto 3D.
+   *
+   * WebKit promociona a capa compositada todo lo que lleve
+   * `backface-visibility: hidden` dentro de un `preserve-3d`, y esa capa se
+   * rasteriza a una escala fija: en un iPhone la ilustración se ve blanda
+   * aunque la fuente sea la de alta resolución. En reposo la carta no necesita
+   * volumen, así que se pinta plana y el navegador la dibuja a resolución
+   * nativa. Durante el giro sí hace falta el 3D, pero ahí el movimiento tapa
+   * cualquier pérdida de nitidez.
+   */
+  const [settled, setSettled] = useState(reveal);
+
   useEffect(() => {
     setIsFlipped(!reveal);
+    if (!reveal) {
+      setSettled(false);
+      return;
+    }
+    // Respaldo por si onAnimationComplete no llega (pestaña en segundo plano,
+    // movimiento reducido): pasado el tiempo del giro, se asienta igualmente.
+    const t = window.setTimeout(() => setSettled(true), 900);
+    return () => window.clearTimeout(t);
   }, [reveal]);
+
+  // El volumen sólo se necesita al girar o mientras se inclina con el puntero.
+  const flat = settled && !isFlipped && !isHovered;
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!interactive || !cardRef.current || isFlipped) return;
@@ -88,20 +112,25 @@ function PokemonCardInner({
   const imageUrl = useHighRes ? card.images?.large : card.images?.small;
 
   return (
-    <div 
-      className="relative w-full aspect-[2.5/3.5] group perspective-1000"
+    <div
+      className={`relative w-full aspect-[2.5/3.5] group ${flat ? "" : "perspective-1000"}`}
       ref={cardRef}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       onMouseEnter={() => setIsHovered(true)}
     >
       <motion.div
-        className="w-full h-full relative preserve-3d"
+        className="w-full h-full relative"
         initial={false}
         animate={{ rotateY: isFlipped ? 180 : 0 }}
         transition={{ duration: 0.8, type: "spring", stiffness: 100, damping: 20 }}
+        onAnimationComplete={() => {
+          if (!isFlipped) setSettled(true);
+        }}
         style={{
-          transformStyle: "preserve-3d",
+          // En reposo se sale del 3D para que la carta no viva en una capa
+          // compositada y se dibuje a resolución nativa.
+          transformStyle: flat ? "flat" : "preserve-3d",
           rotateX: interactive && !isFlipped ? rotateX : 0,
           rotateY: interactive && !isFlipped ? rotateYFront : undefined,
         }}
@@ -110,7 +139,7 @@ function PokemonCardInner({
         <div
           className="absolute w-full h-full rounded-[4.5%] overflow-hidden bg-[#0a0a0a] border border-white/10"
           style={{
-            backfaceVisibility: "hidden",
+            backfaceVisibility: flat ? "visible" : "hidden",
             // Sombra y halo con box-shadow y no con filter: un `filter` sobre un
             // elemento con preserve-3d obliga a WebKit a rasterizar la capa
             // entera —la imagen incluida— y la textura no siempre respeta la
@@ -161,6 +190,9 @@ function PokemonCardInner({
             transform: "rotateY(180deg)",
             backfaceVisibility: "hidden",
             boxShadow: "0 8px 18px rgba(0,0,0,0.45)",
+            // Fuera del contexto 3D el reverso ya no queda oculto por su cara
+            // trasera, así que se retira del todo.
+            display: flat ? "none" : "block",
           }}
         >
           <img
