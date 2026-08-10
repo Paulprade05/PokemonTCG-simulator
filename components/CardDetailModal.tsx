@@ -378,7 +378,7 @@ export default function CardDetailModal({
               </div>
 
               {/* Card image with halo */}
-              <div ref={tiltRef} className="relative" style={{ willChange: "transform" }}>
+              <div ref={tiltRef} className="relative">
                 {aura && (
                   <div
                     className="absolute inset-0 -m-6 rounded-3xl blur-2xl opacity-70 pointer-events-none"

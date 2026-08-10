@@ -129,13 +129,17 @@ export default function CardZoom({
             style={{ touchAction: touchActionFor("both") }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div ref={tiltRef} style={{ willChange: "transform" }}>
+            <div ref={tiltRef}>
               {src && (
                 <img
                   src={src}
                   alt={alt ?? ""}
                   draggable={false}
-                  className="max-h-[76vh] w-auto max-w-[92vw] rounded-2xl object-contain drop-shadow-[0_30px_60px_rgba(0,0,0,0.8)]"
+                  // Sombra con box-shadow y no con drop-shadow: un filter
+                  // rasteriza la imagen y aquí es justo la que debe verse
+                  // nítida.
+                  style={{ boxShadow: "0 30px 60px rgba(0,0,0,0.8)" }}
+                  className="max-h-[76vh] w-auto max-w-[92vw] rounded-2xl object-contain"
                 />
               )}
             </div>

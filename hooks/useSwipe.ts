@@ -105,10 +105,14 @@ export function useSwipe(
         target.style.transform = "";
         window.setTimeout(() => {
           target.style.transition = "";
+          // Se libera la capa: un will-change permanente deja la textura
+          // rasterizada a una escala fija y el contenido se ve borroso.
+          target.style.willChange = "";
         }, 340);
       } else {
         target.style.transition = "";
         target.style.transform = "";
+        target.style.willChange = "";
       }
     };
 
@@ -130,6 +134,8 @@ export function useSwipe(
       startT = lastT = e.timeStamp || performance.now();
       locked = null;
       el.style.transition = "";
+      // Sólo mientras dura el gesto, nunca de forma permanente.
+      moved().style.willChange = "transform";
       cfg().onStart?.();
     };
 

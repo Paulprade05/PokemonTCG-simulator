@@ -104,23 +104,33 @@ function PokemonCardInner({
           transformStyle: "preserve-3d",
           rotateX: interactive && !isFlipped ? rotateX : 0,
           rotateY: interactive && !isFlipped ? rotateYFront : undefined,
-          filter: interactive && !isFlipped && rarityGlow
-            ? `drop-shadow(0px 0px ${isHovered ? 30 : 18}px ${rarityGlow}) drop-shadow(0px 12px 18px rgba(0,0,0,0.5))`
-            : "drop-shadow(0px 8px 18px rgba(0,0,0,0.45))"
         }}
       >
         {/* --- FRONT FACE --- */}
         <div
           className="absolute w-full h-full rounded-[4.5%] overflow-hidden bg-[#0a0a0a] border border-white/10"
-          style={{ backfaceVisibility: "hidden" }}
+          style={{
+            backfaceVisibility: "hidden",
+            // Sombra y halo con box-shadow y no con filter: un `filter` sobre un
+            // elemento con preserve-3d obliga a WebKit a rasterizar la capa
+            // entera —la imagen incluida— y la textura no siempre respeta la
+            // densidad de pantalla del iPhone, lo que se ve como una carta
+            // borrosa. box-shadow pinta igual sin rasterizar el contenido.
+            boxShadow:
+              interactive && !isFlipped && rarityGlow
+                ? `0 0 ${isHovered ? 30 : 18}px ${rarityGlow}, 0 12px 18px rgba(0,0,0,0.5)`
+                : "0 8px 18px rgba(0,0,0,0.45)",
+          }}
         >
           {imageUrl && (
             <img
               src={imageUrl}
               alt={card.name}
-              loading="lazy"
+              // La carta grande es el contenido principal de la pantalla: no
+              // debe esperar al observer de lazy-loading.
+              loading={useHighRes ? "eager" : "lazy"}
               decoding="async"
-              className="w-full h-full object-contain drop-shadow-xl"
+              className="w-full h-full object-contain"
             />
           )}
           
@@ -146,10 +156,20 @@ function PokemonCardInner({
 
         {/* --- BACK FACE --- */}
         <div
-          className="absolute w-full h-full rounded-[4.5%] overflow-hidden shadow-xl backface-hidden border border-white/10"
-          style={{ transform: "rotateY(180deg)", backfaceVisibility: "hidden" }}
+          className="absolute w-full h-full rounded-[4.5%] overflow-hidden backface-hidden border border-white/10"
+          style={{
+            transform: "rotateY(180deg)",
+            backfaceVisibility: "hidden",
+            boxShadow: "0 8px 18px rgba(0,0,0,0.45)",
+          }}
         >
-          <img src={CARD_BACK} alt="Card Back" loading="lazy" decoding="async" className="w-full h-full object-cover" />
+          <img
+            src={CARD_BACK}
+            alt="Card Back"
+            loading={useHighRes ? "eager" : "lazy"}
+            decoding="async"
+            className="w-full h-full object-cover"
+          />
         </div>
       </motion.div>
     </div>

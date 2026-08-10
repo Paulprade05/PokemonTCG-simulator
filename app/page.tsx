@@ -875,7 +875,6 @@ export default function Home() {
               style={{
                 width: CARD_WIDTH,
                 touchAction: touchActionFor("both"),
-                willChange: "transform",
               }}
             >
               {/* la perspectiva va en el padre directo de la carta animada */}

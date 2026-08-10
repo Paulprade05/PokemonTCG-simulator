@@ -338,7 +338,7 @@ export default function SetAlbumPage() {
             <div
               ref={detailImageRef}
               className="mx-auto w-full max-w-[280px] sm:max-w-[320px]"
-              style={{ touchAction: touchActionFor("x"), willChange: "transform" }}
+              style={{ touchAction: touchActionFor("x") }}
             >
               {detailImage && (
                 <motion.img
