@@ -113,8 +113,8 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
     SELECT c.*, uc.quantity, uc.is_favorite -- 👈 Asegúrate de pedir esta columna
     FROM user_collection uc
     JOIN cards c ON uc.card_id = c.id
-    WHERE uc.user_id = ${userId}
-    ORDER BY 
+    WHERE uc.user_id = ${userId} AND uc.quantity > 0
+    ORDER BY
       uc.is_favorite DESC,  -- 👈 PRIMERO LAS FAVORITAS (True va antes que False)
       c.rarity DESC,        -- Luego por rareza
       c.name ASC            -- Luego por nombre
@@ -177,10 +177,10 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
     try {
       // 1. Verificamos estado actual
       const currentStatus = await sql`
-        SELECT is_favorite FROM user_collection 
-        WHERE user_id = ${userId} AND card_id = ${cardId}
+        SELECT is_favorite FROM user_collection
+        WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity > 0
       `;
-      
+
       // Si no encuentra la carta, es que no la tienes
       if (currentStatus.rowCount === 0) return { error: "No tienes esta carta" };
 
@@ -189,8 +189,8 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
       // 2. Comprobar límite de 10 (solo si vamos a activar el favorito)
       if (!isFav) {
         const countResult = await sql`
-          SELECT count(*) as total FROM user_collection 
-          WHERE user_id = ${userId} AND is_favorite = true
+          SELECT count(*) as total FROM user_collection
+          WHERE user_id = ${userId} AND is_favorite = true AND quantity > 0
         `;
         const totalFavs = parseInt(countResult.rows[0].total);
         if (totalFavs >= 10) return { error: "¡Límite de 10 favoritos alcanzado!" };
@@ -247,8 +247,8 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
     try {
       // 1. Consultamos cuántas tiene el usuario
       const { rows } = await sql`
-        SELECT quantity FROM user_collection 
-        WHERE user_id = ${userId} AND card_id = ${cardId}
+        SELECT quantity FROM user_collection
+        WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity > 0
       `;
 
       if (rows.length === 0) return { success: false, error: "No tienes la carta" };
@@ -320,7 +320,7 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
           uc.is_favorite
         FROM user_collection uc
         JOIN cards c ON uc.card_id = c.id
-        WHERE uc.user_id = ${trainerId}
+        WHERE uc.user_id = ${trainerId} AND uc.quantity > 0
       `;
 
       // Formateamos los datos para que tu página los entienda perfectamente
@@ -452,7 +452,7 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
           SELECT uc.quantity, uc.is_favorite, c.rarity
           FROM user_collection uc
           JOIN cards c ON uc.card_id = c.id
-          WHERE uc.user_id = ${friend.friend_id}
+          WHERE uc.user_id = ${friend.friend_id} AND uc.quantity > 0
         `;
 
         let totalValue = 0;
@@ -598,6 +598,17 @@ export async function acceptTrade(tradeId: number) {
     await sql`UPDATE user_collection SET quantity = quantity - 1 WHERE user_id = ${trade.sender_id} AND card_id = ${trade.sender_card_id}`;
     await sql`UPDATE user_collection SET quantity = quantity - 1 WHERE user_id = ${userId} AND card_id = ${trade.receiver_card_id}`;
 
+    // Limpiar filas que se hayan quedado a 0: si no queda ninguna copia,
+    // la carta deja de estar en la colección (si no, contaría como poseída).
+    await sql`
+      DELETE FROM user_collection
+      WHERE quantity <= 0
+        AND (
+          (user_id = ${trade.sender_id} AND card_id = ${trade.sender_card_id})
+          OR (user_id = ${userId} AND card_id = ${trade.receiver_card_id})
+        )
+    `;
+
     // Sumar las cartas al nuevo dueño
     await sql`INSERT INTO user_collection (user_id, card_id, quantity) VALUES (${trade.sender_id}, ${trade.receiver_card_id}, 1) ON CONFLICT (user_id, card_id) DO UPDATE SET quantity = user_collection.quantity + 1`;
     await sql`INSERT INTO user_collection (user_id, card_id, quantity) VALUES (${userId}, ${trade.sender_card_id}, 1) ON CONFLICT (user_id, card_id) DO UPDATE SET quantity = user_collection.quantity + 1`;
@@ -730,7 +741,7 @@ export async function getProfileStats() {
       SELECT uc.quantity, uc.is_favorite, c.rarity, c.set_id
       FROM user_collection uc
       JOIN cards c ON uc.card_id = c.id
-      WHERE uc.user_id = ${userId}
+      WHERE uc.user_id = ${userId} AND uc.quantity > 0
     `;
     const { rows: setsRows } = await sql`SELECT id, total FROM sets`;
     const { rows: userRows } = await sql`SELECT packs_opened, money_spent FROM users WHERE id = ${userId}`;
@@ -856,7 +867,7 @@ export async function searchCardsInDB(query: string, page = 1, pageSize = 10) {
     if (userId) {
       const res = await sql`
         SELECT c.id, c.name, c.rarity, c.images, c.set_id,
-               EXISTS(SELECT 1 FROM user_collection uc WHERE uc.user_id = ${userId} AND uc.card_id = c.id) AS owned
+               EXISTS(SELECT 1 FROM user_collection uc WHERE uc.user_id = ${userId} AND uc.card_id = c.id AND uc.quantity > 0) AS owned
         FROM cards c
         WHERE LOWER(c.name) LIKE ${term}
         ORDER BY c.name ASC
@@ -916,7 +927,7 @@ export async function claimSetCompletionBonuses() {
       SELECT c.set_id, COUNT(*)::int AS owned
       FROM user_collection uc
       JOIN cards c ON uc.card_id = c.id
-      WHERE uc.user_id = ${userId}
+      WHERE uc.user_id = ${userId} AND uc.quantity > 0
       GROUP BY c.set_id
     `;
     const { rows: setsRows } = await sql`SELECT id, total, name FROM sets`;
@@ -968,7 +979,7 @@ export async function sellPackDuplicates(cardIds: string[]) {
       const { rows } = await sql`
         SELECT uc.quantity, c.rarity
         FROM user_collection uc JOIN cards c ON uc.card_id = c.id
-        WHERE uc.user_id = ${userId} AND uc.card_id = ${cardId}
+        WHERE uc.user_id = ${userId} AND uc.card_id = ${cardId} AND uc.quantity > 0
       `;
       if (rows.length === 0) continue;
       const have = rows[0].quantity;
@@ -1044,7 +1055,7 @@ export async function getWishlistCards() {
   try {
     const { rows } = await sql`
       SELECT c.id, c.name, c.rarity, c.images, c.set_id,
-             EXISTS(SELECT 1 FROM user_collection uc WHERE uc.user_id = ${userId} AND uc.card_id = c.id) AS owned
+             EXISTS(SELECT 1 FROM user_collection uc WHERE uc.user_id = ${userId} AND uc.card_id = c.id AND uc.quantity > 0) AS owned
       FROM wishlist w JOIN cards c ON w.card_id = c.id
       WHERE w.user_id = ${userId}
       ORDER BY w.added_at DESC

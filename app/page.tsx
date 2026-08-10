@@ -60,7 +60,7 @@ const cardVariants = {
 };
 
 export default function Home() {
-  const { coins, setCoins, spendCoins } = useCurrency();
+  const { coins, setCoins, spendCoins, addCoins } = useCurrency();
   const { isSignedIn, isLoaded } = useUser();
   const haptic = useHaptics();
   const toast = useToast();
@@ -84,6 +84,8 @@ export default function Home() {
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
   const [openSeries, setOpenSeries] = useState<Record<string, boolean>>({});
   const [direction, setDirection] = useState(1);
+  /** Hay una acción de servidor en vuelo (compra o guardado): botones apagados. */
+  const [busy, setBusy] = useState(false);
   const finishingRef = useRef(false);
   /** Elemento que captura los gestos de la carta durante la apertura. */
   const cardGestureRef = useRef<HTMLDivElement>(null);
@@ -231,16 +233,61 @@ export default function Home() {
     else if (type === "PREMIUM") newPack = openPremiumPack(allCards);
     else newPack = openGoldenPack(allCards, userCollectionIds);
 
-    if (spendCoins(price)) {
+    if (!spendCoins(price)) return;
+
+    // Cierre mientras el cobro viaja al servidor: sin él, un doble toque
+    // compraba dos sobres y sólo se descontaba uno (updateCoins es absoluto).
+    finishingRef.current = true;
+    setBusy(true);
+    try {
       if (isSignedIn) await updateCoins(coins - price);
-      setPrePackIds([...userCollectionIds]); // snapshot ANTES del sobre
-      setSoldInfo(null);
-      setCurrentPackType(type);
-      setCurrentPack(newPack);
-      setCurrentPackPrice(price);
-      setPackIndex(0);
-      setCardRevealed(false);
-      setIsPackOpen(true);
+    } catch (err) {
+      // Si el cobro no llega al servidor no se abre el sobre: se devuelven las
+      // monedas y se avisa. Abrirlo igualmente regalaba cartas que la nube
+      // nunca registraría, o cobraba dos veces al recargar.
+      console.error("Error descontando monedas:", err);
+      addCoins(price);
+      toast("No se pudo completar la compra", "error");
+      haptic("warning");
+      return;
+    } finally {
+      finishingRef.current = false;
+      setBusy(false);
+    }
+
+    setPrePackIds([...userCollectionIds]); // snapshot ANTES del sobre
+    setSoldInfo(null);
+    setCurrentPackType(type);
+    setCurrentPack(newPack);
+    setCurrentPackPrice(price);
+    setPackIndex(0);
+    setCardRevealed(false);
+    setIsPackOpen(true);
+  };
+
+  /**
+   * Puesta al día tras guardar un sobre (sólo con sesión): bonus por set
+   * completado, monedas reales del servidor y estadísticas/logros del panel.
+   * Nunca lanza: un fallo aquí no puede tumbar el guardado del sobre.
+   */
+  const refreshAfterPack = async () => {
+    try {
+      const res = await claimSetCompletionBonuses();
+      if (res.granted > 0) {
+        setSetBonus({ granted: res.granted, sets: res.sets });
+        setTimeout(() => setSetBonus(null), 6000);
+      }
+    } catch (err) {
+      console.error("Error reclamando bonus de set:", err);
+    }
+    try {
+      // Las monedas se releen del servidor (el bonus y la compra se aplican
+      // allí) para que el marcador no quede desincronizado.
+      const [data, fresh] = await Promise.all([getUserData(), getProfileStats()]);
+      if (data) setCoins(data.coins);
+      if (fresh) setStats(fresh);
+    } catch (err) {
+      console.error("Error refrescando estadísticas:", err);
     }
   };
 
@@ -248,71 +295,74 @@ export default function Home() {
   const handleBuyMulti = async (type: PackType, count = 10) => {
     if (finishingRef.current) return;
     finishingRef.current = true;
-    if (!allCards || allCards.length === 0) {
-      toast("Las cartas no se han cargado. Recarga la página.", "error");
-      finishingRef.current = false;
-      return;
-    }
-    const price = PACK_PRICES[type] * count;
-    if (coins < price) {
-      haptic("warning");
-      toast(`Necesitas ${formatNumber(price)} monedas para ×${count}`, "error");
-      finishingRef.current = false; // sin esto el botón quedaba bloqueado
-      return;
-    }
-
-    const ownedSnapshot = [...userCollectionIds];
-    const owned = new Set(ownedSnapshot);
-    const combined: any[] = [];
-    for (let i = 0; i < count; i++) {
-      let p: any[] = [];
-      if (type === "STANDARD") p = openStandardPack(allCards);
-      else if (type === "PREMIUM") p = openPremiumPack(allCards);
-      else p = openGoldenPack(allCards, Array.from(owned));
-      combined.push(...p);
-      p.forEach((c) => owned.add(c.id)); // golden garantiza nuevas distintas
-    }
-
-    if (spendCoins(price)) {
-      if (isSignedIn) {
-        await updateCoins(coins - price);
-        await savePackToCollection(combined, price, count);
-        const res = await claimSetCompletionBonuses();
-        if (res.granted > 0) {
-          setSetBonus({ granted: res.granted, sets: res.sets });
-          setCoins((c) => c + res.granted);
-          setTimeout(() => setSetBonus(null), 6000);
-        }
-        getProfileStats().then(setStats);
-      } else {
-        saveToCollection(combined);
+    setBusy(true);
+    // Todo va en try/finally: antes, un fallo de red dejaba finishingRef en
+    // true y los botones de compra bloqueados para el resto de la sesión.
+    try {
+      if (!allCards || allCards.length === 0) {
+        toast("Las cartas no se han cargado. Recarga la página.", "error");
+        return;
       }
+      const price = PACK_PRICES[type] * count;
+      if (coins < price) {
+        haptic("warning");
+        toast(`Necesitas ${formatNumber(price)} monedas para ×${count}`, "error");
+        return;
+      }
+
+      const ownedSnapshot = [...userCollectionIds];
+      const owned = new Set(ownedSnapshot);
+      const combined: any[] = [];
+      for (let i = 0; i < count; i++) {
+        let p: any[] = [];
+        if (type === "STANDARD") p = openStandardPack(allCards);
+        else if (type === "PREMIUM") p = openPremiumPack(allCards);
+        else p = openGoldenPack(allCards, Array.from(owned));
+        combined.push(...p);
+        p.forEach((c) => owned.add(c.id)); // golden garantiza nuevas distintas
+      }
+
+      if (!spendCoins(price)) return;
+
+      let saved = true;
+      try {
+        if (isSignedIn) {
+          await updateCoins(coins - price);
+          await savePackToCollection(combined, price, count);
+          await refreshAfterPack();
+        } else {
+          saveToCollection(combined);
+        }
+      } catch (err) {
+        console.error("Error guardando los sobres:", err);
+        toast("No se pudieron guardar los sobres en la nube", "error");
+        saved = false;
+      }
+
       setPrePackIds(ownedSnapshot);
-      setUserCollectionIds((prev) => [...prev, ...combined.map((c) => c.id)]);
+      // Sólo damos por poseídas las cartas si el guardado salió bien.
+      if (saved) setUserCollectionIds((prev) => [...prev, ...combined.map((c) => c.id)]);
       setSoldInfo(null);
       setCurrentPackType(type);
       setCurrentPack(combined);
       setCurrentPackPrice(price);
       setIsPackOpen(false); // directo al resumen
       haptic("success");
+    } finally {
+      finishingRef.current = false;
+      setBusy(false);
     }
-    finishingRef.current = false;
   };
 
   const finishPack = async () => {
     if (finishingRef.current) return;
     finishingRef.current = true;
+    setBusy(true);
     try {
       if (isSignedIn) {
         await savePackToCollection(currentPack, currentPackPrice);
-        // Bonus por completar sets
-        const res = await claimSetCompletionBonuses();
-        if (res.granted > 0) {
-          setSetBonus({ granted: res.granted, sets: res.sets });
-          setCoins((c) => c + res.granted);
-          setTimeout(() => setSetBonus(null), 6000);
-        }
-        getProfileStats().then(setStats);
+        // Bonus por completar sets + monedas + estadísticas/logros al día.
+        await refreshAfterPack();
       } else {
         saveToCollection(currentPack);
       }
@@ -329,6 +379,7 @@ export default function Home() {
       // compra bloqueados para el resto de la sesión.
       setIsPackOpen(false);
       finishingRef.current = false;
+      setBusy(false);
     }
   };
 
@@ -459,12 +510,20 @@ export default function Home() {
   const handleSellPackDupes = async () => {
     if (!isSignedIn || dupeIdsInPack.length === 0 || sellingDupes) return;
     setSellingDupes(true);
-    const res = await sellPackDuplicates(dupeIdsInPack);
-    setSellingDupes(false);
-    if (res.earned > 0) {
-      setCoins((c) => c + res.earned);
-      setSoldInfo(res);
-      getProfileStats().then(setStats);
+    try {
+      const res = await sellPackDuplicates(dupeIdsInPack);
+      if (res.earned > 0) {
+        setCoins((c) => c + res.earned);
+        setSoldInfo(res);
+        // El valor de la colección y los logros cambian al vender.
+        getProfileStats().then((s) => { if (s) setStats(s); }).catch(() => {});
+      }
+    } catch (err) {
+      console.error("Error vendiendo repetidas:", err);
+      toast("No se pudieron vender las repetidas", "error");
+    } finally {
+      // Sin el finally, un fallo dejaba el botón en "Vendiendo..." para siempre.
+      setSellingDupes(false);
     }
   };
 
@@ -609,7 +668,7 @@ export default function Home() {
                     transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                     className="overflow-hidden"
                   >
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4 pt-3">
+                    <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 md:gap-4 lg:grid-cols-4 pt-3">
                       {sets.map((set) => (
                         <motion.button
                           key={set.id}
@@ -692,6 +751,7 @@ export default function Home() {
                   </svg>
                 }
                 onClick={() => handleBuyPack("SPECIAL")}
+                disabled={busy}
               />
             ) : (
               <>
@@ -715,6 +775,7 @@ export default function Home() {
                   }
                   onClick={() => handleBuyPack("STANDARD")}
                   onMulti={() => handleBuyMulti("STANDARD", 10)}
+                  disabled={busy}
                 />
                 <PackCard
                   accent="purple"
@@ -735,6 +796,7 @@ export default function Home() {
                   }
                   onClick={() => handleBuyPack("PREMIUM")}
                   onMulti={() => handleBuyMulti("PREMIUM", 10)}
+                  disabled={busy}
                 />
                 <PackCard
                   accent="yellow"
@@ -754,6 +816,8 @@ export default function Home() {
                   }
                   onClick={() => handleBuyPack("GOLDEN")}
                   onMulti={() => handleBuyMulti("GOLDEN", 5)}
+                  disabled={busy}
+                  multiCount={5}
                 />
               </>
             )}
@@ -822,8 +886,9 @@ export default function Home() {
           <div className="w-full max-w-2xl h-14 shrink-0 flex items-center gap-3 px-3 md:px-4 relative z-20">
             <button
               onClick={handleRevealAll}
+              disabled={busy}
               aria-label="Guardar el sobre y salir"
-              className="chip press touch-target w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+              className="chip press touch-target w-10 h-10 rounded-full flex items-center justify-center shrink-0 disabled:opacity-50"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-4 h-4">
                 <path d="m15 18-6-6 6-6" />
@@ -919,13 +984,21 @@ export default function Home() {
             <div className="flex items-center justify-center gap-2 w-full">
               <button
                 onClick={handleNextCard}
-                className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold"
+                disabled={busy}
+                className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-60"
               >
-                Siguiente <kbd className="ml-1 text-[10px] opacity-70 hidden sm:inline">espacio</kbd>
+                {busy ? (
+                  "Guardando..."
+                ) : (
+                  <>
+                    Siguiente <kbd className="ml-1 text-[10px] opacity-70 hidden sm:inline">espacio</kbd>
+                  </>
+                )}
               </button>
               <button
                 onClick={handleRevealAll}
-                className="ink-soft hover:ink press touch-target px-4 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2"
+                disabled={busy}
+                className="ink-soft hover:ink press touch-target px-4 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2 disabled:opacity-50"
               >
                 Revelar todo
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
@@ -1010,7 +1083,10 @@ export default function Home() {
             </motion.div>
           )}
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 md:gap-6 w-full">
+          {/* Rejilla estándar de cartas. Sin useHighRes: son miniaturas de
+              ~113px y la variante grande son ~600 KB por carta (≈6 MB por
+              sobre en datos móviles); PokemonCard elige ya la variante. */}
+          <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 md:gap-4 lg:grid-cols-6 w-full">
             {currentPack.map((card, index) => {
               const isNew = !prePackIds.includes(card.id);
               return (
@@ -1031,7 +1107,7 @@ export default function Home() {
                       Deseada
                     </div>
                   )}
-                  <PokemonCard card={card} reveal={true} useHighRes={true} interactive={false} />
+                  <PokemonCard card={card} reveal={true} interactive={false} />
                 </motion.div>
               );
             })}
@@ -1053,9 +1129,11 @@ interface PackCardProps {
   onMulti?: () => void;
   multiCount?: number;
   odds?: [string, string][];
+  /** Hay una compra en vuelo: los botones no deben poder dispararse otra vez. */
+  disabled?: boolean;
 }
 
-function PackCard({ accent, badge, title, description, price, icon, onClick, onMulti, multiCount = 10, odds }: PackCardProps) {
+function PackCard({ accent, badge, title, description, price, icon, onClick, onMulti, multiCount = 10, odds, disabled = false }: PackCardProps) {
   const accents: Record<string, { iconColor: string; btn: string; badgeBg: string; glow: string }> = {
     white:  { iconColor: "ink-soft",        btn: "btn-ghost",                                  badgeBg: "chip ink-soft",                       glow: "rgba(148,163,184,0.18)" },
     purple: { iconColor: "text-purple-400", btn: "bg-purple-600 hover:bg-purple-500 text-white", badgeBg: "bg-purple-500/15 text-purple-300 border border-purple-500/20", glow: "rgba(168,85,247,0.22)" },
@@ -1102,11 +1180,19 @@ function PackCard({ accent, badge, title, description, price, icon, onClick, onM
       )}
 
       <div className="mt-auto w-full flex flex-col gap-2 relative z-10">
-        <button onClick={onClick} className={`${a.btn} press font-semibold py-2.5 px-6 rounded-xl w-full text-center transition text-sm`}>
-          {formatNumber(price)} monedas
+        <button
+          onClick={onClick}
+          disabled={disabled}
+          className={`${a.btn} press font-semibold py-2.5 px-6 rounded-xl w-full text-center transition text-sm disabled:opacity-50 disabled:cursor-not-allowed`}
+        >
+          {disabled ? "Abriendo..." : `${formatNumber(price)} monedas`}
         </button>
         {onMulti && (
-          <button onClick={onMulti} className="press btn-ghost font-medium py-2 px-6 rounded-xl w-full text-center transition text-xs">
+          <button
+            onClick={onMulti}
+            disabled={disabled}
+            className="press btn-ghost font-medium py-2 px-6 rounded-xl w-full text-center transition text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             Abrir ×{multiCount} · {formatNumber(price * multiCount)}
           </button>
         )}

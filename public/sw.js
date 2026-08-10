@@ -19,7 +19,9 @@ const SHELL_ASSETS = [
 ];
 
 const IMAGE_HOSTS = ["images.pokemontcg.io", "tcg.pokemon.com"];
-const MAX_IMAGE_ENTRIES = 700;
+// Dos variantes por carta (small 245w + large 734w) desde que el <img> usa
+// srcSet: con 700 entradas se expulsaban cartas ya vistas a mitad de álbum.
+const MAX_IMAGE_ENTRIES = 1400;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

@@ -146,7 +146,7 @@ export async function getSocialOverview() {
       const { rows: cards } = await sql`
         SELECT uc.quantity, c.rarity
         FROM user_collection uc JOIN cards c ON uc.card_id = c.id
-        WHERE uc.user_id = ${fr.friend_id}
+        WHERE uc.user_id = ${fr.friend_id} AND uc.quantity > 0
       `;
       let value = 0, total = 0, unique = 0;
       cards.forEach((r: any) => {

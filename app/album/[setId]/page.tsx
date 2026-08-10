@@ -22,6 +22,12 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: "missing", label: "Me faltan" },
 ];
 
+/**
+ * Cartas por tanda. Una expansión grande pasa de 250 cartas: montarlas todas de
+ * golpe deja el hilo principal bloqueado y el scroll a tirones en iPhone.
+ */
+const BATCH = 60;
+
 /** Número de carta normalizado a 3 dígitos (011, 004…) conservando sufijos. */
 const padNumber = (n: unknown) => String(n ?? "").padStart(3, "0");
 
@@ -155,6 +161,63 @@ export default function SetAlbumPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [detail, step]);
 
+  // ── RENDER POR TANDAS ─────────────────────────────────────────────────────
+  // Sólo se monta el principio de la lista; el centinela del final pide la
+  // siguiente tanda antes de llegar a él.
+  const [limit, setLimit] = useState(BATCH);
+
+  // Cambiar de filtro (o recargar el set) rehace la lista: se vuelve al corte
+  // inicial para no montar 250 cartas de una tacada.
+  useEffect(() => {
+    setLimit(BATCH);
+  }, [visibleCards]);
+
+  const hasMore = limit < visibleCards.length;
+
+  // El total vive en un ref para que el observador no dependa de él y no haya
+  // que recrearlo en cada tanda.
+  const totalRef = useRef(0);
+  totalRef.current = visibleCards.length;
+  const observerRef = useRef<IntersectionObserver | null>(null);
+
+  /**
+   * Callback ref en vez de useEffect a propósito.
+   *
+   * Mientras se cargan los datos la página devuelve el Loader, así que el
+   * centinela no existe todavía: un efecto se ejecutaría, encontraría el ref a
+   * null y se iría. Y como sus dependencias ya no vuelven a cambiar, el
+   * observador no llegaba a engancharse nunca y el álbum se quedaba congelado
+   * en las primeras 60 cartas. Con un callback ref se conecta justo cuando el
+   * nodo entra en el DOM, sea cuando sea.
+   */
+  const sentinelRef = useCallback((node: HTMLDivElement | null) => {
+    observerRef.current?.disconnect();
+    if (!node) return;
+
+    // Degradado seguro: sin IntersectionObserver se muestra todo de una vez.
+    if (typeof IntersectionObserver === "undefined") {
+      setLimit(totalRef.current);
+      return;
+    }
+
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setLimit((current) => Math.min(current + BATCH, totalRef.current));
+        }
+      },
+      // Margen generoso: la tanda siguiente ya está montada cuando el usuario
+      // llega al final de la actual.
+      { rootMargin: "600px 0px" },
+    );
+    observerRef.current.observe(node);
+  }, []);
+
+  // Al desmontar la página, soltar el observador.
+  useEffect(() => () => observerRef.current?.disconnect(), []);
+
+  const renderedCards = useMemo(() => visibleCards.slice(0, limit), [visibleCards, limit]);
+
   if (loading) return <Loader label="Abriendo álbum" />;
 
   const total = setInfo?.total || allSetCards.length || 1;
@@ -271,8 +334,8 @@ export default function SetAlbumPage() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-3 gap-2 sm:gap-3 md:gap-5 max-w-4xl mx-auto w-full">
-            {visibleCards.map((blueprintCard) => {
+          <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 md:gap-4 lg:grid-cols-6 w-full">
+            {renderedCards.map((blueprintCard) => {
               const ownedCard = ownedCards.get(blueprintCard.id);
 
               if (ownedCard) {
@@ -282,7 +345,7 @@ export default function SetAlbumPage() {
                     type="button"
                     onClick={() => openDetail(blueprintCard, ownedCard)}
                     aria-label={`Ver ${ownedCard.name || blueprintCard.name}`}
-                    className="relative group text-left press rounded-2xl focus-visible:outline-none"
+                    className="relative group text-left press rounded-[4.5%]"
                   >
                     {ownedCard.quantity > 1 && (
                       <div
@@ -306,10 +369,14 @@ export default function SetAlbumPage() {
               return (
                 // No lleva aria-hidden: el número es la única pista de qué
                 // carta falta, y un lector de pantalla debe poder leerlo.
+                // Misma proporción y mismo radio que PokemonCard
+                // (aspect-[2.5/3.5] + rounded-[4.5%]): el hueco ocupa
+                // exactamente lo que ocuparía la carta y la rejilla no baila al
+                // ir consiguiéndolas.
                 <div
                   key={blueprintCard.id}
                   aria-label={`Carta ${padNumber(blueprintCard.number)}, no conseguida`}
-                  className="w-full aspect-[2.5/3.5] border border-dashed rounded-2xl flex items-center justify-center transition"
+                  className="w-full aspect-[2.5/3.5] border border-dashed rounded-[4.5%] flex items-center justify-center transition"
                   style={{
                     background: "color-mix(in srgb, var(--ink) 3%, transparent)",
                     borderColor: "var(--border-strong)",
@@ -321,6 +388,34 @@ export default function SetAlbumPage() {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* CENTINELA + CUÁNTAS SE ESTÁN VIENDO */}
+        {hasMore && (
+          <div
+            ref={sentinelRef}
+            className="flex flex-col items-center justify-center gap-2 py-3"
+          >
+            <p className="text-[11px] ink-faint">
+              Mostrando <span className="tnum">{renderedCards.length}</span> de{" "}
+              <span className="tnum">{visibleCards.length}</span>
+            </p>
+            {/* Salida manual: la carga al llegar al final depende de
+                IntersectionObserver, y si por lo que sea no dispara, sin este
+                botón las cartas restantes quedarían inalcanzables. También es
+                la vía para quien navegue con teclado. */}
+            <button
+              type="button"
+              onClick={() =>
+                setLimit((current) =>
+                  Math.min(current + BATCH, visibleCards.length),
+                )
+              }
+              className="btn-ghost press touch-target rounded-xl px-5 text-xs font-medium"
+            >
+              Ver más cartas
+            </button>
           </div>
         )}
       </div>

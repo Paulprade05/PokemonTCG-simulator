@@ -40,6 +40,31 @@ export default function CollectionPage() {
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 24;
 
+  /**
+   * Venta en vuelo. `pendingSale` guarda el id de la carta (o "duplicates"
+   * para el lote) y sirve para deshabilitar los botones; el ref es el cerrojo
+   * real, porque setState no se ve hasta el siguiente render y dos toques
+   * seguidos entrarían los dos.
+   */
+  const [pendingSale, setPendingSale] = useState<string | null>(null);
+  const saleLockRef = useRef(false);
+  const isSelling = pendingSale !== null;
+
+  /** Toma el cerrojo; devuelve false si ya hay una venta en curso. */
+  const beginSale = (key: string) => {
+    if (saleLockRef.current) return false;
+    saleLockRef.current = true;
+    setPendingSale(key);
+    return true;
+  };
+  const endSale = () => {
+    saleLockRef.current = false;
+    setPendingSale(null);
+  };
+
+  /** Mismo cerrojo para el favorito: evita dos peticiones cruzadas. */
+  const favLockRef = useRef<Set<string>>(new Set());
+
   // Estado de la pulsación larga sobre la rejilla. En un ref para no
   // re-renderizar 24 cartas en cada movimiento del dedo.
   const longPressRef = useRef<{ timer: number | null; x: number; y: number; fired: boolean }>({
@@ -134,11 +159,19 @@ export default function CollectionPage() {
     return { list, total, units };
   }, [cards]);
 
-  /** Vende una copia suelta. La comparte el botón de la rejilla y la hoja de acciones. */
+  /**
+   * Vende una copia suelta. La comparte el botón de la rejilla y la hoja de
+   * acciones. La actualización es optimista pero con red: si el servidor
+   * rechaza o revienta se devuelven la carta y las monedas.
+   * Devuelve true sólo si la venta se consolidó.
+   */
   const sellOneCopy = async (cardId: string, rarity: string) => {
     const card = cards.find((c) => c.id === cardId);
-    if (!card || card.quantity <= 1) return;
+    if (!card || card.quantity <= 1) return false;
+    if (!beginSale(cardId)) return false;
+
     const price = getPrice(rarity);
+    const prevCards = cards; // instantánea para el modo invitado
     haptic("success");
     const updatedCards = cards.map((c) => (c.id === cardId ? { ...c, quantity: c.quantity - 1 } : c));
     setCards(updatedCards);
@@ -146,8 +179,30 @@ export default function CollectionPage() {
       prev && prev.id === cardId ? { ...prev, quantity: prev.quantity - 1 } : prev,
     );
     addCoins(price);
-    if (isSignedIn) await sellCardAction(cardId, price);
-    else saveCollectionRaw(updatedCards);
+
+    try {
+      if (isSignedIn) {
+        // sellCardAction devuelve false si la fila no se pudo actualizar.
+        const ok = await sellCardAction(cardId, price);
+        if (!ok) throw new Error("venta rechazada");
+      } else {
+        saveCollectionRaw(updatedCards);
+      }
+      return true;
+    } catch {
+      // Revertimos por id (no restaurando la instantánea) para no pisar otros
+      // cambios que hayan ocurrido mientras tanto, como marcar una favorita.
+      setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, quantity: c.quantity + 1 } : c)));
+      setSelectedCard((prev: any) =>
+        prev && prev.id === cardId ? { ...prev, quantity: prev.quantity + 1 } : prev,
+      );
+      addCoins(-price);
+      if (!isSignedIn) saveCollectionRaw(prevCards);
+      toast("No se pudo vender la carta. Nada ha cambiado.", "error");
+      return false;
+    } finally {
+      endSale();
+    }
   };
 
   const handleSellCard = async (e: React.MouseEvent, cardId: string, rarity: string) => {
@@ -168,46 +223,133 @@ export default function CollectionPage() {
   const handleSellAllDuplicates = async () => {
     const duplicates = duplicateInfo.list;
     if (duplicates.length === 0) return;
+    if (!beginSale("duplicates")) return;
+
     const totalGanancias = duplicateInfo.total;
+    const units = duplicateInfo.units;
+    const prevCards = cards;
     const newCollection = cards.map((card) =>
       card.quantity > 1 && !card.is_favorite ? { ...card, quantity: 1 } : card,
     );
     setCards(newCollection);
     addCoins(totalGanancias);
+
     try {
-      if (isSignedIn) await Promise.all(duplicates.map((c) => sellAllDuplicatesAction(c.id, getPrice(c.rarity))));
-      else saveCollectionRaw(newCollection);
-      toast(`+${totalGanancias} monedas por ${duplicateInfo.units} cartas`, "success");
+      if (!isSignedIn) {
+        saveCollectionRaw(newCollection);
+        toast(`+${totalGanancias} monedas por ${units} cartas`, "success");
+        return;
+      }
+
+      // Cada carta es una petición independiente: con allSettled sabemos
+      // exactamente cuáles fallaron y devolvemos sólo esas, en vez de
+      // deshacer un lote que en su mayoría sí se vendió.
+      const results = await Promise.allSettled(
+        duplicates.map((c) => sellAllDuplicatesAction(c.id, getPrice(c.rarity))),
+      );
+      const failed = new Map<string, number>(); // id -> cantidad previa
+      let refund = 0;
+      let failedUnits = 0;
+      results.forEach((res, i) => {
+        const card = duplicates[i];
+        const ok = res.status === "fulfilled" && (res.value as any)?.success;
+        if (!ok) {
+          failed.set(card.id, card.quantity);
+          refund += (card.quantity - 1) * getPrice(card.rarity);
+          failedUnits += card.quantity - 1;
+        }
+      });
+
+      if (failed.size > 0) {
+        setCards((prev) =>
+          prev.map((c) => (failed.has(c.id) ? { ...c, quantity: failed.get(c.id)! } : c)),
+        );
+        setSelectedCard((prev: any) =>
+          prev && failed.has(prev.id) ? { ...prev, quantity: failed.get(prev.id)! } : prev,
+        );
+        addCoins(-refund);
+      }
+
+      if (failed.size === duplicates.length) {
+        toast("No se pudo completar la venta. Nada ha cambiado.", "error");
+      } else if (failed.size > 0) {
+        toast(
+          `Vendidas ${units - failedUnits} cartas · ${failedUnits} no se pudieron vender`,
+          "error",
+        );
+      } else {
+        toast(`+${totalGanancias} monedas por ${units} cartas`, "success");
+      }
     } catch {
-      toast("No se pudo completar la venta", "error");
+      setCards(prevCards);
+      addCoins(-totalGanancias);
+      if (!isSignedIn) saveCollectionRaw(prevCards);
+      toast("No se pudo completar la venta. Nada ha cambiado.", "error");
+    } finally {
+      endSale();
     }
   };
 
   const handleSellAllFromModal = async () => {
     if (!selectedCard || selectedCard.quantity <= 1) return;
-    const unitPrice = getPrice(selectedCard.rarity);
-    const duplicates = selectedCard.quantity - 1;
+    const { id, rarity } = selectedCard;
+    const prevQuantity = selectedCard.quantity;
+    if (!beginSale(id)) return;
+
+    const unitPrice = getPrice(rarity);
+    const duplicates = prevQuantity - 1;
     const totalValue = duplicates * unitPrice;
+    const prevCards = cards;
+    const updatedCards = cards.map((c) => (c.id === id ? { ...c, quantity: 1 } : c));
     addCoins(totalValue);
-    setSelectedCard({ ...selectedCard, quantity: 1 });
-    setCards((prev) => prev.map((c) => (c.id === selectedCard.id ? { ...c, quantity: 1 } : c)));
-    if (isSignedIn) await sellAllDuplicatesAction(selectedCard.id, unitPrice);
-    else saveCollectionRaw(cards.map((c) => (c.id === selectedCard.id ? { ...c, quantity: 1 } : c)));
-    toast(`+${totalValue} monedas por ${duplicates} duplicadas`, "success");
+    setSelectedCard((prev: any) => (prev && prev.id === id ? { ...prev, quantity: 1 } : prev));
+    setCards(updatedCards);
+
+    try {
+      if (isSignedIn) {
+        const res: any = await sellAllDuplicatesAction(id, unitPrice);
+        if (!res?.success) throw new Error(res?.error || "venta rechazada");
+      } else {
+        saveCollectionRaw(updatedCards);
+      }
+      toast(`+${totalValue} monedas por ${duplicates} duplicadas`, "success");
+    } catch {
+      setCards((prev) => prev.map((c) => (c.id === id ? { ...c, quantity: prevQuantity } : c)));
+      setSelectedCard((prev: any) =>
+        prev && prev.id === id ? { ...prev, quantity: prevQuantity } : prev,
+      );
+      addCoins(-totalValue);
+      if (!isSignedIn) saveCollectionRaw(prevCards);
+      toast("No se pudieron vender las duplicadas. Nada ha cambiado.", "error");
+    } finally {
+      endSale();
+    }
   };
 
   /** Alterna deseada/favorita. La comparten el modal y la hoja de acciones. */
   const applyToggleFavorite = async (cardId: string, current: boolean) => {
+    // Sin cerrojo, dos toques seguidos lanzan dos peticiones que se pisan y el
+    // corazón acaba en el estado contrario al del servidor.
+    if (favLockRef.current.has(cardId)) return;
+    favLockRef.current.add(cardId);
     const newStatus = !current;
     haptic("select");
     setSelectedCard((prev: any) => (prev && prev.id === cardId ? { ...prev, is_favorite: newStatus } : prev));
     setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, is_favorite: newStatus } : c)));
-    const res = await toggleFavorite(cardId);
-    if (res?.error) {
-      // Deshacemos el cambio optimista para no mentir sobre el estado real.
+    try {
+      const res = await toggleFavorite(cardId);
+      if (res?.error) {
+        // Deshacemos el cambio optimista para no mentir sobre el estado real.
+        setSelectedCard((prev: any) => (prev && prev.id === cardId ? { ...prev, is_favorite: !newStatus } : prev));
+        setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, is_favorite: !newStatus } : c)));
+        toast(res.error, "error");
+      }
+    } catch {
       setSelectedCard((prev: any) => (prev && prev.id === cardId ? { ...prev, is_favorite: !newStatus } : prev));
       setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, is_favorite: !newStatus } : c)));
-      toast(res.error, "error");
+      toast("No se pudo actualizar el favorito", "error");
+    } finally {
+      favLockRef.current.delete(cardId);
     }
   };
 
@@ -306,11 +448,13 @@ export default function CollectionPage() {
         actions={
           <button
             onClick={requestSellAllDuplicates}
+            disabled={isSelling}
+            aria-busy={pendingSale === "duplicates"}
             // En móvil el texto va oculto con `hidden` (display:none), que lo
             // saca del árbol de accesibilidad: sin esta etiqueta el botón
             // quedaría sin nombre para un lector de pantalla.
             aria-label="Limpiar duplicados"
-            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press touch-target justify-center"
+            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press touch-target justify-center disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
               <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
@@ -544,11 +688,16 @@ export default function CollectionPage() {
                   {card.quantity > 1 ? (
                     <button
                       onClick={(e) => handleSellCard(e, card.id, card.rarity)}
+                      // Deshabilitado mientras hay una venta en vuelo: dos
+                      // toques seguidos vendían dos copias con una sola
+                      // confirmación del servidor.
+                      disabled={isSelling}
+                      aria-busy={pendingSale === card.id}
                       // El botón no arma la pulsación larga de la carta.
                       onPointerDown={(e) => e.stopPropagation()}
-                      className="chip ink text-[10px] min-h-8 px-3 rounded-full press hover:brightness-110"
+                      className="chip ink text-[10px] min-h-8 px-3 rounded-full press hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:brightness-100"
                     >
-                      Vender +{getPrice(card.rarity)}
+                      {pendingSale === card.id ? "Vendiendo…" : `Vender +${getPrice(card.rarity)}`}
                     </button>
                   ) : (
                     <span className="chip ink-soft text-[10px] px-2 py-1 rounded-full">Única</span>
@@ -646,10 +795,12 @@ export default function CollectionPage() {
                   onClick={async () => {
                     const { id, rarity, name } = actionCardLive;
                     setActionCard(null);
-                    await sellOneCopy(id, rarity);
-                    toast(`+${getPrice(rarity)} monedas por ${name}`, "success");
+                    // Sólo celebramos si el servidor aceptó la venta.
+                    const sold = await sellOneCopy(id, rarity);
+                    if (sold) toast(`+${getPrice(rarity)} monedas por ${name}`, "success");
                   }}
-                  className="btn-ghost press rounded-2xl py-3.5 text-sm font-medium flex items-center justify-center gap-2 touch-target"
+                  disabled={isSelling}
+                  className="btn-ghost press rounded-2xl py-3.5 text-sm font-medium flex items-center justify-center gap-2 touch-target disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
                     <circle cx="12" cy="12" r="9" /><path d="M12 7v10M9.5 9.5h4a1.8 1.8 0 0 1 0 3.5h-3a1.8 1.8 0 0 0 0 3.5h4" />

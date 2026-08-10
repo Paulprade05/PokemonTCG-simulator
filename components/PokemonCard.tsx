@@ -60,6 +60,13 @@ function PokemonCardInner({
 
   const rotateX = useTransform(mouseYSpring, [-0.5, 0.5], ["15deg", "-15deg"]);
   const rotateYFront = useTransform(mouseXSpring, [-0.5, 0.5], ["-15deg", "15deg"]);
+  // Se calcula siempre (aunque la carta no sea holo) para no llamar hooks
+  // dentro de una rama del JSX: el orden de los hooks debe ser estable.
+  const holoPosition = useTransform(
+    mouseXSpring,
+    [-0.5, 0.5],
+    ["100% 100%", "0% 0%"],
+  );
 
   /**
    * Con la carta ya girada y quieta, se abandona el contexto 3D.
@@ -86,8 +93,66 @@ function PokemonCardInner({
     return () => window.clearTimeout(t);
   }, [reveal]);
 
+  // --- A partir de aquí ya no hay hooks: se puede volver antes sin romper el
+  // orden de llamada de React. ---
+
   // El volumen sólo se necesita al girar o mientras se inclina con el puntero.
   const flat = settled && !isFlipped && !isHovered;
+
+  const smallUrl: string | undefined = card.images?.small;
+  const largeUrl: string | undefined = card.images?.large;
+  const imageUrl = useHighRes ? largeUrl || smallUrl : smallUrl || largeUrl;
+
+  // Sin srcSet a propósito. Sólo hay dos variantes (245w y 734w) y en un iPhone
+  // la celda pide ~386px físicos, así que el navegador elegiría SIEMPRE la
+  // grande: recorrer un álbum de 258 cartas pasaría de 45 MB a 151 MB de
+  // descarga. En rejilla mandan los datos; la nitidez la gana el camino rápido,
+  // que pinta la carta sin capa compositada y por tanto a resolución nativa.
+
+  /** Hueco cuando la carta no trae imágenes: mejor que un esqueleto eterno. */
+  const placeholder = (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-2 text-center">
+      {card.number && (
+        <span className="text-xs font-semibold tnum ink-soft">#{card.number}</span>
+      )}
+      <span className="text-[0.7rem] leading-tight ink-faint line-clamp-3">
+        {card.name || "Carta sin imagen"}
+      </span>
+    </div>
+  );
+
+  const image = (loading: "eager" | "lazy") =>
+    imageUrl ? (
+      <img
+        src={imageUrl}
+        alt={card.name}
+        // La carta grande es el contenido principal de la pantalla: no
+        // debe esperar al observer de lazy-loading.
+        loading={loading}
+        decoding="async"
+        className="w-full h-full object-contain"
+      />
+    ) : (
+      placeholder
+    );
+
+  /**
+   * Camino rápido de las rejillas (colección, álbum, entrenador, resumen).
+   *
+   * Sin perspectiva, sin `preserve-3d`, sin reverso y sin motion: un álbum de
+   * 258 cartas creaba 258 capas compositadas y el scroll iba a tirones. Aquí
+   * la carta es una imagen y ya.
+   */
+  if (!interactive && reveal) {
+    return (
+      <div
+        className="relative w-full aspect-[2.5/3.5] overflow-hidden rounded-[4.5%] border border-[var(--border)] bg-[var(--surface-2)]"
+        style={{ boxShadow: "0 8px 18px rgba(0,0,0,0.45)" }}
+      >
+        {image("lazy")}
+      </div>
+    );
+  }
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!interactive || !cardRef.current || isFlipped) return;
@@ -109,7 +174,38 @@ function PokemonCardInner({
     setIsHovered(false);
   };
 
-  const imageUrl = useHighRes ? card.images?.large : card.images?.small;
+  /**
+   * En iOS no existe el hover: sin esto, ni el brillo holográfico ni la
+   * inclinación llegan a verse nunca. Se enganchan también al puntero (dedo o
+   * lápiz) mientras se mantiene pulsada la carta. El ratón ya va por los
+   * eventos de arriba, así que aquí se ignora para no duplicar trabajo.
+   * No se llama a preventDefault ni se fija touch-action: el pinch y el scroll
+   * siguen funcionando igual.
+   */
+  const trackPointer = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!interactive || !cardRef.current || isFlipped) return;
+    const rect = cardRef.current.getBoundingClientRect();
+    x.set((e.clientX - rect.left) / rect.width - 0.5);
+    y.set((e.clientY - rect.top) / rect.height - 0.5);
+  };
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!interactive || e.pointerType === "mouse") return;
+    setIsHovered(true);
+    trackPointer(e);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!interactive || e.pointerType === "mouse" || !isHovered) return;
+    trackPointer(e);
+  };
+
+  const handlePointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!interactive || e.pointerType === "mouse") return;
+    x.set(0);
+    y.set(0);
+    setIsHovered(false);
+  };
 
   return (
     <div
@@ -118,6 +214,10 @@ function PokemonCardInner({
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       onMouseEnter={() => setIsHovered(true)}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerEnd}
+      onPointerCancel={handlePointerEnd}
     >
       <motion.div
         className="w-full h-full relative"
@@ -137,7 +237,7 @@ function PokemonCardInner({
       >
         {/* --- FRONT FACE --- */}
         <div
-          className="absolute w-full h-full rounded-[4.5%] overflow-hidden bg-[#0a0a0a] border border-white/10"
+          className="absolute w-full h-full rounded-[4.5%] overflow-hidden bg-[var(--surface-2)] border border-[var(--border)]"
           style={{
             backfaceVisibility: flat ? "visible" : "hidden",
             // Sombra y halo con box-shadow y no con filter: un `filter` sobre un
@@ -151,29 +251,15 @@ function PokemonCardInner({
                 : "0 8px 18px rgba(0,0,0,0.45)",
           }}
         >
-          {imageUrl && (
-            <img
-              src={imageUrl}
-              alt={card.name}
-              // La carta grande es el contenido principal de la pantalla: no
-              // debe esperar al observer de lazy-loading.
-              loading={useHighRes ? "eager" : "lazy"}
-              decoding="async"
-              className="w-full h-full object-contain"
-            />
-          )}
-          
+          {image(useHighRes ? "eager" : "lazy")}
+
           {hasHoloEffect && interactive && (
             <motion.div
               className="absolute inset-0 z-20 mix-blend-color-dodge transition-opacity duration-300 pointer-events-none"
               style={{
                 backgroundImage: `linear-gradient(115deg, transparent 20%, rgba(255,255,255,0.4) 45%, rgba(255,200,255,0.4) 50%, rgba(200,255,255,0.4) 55%, transparent 80%)`,
                 backgroundSize: '200% 200%',
-                backgroundPosition: useTransform(
-                  mouseXSpring,
-                  [-0.5, 0.5],
-                  ["100% 100%", "0% 0%"]
-                ),
+                backgroundPosition: holoPosition,
                 opacity: isHovered ? 0.8 : 0
               }}
             />
@@ -183,9 +269,11 @@ function PokemonCardInner({
               carta. Nombre, artista y rareza se leen en el detalle. */}
         </div>
 
-        {/* --- BACK FACE --- */}
+        {/* --- BACK FACE ---
+            Sólo existe cuando puede verse: en el camino rápido de las rejillas
+            ni se monta. */}
         <div
-          className="absolute w-full h-full rounded-[4.5%] overflow-hidden backface-hidden border border-white/10"
+          className="absolute w-full h-full rounded-[4.5%] overflow-hidden backface-hidden border border-[var(--border)]"
           style={{
             transform: "rotateY(180deg)",
             backfaceVisibility: "hidden",
@@ -198,7 +286,7 @@ function PokemonCardInner({
           <img
             src={CARD_BACK}
             alt="Card Back"
-            loading={useHighRes ? "eager" : "lazy"}
+            loading="lazy"
             decoding="async"
             className="w-full h-full object-cover"
           />

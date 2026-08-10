@@ -31,7 +31,9 @@ export const useCurrency = () => {
   };
 
   const addCoins = (amount: number) => {
-    setCoins((prev) => prev + amount);
+    // Se acota en 0: hay devoluciones compensatorias que llaman con importes
+    // negativos y un saldo bajo cero dejaría la tienda inutilizable.
+    setCoins((prev) => Math.max(0, prev + amount));
   };
 
   // 👇 AQUÍ ESTÁ EL CAMBIO IMPORTANTE 👇

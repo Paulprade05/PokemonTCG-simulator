@@ -86,20 +86,20 @@ export default function TrainerProfilePage() {
             className="w-full surface surface-hover rounded-2xl px-5 py-4 flex justify-between items-center"
           >
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-white/5 border border-white/5 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-xl surface-2 border border-[var(--border)] flex items-center justify-center">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-blue-400">
                   <path d="M3 3v18h18" /><path d="M7 14l4-4 4 4 6-6" />
                 </svg>
               </div>
               <div className="text-left">
-                <h3 className="font-semibold text-sm text-white">Progreso del entrenador</h3>
-                <p className="text-xs text-gray-500">{showStats ? "Ocultar detalles" : "Ver por expansión"}</p>
+                <h3 className="font-semibold text-sm ink">Progreso del entrenador</h3>
+                <p className="text-xs ink-faint">{showStats ? "Ocultar detalles" : "Ver por expansión"}</p>
               </div>
             </div>
             <motion.svg
               animate={{ rotate: showStats ? 180 : 0 }}
               viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-              className="w-4 h-4 text-gray-400"
+              className="w-4 h-4 ink-soft"
             >
               <path d="m6 9 6 6 6-6" />
             </motion.svg>
@@ -119,12 +119,12 @@ export default function TrainerProfilePage() {
                       <div className="flex items-center gap-3 mb-3">
                         {stat.logo && <img src={stat.logo} alt={stat.name} className="h-7 object-contain opacity-90" />}
                         <div className="flex-1 min-w-0">
-                          <h3 className="font-medium text-sm text-gray-200 truncate">{stat.name}</h3>
-                          <p className="text-[10px] text-gray-500 font-mono">{stat.owned}/{stat.total}</p>
+                          <h3 className="font-medium text-sm ink truncate">{stat.name}</h3>
+                          <p className="text-[10px] ink-faint font-mono">{stat.owned}/{stat.total}</p>
                         </div>
-                        <span className="text-xs font-semibold text-gray-400">{stat.percentage}%</span>
+                        <span className="text-xs font-semibold ink-soft">{stat.percentage}%</span>
                       </div>
-                      <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                      <div className="w-full h-1.5 bg-[color-mix(in_srgb,var(--ink)_8%,transparent)] rounded-full overflow-hidden">
                         <div className={stat.percentage === 100 ? "progress-bar h-full" : "progress-bar-blue h-full"} style={{ width: `${stat.percentage}%` }} />
                       </div>
                     </div>
@@ -137,24 +137,24 @@ export default function TrainerProfilePage() {
 
         <div className="surface rounded-2xl px-3 py-3 flex flex-wrap gap-2 items-center">
           <div className="flex items-center gap-2 bg-white/5 px-3 py-2 rounded-xl border border-white/5 flex-1 min-w-[180px]">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-gray-500">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint">
               <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
             </svg>
             <input
               type="text" placeholder="Buscar..."
               value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-              className="bg-transparent text-white outline-none text-sm flex-1 placeholder:text-gray-600"
+              className="bg-transparent ink outline-none text-base flex-1 min-w-0 placeholder:text-[var(--ink-faint)]"
             />
           </div>
-          <select value={filterSet} onChange={(e) => setFilterSet(e.target.value)} className="bg-white/5 hover:bg-white/10 text-white px-3 py-2 rounded-xl border border-white/5 text-xs cursor-pointer">
+          <select value={filterSet} onChange={(e) => setFilterSet(e.target.value)} className="input-field w-full min-w-0 truncate px-3 py-2.5 rounded-xl text-xs cursor-pointer">
             <option value="all" className="bg-[#111]">Todas</option>
             {dbSets.map((set) => <option key={set.id} value={set.id} className="bg-[#111]">{set.name}</option>)}
           </select>
-          <select value={filterRarity} onChange={(e) => setFilterRarity(e.target.value)} className="bg-white/5 hover:bg-white/10 text-white px-3 py-2 rounded-xl border border-white/5 text-xs cursor-pointer">
+          <select value={filterRarity} onChange={(e) => setFilterRarity(e.target.value)} className="input-field w-full min-w-0 truncate px-3 py-2.5 rounded-xl text-xs cursor-pointer">
             <option value="all" className="bg-[#111]">Toda rareza</option>
             {rarityOptions.map((r) => <option key={r} value={r} className="bg-[#111]">{r}</option>)}
           </select>
-          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="bg-white/5 hover:bg-white/10 text-white px-3 py-2 rounded-xl border border-white/5 text-xs cursor-pointer">
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="input-field w-full min-w-0 truncate px-3 py-2.5 rounded-xl text-xs cursor-pointer">
             <option value="rarity_desc" className="bg-[#111]">Rareza</option>
             <option value="quantity_desc" className="bg-[#111]">Cantidad</option>
             <option value="name_asc" className="bg-[#111]">Nombre</option>
@@ -162,9 +162,11 @@ export default function TrainerProfilePage() {
         </div>
 
         {processedCards.length === 0 ? (
-          <div className="surface rounded-2xl py-20 text-center text-gray-500 text-sm">Este entrenador no tiene cartas.</div>
+          <div className="surface rounded-2xl py-20 text-center ink-faint text-sm">Este entrenador no tiene cartas.</div>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 md:gap-6">
+          // Misma rejilla que colección y álbum: las cartas miden igual en
+          // las tres pantallas y en móvil caben tres por fila.
+          <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 md:gap-4 lg:grid-cols-6">
             {processedCards.map((card) => (
               <div
                 key={card.id}
@@ -186,7 +188,8 @@ export default function TrainerProfilePage() {
                 <div className="transition transform group-hover:-translate-y-1 duration-300 pointer-events-none">
                   <PokemonCard card={card} reveal={true} interactive={false} />
                 </div>
-                <div className="mt-2 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                {/* En táctil no hay hover: el contador se ve siempre en móvil */}
+                <div className="mt-2 flex justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
                   <span className="chip ink-soft text-[10px] px-2 py-1 rounded-full">
                     {card.quantity > 1 ? `${card.quantity} copias` : "Única"}
                   </span>
