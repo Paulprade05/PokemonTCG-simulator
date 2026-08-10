@@ -607,7 +607,7 @@ export default function Home() {
                           whileTap={{ scale: 0.96 }}
                           transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
                           onClick={() => handleSelectSet(set.id)}
-                          className="group surface surface-hover p-6 md:p-8 rounded-3xl flex flex-col items-center justify-between gap-4 overflow-hidden relative min-h-[150px] md:min-h-[180px]"
+                          className="group surface surface-hover p-3.5 md:p-8 rounded-2xl md:rounded-3xl flex flex-col items-center justify-between gap-2 md:gap-4 overflow-hidden relative min-h-[126px] md:min-h-[180px]"
                         >
                           <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.06),transparent_60%)] pointer-events-none" />
                           <div className="flex-1 flex items-center justify-center w-full relative z-10">
@@ -617,7 +617,7 @@ export default function Home() {
                                 alt={set.name}
                                 loading="lazy"
                                 decoding="async"
-                                className="max-h-16 md:max-h-20 max-w-[80%] object-contain group-hover:scale-110 transition-transform duration-500 opacity-90 group-hover:opacity-100 drop-shadow-lg"
+                                className="max-h-[58px] md:max-h-20 max-w-full object-contain group-hover:scale-110 transition-transform duration-500 opacity-90 group-hover:opacity-100 drop-shadow-lg"
                               />
                             ) : (
                               <div className="ink-faint text-sm text-center">{set.name}</div>

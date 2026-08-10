@@ -428,13 +428,16 @@ export default function CollectionPage() {
             )}
           </div>
 
-          {/* En móvil los selectores se desplazan en horizontal en vez de apilarse */}
-          <div className="flex gap-2 scroll-x sm:overflow-visible sm:contents -mx-1 px-1 sm:mx-0 sm:px-0" data-lenis-prevent>
+          {/* Rejilla en vez de tira desplazable: un <select> se estira hasta su
+              opción más larga, así que con `shrink-0` en una fila horizontal el
+              de expansiones (305px) echaba a los otros dos fuera de pantalla.
+              Con w-full + min-w-0 el texto se recorta y todo cabe. */}
+          <div className="grid grid-cols-2 gap-2 sm:contents">
             <select
               value={filterSet}
               onChange={(e) => { haptic("select"); setFilterSet(e.target.value); }}
               aria-label="Filtrar por expansión"
-              className="input-field px-3 py-2 rounded-xl text-xs cursor-pointer shrink-0"
+              className="input-field col-span-2 w-full min-w-0 px-3 py-2.5 rounded-xl text-xs cursor-pointer truncate sm:col-span-1 sm:w-auto"
             >
               <option value="all">Todas las expansiones</option>
               {dbSets.map((set) => (<option key={set.id} value={set.id}>{set.name}</option>))}
@@ -443,7 +446,7 @@ export default function CollectionPage() {
               value={filterRarity}
               onChange={(e) => { haptic("select"); setFilterRarity(e.target.value); }}
               aria-label="Filtrar por rareza"
-              className="input-field px-3 py-2 rounded-xl text-xs cursor-pointer shrink-0"
+              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl text-xs cursor-pointer truncate sm:w-auto"
             >
               <option value="all">Toda rareza</option>
               {rarityOptions.map((r) => (<option key={r} value={r}>{r}</option>))}
@@ -452,7 +455,7 @@ export default function CollectionPage() {
               value={sortBy}
               onChange={(e) => { haptic("select"); setSortBy(e.target.value); }}
               aria-label="Ordenar por"
-              className="input-field px-3 py-2 rounded-xl text-xs cursor-pointer shrink-0"
+              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl text-xs cursor-pointer truncate sm:w-auto"
             >
               <option value="rarity_desc">Rareza</option>
               <option value="quantity_desc">Cantidad</option>
@@ -478,7 +481,9 @@ export default function CollectionPage() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 md:gap-6">
+          // 3 columnas en móvil: a 2 las cartas salían enormes y apenas cabían
+          // dos filas en pantalla.
+          <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 md:gap-4 lg:grid-cols-6">
             {pagedCards.map((card) => (
               <div
                 key={card.id}

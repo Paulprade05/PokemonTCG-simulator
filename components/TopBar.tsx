@@ -32,7 +32,12 @@ export default function TopBar() {
             <rect x="3" y="5" width="18" height="14" rx="3" /><path d="M3 12h18" /><circle cx="12" cy="12" r="2.4" fill="currentColor" />
           </svg>
         </div>
-        <span className="text-sm font-bold tracking-tight truncate">Pokémon TCG</span>
+        {/* El nombre se cae por debajo de 420px: con la marca, buscador,
+            monedas, recompensa, tema y avatar no cabe todo y acababa
+            truncado a "Pokémo…". El icono ya identifica la app. */}
+        <span className="hidden min-[420px]:inline text-sm font-bold tracking-tight truncate">
+          Pokémon TCG
+        </span>
       </div>
 
       {/* Search grows on desktop */}
