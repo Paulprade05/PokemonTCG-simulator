@@ -60,7 +60,18 @@ export default function CardZoom({
   const scaleRef = useRef(1);
   const offsetRef = useRef({ x: 0, y: 0 });
   const pointersRef = useRef(
-    new Map<number, { x: number; y: number; downX: number; downY: number; t: number }>(),
+    new Map<
+      number,
+      {
+        x: number;
+        y: number;
+        downX: number;
+        downY: number;
+        t: number;
+        /** Participó en un pellizco: su pointerup nunca cuenta como toque. */
+        pinched: boolean;
+      }
+    >(),
   );
   const pinchRef = useRef<null | {
     dist: number;
@@ -84,12 +95,26 @@ export default function CardZoom({
     el.style.transform = `translate3d(${offsetRef.current.x}px, ${offsetRef.current.y}px, 0) scale(${scaleRef.current})`;
   }, []);
 
-  /** La carta no puede perderse fuera de pantalla: el margen crece con la escala. */
+  /**
+   * La carta no puede perderse fuera de pantalla. El límite sale del CONTENIDO,
+   * no de la superficie: el borde de la carta ampliada puede llegar justo al
+   * borde visible y no más allá (con la superficie como límite, en pantallas
+   * anchas —móvil girado, escritorio— la carta podía salirse entera). Si en un
+   * eje la carta ampliada aún cabe, en ese eje se queda centrada.
+   * offsetWidth/offsetHeight son medidas de layout, ajenas al transform.
+   */
   const clampOffset = useCallback(() => {
-    const s = surfaceRef.current?.getBoundingClientRect();
-    if (!s) return;
-    const maxX = (s.width * (scaleRef.current - 1)) / 2;
-    const maxY = (s.height * (scaleRef.current - 1)) / 2;
+    const surf = surfaceRef.current;
+    const card = zoomRef.current;
+    if (!surf || !card) return;
+    const maxX = Math.max(
+      0,
+      (card.offsetWidth * scaleRef.current - surf.clientWidth) / 2,
+    );
+    const maxY = Math.max(
+      0,
+      (card.offsetHeight * scaleRef.current - surf.clientHeight) / 2,
+    );
     offsetRef.current.x = Math.max(-maxX, Math.min(maxX, offsetRef.current.x));
     offsetRef.current.y = Math.max(-maxY, Math.min(maxY, offsetRef.current.y));
   }, []);
@@ -136,15 +161,22 @@ export default function CardZoom({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" && e.key !== "ArrowRight" && e.key !== "ArrowLeft")
+        return;
+      // El visor es modal: estas teclas son suyas y no deben llegar a la hoja
+      // o modal de debajo (que también escuchan Escape/flechas en window y
+      // cerrarían la ficha o navegarían por duplicado). En fase de captura,
+      // stopPropagation las corta antes de que bajen al resto de listeners.
+      e.stopPropagation();
       if (e.key === "Escape") {
         // Con la carta ampliada, Escape primero la encoge; el segundo cierra.
         if (scaleRef.current > 1) setScaleTo(1);
         else onClose();
       } else if (e.key === "ArrowRight") onNext?.();
-      else if (e.key === "ArrowLeft") onPrev?.();
+      else onPrev?.();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [open, onClose, onPrev, onNext, setScaleTo]);
 
   const applyTilt = useCallback((dx: number, dy: number) => {
@@ -199,9 +231,16 @@ export default function CardZoom({
       downX: e.clientX,
       downY: e.clientY,
       t: performance.now(),
+      pinched: false,
     });
     const pts = [...pointersRef.current.values()];
     if (pts.length === 2) {
+      // El segundo dedo aborta el gesto de useSwipe sin pasar por su onEnd:
+      // si la carta venía inclinándose, sin esto se quedaría torcida durante
+      // todo el zoom (el swipe, que es quien la endereza, queda apagado).
+      resetTilt();
+      pts[0].pinched = true;
+      pts[1].pinched = true;
       // Empieza el pellizco: la base congela escala y desplazamiento actuales.
       pinchRef.current = {
         dist: Math.max(1, Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)),
@@ -260,7 +299,22 @@ export default function CardZoom({
     pointersRef.current.delete(e.pointerId);
     const restantes = [...pointersRef.current.values()];
 
-    if (pinchRef.current && restantes.length < 2) {
+    if (pinchRef.current && restantes.length >= 2) {
+      // Con tres dedos, soltar uno de la pareja activa cambiaría de pareja
+      // contra la base vieja y la escala daría un salto: se recongela la base
+      // con los dos dedos que quedan (continuo: en este instante dist = base).
+      const [a, b] = restantes;
+      a.pinched = true;
+      b.pinched = true;
+      pinchRef.current = {
+        dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+        scale: scaleRef.current,
+        midX: (a.x + b.x) / 2,
+        midY: (a.y + b.y) / 2,
+        offX: offsetRef.current.x,
+        offY: offsetRef.current.y,
+      };
+    } else if (pinchRef.current) {
       pinchRef.current = null;
       if (scaleRef.current < SNAP_SCALE) {
         setScaleTo(1);
@@ -282,10 +336,13 @@ export default function CardZoom({
     // Doble toque: dos toques limpios y seguidos alternan ampliar/alejar.
     if (p && e.type === "pointerup") {
       const ahora = performance.now();
+      // `p.pinched` y no `pinchRef`: al soltar el segundo dedo del pellizco
+      // pinchRef ya se anuló arriba, así que no delata al dedo que pellizcó.
       const limpio =
         Math.hypot(e.clientX - p.downX, e.clientY - p.downY) < 8 &&
         ahora - p.t < 250 &&
         pointersRef.current.size === 0 &&
+        !p.pinched &&
         !pinchRef.current;
       if (limpio) {
         const previo = lastTapRef.current;

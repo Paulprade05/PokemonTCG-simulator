@@ -31,7 +31,19 @@ export default function ServiceWorkerRegister() {
     // Una sola recarga por relevo de service worker. Sin el guard, un SW que
     // llamara a clients.claim() en bucle recargaría la página sin fin.
     let reloading = false;
+    // La PRIMERA toma de control no debe recargar: en un usuario nuevo (o tras
+    // un hard reload) la página llega sin controller, y el clients.claim() de
+    // la primera instalación dispara controllerchange igualmente — pero ese
+    // HTML/JS ya es el del despliegue vigente, no hay nada viejo que refrescar.
+    // Sólo se recarga si otro service worker ya nos servía al cargar.
+    let hadController = !!navigator.serviceWorker.controller;
     const onControllerChange = () => {
+      if (!hadController) {
+        // A partir de aquí la página sí está controlada: el siguiente relevo
+        // (una actualización real) ya recarga.
+        hadController = true;
+        return;
+      }
       if (reloading) return;
       reloading = true;
       window.location.reload();
