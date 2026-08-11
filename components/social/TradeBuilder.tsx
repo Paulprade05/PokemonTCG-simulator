@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
 import { getTradableCollection, createTradeOffer } from "../../app/social";
 import { useToast } from "../ui/Toast";
+import Portal from "../ui/Portal";
 
 interface Friend { friend_id: string; friend_name: string; }
 interface TradeBuilderProps {
@@ -125,6 +126,7 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
   );
 
   return (
+    <Portal>
     <AnimatePresence>
       {friend && (
         <motion.div
@@ -182,5 +184,6 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
         </motion.div>
       )}
     </AnimatePresence>
+    </Portal>
   );
 }

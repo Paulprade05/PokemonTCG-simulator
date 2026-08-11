@@ -27,6 +27,7 @@ import { useToast } from "../components/ui/Toast";
 import { useImmersive } from "../components/AppShell";
 import PokemonCard from "../components/PokemonCard";
 import { formatNumber } from "../utils/format";
+import Portal from "../components/ui/Portal";
 
 type PackType = "STANDARD" | "PREMIUM" | "GOLDEN" | "SPECIAL";
 
@@ -838,6 +839,7 @@ export default function Home() {
             )}
           </div>
 
+          <Portal>
           <AnimatePresence>
             {loading && (
               <motion.div
@@ -855,6 +857,7 @@ export default function Home() {
               </motion.div>
             )}
           </AnimatePresence>
+          </Portal>
         </motion.div>
       )}
 

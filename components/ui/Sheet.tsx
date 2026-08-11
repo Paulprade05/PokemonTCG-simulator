@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, type ReactNode } from "react";
 import { useHaptics } from "../../hooks/useHaptics";
 import { useSwipe, touchActionFor } from "../../hooks/useSwipe";
+import Portal from "./Portal";
 
 interface SheetProps {
   open: boolean;
@@ -72,6 +73,7 @@ export default function Sheet({
   });
 
   return (
+    <Portal>
     <AnimatePresence>
       {open && (
         <motion.div
@@ -130,5 +132,6 @@ export default function Sheet({
         </motion.div>
       )}
     </AnimatePresence>
+    </Portal>
   );
 }

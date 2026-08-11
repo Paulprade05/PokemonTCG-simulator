@@ -9,6 +9,7 @@ import { getCardFromDB, toggleWishlist, getWishlistIds } from "../app/action";
 import { useHaptics } from "../hooks/useHaptics";
 import { useSwipe, touchActionFor } from "../hooks/useSwipe";
 import CardZoom from "./ui/CardZoom";
+import Portal from "./ui/Portal";
 
 // Umbrales del gesto de cierre (los mismos que usa components/ui/Sheet).
 const CLOSE_OFFSET = 110;
@@ -253,6 +254,7 @@ export default function CardDetailModal({
 
   return (
     <>
+      <Portal>
       <AnimatePresence>
       {c && (
         <motion.div
@@ -279,9 +281,20 @@ export default function CardDetailModal({
             className="relative w-full max-w-5xl bg-[var(--surface)] overflow-hidden border border-[var(--border)] shadow-2xl flex flex-col md:flex-row"
             style={{
               borderRadius: isMobile ? "28px 28px 0 0" : "1.5rem",
-              maxHeight: isMobile
+              /**
+               * El alto disponible se publica como variable para que la imagen
+               * se mida CONTRA EL PANEL y no contra el viewport.
+               *
+               * Antes el panel se limitaba con --app-height (el alto real,
+               * medido) pero la imagen con 40vh/68vh. En iOS `vh` es el
+               * viewport grande, con la barra de Safari oculta, así que la
+               * imagen se calculaba sobre un alto que no existía y empujaba al
+               * resto: de ahí que a veces no cuadrara nada.
+               */
+              ["--panel-max" as string]: isMobile
                 ? "calc(var(--app-height) - var(--sat) - 12px)"
-                : "92vh",
+                : "min(92vh, calc(var(--app-height) - 48px))",
+              maxHeight: "var(--panel-max)",
               // Con el teclado desplegado ya no hay barra de gestos que esquivar.
               paddingBottom: isMobile
                 ? "max(0px, calc(var(--sab) - var(--keyboard)))"
@@ -400,7 +413,14 @@ export default function CardDetailModal({
                     haptic("tap");
                     setZoomed(true);
                   }}
-                  className={`relative cursor-zoom-in object-contain max-h-[40vh] md:max-h-[68vh] drop-shadow-[0_25px_50px_rgba(0,0,0,0.6)] ${c.owned === false ? "grayscale opacity-70" : ""}`}
+                  // El alto sale del panel (--panel-max), no de vh: así la
+                  // carta siempre cabe, tenga el viewport el tamaño que tenga.
+                  style={{
+                    maxHeight: isMobile
+                      ? "calc(var(--panel-max) * 0.42)"
+                      : "calc(var(--panel-max) * 0.82)",
+                  }}
+                  className={`relative cursor-zoom-in object-contain drop-shadow-[0_25px_50px_rgba(0,0,0,0.6)] ${c.owned === false ? "grayscale opacity-70" : ""}`}
                 />
               </div>
 
@@ -586,6 +606,7 @@ export default function CardDetailModal({
         </motion.div>
       )}
       </AnimatePresence>
+      </Portal>
 
       {/* Sólo la carta, a pantalla completa */}
       <CardZoom

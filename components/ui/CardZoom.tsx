@@ -138,8 +138,14 @@ export default function CardZoom({
                   // Sombra con box-shadow y no con drop-shadow: un filter
                   // rasteriza la imagen y aquí es justo la que debe verse
                   // nítida.
-                  style={{ boxShadow: "0 30px 60px rgba(0,0,0,0.8)" }}
-                  className="max-h-[76vh] w-auto max-w-[92vw] rounded-2xl object-contain"
+                  // Contra el viewport medido, no contra vh: se descuentan las
+                  // safe areas y el hueco del pie con la ayuda del gesto.
+                  style={{
+                    boxShadow: "0 30px 60px rgba(0,0,0,0.8)",
+                    maxHeight:
+                      "calc(var(--app-height) - var(--sat) - var(--sab) - 132px)",
+                  }}
+                  className="w-auto max-w-[92vw] rounded-2xl object-contain"
                 />
               )}
             </div>

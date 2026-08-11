@@ -53,6 +53,18 @@ export default function SetAlbumPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [detail, setDetail] = useState<any>(null);
 
+  // Pantalla baja y ancha: el móvil girado. La ficha se reparte en dos columnas
+  // y el tope de la carta cambia, así que hace falta saberlo también en JS.
+  // Empieza en false para que servidor y cliente rendericen lo mismo.
+  const [landscape, setLandscape] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-height: 560px) and (min-width: 640px)");
+    const sync = () => setLandscape(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
   useEffect(() => {
     async function fetchAlbumData() {
       if (!isLoaded) return;
@@ -427,13 +439,33 @@ export default function SetAlbumPage() {
         label={detail ? `Detalle de ${detail.name}` : "Detalle de carta"}
       >
         {detail && (
-          <div className="px-4 pb-5 pt-2 sm:px-6 flex flex-col gap-4">
+          // En apaisado (pantalla baja y ancha, p. ej. el móvil girado) el
+          // contenido pasa a dos columnas: si no, la carta se queda en una
+          // miniatura ridícula porque el alto disponible es mínimo.
+          <div className="px-4 pb-5 pt-2 sm:px-6 flex flex-col gap-4 [@media(max-height:560px)_and_(min-width:640px)]:flex-row [@media(max-height:560px)_and_(min-width:640px)]:items-start [@media(max-height:560px)_and_(min-width:640px)]:gap-6">
             {/* Contenedor estable del gesto: no lleva `key`, así los listeners
                 sobreviven al cambio de carta. */}
             <div
               ref={detailImageRef}
-              className="mx-auto w-full max-w-[280px] sm:max-w-[320px]"
-              style={{ touchAction: touchActionFor("x") }}
+              className="mx-auto w-full [@media(max-height:560px)_and_(min-width:640px)]:mx-0 [@media(max-height:560px)_and_(min-width:640px)]:shrink-0"
+              // El límite se pone al ANCHO, no al alto de la imagen: como la
+              // carta lleva `w-full`, un tope de alto la dejaría con bandas
+              // laterales. Se convierte el alto disponible a ancho con la
+              // proporción de una carta (2.5/3.5 ≈ 0.715) y así encaja exacta
+              // en pantallas bajas sin deformarse ni desbordar la hoja.
+              style={{
+                touchAction: touchActionFor("x"),
+                maxWidth:
+                  "min(320px, calc((var(--app-height) - var(--sat) - var(--sab) - 260px) * 0.715))",
+                // En apaisado no hay 260px de fichas debajo que descontar: la
+                // carta ocupa la columna izquierda y sólo esquiva el asa.
+                ...(landscape
+                  ? {
+                      maxWidth:
+                        "min(320px, calc((var(--app-height) - var(--sat) - var(--sab) - 56px) * 0.715))",
+                    }
+                  : null),
+              }}
             >
               {detailImage && (
                 <motion.img
@@ -444,12 +476,13 @@ export default function SetAlbumPage() {
                   initial={{ opacity: 0, scale: 0.97 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-                  className="block w-full rounded-2xl object-contain"
+                  className="mx-auto block w-full rounded-2xl"
                   style={{ boxShadow: "var(--shadow-lg)" }}
                 />
               )}
             </div>
 
+            <div className="flex min-w-0 flex-1 flex-col gap-4">
             {/* POSICIÓN EN EL RECORRIDO */}
             {detailIndex >= 0 && (
               <div className="flex items-center justify-center gap-2 sm:gap-3">
@@ -565,6 +598,7 @@ export default function SetAlbumPage() {
             >
               Cerrar
             </button>
+            </div>
           </div>
         )}
       </Sheet>
