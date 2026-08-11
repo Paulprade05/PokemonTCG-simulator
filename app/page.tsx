@@ -1,7 +1,7 @@
 "use client";
 
 import { useUser } from "@clerk/nextjs";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -20,6 +20,7 @@ import { getCardsFromSet } from "../services/pokemon";
 import { openStandardPack, openPremiumPack, openGoldenPack } from "../utils/packLogic";
 import { saveToCollection, getCollection } from "../utils/storage";
 import { SELL_PRICES, PACK_PRICES, RARITY_RANK } from "../utils/constanst";
+import { RARITY_GLOW } from "../utils/rarityGlow";
 import { useCurrency } from "../hooks/useGameCurrency";
 import { useHaptics } from "../hooks/useHaptics";
 import { useSwipe, touchActionFor } from "../hooks/useSwipe";
@@ -43,6 +44,26 @@ const CARD_WIDTH =
 
 /** Rareza a partir de la cual la revelación merece aura a pantalla completa. */
 const AURA_RANK = 70;
+
+/**
+ * Rango de una rareza con red de seguridad.
+ *
+ * packLogic reparte hits por coincidencia de texto ("Rare Holo EX", "LEGEND"…),
+ * y esas cadenas no están en RARITY_RANK: saldrían con rango 0 y una carta cara
+ * se revelaría igual que una común. Cuando no hay rango se deduce del precio de
+ * venta, que sí las cubre.
+ */
+const rankOf = (rarity?: string): number => {
+  if (!rarity) return 0;
+  const rank = RARITY_RANK[rarity];
+  if (rank) return rank;
+  const price = SELL_PRICES[rarity] || 0;
+  if (price >= 150) return 90;
+  if (price >= 90) return 75;
+  if (price >= 50) return 55;
+  if (price >= 30) return 40;
+  return 0;
+};
 
 const cardVariants = {
   enter: (dir: number) => ({
@@ -77,7 +98,6 @@ export default function Home() {
   /** Cartas ya destapadas del sobre; no baja al volver a una carta anterior. */
   const [maxRevealed, setMaxRevealed] = useState(0);
   const [isPackOpen, setIsPackOpen] = useState(false);
-  const [cardRevealed, setCardRevealed] = useState(false);
   const [loading, setLoading] = useState(false);
   /** El set no ha devuelto cartas: la tienda no debe parecer comprable. */
   const [loadError, setLoadError] = useState(false);
@@ -98,8 +118,21 @@ export default function Home() {
    * duplicaría las cartas en la colección.
    */
   const packSavedRef = useRef(false);
+  /**
+   * Guardado del sobre en vuelo. Se lanza al comprar y NO se espera allí, así
+   * que finishPack tiene que aguardarlo antes de plantearse un reintento: sin
+   * esa espera se guardaría el mismo sobre dos veces y las cantidades de la
+   * colección se duplicarían.
+   */
+  const savePromiseRef = useRef<Promise<unknown> | null>(null);
+  /** Momento del último volteo, para no encadenarle un toque con inercia. */
+  const lastFlipAtRef = useRef(0);
   /** Elemento que captura los gestos de la carta durante la apertura. */
   const cardGestureRef = useRef<HTMLDivElement>(null);
+  // Menos animación por preferencia del sistema: el aura a pantalla completa es
+  // un cambio de luminancia grande y framer no desactiva la opacidad por su
+  // cuenta.
+  const reduceMotion = useReducedMotion();
 
   // La apertura ocupa toda la pantalla: escondemos la barra de pestañas.
   useImmersive(isPackOpen);
@@ -121,9 +154,25 @@ export default function Home() {
 
   const lastIndex = Math.max(0, currentPack.length - 1);
   const currentCard = currentPack[packIndex];
-  const currentRevealed = cardRevealed || packIndex > 0;
-  const showAura =
-    currentRevealed && (RARITY_RANK[currentCard?.rarity] || 0) >= AURA_RANK;
+  // Las cartas destapadas son siempre un prefijo (sólo se avanza desde una ya
+  // vista), así que maxRevealed basta y no hace falta llevar un conjunto.
+  const currentRevealed = packIndex < maxRevealed;
+  const currentRank = rankOf(currentCard?.rarity);
+  /** 0 nada · 1 destello · 2 aura · 3 aura y escenario a oscuras. */
+  const auraLevel = !currentRevealed
+    ? 0
+    : currentRank >= 85
+      ? 3
+      : currentRank >= AURA_RANK
+        ? 2
+        : currentRank >= 40
+          ? 1
+          : 0;
+  // El color lo pone la rareza, no la marca: así una Hyper Rare dorada no se
+  // siente igual que una Illustration Rare morada.
+  const auraColor =
+    (currentCard?.rarity && RARITY_GLOW[currentCard.rarity]) ||
+    "color-mix(in srgb, var(--accent) 45%, transparent)";
 
   const currentSetObj = dbSets.find((s) => s.id === selectedSet);
   const isSpecialSet = currentSetObj
@@ -205,7 +254,25 @@ export default function Home() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isPackOpen) return;
       if (e.repeat) return; // ignora auto-repeat al mantener pulsado
+      if (e.code === "Escape") {
+        e.preventDefault();
+        // Mientras hay un guardado en vuelo, finishPack no entra: la capa se
+        // cierra en seco igual que hace el botón de la cabecera, porque aquí no
+        // hay barra de pestañas ni gesto de retroceso con los que salir.
+        if (finishingRef.current) setIsPackOpen(false);
+        else finishPack();
+        return;
+      }
       if (e.code === "Space" || e.code === "ArrowRight") {
+        // Espacio es la tecla de activación de un botón: si el foco está en uno
+        // de los controles de la vista, cancelar aquí el keydown lo dejaría
+        // muerto. La carta se excluye porque también lleva role="button".
+        if (e.code === "Space") {
+          const btn = (e.target as HTMLElement | null)?.closest?.(
+            'button,[role="button"]',
+          );
+          if (btn && btn !== cardGestureRef.current) return;
+        }
         e.preventDefault();
         handleNextCard();
       } else if (e.code === "ArrowLeft") {
@@ -216,7 +283,20 @@ export default function Home() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPackOpen, cardRevealed, packIndex, currentPack, isSignedIn]);
+  }, [isPackOpen, maxRevealed, packIndex, currentPack, isSignedIn]);
+
+  // Precarga de las siguientes cartas: la variante grande ronda el medio mega y
+  // hasta ahora la descarga no empezaba hasta que la carta se montaba, así que
+  // cada avance enseñaba un rectángulo gris. Un colchón de dos basta; las diez
+  // de golpe serían ~5 MB para quien salga en la carta 2. El service worker ya
+  // cachea images.pokemontcg.io, así que no se descarga dos veces.
+  useEffect(() => {
+    if (!isPackOpen) return;
+    for (const offset of [1, 2]) {
+      const url = currentPack[packIndex + offset]?.images?.large;
+      if (url) new Image().src = url;
+    }
+  }, [isPackOpen, packIndex, currentPack]);
 
   const handleSelectSet = (setId: string) => {
     setSelectedSet(setId);
@@ -228,7 +308,6 @@ export default function Home() {
     setPackIndex(0);
     setMaxRevealed(0);
     setIsPackOpen(false);
-    setCardRevealed(false);
     setDirection(1);
   };
 
@@ -250,11 +329,19 @@ export default function Home() {
     else if (type === "PREMIUM") newPack = openPremiumPack(allCards);
     else newPack = openGoldenPack(allCards, userCollectionIds);
 
+    // Las dos primeras se piden ya, mientras el cobro viaja al servidor: cuando
+    // la vista se abra, la imagen estará en camino o en caché.
+    for (const card of newPack.slice(0, 2)) {
+      const url = card?.images?.large;
+      if (url) new Image().src = url;
+    }
+
     // Cierre mientras el cobro viaja al servidor: sin él, un doble toque
     // compraba dos sobres y se descontaba uno solo.
     finishingRef.current = true;
     setBusy(true);
     packSavedRef.current = false;
+    savePromiseRef.current = null;
     try {
       if (isSignedIn) {
         // Con sesión manda el servidor: cobra de forma atómica y devuelve el
@@ -270,13 +357,19 @@ export default function Home() {
         // El sobre se guarda ya cobrado, sin esperar a que se revele: si la app
         // muere a mitad de la revelación (iOS la mata en segundo plano, recarga,
         // botón atrás) las monedas están gastadas y las cartas deben existir.
-        try {
-          await savePackToCollection(newPack, price);
-          packSavedRef.current = true;
-        } catch (err) {
-          // No se avisa aquí: finishPack lo reintenta al cerrar la revelación.
-          console.error("Error guardando el sobre:", err);
-        }
+        // No se espera aquí: son una veintena de consultas en serie y el sobre
+        // tiene que abrirse en el instante del toque. finishPack aguarda esta
+        // promesa antes de decidir si reintenta.
+        savePromiseRef.current = savePackToCollection(newPack, price)
+          .then((res) => {
+            // La acción no lanza: devuelve {success:false}. Sin comprobarlo,
+            // un fallo de base de datos pasaría por guardado correcto.
+            packSavedRef.current = res?.success === true;
+          })
+          .catch((err) => {
+            // No se avisa aquí: finishPack lo reintenta al cerrar la revelación.
+            console.error("Error guardando el sobre:", err);
+          });
       } else if (!spendCoins(price)) {
         // Invitado: el saldo sólo vive en este dispositivo.
         return;
@@ -301,7 +394,9 @@ export default function Home() {
     setCurrentPackPrice(price);
     setPackIndex(0);
     setMaxRevealed(0);
-    setCardRevealed(false);
+    // Si el sobre anterior se cerró tras retroceder, direction quedaba en -1 y
+    // la primera carta del nuevo entraba por el lado contrario.
+    setDirection(1);
     setIsPackOpen(true);
   };
 
@@ -373,7 +468,10 @@ export default function Home() {
             return;
           }
           setCoins(balance);
-          await savePackToCollection(combined, price, count);
+          const res = await savePackToCollection(combined, price, count);
+          // La acción devuelve {success:false} en vez de lanzar: sin esta
+          // comprobación, un fallo se daba por bueno y las cartas no existían.
+          if (res?.success !== true) throw new Error(res?.error || "guardado rechazado");
           await refreshAfterPack();
         } else if (!spendCoins(price)) {
           return;
@@ -407,15 +505,33 @@ export default function Home() {
     finishingRef.current = true;
     setBusy(true);
     try {
+      // La vista se cierra antes de tocar la red: el sobre ya está visto y
+      // esperar aquí sólo dejaba el pie clavado en "Guardando...".
+      setIsPackOpen(false);
+      // El guardado se lanzó al comprar y puede seguir en vuelo: hay que
+      // esperarlo ANTES de decidir el reintento o el sobre se guardaría dos
+      // veces y las cantidades quedarían dobladas.
+      await savePromiseRef.current;
       // El sobre ya se guardó al comprarlo; sólo se reintenta si aquello falló.
       if (!packSavedRef.current) {
-        if (isSignedIn) await savePackToCollection(currentPack, currentPackPrice);
-        else saveToCollection(currentPack);
-        packSavedRef.current = true;
+        if (isSignedIn) {
+          const res = await savePackToCollection(currentPack, currentPackPrice);
+          packSavedRef.current = res?.success === true;
+        } else {
+          saveToCollection(currentPack);
+          packSavedRef.current = true;
+        }
       }
-      const newPackIds = currentPack.map((c) => c.id);
-      setUserCollectionIds((prev) => [...prev, ...newPackIds]);
-      haptic("success");
+      if (packSavedRef.current) {
+        const newPackIds = currentPack.map((c) => c.id);
+        setUserCollectionIds((prev) => [...prev, ...newPackIds]);
+        haptic("success");
+      } else {
+        // Con el sobre sin guardar no se dan por poseídas sus cartas: si no, la
+        // colección enseñaría cartas que no están en la base de datos.
+        toast("No se pudo guardar el sobre en la nube", "error");
+        haptic("warning");
+      }
     } catch (err) {
       // Una caída de red al guardar no puede dejar el sobre a medias: se avisa
       // y se sale igualmente al resumen, con las cartas ya en pantalla.
@@ -424,7 +540,6 @@ export default function Home() {
     } finally {
       // Sin este finally, un fallo dejaba finishingRef en true y los botones de
       // compra bloqueados para el resto de la sesión.
-      setIsPackOpen(false);
       finishingRef.current = false;
       setBusy(false);
     }
@@ -435,22 +550,24 @@ export default function Home() {
   };
 
   const handleNextCard = async () => {
-    if (!cardRevealed) {
-      haptic("heavy");
-      setCardRevealed(true);
+    if (!currentRevealed) {
+      // El peso lo marca la carta que se está destapando, nunca la siguiente:
+      // medirlo sobre la siguiente chivaba la rareza antes de verla.
+      haptic(currentRank >= AURA_RANK ? "heavy" : "select");
+      lastFlipAtRef.current = performance.now();
       setMaxRevealed((m) => Math.max(m, packIndex + 1));
       return;
     }
     if (packIndex < lastIndex) {
-      const next = currentPack[packIndex + 1];
-      // Las cartas siguientes salen ya reveladas: la vibración fuerte se
-      // reserva para las que además encienden el aura.
-      haptic((RARITY_RANK[next?.rarity] || 0) >= AURA_RANK ? "heavy" : "tap");
+      // Avanzar sólo mueve el mazo: la carta llega tapada y se destapa aparte,
+      // así que aquí no hay rareza que anunciar.
+      haptic("tap");
       setDirection(1);
-      setCardRevealed(true);
       setPackIndex((prev) => prev + 1);
-      setMaxRevealed((m) => Math.max(m, packIndex + 2));
     } else {
+      // Un toque con inercia justo después de destapar la última carta cerraba
+      // el sobre sin dejar verla, que es justo lo que se ha pagado.
+      if (performance.now() - lastFlipAtRef.current < 400) return;
       await finishPack();
     }
   };
@@ -459,7 +576,6 @@ export default function Home() {
     if (packIndex <= 0) return; // no hay carta anterior
     haptic("tap");
     setDirection(-1);
-    setCardRevealed(true); // las anteriores ya se revelaron
     setPackIndex((prev) => prev - 1);
   };
 
@@ -469,23 +585,24 @@ export default function Home() {
     handleNextCard();
   };
 
-  // Gestos de la carta: izquierda/derecha para pasar, abajo para saltar al
-  // resumen. El giro acompaña al arrastre para dar tacto de carta física.
+  // Gestos de la carta: izquierda y derecha para pasar. El giro acompaña al
+  // arrastre para dar tacto de carta física. No hay gesto vertical a propósito:
+  // un flick en diagonal terminaba el sobre sin aviso ni vuelta atrás; sin
+  // manejador, useSwipe le aplica resistencia y la carta vuelve a su sitio.
   const didSwipeRef = useSwipe(cardGestureRef, {
     axis: "both",
     rotate: 6,
     enabled: isPackOpen,
     onSwipeLeft: () => handleNextCard(),
     onSwipeRight: packIndex > 0 ? () => handlePrevCard() : undefined,
-    onSwipeDown: () => {
-      haptic("select");
-      handleRevealAll();
-    },
   });
 
-  // Revelar todo: salta animación carta por carta y va al resumen.
-  const handleRevealAll = async () => {
-    await finishPack();
+  // Revelar todo: destapa el sobre entero y deja al usuario en la última carta.
+  // No guarda ni cierra: salir es cosa del botón de la cabecera.
+  const handleRevealAll = () => {
+    setDirection(1);
+    setMaxRevealed(currentPack.length);
+    setPackIndex(lastIndex);
   };
 
   // Mejor carta del sobre (por valor de venta)
@@ -945,6 +1062,9 @@ export default function Home() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           data-lenis-prevent
+          role="dialog"
+          aria-modal="true"
+          aria-label="Apertura de sobre"
           className="fixed inset-0 z-[120] flex flex-col items-center overflow-hidden"
           style={{
             height: "var(--app-height)",
@@ -953,19 +1073,45 @@ export default function Home() {
             background: "var(--bg)",
           }}
         >
-          {/* AURA de rareza a pantalla completa (sólo en revelaciones buenas) */}
+          {/* ESCENARIO Y AURA: capas hermanas en z-0, fuera del contexto 3D de
+              la carta. El resplandor nunca puede hacerse con filter ni
+              drop-shadow sobre la carta: WebKit rasterizaría la ilustración a
+              escala fija y se vería borrosa. */}
           <AnimatePresence>
-            {showAura && (
+            {auraLevel >= 2 && (
+              // A oscuras la carta buena se lee como un premio; sin esto, en
+              // tema claro el aura queda en un manchurrón de color.
               <motion.div
-                key={`aura-${packIndex}`}
+                key={`stage-${packIndex}`}
                 initial={{ opacity: 0 }}
-                animate={{ opacity: [0, 0.9, 0.55] }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 1.2, ease: "easeOut" }}
+                animate={{ opacity: auraLevel >= 3 ? 0.78 : 0.5 }}
+                exit={{ opacity: 0, transition: { duration: 0.15 } }}
+                transition={{ duration: reduceMotion ? 0 : 0.6, ease: "easeOut" }}
                 className="pointer-events-none absolute inset-0 z-0"
                 style={{
                   background:
-                    "radial-gradient(circle at 50% 48%, color-mix(in srgb, var(--accent) 45%, transparent), color-mix(in srgb, var(--accent-2) 14%, transparent) 45%, transparent 72%)",
+                    "radial-gradient(circle at 50% 46%, transparent 26%, rgba(0,0,0,0.92) 100%)",
+                }}
+              />
+            )}
+            {auraLevel >= 1 && (
+              <motion.div
+                key={`aura-${packIndex}`}
+                initial={{ opacity: 0 }}
+                // Con movimiento reducido se enciende sin pulso: un cambio de
+                // luminancia a pantalla completa es lo que evita esa opción.
+                animate={
+                  reduceMotion
+                    ? { opacity: auraLevel >= 2 ? 0.35 : 0.22 }
+                    : { opacity: auraLevel >= 3 ? [0, 1, 0.7] : auraLevel >= 2 ? [0, 0.9, 0.55] : [0, 0.5, 0.28] }
+                }
+                // La salida va corta y aparte: con los 1,2 s de entrada, el
+                // resplandor de una rara seguía tiñendo la carta siguiente.
+                exit={{ opacity: 0, transition: { duration: 0.15 } }}
+                transition={{ duration: reduceMotion ? 0 : 1.2, ease: "easeOut" }}
+                className="pointer-events-none absolute inset-0 z-0"
+                style={{
+                  background: `radial-gradient(circle at 50% 46%, ${auraColor}, color-mix(in srgb, ${auraColor} 30%, transparent) 45%, transparent 72%)`,
                 }}
               />
             )}
@@ -979,7 +1125,7 @@ export default function Home() {
                 de retroceso, ni scroll: sería un encierro. El sobre ya está
                 guardado desde la compra, así que salir no pierde nada. */}
             <button
-              onClick={busy ? () => setIsPackOpen(false) : handleRevealAll}
+              onClick={busy ? () => setIsPackOpen(false) : finishPack}
               aria-label={busy ? "Salir de la apertura" : "Guardar el sobre y salir"}
               className="chip press touch-target w-10 h-10 rounded-full flex items-center justify-center shrink-0"
             >
@@ -1021,7 +1167,10 @@ export default function Home() {
 
           {/* ZONA DE CARTA */}
           <div className="relative flex-1 w-full flex items-center justify-center px-4">
-            {currentPackType === "GOLDEN" && packIndex === lastIndex && (
+            {/* El Promo Pack (SPECIAL) también usa openGoldenPack y coloca la
+                garantizada al final: se anuncia igual que en Leyenda. */}
+            {(currentPackType === "GOLDEN" || currentPackType === "SPECIAL") &&
+              packIndex === lastIndex && (
               <motion.div
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -1060,7 +1209,10 @@ export default function Home() {
             >
               {/* la perspectiva va en el padre directo de la carta animada */}
               <div className="relative w-full aspect-[2.5/3.5] perspective-1000">
-                <AnimatePresence mode="wait" custom={direction}>
+                {/* Sin mode="wait": las dos cartas son absolute inset-0 dentro
+                    de este padre, así que se cruzan sin descolocar nada y se
+                    ahorra el medio segundo de zona vacía entre carta y carta. */}
+                <AnimatePresence custom={direction}>
                   <motion.div
                     key={packIndex}
                     custom={direction}
@@ -1068,35 +1220,63 @@ export default function Home() {
                     initial="enter"
                     animate="center"
                     exit="exit"
-                    transition={{ type: "spring", stiffness: 200, damping: 25 }}
+                    transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
                     className="absolute inset-0"
                   >
-                    {newCardIndexes.has(packIndex) && cardRevealed && (
-                      <motion.div
-                        initial={{ scale: 0, x: -20 }}
-                        animate={{ scale: 1, x: 0 }}
-                        transition={{ type: "spring", bounce: 0.5 }}
-                        className="absolute -top-3 -left-3 z-50 bg-emerald-500 text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-lg"
-                      >
-                        Nueva
-                      </motion.div>
-                    )}
                     <PokemonCard card={currentCard} reveal={currentRevealed} useHighRes={true} />
                   </motion.div>
                 </AnimatePresence>
+                {/* La insignia va fuera del bloque animado: con las cartas
+                    solapándose se verían dos a la vez durante el relevo. */}
+                {newCardIndexes.has(packIndex) && currentRevealed && (
+                  <motion.div
+                    key={`nueva-${packIndex}`}
+                    initial={{ scale: 0, x: -20 }}
+                    animate={{ scale: 1, x: 0 }}
+                    transition={{ type: "spring", bounce: 0.5 }}
+                    className="absolute -top-3 -left-3 z-50 bg-emerald-500 text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-lg"
+                  >
+                    Nueva
+                  </motion.div>
+                )}
               </div>
             </div>
           </div>
 
-          {/* PIE (96px): texto contextual + acciones */}
-          <div className="w-full max-w-2xl h-24 shrink-0 flex flex-col items-center justify-center gap-3 px-4 relative z-20">
-            <p className="ink-faint text-[11px] uppercase tracking-[0.2em] text-center">
-              {!cardRevealed
-                ? "Toca la carta para darle la vuelta"
-                : packIndex < lastIndex
-                  ? "Desliza o toca para continuar"
-                  : "Toca para guardar el sobre"}
-            </p>
+          {/* PIE (96px): identidad de la carta + acciones. El alto es fijo a
+              propósito: CARD_WIDTH descuenta exactamente estos 96px, así que
+              crecer aquí encoge la carta. */}
+          <div className="w-full max-w-2xl h-24 shrink-0 flex flex-col items-center justify-center gap-1.5 px-4 relative z-20">
+            <div className="h-10 w-full flex flex-col items-center justify-center text-center">
+              {currentRevealed ? (
+                <>
+                  {/* Hasta ahora la vista no decía en ningún sitio qué había
+                      salido salvo en el texto para lectores de pantalla. */}
+                  <p className="text-sm font-semibold ink leading-tight truncate max-w-full">
+                    {currentCard.name}
+                  </p>
+                  <p className="ink-faint text-[10px] uppercase tracking-[0.16em] leading-tight flex items-center gap-1.5">
+                    {RARITY_GLOW[currentCard.rarity] && (
+                      // El color de rareza va como punto y no como color de
+                      // texto: son rgba fijos y en tema claro no contrastan.
+                      <span
+                        aria-hidden="true"
+                        className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+                        style={{ background: RARITY_GLOW[currentCard.rarity] }}
+                      />
+                    )}
+                    <span className="truncate">
+                      {currentCard.rarity || "Sin rareza"} ·{" "}
+                      {formatNumber(SELL_PRICES[currentCard.rarity] || 10)} monedas
+                    </span>
+                  </p>
+                </>
+              ) : (
+                <p className="ink-faint text-[11px] uppercase tracking-[0.2em]">
+                  Toca la carta para darle la vuelta
+                </p>
+              )}
+            </div>
             <div className="flex items-center justify-center gap-2 w-full">
               <button
                 onClick={handleNextCard}
@@ -1107,13 +1287,18 @@ export default function Home() {
                   "Guardando..."
                 ) : (
                   <>
-                    Siguiente <kbd className="ml-1 text-[10px] opacity-70 hidden sm:inline">espacio</kbd>
+                    {!currentRevealed
+                      ? "Voltear"
+                      : packIndex < lastIndex
+                        ? "Siguiente"
+                        : "Guardar sobre"}{" "}
+                    <kbd className="ml-1 text-[10px] opacity-70 hidden sm:inline">espacio</kbd>
                   </>
                 )}
               </button>
               <button
                 onClick={handleRevealAll}
-                disabled={busy}
+                disabled={busy || maxRevealed >= currentPack.length}
                 className="ink-soft hover:ink press touch-target px-4 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2 disabled:opacity-50"
               >
                 Revelar todo
@@ -1159,12 +1344,27 @@ export default function Home() {
                   +{formatNumber(soldInfo.earned)} por {soldInfo.sold} repetidas
                 </span>
               )}
-              <button onClick={() => setCurrentPack([])} className="btn-ghost press touch-target px-5 py-2.5 rounded-xl text-sm font-medium">
-                Abrir otro
+              {/* Vaciar currentPack a secas dejaba direction en -1 y la primera
+                  carta del sobre siguiente entraba por el lado contrario. */}
+              <button onClick={resetPackState} className="btn-ghost press touch-target px-5 py-2.5 rounded-xl text-sm font-medium">
+                Cambiar de sobre
               </button>
-              <button onClick={handleBackToMenu} className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold">
+              <button onClick={handleBackToMenu} className="btn-ghost press touch-target px-5 py-2.5 rounded-xl text-sm font-medium">
                 Finalizar
               </button>
+              {currentPackType && (
+                // Repetir el mismo sobre sin pasar por la tienda: handleBuyPack
+                // ya comprueba saldo y compra en vuelo, y finishPack ya metió
+                // estas cartas en userCollectionIds, así que las "Nuevas" del
+                // siguiente sobre salen bien.
+                <button
+                  onClick={() => handleBuyPack(currentPackType)}
+                  disabled={busy}
+                  className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-60"
+                >
+                  {busy ? "Abriendo..." : `Otro sobre · ${formatNumber(PACK_PRICES[currentPackType])}`}
+                </button>
+              )}
             </div>
           </div>
 
@@ -1210,7 +1410,9 @@ export default function Home() {
                   key={index}
                   initial={{ opacity: 0, y: 15 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.04 }}
+                  // Un ×10 son 100 cartas: sin tope, la última no aparecía
+                  // hasta los cuatro segundos.
+                  transition={{ delay: reduceMotion ? 0 : Math.min(index, 12) * 0.04 }}
                   className="relative"
                 >
                   {isNew && (

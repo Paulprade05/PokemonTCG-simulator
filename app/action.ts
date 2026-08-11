@@ -87,39 +87,66 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
   if (!userId) return { success: false, error: "No logueado" };
 
   try {
+    // Antes esto eran dos consultas en serie POR CARTA: 21 viajes a la base de
+    // datos para un sobre de 10 y más de 200 para un ×10, todos en el camino
+    // crítico de la apertura. Agrupadas, el coste deja de crecer con el número
+    // de cartas.
+    //
+    // Las repeticiones se cuentan aquí y no en la base de datos porque
+    // Postgres rechaza un ON CONFLICT ... DO UPDATE que toque la misma fila dos
+    // veces dentro de una misma sentencia, y un sobre puede traer la misma
+    // carta más de una vez.
+    const porCarta = new Map<string, { card: any; quantity: number }>();
     for (const card of cards) {
-      const setId = card.set?.id || card.setId || 'unknown_set';
-      
-      // PREPARAR DATOS EXTRA
-      const number = card.number || '';
-      const artist = card.artist || 'Desconocido';
-      const flavorText = card.flavorText || '';
-      const tcgplayer = JSON.stringify(card.tcgplayer || {}); 
+      const previa = porCarta.get(card.id);
+      if (previa) previa.quantity += 1;
+      else porCarta.set(card.id, { card, quantity: 1 });
+    }
+    const entradas = Array.from(porCarta.values());
+
+    if (entradas.length > 0) {
+      // Los $n los genera el índice del bucle, nunca los datos: cada valor
+      // viaja como parámetro, igual que con la plantilla etiquetada.
 
       // 1. INSERTAR EN TABLA MAESTRA (Si no existe)
-      await sql`
-        INSERT INTO cards (id, name, rarity, images, set_id, number, artist, flavor_text, tcgplayer)
-        VALUES (
-            ${card.id}, 
-            ${card.name}, 
-            ${card.rarity || 'Common'}, 
-            ${JSON.stringify(card.images)}, 
-            ${setId},
-            ${number},       
-            ${artist},       
-            ${flavorText},   
-            ${tcgplayer}     
-        )
-        ON CONFLICT (id) DO NOTHING;
-      `;
+      const cardParams: any[] = [];
+      const cardRows = entradas.map(({ card }, i) => {
+        cardParams.push(
+          card.id,
+          card.name,
+          card.rarity || 'Common',
+          JSON.stringify(card.images),
+          card.set?.id || card.setId || 'unknown_set',
+          card.number || '',
+          card.artist || 'Desconocido',
+          card.flavorText || '',
+          JSON.stringify(card.tcgplayer || {}),
+        );
+        const base = i * 9;
+        return `(${Array.from({ length: 9 }, (_, k) => `$${base + k + 1}`).join(', ')})`;
+      });
+      await sql.query(
+        `INSERT INTO cards (id, name, rarity, images, set_id, number, artist, flavor_text, tcgplayer)
+         VALUES ${cardRows.join(', ')}
+         ON CONFLICT (id) DO NOTHING`,
+        cardParams,
+      );
 
       // 2. INSERTAR EN COLECCIÓN DE USUARIO (Incrementar cantidad)
-      await sql`
-        INSERT INTO user_collection (user_id, card_id, quantity)
-        VALUES (${userId}, ${card.id}, 1)
-        ON CONFLICT (user_id, card_id) 
-        DO UPDATE SET quantity = user_collection.quantity + 1;
-      `;
+      // El usuario es el mismo en todas las filas, así que reutiliza $1.
+      const collParams: any[] = [userId];
+      const collRows = entradas.map(({ card, quantity }, i) => {
+        collParams.push(card.id, quantity);
+        const base = 1 + i * 2;
+        return `($1, $${base + 1}, $${base + 2})`;
+      });
+      await sql.query(
+        `INSERT INTO user_collection (user_id, card_id, quantity)
+         VALUES ${collRows.join(', ')}
+         ON CONFLICT (user_id, card_id)
+         DO UPDATE SET quantity = user_collection.quantity + EXCLUDED.quantity`,
+        collParams,
+      );
     }
 
     // 🚨 NUEVO: SUMAR A LAS ESTADÍSTICAS DEL JUGADOR 🚨
