@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
 import { getTrainerCollection, getSetsFromDB } from "../../action";
+import { getSocialOverview } from "../../social";
 import { RARITY_RANK, SELL_PRICES } from "../../../utils/constanst";
 import PokemonCard from "../../../components/PokemonCard";
 import PageHeader from "../../../components/PageHeader";
@@ -19,6 +20,8 @@ export default function TrainerProfilePage() {
   const [dbSets, setDbSets] = useState<any[]>([]);
   const [showStats, setShowStats] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [trainerName, setTrainerName] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState("rarity_desc");
   const [filterSet, setFilterSet] = useState("all");
@@ -31,19 +34,41 @@ export default function TrainerProfilePage() {
     return Array.from(set).sort((a, b) => (RARITY_RANK[b] || 0) - (RARITY_RANK[a] || 0));
   }, [cards]);
 
-  useEffect(() => {
-    async function init() {
-      if (!trainerId) return;
-      setLoading(true);
+  // Todo dentro del mismo try/finally: si falla el transporte de cualquiera de
+  // las dos peticiones (PWA sin cobertura, 500) la pantalla ofrece reintentar en
+  // vez de quedarse con el Loader girando o fingir un álbum vacío.
+  const loadTrainer = useCallback(async () => {
+    if (!trainerId) return;
+    setLoading(true);
+    setLoadError(false);
+    try {
       const sets = await getSetsFromDB();
       setDbSets(sets);
-      try {
-        const trainerCards = await getTrainerCollection(trainerId);
-        setCards(trainerCards);
-      } catch (e) { console.error(e); }
+      const trainerCards = await getTrainerCollection(trainerId);
+      setCards(trainerCards);
+    } catch (e) {
+      console.error(e);
+      setLoadError(true);
+    } finally {
       setLoading(false);
     }
-    init();
+  }, [trainerId]);
+
+  useEffect(() => { loadTrainer(); }, [loadTrainer]);
+
+  // La ruta sólo lleva el id de Clerk, así que el nombre se busca en la lista
+  // social. Va aparte para no retrasar la carga del álbum.
+  useEffect(() => {
+    if (!trainerId) return;
+    let cancelled = false;
+    getSocialOverview()
+      .then((overview) => {
+        if (cancelled) return;
+        const match = (overview.friends as any[]).find((f) => f.friend_id === trainerId);
+        if (match) setTrainerName(match.isMe ? "Tu álbum" : match.friend_name);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [trainerId]);
 
   const setStats = useMemo(() => dbSets.map((set) => {
@@ -56,7 +81,7 @@ export default function TrainerProfilePage() {
   const processedCards = useMemo(() => {
     let result = [...cards];
     if (searchTerm) result = result.filter((c) => c.name.toLowerCase().includes(searchTerm.toLowerCase()));
-    if (filterSet !== "all") result = result.filter((c) => c.id.startsWith(filterSet));
+    if (filterSet !== "all") result = result.filter((c) => c.id.startsWith(filterSet + "-"));
     if (filterRarity !== "all") result = result.filter((c) => c.rarity === filterRarity);
     result.sort((a, b) => {
       if (a.is_favorite && !b.is_favorite) return -1;
@@ -75,9 +100,27 @@ export default function TrainerProfilePage() {
 
   if (loading || !isLoaded) return <Loader label="Cargando entrenador" />;
 
+  if (loadError) {
+    return (
+      <div className="select-none w-full">
+        <PageHeader back="/friends" title="Álbum de entrenador" subtitle={trainerName || undefined} />
+        <div className="surface rounded-2xl px-6 py-16 flex flex-col items-center gap-4 text-center">
+          <p className="text-sm ink-soft">No se ha podido cargar este álbum. Comprueba tu conexión.</p>
+          <button
+            type="button"
+            onClick={loadTrainer}
+            className="btn-accent press touch-target rounded-xl px-5 text-sm font-semibold flex items-center justify-center"
+          >
+            Reintentar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="select-none w-full">
-      <PageHeader back="/friends" title="Álbum de entrenador" subtitle={trainerId} />
+      <PageHeader back="/friends" title="Álbum de entrenador" subtitle={trainerName || undefined} />
 
       <div className="w-full flex flex-col gap-6">
         <div>
@@ -135,30 +178,73 @@ export default function TrainerProfilePage() {
           </AnimatePresence>
         </div>
 
-        <div className="surface rounded-2xl px-3 py-3 flex flex-wrap gap-2 items-center">
-          <div className="flex items-center gap-2 bg-white/5 px-3 py-2 rounded-xl border border-white/5 flex-1 min-w-[180px]">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint">
+        <div className="surface rounded-2xl px-3 py-3 flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:items-center">
+          {/* <label> y no <div>: tocar el icono o el relleno enfoca el campo. */}
+          <label className="input-field flex min-h-11 items-center gap-2 px-3 py-2 rounded-xl flex-1 sm:min-w-[180px]">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint shrink-0">
               <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
             </svg>
             <input
-              type="text" placeholder="Buscar..."
-              value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-              className="bg-transparent ink outline-none text-base flex-1 min-w-0 placeholder:text-[var(--ink-faint)]"
+              type="search"
+              inputMode="search"
+              enterKeyHint="search"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              aria-label="Buscar en el álbum"
+              placeholder="Buscar..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              className="bg-transparent ink outline-none text-base flex-1 min-w-0 placeholder:text-[var(--ink-faint)] [&::-webkit-search-cancel-button]:hidden"
             />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm("")}
+                aria-label="Limpiar búsqueda"
+                className="ink-faint hover:ink shrink-0 -mr-1.5 press flex h-11 w-11 items-center justify-center rounded-full"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </label>
+
+          {/* Rejilla de dos columnas: con `w-full` en una fila flexible cada
+              selector se llevaba una línea entera (cuatro filas apiladas). */}
+          <div className="grid grid-cols-2 gap-2 sm:contents">
+            <select
+              value={filterSet}
+              onChange={(e) => setFilterSet(e.target.value)}
+              aria-label="Filtrar por expansión"
+              className="input-field col-span-2 w-full min-w-0 truncate px-3 py-2.5 rounded-xl text-xs cursor-pointer sm:col-span-1 sm:w-auto"
+            >
+              <option value="all">Todas</option>
+              {dbSets.map((set) => <option key={set.id} value={set.id}>{set.name}</option>)}
+            </select>
+            <select
+              value={filterRarity}
+              onChange={(e) => setFilterRarity(e.target.value)}
+              aria-label="Filtrar por rareza"
+              className="input-field w-full min-w-0 truncate px-3 py-2.5 rounded-xl text-xs cursor-pointer sm:w-auto"
+            >
+              <option value="all">Toda rareza</option>
+              {rarityOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              aria-label="Ordenar por"
+              className="input-field w-full min-w-0 truncate px-3 py-2.5 rounded-xl text-xs cursor-pointer sm:w-auto"
+            >
+              <option value="rarity_desc">Rareza</option>
+              <option value="quantity_desc">Cantidad</option>
+              <option value="name_asc">Nombre</option>
+            </select>
           </div>
-          <select value={filterSet} onChange={(e) => setFilterSet(e.target.value)} className="input-field w-full min-w-0 truncate px-3 py-2.5 rounded-xl text-xs cursor-pointer">
-            <option value="all" className="bg-[#111]">Todas</option>
-            {dbSets.map((set) => <option key={set.id} value={set.id} className="bg-[#111]">{set.name}</option>)}
-          </select>
-          <select value={filterRarity} onChange={(e) => setFilterRarity(e.target.value)} className="input-field w-full min-w-0 truncate px-3 py-2.5 rounded-xl text-xs cursor-pointer">
-            <option value="all" className="bg-[#111]">Toda rareza</option>
-            {rarityOptions.map((r) => <option key={r} value={r} className="bg-[#111]">{r}</option>)}
-          </select>
-          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="input-field w-full min-w-0 truncate px-3 py-2.5 rounded-xl text-xs cursor-pointer">
-            <option value="rarity_desc" className="bg-[#111]">Rareza</option>
-            <option value="quantity_desc" className="bg-[#111]">Cantidad</option>
-            <option value="name_asc" className="bg-[#111]">Nombre</option>
-          </select>
         </div>
 
         {processedCards.length === 0 ? (

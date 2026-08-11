@@ -7,7 +7,10 @@ import SmoothScroll from "../components/SmoothScroll";
 import AppShell from "../components/AppShell";
 import ServiceWorkerRegister from "../components/pwa/ServiceWorkerRegister";
 
-const themeInit = `(function(){try{var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`;
+// Fija el tema antes del primer pintado y, con él, el color de la barra del
+// navegador: si theme-color se dejara al valor estático, el tema claro saldría
+// con la barra de Safari en negro.
+const themeInit = `(function(){var t;try{t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}}catch(e){t='dark';}document.documentElement.setAttribute('data-theme',t);var m=document.querySelector('meta[name="theme-color"]');if(m){m.setAttribute('content',t==='dark'?'#080a0e':'#f4f5f8');}})();`;
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -60,6 +63,10 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Un único valor, sin variantes por prefers-color-scheme: el tema depende de
+  // data-theme (lo elige el usuario), así que la etiqueta la reescriben el
+  // script de arranque y ThemeToggle. Con dos metas media-gated ese reemplazo
+  // no funcionaría. Éste es sólo el valor de partida sin JS.
   themeColor: "#080a0e",
   // Imprescindible para que env(safe-area-inset-*) devuelva valores reales en
   // iOS; sin esto el padding de safe-area de BottomNav siempre vale 0.

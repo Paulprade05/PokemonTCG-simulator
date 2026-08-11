@@ -147,7 +147,7 @@ function PokemonCardInner({
     return (
       <div
         className="relative w-full aspect-[2.5/3.5] overflow-hidden rounded-[4.5%] border border-[var(--border)] bg-[var(--surface-2)]"
-        style={{ boxShadow: "0 8px 18px rgba(0,0,0,0.45)" }}
+        style={{ boxShadow: "var(--shadow-md)" }}
       >
         {image("lazy")}
       </div>
@@ -248,7 +248,7 @@ function PokemonCardInner({
             boxShadow:
               interactive && !isFlipped && rarityGlow
                 ? `0 0 ${isHovered ? 30 : 18}px ${rarityGlow}, 0 12px 18px rgba(0,0,0,0.5)`
-                : "0 8px 18px rgba(0,0,0,0.45)",
+                : "var(--shadow-md)",
           }}
         >
           {image(useHighRes ? "eager" : "lazy")}
@@ -277,7 +277,7 @@ function PokemonCardInner({
           style={{
             transform: "rotateY(180deg)",
             backfaceVisibility: "hidden",
-            boxShadow: "0 8px 18px rgba(0,0,0,0.45)",
+            boxShadow: "var(--shadow-md)",
             // Fuera del contexto 3D el reverso ya no queda oculto por su cara
             // trasera, así que se retira del todo.
             display: flat ? "none" : "block",

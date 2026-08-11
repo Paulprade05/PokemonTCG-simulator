@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useUser } from "@clerk/nextjs";
 import { AnimatePresence, motion } from "framer-motion";
@@ -31,6 +31,7 @@ export default function SocialPage() {
   const { user, isLoaded, isSignedIn } = useUser();
   const [tab, setTab] = useState<Tab>("amigos");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const [friends, setFriends] = useState<any[]>([]);
   const [requests, setRequests] = useState<any[]>([]);
@@ -43,30 +44,66 @@ export default function SocialPage() {
   const [pendingRemove, setPendingRemove] = useState<PendingRemove | null>(null);
   const [pendingCancel, setPendingCancel] = useState<PendingCancel | null>(null);
 
+  // Al confirmar, ConfirmSheet cierra y el pendiente pasa a null, pero la hoja
+  // sigue montada durante la animación de salida: sin conservar el último valor
+  // el texto se veía cambiar a "undefined" mientras se cierra.
+  const lastRemove = useRef<PendingRemove | null>(null);
+  if (pendingRemove) lastRemove.current = pendingRemove;
+  const removeInfo = pendingRemove ?? lastRemove.current;
+
+  const lastCancel = useRef<PendingCancel | null>(null);
+  if (pendingCancel) lastCancel.current = pendingCancel;
+  const cancelInfo = pendingCancel ?? lastCancel.current;
+
   const toast = useToast();
   const haptic = useHaptics();
 
   // Mientras hay una capa a pantalla completa encima, la barra de pestañas sobra.
   useImmersive(showAdd || !!tradeFriend);
 
+  // Las server actions capturan sus errores de SQL, pero un fallo de transporte
+  // (sin cobertura, 500, despliegue caducado) sí rechaza: sin este catch la
+  // pantalla se quedaba girando para siempre.
+  const loadedOnce = useRef(false);
   const refresh = useCallback(async () => {
     if (!isSignedIn) return;
-    const [ov, inc, out, hist] = await Promise.all([
-      getSocialOverview(), getIncomingTradeOffers(), getOutgoingTradeOffers(), getTradeHistory(),
-    ]);
-    setFriends(ov.friends);
-    setRequests(ov.requests);
-    setIncoming(inc as any[]);
-    setOutgoing(out as any[]);
-    setHistory(hist as any[]);
-    setLoading(false);
-  }, [isSignedIn]);
+    try {
+      const [ov, inc, out, hist] = await Promise.all([
+        getSocialOverview(), getIncomingTradeOffers(), getOutgoingTradeOffers(), getTradeHistory(),
+      ]);
+      setFriends(ov.friends);
+      setRequests(ov.requests);
+      setIncoming(inc as any[]);
+      setOutgoing(out as any[]);
+      setHistory(hist as any[]);
+      loadedOnce.current = true;
+      setLoadError(false);
+    } catch (err) {
+      console.error(err);
+      // Si ya hay datos en pantalla (refresco tras una acción) no se vacía la
+      // vista: basta con avisar de que la lista puede estar desactualizada.
+      if (loadedOnce.current) toast("No se pudo actualizar la lista", "error");
+      else setLoadError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [isSignedIn, toast]);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setLoadError(false);
+    syncUserName().then(refresh).catch((err) => {
+      console.error(err);
+      setLoadError(true);
+      setLoading(false);
+    });
+  }, [refresh]);
 
   useEffect(() => {
     if (!isLoaded) return;
     if (!isSignedIn) { setLoading(false); return; }
-    syncUserName().then(refresh);
-  }, [isLoaded, isSignedIn, refresh]);
+    load();
+  }, [isLoaded, isSignedIn, load]);
 
   /* ---- acciones ---- */
 
@@ -121,6 +158,21 @@ export default function SocialPage() {
         <h2 className="text-xl font-bold mb-2">Inicia sesión para conectar</h2>
         <p className="ink-soft text-sm mb-5">Añade amigos e intercambia cartas.</p>
         <Link href="/" className="btn-accent press px-6 py-2.5 rounded-xl text-sm font-semibold">Volver al inicio</Link>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center text-center py-24">
+        <h2 className="text-xl font-bold mb-2">No se pudo cargar</h2>
+        <p className="ink-soft text-sm mb-5">Revisa tu conexión e inténtalo de nuevo.</p>
+        <button
+          onClick={load}
+          className="btn-accent press touch-target px-6 rounded-xl text-sm font-semibold flex items-center justify-center"
+        >
+          Reintentar
+        </button>
       </div>
     );
   }
@@ -222,13 +274,13 @@ export default function SocialPage() {
 
       <ConfirmSheet
         open={!!pendingRemove}
-        title={pendingRemove?.kind === "request" ? "Ignorar petición" : "Eliminar amigo"}
+        title={removeInfo?.kind === "request" ? "Ignorar petición" : "Eliminar amigo"}
         description={
-          pendingRemove?.kind === "request"
-            ? `Se descartará la petición de ${pendingRemove?.name}. Podrá volver a enviarte otra más adelante.`
-            : `${pendingRemove?.name} dejará de aparecer en tu lista de amigos. Tus cartas no se ven afectadas.`
+          removeInfo?.kind === "request"
+            ? `Se descartará la petición de ${removeInfo?.name ?? "este entrenador"}. Podrá volver a enviarte otra más adelante.`
+            : `${removeInfo?.name ?? "Este entrenador"} dejará de aparecer en tu lista de amigos. Tus cartas no se ven afectadas.`
         }
-        confirmLabel={pendingRemove?.kind === "request" ? "Ignorar" : "Eliminar"}
+        confirmLabel={removeInfo?.kind === "request" ? "Ignorar" : "Eliminar"}
         destructive
         onConfirm={handleRemoveConfirmed}
         onClose={() => setPendingRemove(null)}
@@ -237,7 +289,7 @@ export default function SocialPage() {
       <ConfirmSheet
         open={!!pendingCancel}
         title="Cancelar oferta"
-        description={`Retirarás el intercambio que enviaste a ${pendingCancel?.name}.`}
+        description={`Retirarás el intercambio que enviaste a ${cancelInfo?.name ?? "este entrenador"}.`}
         confirmLabel="Cancelar oferta"
         cancelLabel="Mantener"
         destructive
@@ -263,9 +315,9 @@ function AmigosTab({ friends, requests, myId, onAccept, onRemove, onTrade }: any
                   <Avatar name={r.requester_name} />
                   <span className="font-medium text-sm truncate">{r.requester_name}</span>
                 </div>
-                <div className="flex gap-2 shrink-0">
-                  <button onClick={() => onAccept(r.id, r.requester_name)} className="btn-accent press px-3 py-2 rounded-lg text-xs font-semibold">Aceptar</button>
-                  <button onClick={() => onRemove(r.id, r.requester_name, "request")} className="btn-ghost press px-3 py-2 rounded-lg text-xs">Ignorar</button>
+                <div className="flex gap-3 shrink-0">
+                  <button onClick={() => onAccept(r.id, r.requester_name)} className="btn-accent press touch-target px-3 py-2 rounded-lg text-xs font-semibold">Aceptar</button>
+                  <button onClick={() => onRemove(r.id, r.requester_name, "request")} className="btn-ghost press touch-target px-3 py-2 rounded-lg text-xs">Ignorar</button>
                 </div>
               </div>
             ))}
@@ -285,7 +337,7 @@ function AmigosTab({ friends, requests, myId, onAccept, onRemove, onTrade }: any
               <Avatar name={f.friend_name} highlight={f.isMe} />
               <div className="min-w-0">
                 <p className="font-semibold text-sm truncate">{f.friend_name}{f.isMe && <span className="ink-faint font-normal"> · tú</span>}</p>
-                <p className="text-[11px] ink-faint tnum">{f.stats.unique} únicas · {f.stats.cards} cartas</p>
+                <p className="text-[11px] ink-faint tnum">{formatNumber(f.stats.unique)} únicas · {formatNumber(f.stats.cards)} cartas</p>
               </div>
             </div>
             <div className="flex items-center justify-between mb-3">
@@ -422,6 +474,7 @@ function AddFriendSheet({ open, onClose, onChanged, myId }: any) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
 
   const toast = useToast();
@@ -429,18 +482,29 @@ function AddFriendSheet({ open, onClose, onChanged, myId }: any) {
 
   // Al cerrar dejamos la hoja limpia para la próxima vez que se abra.
   useEffect(() => {
-    if (!open) { setQ(""); setResults([]); setSearching(false); setAdding(null); }
+    if (!open) { setQ(""); setResults([]); setSearching(false); setSearchError(false); setAdding(null); }
   }, [open]);
 
   useEffect(() => {
-    if (!q.trim() || q.trim().length < 2) { setResults([]); setSearching(false); return; }
+    if (!q.trim() || q.trim().length < 2) { setResults([]); setSearching(false); setSearchError(false); return; }
     setSearching(true);
+    setSearchError(false);
+    // Cancelar el temporizador no cancela la petición ya lanzada: sin esta
+    // bandera, una consulta lenta de un texto anterior pisaba los resultados
+    // del texto actual.
+    let cancelled = false;
     const h = setTimeout(async () => {
-      const r = await searchUsersByName(q);
-      setResults(r as any[]);
-      setSearching(false);
+      try {
+        const r = await searchUsersByName(q);
+        if (!cancelled) setResults(r as any[]);
+      } catch (err) {
+        console.error(err);
+        if (!cancelled) { setResults([]); setSearchError(true); }
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
     }, 300);
-    return () => clearTimeout(h);
+    return () => { cancelled = true; clearTimeout(h); };
   }, [q]);
 
   const doAdd = async (identifier: string, name: string) => {
@@ -510,7 +574,12 @@ function AddFriendSheet({ open, onClose, onChanged, myId }: any) {
 
         <div className="flex flex-col gap-1.5 min-h-[60px]">
           {searching && <p className="text-xs ink-faint text-center py-3">Buscando…</p>}
-          {!searching && q.length >= 2 && results.length === 0 && (
+          {!searching && searchError && (
+            <p className="text-xs text-center py-3" style={{ color: "var(--danger)" }}>
+              No se pudo buscar. Revisa tu conexión.
+            </p>
+          )}
+          {!searching && !searchError && q.length >= 2 && results.length === 0 && (
             <p className="text-xs ink-faint text-center py-3">Sin resultados</p>
           )}
           {results.map((u: any) => (
@@ -525,7 +594,7 @@ function AddFriendSheet({ open, onClose, onChanged, myId }: any) {
                   <button
                     onClick={() => doAdd(u.id, u.username)}
                     disabled={adding === u.id}
-                    className="btn-accent press px-3 py-2 rounded-lg text-xs font-semibold shrink-0 disabled:opacity-60"
+                    className="btn-accent press touch-target px-3 py-2 rounded-lg text-xs font-semibold shrink-0 disabled:opacity-60"
                   >
                     {adding === u.id ? "Enviando…" : "Añadir"}
                   </button>

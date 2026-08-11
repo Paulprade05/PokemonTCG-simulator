@@ -105,9 +105,12 @@ export default function InstallPrompt() {
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 140, opacity: 0 }}
           transition={{ type: "spring", stiffness: 380, damping: 36 }}
-          className="fixed inset-x-0 z-50 flex justify-center px-3 md:bottom-6"
-          // Por encima de la barra inferior en móvil, que sólo existe bajo md.
-          style={{ bottom: "calc(env(safe-area-inset-bottom) + 5.5rem)" }}
+          className="fixed inset-x-0 z-50 flex justify-center px-3"
+          // Se apoya en el hueco que el armazón ya reserva para la barra de
+          // pestañas: así sigue su alto real y en escritorio, donde esa barra no
+          // existe, la variable vale menos y el banner baja solo. Va en línea
+          // porque una clase md:bottom-* nunca ganaría a este style.
+          style={{ bottom: "calc(var(--content-bottom) + 12px)" }}
         >
           <div className="glass border border-[var(--border)] rounded-2xl shadow-[var(--shadow-lg)] p-3.5 w-full max-w-md flex items-start gap-3">
             <img

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
 import {
@@ -17,6 +17,7 @@ import { useToast } from "../../components/ui/Toast";
 import ConfirmSheet from "../../components/ui/ConfirmSheet";
 import Sheet from "../../components/ui/Sheet";
 import { RARITY_RANK, SELL_PRICES } from "../../utils/constanst";
+import { formatNumber } from "../../utils/format";
 import PokemonCard from "../../components/PokemonCard";
 import PageHeader from "../../components/PageHeader";
 import Loader from "../../components/Loader";
@@ -30,6 +31,7 @@ export default function CollectionPage() {
   const { coins, addCoins, setCoins } = useCurrency();
   const [showStats, setShowStats] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState("rarity_desc");
   const [filterSet, setFilterSet] = useState("all");
@@ -85,26 +87,36 @@ export default function CollectionPage() {
     return Array.from(set).sort((a, b) => (RARITY_RANK[b] || 0) - (RARITY_RANK[a] || 0));
   }, [cards]);
 
-  useEffect(() => {
-    async function initCollection() {
-      if (!isLoaded) return;
-      setLoading(true);
+  /**
+   * Carga inicial. Todo va dentro del mismo try: si se cae el transporte de una
+   * server action (sin cobertura, 500, despliegue caducado) o el JSON del modo
+   * invitado está corrupto, el `finally` apaga el spinner y `loadError` ofrece
+   * reintentar, en vez de dejar la pantalla girando o fingir una colección
+   * vacía a quien tiene cientos de cartas.
+   */
+  const loadCollection = useCallback(async () => {
+    if (!isLoaded) return;
+    setLoading(true);
+    setLoadError(false);
+    try {
       const sets = await getSetsFromDB();
       setDbSets(sets);
       if (isSignedIn) {
-        try {
-          const dbCards = await getFullCollection();
-          setCards(dbCards);
-        } catch (error) {
-          console.error("Error cargando colección:", error);
-        }
+        setCards(await getFullCollection());
       } else {
         setCards(getCollection());
       }
+    } catch (error) {
+      console.error("Error cargando colección:", error);
+      setLoadError(true);
+    } finally {
       setLoading(false);
     }
-    initCollection();
   }, [isSignedIn, isLoaded]);
+
+  useEffect(() => {
+    loadCollection();
+  }, [loadCollection]);
 
   const setStats = useMemo(() => {
     return dbSets.map((set) => {
@@ -120,7 +132,9 @@ export default function CollectionPage() {
   const processedCards = useMemo(() => {
     let result = [...cards];
     if (searchTerm) result = result.filter((c) => c.name.toLowerCase().includes(searchTerm.toLowerCase()));
-    if (filterSet !== "all") result = result.filter((c) => c.id.startsWith(filterSet));
+    // Con el guion: los ids son `set-numero` y sin él "sv8" se llevaría también
+    // las de "sv8pt5" (y "swsh1" las de swsh10/11/12).
+    if (filterSet !== "all") result = result.filter((c) => c.id.startsWith(filterSet + "-"));
     if (filterRarity !== "all") result = result.filter((c) => c.rarity === filterRarity);
 
     result.sort((a, b) => {
@@ -137,9 +151,13 @@ export default function CollectionPage() {
   }, [cards, searchTerm, filterSet, filterRarity, sortBy]);
 
   const totalPages = Math.max(1, Math.ceil(processedCards.length / PAGE_SIZE));
+  // El reajuste de `page` vive en un efecto, que corre tras el pintado: sin
+  // acotar aquí, escribir en el buscador desde la página 4 deja un frame con la
+  // rejilla vacía y "4 / 2" en la paginación.
+  const safePage = Math.min(page, totalPages);
   const pagedCards = useMemo(
-    () => processedCards.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-    [processedCards, page],
+    () => processedCards.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+    [processedCards, safePage],
   );
 
   // Reset page on filter/search change
@@ -239,7 +257,7 @@ export default function CollectionPage() {
     try {
       if (!isSignedIn) {
         saveCollectionRaw(newCollection);
-        toast(`+${totalGanancias} monedas por ${units} cartas`, "success");
+        toast(`+${formatNumber(totalGanancias)} monedas por ${formatNumber(units)} cartas`, "success");
         return;
       }
 
@@ -250,15 +268,18 @@ export default function CollectionPage() {
         duplicates.map((c) => sellAllDuplicatesAction(c.id)),
       );
       const failed = new Map<string, number>(); // id -> cantidad previa
+      const serverBalances: number[] = []; // saldos reales devueltos por el servidor
       let refund = 0;
       let failedUnits = 0;
       results.forEach((res, i) => {
         const card = duplicates[i];
-        const ok = res.status === "fulfilled" && (res.value as any)?.success;
-        if (!ok) {
+        const value: any = res.status === "fulfilled" ? res.value : null;
+        if (!value?.success) {
           failed.set(card.id, card.quantity);
           refund += (card.quantity - 1) * getPrice(card.rarity);
           failedUnits += card.quantity - 1;
+        } else if (typeof value.coins === "number") {
+          serverBalances.push(value.coins);
         }
       });
 
@@ -272,15 +293,20 @@ export default function CollectionPage() {
         addCoins(-refund);
       }
 
+      // El saldo real se adopta al final, después del ajuste optimista: el mayor
+      // de los devueltos es el de la última venta consolidada y ya descuenta lo
+      // que no se pudo vender, así que aplicarlo antes lo pisaría el refund.
+      if (serverBalances.length > 0) setCoins(Math.max(...serverBalances));
+
       if (failed.size === duplicates.length) {
         toast("No se pudo completar la venta. Nada ha cambiado.", "error");
       } else if (failed.size > 0) {
         toast(
-          `Vendidas ${units - failedUnits} cartas · ${failedUnits} no se pudieron vender`,
+          `Vendidas ${formatNumber(units - failedUnits)} cartas · ${formatNumber(failedUnits)} no se pudieron vender`,
           "error",
         );
       } else {
-        toast(`+${totalGanancias} monedas por ${units} cartas`, "success");
+        toast(`+${formatNumber(totalGanancias)} monedas por ${formatNumber(units)} cartas`, "success");
       }
     } catch {
       setCards(prevCards);
@@ -315,7 +341,7 @@ export default function CollectionPage() {
       } else {
         saveCollectionRaw(updatedCards);
       }
-      toast(`+${totalValue} monedas por ${duplicates} duplicadas`, "success");
+      toast(`+${formatNumber(totalValue)} monedas por ${formatNumber(duplicates)} duplicadas`, "success");
     } catch {
       setCards((prev) => prev.map((c) => (c.id === id ? { ...c, quantity: prevQuantity } : c)));
       setSelectedCard((prev: any) =>
@@ -443,6 +469,33 @@ export default function CollectionPage() {
 
   if (loading) return <Loader label="Cargando Colección" />;
 
+  // Sin esto, un fallo de carga se presentaba como "Aún no tienes cartas" y se
+  // invitaba a gastar monedas a quien ya tiene la colección llena.
+  if (loadError) {
+    return (
+      <div className="w-full">
+        <PageHeader title="Mi Colección" subtitle="Tus cartas, progreso y estadísticas" />
+        <div className="surface rounded-2xl py-16 md:py-20 px-6 text-center flex flex-col items-center gap-4">
+          <div className="w-14 h-14 rounded-2xl surface-2 flex items-center justify-center">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-7 h-7 ink-faint">
+              <circle cx="12" cy="12" r="9" /><path d="M12 7.5v5.5M12 16.5h.01" />
+            </svg>
+          </div>
+          <div>
+            <p className="ink font-medium">No se pudo cargar tu colección</p>
+            <p className="ink-soft text-sm mt-1">Comprueba tu conexión e inténtalo de nuevo.</p>
+          </div>
+          <button
+            onClick={() => { haptic("tap"); loadCollection(); }}
+            className="btn-primary press touch-target px-5 py-2.5 rounded-xl text-sm font-medium"
+          >
+            Reintentar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="select-none w-full">
       <PageHeader
@@ -542,7 +595,9 @@ export default function CollectionPage() {
           className="surface rounded-2xl px-3 py-3 flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:items-center sticky z-40"
           style={{ top: "calc(var(--sat) + var(--topbar-h) + 8px)" }}
         >
-          <div className="input-field flex items-center gap-2 px-3 py-2 rounded-xl flex-1 sm:min-w-[180px]">
+          {/* Etiqueta y no contenedor neutro: así tocar el icono o el relleno
+              enfoca el campo. min-h-11 son los 44px mínimos de zona táctil. */}
+          <label className="input-field flex min-h-11 items-center gap-2 px-3 py-2 rounded-xl flex-1 sm:min-w-[180px]">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint shrink-0">
               <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
             </svg>
@@ -566,14 +621,17 @@ export default function CollectionPage() {
                 type="button"
                 onClick={() => { haptic("tap"); setSearchTerm(""); }}
                 aria-label="Limpiar búsqueda"
-                className="ink-faint hover:ink shrink-0 -mr-1 press flex h-9 w-9 items-center justify-center rounded-full"
+                // El área táctil es de 44px, pero los márgenes negativos la
+                // meten dentro del relleno del campo: sin ellos la barra da un
+                // salto de 18px al escribir la primera letra.
+                className="ink-faint hover:ink shrink-0 -mr-1.5 -my-2.5 press flex h-11 w-11 items-center justify-center rounded-full"
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
                   <path d="M18 6 6 18M6 6l12 12" />
                 </svg>
               </button>
             )}
-          </div>
+          </label>
 
           {/* Rejilla en vez de tira desplazable: un <select> se estira hasta su
               opción más larga, así que con `shrink-0` en una fila horizontal el
@@ -632,37 +690,7 @@ export default function CollectionPage() {
           // dos filas en pantalla.
           <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 md:gap-4 lg:grid-cols-6">
             {pagedCards.map((card) => (
-              <div
-                key={card.id}
-                className="relative group cursor-zoom-in"
-                tabIndex={0}
-                aria-label={`Ver ${card.name}`}
-                onClick={() => openDetail(card)}
-                onPointerDown={(e) => startLongPress(e, card)}
-                onPointerMove={moveLongPress}
-                onPointerUp={cancelLongPress}
-                onPointerCancel={cancelLongPress}
-                onContextMenu={(e) => {
-                  // Sólo tapamos el menú nativo cuando la pulsación larga es
-                  // nuestra; con el ratón el menú del navegador sigue saliendo.
-                  const lp = longPressRef.current;
-                  if (lp.timer != null || lp.fired) e.preventDefault();
-                }}
-                onKeyDown={(e) => {
-                  if (e.target !== e.currentTarget) return;
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    haptic("select");
-                    setSelectedCard(card);
-                  }
-                  // Equivalente de teclado a la pulsación larga.
-                  if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
-                    e.preventDefault();
-                    haptic("heavy");
-                    setActionCard(card);
-                  }
-                }}
-              >
+              <div key={card.id} className="relative group">
                 {card.quantity > 1 && (
                   <div
                     className="absolute -top-2 -right-2 z-30 text-[10px] font-bold w-6 h-6 flex items-center justify-center rounded-full tnum"
@@ -683,9 +711,38 @@ export default function CollectionPage() {
                     </svg>
                   </div>
                 )}
-                <div className="transition transform group-hover:-translate-y-1 duration-300 pointer-events-none">
-                  <PokemonCard card={card} reveal={true} interactive={false} />
-                </div>
+                {/* <button> y no un <div tabIndex>: aria-label no se anuncia en
+                    un elemento de rol genérico, y así Enter y Espacio abren el
+                    detalle por el mismo camino que el toque (que es quien
+                    congela navIds), sin duplicar el manejo de teclado. */}
+                <button
+                  type="button"
+                  aria-label={`Ver ${card.name}`}
+                  className="block w-full cursor-zoom-in"
+                  onClick={() => openDetail(card)}
+                  onPointerDown={(e) => startLongPress(e, card)}
+                  onPointerMove={moveLongPress}
+                  onPointerUp={cancelLongPress}
+                  onPointerCancel={cancelLongPress}
+                  onContextMenu={(e) => {
+                    // Sólo tapamos el menú nativo cuando la pulsación larga es
+                    // nuestra; con el ratón el menú del navegador sigue saliendo.
+                    const lp = longPressRef.current;
+                    if (lp.timer != null || lp.fired) e.preventDefault();
+                  }}
+                  onKeyDown={(e) => {
+                    // Equivalente de teclado a la pulsación larga.
+                    if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+                      e.preventDefault();
+                      haptic("heavy");
+                      setActionCard(card);
+                    }
+                  }}
+                >
+                  <div className="transition transform group-hover:-translate-y-1 duration-300 pointer-events-none">
+                    <PokemonCard card={card} reveal={true} interactive={false} />
+                  </div>
+                </button>
                 {/* En táctil no hay hover: la acción se muestra siempre en móvil */}
                 <div className="mt-2 flex justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity duration-300">
                   {card.quantity > 1 ? (
@@ -696,9 +753,7 @@ export default function CollectionPage() {
                       // confirmación del servidor.
                       disabled={isSelling}
                       aria-busy={pendingSale === card.id}
-                      // El botón no arma la pulsación larga de la carta.
-                      onPointerDown={(e) => e.stopPropagation()}
-                      className="chip ink text-[10px] min-h-8 px-3 rounded-full press hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:brightness-100"
+                      className="chip ink text-[11px] min-h-11 px-4 rounded-full press hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:brightness-100"
                     >
                       {pendingSale === card.id ? "Vendiendo…" : `Vender +${getPrice(card.rarity)}`}
                     </button>
@@ -715,8 +770,8 @@ export default function CollectionPage() {
         {processedCards.length > PAGE_SIZE && (
           <div className="flex items-center justify-center gap-3 pt-2">
             <button
-              onClick={() => goToPage(Math.max(1, page - 1))}
-              disabled={page === 1}
+              onClick={() => goToPage(Math.max(1, safePage - 1))}
+              disabled={safePage === 1}
               className="btn-ghost press touch-target w-11 h-11 rounded-xl flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
               aria-label="Anterior"
             >
@@ -725,12 +780,12 @@ export default function CollectionPage() {
               </svg>
             </button>
             <span className="chip ink px-4 py-2 text-sm font-medium tnum">
-              {page} / {totalPages}
-              <span className="ink-soft text-xs ml-2">· {processedCards.length} cartas</span>
+              {safePage} / {totalPages}
+              <span className="ink-soft text-xs ml-2">· {formatNumber(processedCards.length)} cartas</span>
             </span>
             <button
-              onClick={() => goToPage(Math.min(totalPages, page + 1))}
-              disabled={page === totalPages}
+              onClick={() => goToPage(Math.min(totalPages, safePage + 1))}
+              disabled={safePage === totalPages}
               className="btn-ghost press touch-target w-11 h-11 rounded-xl flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
               aria-label="Siguiente"
             >
@@ -745,8 +800,8 @@ export default function CollectionPage() {
       <ConfirmSheet
         open={confirmDuplicates}
         title="Vender duplicados"
-        description={`Se venderán ${duplicateInfo.units} cartas repetidas por ${duplicateInfo.total} monedas. Las favoritas no se tocan.`}
-        confirmLabel={`Vender por ${duplicateInfo.total}`}
+        description={`Se venderán ${formatNumber(duplicateInfo.units)} cartas repetidas por ${formatNumber(duplicateInfo.total)} monedas. Las favoritas no se tocan.`}
+        confirmLabel={`Vender por ${formatNumber(duplicateInfo.total)}`}
         destructive
         onConfirm={handleSellAllDuplicates}
         onClose={() => setConfirmDuplicates(false)}

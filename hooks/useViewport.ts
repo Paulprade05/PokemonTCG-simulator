@@ -34,6 +34,13 @@ export function useViewport(): ViewportState {
     const vv = window.visualViewport;
 
     const update = () => {
+      // Con un pellizco para ampliar, vv.height viene dividido por la escala:
+      // la diferencia con innerHeight es enorme y se confundiría con el
+      // teclado, encogiendo --app-height a media pantalla y escondiendo la
+      // barra de pestañas. Mientras dura el zoom no se toca nada; al volver a
+      // escala 1 llega otro evento y se recalcula.
+      if (vv && vv.scale > 1.01) return;
+
       const height = vv ? vv.height : window.innerHeight;
       const rawKeyboard = vv
         ? window.innerHeight - vv.height - vv.offsetTop

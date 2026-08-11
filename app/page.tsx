@@ -2,7 +2,7 @@
 
 import { useUser } from "@clerk/nextjs";
 import { AnimatePresence, motion } from "framer-motion";
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
   getUserData,
@@ -74,9 +74,13 @@ export default function Home() {
   const [currentPackType, setCurrentPackType] = useState<PackType | null>(null);
   const [currentPack, setCurrentPack] = useState<any[]>([]);
   const [packIndex, setPackIndex] = useState(0);
+  /** Cartas ya destapadas del sobre; no baja al volver a una carta anterior. */
+  const [maxRevealed, setMaxRevealed] = useState(0);
   const [isPackOpen, setIsPackOpen] = useState(false);
   const [cardRevealed, setCardRevealed] = useState(false);
   const [loading, setLoading] = useState(false);
+  /** El set no ha devuelto cartas: la tienda no debe parecer comprable. */
+  const [loadError, setLoadError] = useState(false);
   const [stats, setStats] = useState<any>(null);
   const [setBonus, setSetBonus] = useState<{ granted: number; sets: string[] } | null>(null);
   const [prePackIds, setPrePackIds] = useState<string[]>([]);
@@ -88,6 +92,12 @@ export default function Home() {
   /** Hay una acción de servidor en vuelo (compra o guardado): botones apagados. */
   const [busy, setBusy] = useState(false);
   const finishingRef = useRef(false);
+  /**
+   * El sobre en pantalla ya está persistido. Se guarda al comprarlo, así que
+   * al terminar de revelarlo NO hay que volver a guardarlo: repetir la llamada
+   * duplicaría las cartas en la colección.
+   */
+  const packSavedRef = useRef(false);
   /** Elemento que captura los gestos de la carta durante la apertura. */
   const cardGestureRef = useRef<HTMLDivElement>(null);
 
@@ -111,8 +121,6 @@ export default function Home() {
 
   const lastIndex = Math.max(0, currentPack.length - 1);
   const currentCard = currentPack[packIndex];
-  /** Las cartas anteriores a la actual ya se vieron; la actual depende del flip. */
-  const revealedCount = cardRevealed ? packIndex + 1 : packIndex;
   const currentRevealed = cardRevealed || packIndex > 0;
   const showAura =
     currentRevealed && (RARITY_RANK[currentCard?.rarity] || 0) >= AURA_RANK;
@@ -157,24 +165,31 @@ export default function Home() {
     syncUserData();
   }, [isSignedIn, isLoaded, setCoins]);
 
-  useEffect(() => {
-    async function loadAndSync() {
-      if (!selectedSet) return;
-      setLoading(true);
-      try {
-        const cards = await getCardsFromSet(selectedSet);
-        if (cards && cards.length > 0) {
-          setAllCards(cards);
-          syncSetToDatabase(selectedSet, cards).catch((err) => console.error("sync:", err));
-        }
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
+  const loadAndSync = useCallback(async () => {
+    if (!selectedSet) return;
+    setLoading(true);
+    setLoadError(false);
+    try {
+      const cards = await getCardsFromSet(selectedSet);
+      if (cards && cards.length > 0) {
+        setAllCards(cards);
+        syncSetToDatabase(selectedSet, cards).catch((err) => console.error("sync:", err));
+      } else {
+        // Sin cartas no se puede abrir nada: mejor decirlo aquí que dejar la
+        // tienda entera con aspecto de funcionar y fallar al pulsar comprar.
+        setLoadError(true);
       }
+    } catch (err) {
+      console.error(err);
+      setLoadError(true);
+    } finally {
+      setLoading(false);
     }
-    loadAndSync();
   }, [selectedSet]);
+
+  useEffect(() => {
+    loadAndSync();
+  }, [loadAndSync]);
 
   const setsBySeries = useMemo(() => {
     const groups: Record<string, any[]> = {};
@@ -211,6 +226,7 @@ export default function Home() {
   const resetPackState = () => {
     setCurrentPack([]);
     setPackIndex(0);
+    setMaxRevealed(0);
     setIsPackOpen(false);
     setCardRevealed(false);
     setDirection(1);
@@ -238,6 +254,7 @@ export default function Home() {
     // compraba dos sobres y se descontaba uno solo.
     finishingRef.current = true;
     setBusy(true);
+    packSavedRef.current = false;
     try {
       if (isSignedIn) {
         // Con sesión manda el servidor: cobra de forma atómica y devuelve el
@@ -250,9 +267,22 @@ export default function Home() {
           return;
         }
         setCoins(balance);
+        // El sobre se guarda ya cobrado, sin esperar a que se revele: si la app
+        // muere a mitad de la revelación (iOS la mata en segundo plano, recarga,
+        // botón atrás) las monedas están gastadas y las cartas deben existir.
+        try {
+          await savePackToCollection(newPack, price);
+          packSavedRef.current = true;
+        } catch (err) {
+          // No se avisa aquí: finishPack lo reintenta al cerrar la revelación.
+          console.error("Error guardando el sobre:", err);
+        }
       } else if (!spendCoins(price)) {
         // Invitado: el saldo sólo vive en este dispositivo.
         return;
+      } else {
+        saveToCollection(newPack);
+        packSavedRef.current = true;
       }
     } catch (err) {
       console.error("Error descontando monedas:", err);
@@ -270,6 +300,7 @@ export default function Home() {
     setCurrentPack(newPack);
     setCurrentPackPrice(price);
     setPackIndex(0);
+    setMaxRevealed(0);
     setCardRevealed(false);
     setIsPackOpen(true);
   };
@@ -354,6 +385,7 @@ export default function Home() {
         toast("No se pudieron guardar los sobres en la nube", "error");
         saved = false;
       }
+      packSavedRef.current = saved;
 
       setPrePackIds(ownedSnapshot);
       // Sólo damos por poseídas las cartas si el guardado salió bien.
@@ -375,12 +407,11 @@ export default function Home() {
     finishingRef.current = true;
     setBusy(true);
     try {
-      if (isSignedIn) {
-        await savePackToCollection(currentPack, currentPackPrice);
-        // Bonus por completar sets + monedas + estadísticas/logros al día.
-        await refreshAfterPack();
-      } else {
-        saveToCollection(currentPack);
+      // El sobre ya se guardó al comprarlo; sólo se reintenta si aquello falló.
+      if (!packSavedRef.current) {
+        if (isSignedIn) await savePackToCollection(currentPack, currentPackPrice);
+        else saveToCollection(currentPack);
+        packSavedRef.current = true;
       }
       const newPackIds = currentPack.map((c) => c.id);
       setUserCollectionIds((prev) => [...prev, ...newPackIds]);
@@ -397,12 +428,17 @@ export default function Home() {
       finishingRef.current = false;
       setBusy(false);
     }
+    // Bonus por completar sets + monedas + estadísticas/logros al día. Va sin
+    // await y con la vista ya cerrada: son tres peticiones más y no pueden
+    // dejar al usuario encerrado en la pantalla completa esperándolas.
+    if (isSignedIn) refreshAfterPack();
   };
 
   const handleNextCard = async () => {
     if (!cardRevealed) {
       haptic("heavy");
       setCardRevealed(true);
+      setMaxRevealed((m) => Math.max(m, packIndex + 1));
       return;
     }
     if (packIndex < lastIndex) {
@@ -413,6 +449,7 @@ export default function Home() {
       setDirection(1);
       setCardRevealed(true);
       setPackIndex((prev) => prev + 1);
+      setMaxRevealed((m) => Math.max(m, packIndex + 2));
     } else {
       await finishPack();
     }
@@ -465,18 +502,22 @@ export default function Home() {
     resetPackState();
   };
 
-  // Cartas nuevas (no estaban antes del sobre)
-  const newCardsInPack = useMemo(() => {
-    if (!currentPack.length) return 0;
+  // Posiciones del sobre que estrenan carta. Sólo cuenta la PRIMERA aparición
+  // de cada id: si el sobre trae dos copias de la misma carta, la segunda es
+  // una repetida (y como tal la vende dupeIdsInPack), no una nueva.
+  const newCardIndexes = useMemo(() => {
     const before = new Set(prePackIds);
     const seen = new Set<string>();
-    let count = 0;
-    currentPack.forEach((c) => {
-      if (!before.has(c.id) && !seen.has(c.id)) count++;
+    const indexes = new Set<number>();
+    currentPack.forEach((c, i) => {
+      if (!before.has(c.id) && !seen.has(c.id)) indexes.add(i);
       seen.add(c.id);
     });
-    return count;
+    return indexes;
   }, [currentPack, prePackIds]);
+
+  // Cartas nuevas (no estaban antes del sobre)
+  const newCardsInPack = newCardIndexes.size;
 
   // Duplicados del sobre (ya poseídos antes) → vendibles
   const dupeIdsInPack = useMemo(() => {
@@ -545,22 +586,29 @@ export default function Home() {
 
   return (
     <div className="flex flex-col items-center select-none w-full">
-      {/* SET COMPLETION BONUS TOAST */}
-      <AnimatePresence>
-        {setBonus && setBonus.granted > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: -20, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="fixed top-24 left-1/2 -translate-x-1/2 z-[200] bg-yellow-500/15 border border-yellow-500/30 backdrop-blur-xl px-6 py-4 rounded-2xl text-center max-w-sm"
-          >
-            <p className="text-sm font-semibold" style={{ color: "var(--warn)" }}>¡Set completado!</p>
-            <p className="text-xs ink-soft mt-1">
-              {setBonus.sets.join(", ")} · +{formatNumber(setBonus.granted)} monedas
-            </p>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* SET COMPLETION BONUS TOAST — en Portal como el resto de capas fijas de
+          la página: dentro de la ruta lo contendría el transform de
+          app/template.tsx. La TopBar mide 4rem + la safe area y --topbar-h sólo
+          cubre esas 4rem, así que hay que sumar --sat para caer por debajo de
+          ella y no tapar el saldo. */}
+      <Portal>
+        <AnimatePresence>
+          {setBonus && setBonus.granted > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -20 }}
+              style={{ top: "calc(var(--sat) + var(--topbar-h) + 12px)" }}
+              className="fixed left-1/2 -translate-x-1/2 z-[200] bg-yellow-500/15 border border-yellow-500/30 backdrop-blur-xl px-6 py-4 rounded-2xl text-center max-w-sm"
+            >
+              <p className="text-sm font-semibold" style={{ color: "var(--warn)" }}>¡Set completado!</p>
+              <p className="text-xs ink-soft mt-1">
+                {setBonus.sets.join(", ")} · +{formatNumber(setBonus.granted)} monedas
+              </p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </Portal>
 
       {/* DASHBOARD (signed-in) — panel unificado */}
       {!selectedSet && isSignedIn && stats && (
@@ -589,7 +637,10 @@ export default function Home() {
                 ].map((s) => (
                   <div key={s.label} className="surface-2 rounded-2xl px-3 md:px-5 py-2.5 text-center md:text-left">
                     <p className="text-[9px] uppercase tracking-wider ink-faint">{s.label}</p>
-                    <p className="text-base md:text-xl font-bold tabular-nums mt-0.5">{s.value}</p>
+                    {/* "Sets" es la cadena "3/12" y no debe pasar por formatNumber. */}
+                    <p className="text-base md:text-xl font-bold tabular-nums mt-0.5">
+                      {typeof s.value === "number" ? formatNumber(s.value) : s.value}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -611,6 +662,9 @@ export default function Home() {
                   <div
                     key={ach.id}
                     title={`${ach.name} — ${ach.desc}`}
+                    // Sin rol el div es genérico y ARIA descarta su aria-label:
+                    // el lector de pantalla sólo leería el emoji.
+                    role="img"
                     aria-label={`${ach.name}: ${ach.done ? "conseguido" : "pendiente"}`}
                     className={`flex aspect-square items-center justify-center rounded-xl border text-base transition sm:aspect-auto sm:h-9 sm:w-9 sm:text-lg ${
                       ach.done
@@ -732,7 +786,7 @@ export default function Home() {
         >
           <button
             onClick={handleBackToMenu}
-            className="mb-5 md:mb-10 ink-soft hover:ink transition flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] chip px-4 py-2 press"
+            className="mb-5 md:mb-10 ink-soft hover:ink transition flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] chip touch-target px-4 py-2 press"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
               <path d="m15 18-6-6 6-6" />
@@ -744,9 +798,25 @@ export default function Home() {
             <img src={currentSetObj.images.logo} alt={currentSetObj.name} className="h-14 md:h-20 object-contain mb-5 md:mb-10 opacity-90" />
           )}
 
-          {/* En móvil, carrusel horizontal con anclaje: los tres sobres caben
+          {/* Sin cartas no hay sobres que ofrecer: se dice y se ofrece reintentar,
+              en vez de enseñar una tienda que falla al pulsar comprar. */}
+          {loadError && !loading ? (
+            <div className="surface rounded-3xl w-full max-w-sm p-6 flex flex-col items-center gap-3 text-center">
+              <p className="text-sm font-semibold">No se han podido cargar las cartas</p>
+              <p className="text-xs ink-soft">
+                Comprueba tu conexión e inténtalo de nuevo.
+              </p>
+              <button
+                onClick={loadAndSync}
+                className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold"
+              >
+                Reintentar
+              </button>
+            </div>
+          ) : (
+          /* En móvil, carrusel horizontal con anclaje: los tres sobres caben
               "en la misma línea" y se pasan deslizando, en vez de apilarse en
-              una columna kilométrica. En md+ vuelve a ser una rejilla. */}
+              una columna kilométrica. En md+ vuelve a ser una rejilla. */
           <div
             className={
               isSpecialSet
@@ -838,6 +908,7 @@ export default function Home() {
               </>
             )}
           </div>
+          )}
 
           <Portal>
           <AnimatePresence>
@@ -902,11 +973,15 @@ export default function Home() {
 
           {/* CABECERA (56px): salir + progreso segmentado + contador */}
           <div className="w-full max-w-2xl h-14 shrink-0 flex items-center gap-3 px-3 md:px-4 relative z-20">
+            {/* Salida de emergencia: mientras se guarda, este botón NO puede
+                llamar a finishPack (lo bloquea finishingRef) ni quedarse
+                apagado, porque en esta vista no hay barra de pestañas, ni gesto
+                de retroceso, ni scroll: sería un encierro. El sobre ya está
+                guardado desde la compra, así que salir no pierde nada. */}
             <button
-              onClick={handleRevealAll}
-              disabled={busy}
-              aria-label="Guardar el sobre y salir"
-              className="chip press touch-target w-10 h-10 rounded-full flex items-center justify-center shrink-0 disabled:opacity-50"
+              onClick={busy ? () => setIsPackOpen(false) : handleRevealAll}
+              aria-label={busy ? "Salir de la apertura" : "Guardar el sobre y salir"}
+              className="chip press touch-target w-10 h-10 rounded-full flex items-center justify-center shrink-0"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-4 h-4">
                 <path d="m15 18-6-6 6-6" />
@@ -922,7 +997,7 @@ export default function Home() {
                 >
                   <motion.div
                     initial={false}
-                    animate={{ scaleX: i < revealedCount ? 1 : 0 }}
+                    animate={{ scaleX: i < maxRevealed ? 1 : 0 }}
                     transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
                     className="h-full w-full origin-left"
                     style={{ background: "var(--accent)" }}
@@ -935,6 +1010,14 @@ export default function Home() {
               {packIndex + 1} / {currentPack.length}
             </span>
           </div>
+
+          {/* La carta es una imagen animada: sin esto el lector de pantalla no
+              llega a decir qué ha salido. */}
+          <p className="sr-only" aria-live="polite">
+            {currentRevealed
+              ? `Carta ${packIndex + 1} de ${currentPack.length}: ${currentCard.name}${currentCard.rarity ? `, ${currentCard.rarity}` : ""}`
+              : ""}
+          </p>
 
           {/* ZONA DE CARTA */}
           <div className="relative flex-1 w-full flex items-center justify-center px-4">
@@ -954,6 +1037,21 @@ export default function Home() {
             <div
               ref={cardGestureRef}
               onClick={handleCardTap}
+              // El espacio ya lo atiende el atajo global de la vista; aquí basta
+              // con Enter para que el rol de botón se comporte como tal.
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleNextCard();
+                }
+              }}
+              role="button"
+              tabIndex={0}
+              aria-label={
+                currentRevealed
+                  ? `${currentCard.name}${currentCard.rarity ? `, ${currentCard.rarity}` : ""}`
+                  : "Girar carta"
+              }
               className="relative z-20 cursor-pointer select-none"
               style={{
                 width: CARD_WIDTH,
@@ -973,7 +1071,7 @@ export default function Home() {
                     transition={{ type: "spring", stiffness: 200, damping: 25 }}
                     className="absolute inset-0"
                   >
-                    {!userCollectionIds.includes(currentCard.id) && cardRevealed && (
+                    {newCardIndexes.has(packIndex) && cardRevealed && (
                       <motion.div
                         initial={{ scale: 0, x: -20 }}
                         animate={{ scale: 1, x: 0 }}
@@ -1053,18 +1151,18 @@ export default function Home() {
                   disabled={sellingDupes}
                   className="bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 px-5 py-2.5 rounded-xl text-sm font-medium transition disabled:opacity-50"
                 >
-                  {sellingDupes ? "Vendiendo..." : `Vender ${dupeIdsInPack.length} repetidas (+${dupeValue})`}
+                  {sellingDupes ? "Vendiendo..." : `Vender ${dupeIdsInPack.length} repetidas (+${formatNumber(dupeValue)})`}
                 </button>
               )}
               {soldInfo && (
                 <span className="text-emerald-300 text-sm font-medium px-3 py-2.5">
-                  +{soldInfo.earned} por {soldInfo.sold} repetidas
+                  +{formatNumber(soldInfo.earned)} por {soldInfo.sold} repetidas
                 </span>
               )}
-              <button onClick={() => setCurrentPack([])} className="btn-ghost press px-5 py-2.5 rounded-xl text-sm font-medium">
+              <button onClick={() => setCurrentPack([])} className="btn-ghost press touch-target px-5 py-2.5 rounded-xl text-sm font-medium">
                 Abrir otro
               </button>
-              <button onClick={handleBackToMenu} className="btn-accent press px-6 py-2.5 rounded-xl text-sm font-semibold">
+              <button onClick={handleBackToMenu} className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold">
                 Finalizar
               </button>
             </div>
@@ -1106,7 +1204,7 @@ export default function Home() {
               sobre en datos móviles); PokemonCard elige ya la variante. */}
           <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 md:gap-4 lg:grid-cols-6 w-full">
             {currentPack.map((card, index) => {
-              const isNew = !prePackIds.includes(card.id);
+              const isNew = newCardIndexes.has(index);
               return (
                 <motion.div
                   key={index}
@@ -1183,7 +1281,7 @@ function PackCard({ accent, badge, title, description, price, icon, onClick, onM
           el alto de la tarjeta en un móvil. */}
       {odds && odds.length > 0 && (
         <details className="w-full mb-3 md:mb-5 relative z-10 group/odds">
-          <summary className="chip ink-faint cursor-pointer list-none rounded-lg px-3 py-1.5 text-center text-[10px] font-semibold tracking-wide uppercase [&::-webkit-details-marker]:hidden">
+          <summary className="chip ink-faint touch-target flex items-center justify-center cursor-pointer list-none rounded-lg px-3 py-3 text-center text-[10px] font-semibold tracking-wide uppercase [&::-webkit-details-marker]:hidden">
             Probabilidades
           </summary>
           <div className="surface-2 mt-2 space-y-1 rounded-xl p-3">
@@ -1201,7 +1299,7 @@ function PackCard({ accent, badge, title, description, price, icon, onClick, onM
         <button
           onClick={onClick}
           disabled={disabled}
-          className={`${a.btn} press font-semibold py-2.5 px-6 rounded-xl w-full text-center transition text-sm disabled:opacity-50 disabled:cursor-not-allowed`}
+          className={`${a.btn} press touch-target font-semibold py-2.5 px-6 rounded-xl w-full text-center transition text-sm disabled:opacity-50 disabled:cursor-not-allowed`}
         >
           {disabled ? "Abriendo..." : `${formatNumber(price)} monedas`}
         </button>
@@ -1209,7 +1307,7 @@ function PackCard({ accent, badge, title, description, price, icon, onClick, onM
           <button
             onClick={onMulti}
             disabled={disabled}
-            className="press btn-ghost font-medium py-2 px-6 rounded-xl w-full text-center transition text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+            className="press btn-ghost touch-target font-medium py-2 px-6 rounded-xl w-full text-center transition text-xs disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Abrir ×{multiCount} · {formatNumber(price * multiCount)}
           </button>

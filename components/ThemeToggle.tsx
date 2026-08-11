@@ -7,6 +7,17 @@ import { getUserTheme, setUserTheme } from "../app/action";
 
 type Theme = "light" | "dark";
 
+// El tema lo elige el usuario con data-theme, no prefers-color-scheme, así que
+// la etiqueta theme-color no puede declararse por media query: se reescribe a
+// mano para que la barra del navegador acompañe al fondo (--bg de globals.css).
+const THEME_COLOR: Record<Theme, string> = { light: "#f4f5f8", dark: "#080a0e" };
+
+const syncThemeColor = (t: Theme) => {
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute("content", THEME_COLOR[t]);
+};
+
 export default function ThemeToggle() {
   const { isSignedIn, isLoaded } = useUser();
   const [theme, setTheme] = useState<Theme>("light");
@@ -15,6 +26,8 @@ export default function ThemeToggle() {
   useEffect(() => {
     const cur = (document.documentElement.getAttribute("data-theme") as Theme) || "light";
     setTheme(cur);
+    // Repaso por si el script de arranque corrió antes de que existiera la meta.
+    syncThemeColor(cur);
   }, []);
 
   // Si está logueado, sincronizar desde BD (sobrescribe localStorage si difiere)
@@ -24,6 +37,7 @@ export default function ThemeToggle() {
       if (t && t !== theme) {
         setTheme(t);
         document.documentElement.setAttribute("data-theme", t);
+        syncThemeColor(t);
         try { localStorage.setItem("theme", t); } catch {}
       }
     });
@@ -34,6 +48,7 @@ export default function ThemeToggle() {
     const next: Theme = theme === "dark" ? "light" : "dark";
     setTheme(next);
     document.documentElement.setAttribute("data-theme", next);
+    syncThemeColor(next);
     try { localStorage.setItem("theme", next); } catch {}
     if (isSignedIn) setUserTheme(next).catch(() => {});
   };
@@ -43,7 +58,7 @@ export default function ThemeToggle() {
       onClick={toggle}
       aria-label="Cambiar tema"
       title={theme === "dark" ? "Tema claro" : "Tema oscuro"}
-      className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center rounded-xl btn-ghost press relative overflow-hidden"
+      className="touch-target w-11 h-11 flex items-center justify-center rounded-xl btn-ghost press relative overflow-hidden"
     >
       <AnimatePresence mode="wait" initial={false}>
         {theme === "dark" ? (

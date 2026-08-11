@@ -73,7 +73,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
+      {/* Región viva: el aviso se descarta solo a los 2800ms y el contenedor no
+          recibe eventos, así que sin esto un lector de pantalla no tendría
+          ninguna forma de enterarse de un error. */}
       <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
         className="pointer-events-none fixed inset-x-0 z-[200] flex flex-col items-center gap-2 px-4"
         style={{ top: "calc(var(--sat) + 10px)" }}
       >

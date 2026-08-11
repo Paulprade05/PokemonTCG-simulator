@@ -16,6 +16,9 @@ interface TradeBuilderProps {
 
 interface TCard { id: string; name: string; rarity: string; quantity: number; images?: { small?: string }; }
 
+// El servidor rechaza las ofertas que pasen de aquí, así que se avisa antes de enviarlas.
+const MAX_PER_SIDE = 12;
+
 export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderProps) {
   const { user } = useUser();
   const toast = useToast();
@@ -32,13 +35,20 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
     if (!friend || !user) return;
     setLoading(true);
     setOffer({}); setRequest({});
+    // Sin vaciar aquí, si la carga falla quedan a la vista las cartas del amigo anterior.
+    setMine([]); setTheirs([]);
     Promise.all([
       getTradableCollection(user.id),
       getTradableCollection(friend.friend_id),
     ]).then(([a, b]) => {
       setMine(a as TCard[]);
       setTheirs(b as TCard[]);
+    }).catch(() => {
+      toast("No se pudieron cargar las cartas", "error");
+      onClose();
     }).finally(() => setLoading(false));
+    // onClose llega como función nueva en cada render del padre: incluirlo relanzaría la carga.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [friend, user]);
 
   useEffect(() => {
@@ -47,6 +57,13 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = prev; };
   }, [friend]);
+
+  useEffect(() => {
+    if (!friend) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [friend, onClose]);
 
   const toggle = (side: "offer" | "request", card: TCard) => {
     const setter = side === "offer" ? setOffer : setRequest;
@@ -98,7 +115,11 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filtrar…"
           className="bg-transparent outline-none text-sm flex-1 min-w-0" />
       </div>
-      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 overflow-y-auto custom-scrollbar pr-1 flex-1" data-lenis-prevent style={{ maxHeight: "44vh" }}>
+      {/* La columna es celda de un grid de filas automáticas, así que sin tope crecería
+          con todas las cartas: en móvil se reparte el alto real entre las dos columnas.
+          El suelo de 96px evita que la rejilla desaparezca cuando el teclado deja
+          --app-height por debajo del descuento; el contenedor del panel ya hace scroll. */}
+      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 overflow-y-auto custom-scrollbar pr-1 flex-1 max-h-[max(96px,calc((var(--app-height)_-_260px)_/_2))] md:max-h-[max(96px,calc(var(--app-height)_-_260px))]" data-lenis-prevent>
         {cards.length === 0 && <p className="col-span-full text-center text-xs ink-faint py-8">Sin cartas</p>}
         {cards.map((c) => {
           const sel = selected[c.id] || 0;
@@ -131,7 +152,10 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
       {friend && (
         <motion.div
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[100] flex items-end md:items-center justify-center bg-black/80 backdrop-blur-md md:p-6"
+          className="fixed inset-x-0 top-0 z-[100] flex items-end md:items-center justify-center bg-black/80 backdrop-blur-md md:p-6"
+          // En iOS el viewport de layout no encoge con el teclado: sin esto el panel
+          // quedaría debajo de él.
+          style={{ bottom: "var(--keyboard)" }}
           onClick={onClose}
         >
           <motion.div
@@ -140,15 +164,18 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
             exit={{ y: 40, opacity: 0 }}
             transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-4xl bg-[var(--surface)] border border-[var(--border)] rounded-t-3xl md:rounded-3xl shadow-2xl flex flex-col max-h-[94vh] md:max-h-[88vh] overflow-hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Nuevo intercambio con ${friend.friend_name}`}
+            className="w-full max-w-4xl bg-[var(--surface)] border border-[var(--border)] rounded-t-3xl md:rounded-3xl shadow-2xl flex flex-col max-h-[calc(var(--app-height)_-_var(--sat)_-_16px)] md:max-h-[calc(var(--app-height)_-_64px)] overflow-hidden"
           >
             {/* Header */}
             <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
-              <div>
+              <div className="min-w-0">
                 <p className="text-[10px] uppercase tracking-wider ink-faint">Nuevo intercambio</p>
-                <h3 className="text-lg font-bold tracking-tight">con {friend.friend_name}</h3>
+                <h3 className="text-lg font-bold tracking-tight truncate">con {friend.friend_name}</h3>
               </div>
-              <button onClick={onClose} className="w-9 h-9 rounded-xl btn-ghost press flex items-center justify-center">
+              <button onClick={onClose} aria-label="Cerrar" className="touch-target shrink-0 rounded-xl btn-ghost press flex items-center justify-center">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
                   <path d="M18 6 6 18M6 6l12 12" />
                 </svg>
@@ -167,14 +194,25 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
             )}
 
             {/* Footer */}
-            <div className="px-4 py-3 border-t border-[var(--border)] flex items-center gap-3">
+            <div
+              className="px-4 py-3 border-t border-[var(--border)] flex items-center gap-3"
+              // Con el teclado desplegado ya no hay barra de gestos que esquivar.
+              style={{ paddingBottom: "max(12px, calc(var(--sab) - var(--keyboard) + 12px))" }}
+            >
               <div className="flex-1 text-xs ink-soft">
-                <span className="accent font-semibold">{offeredIds.length}</span> ofrecidas ·{" "}
-                <span className="text-cyan-400 font-semibold">{requestedIds.length}</span> pedidas
+                <span className={`font-semibold ${offeredIds.length > MAX_PER_SIDE ? "text-[var(--danger)]" : "accent"}`}>
+                  {offeredIds.length}/{MAX_PER_SIDE}
+                </span> ofrecidas ·{" "}
+                <span className={`font-semibold ${requestedIds.length > MAX_PER_SIDE ? "text-[var(--danger)]" : "text-cyan-400"}`}>
+                  {requestedIds.length}/{MAX_PER_SIDE}
+                </span> pedidas
               </div>
               <button
                 onClick={send}
-                disabled={offeredIds.length === 0 || requestedIds.length === 0 || sending}
+                disabled={
+                  offeredIds.length === 0 || requestedIds.length === 0 || sending ||
+                  offeredIds.length > MAX_PER_SIDE || requestedIds.length > MAX_PER_SIDE
+                }
                 className="btn-accent press px-6 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {sending ? "Enviando…" : "Enviar oferta"}

@@ -67,7 +67,10 @@ export default function DailyReward() {
             initial={{ opacity: 0, y: -10, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -10 }}
-            className="fixed top-24 left-1/2 -translate-x-1/2 z-[200] bg-emerald-500/20 border border-emerald-500/30 backdrop-blur-xl px-6 py-3 rounded-2xl text-emerald-200 font-semibold text-sm flex items-center gap-2"
+            /* La cabecera mide 4rem + la safe area, así que un top fijo se
+               solaparía con sus controles en un iPhone con notch. */
+            style={{ top: "calc(var(--sat) + 4.5rem)" }}
+            className="fixed left-1/2 -translate-x-1/2 z-[200] bg-emerald-500/20 border border-emerald-500/30 backdrop-blur-xl px-6 py-3 rounded-2xl text-emerald-200 font-semibold text-sm flex items-center gap-2"
           >
             <span>+{reward}</span>
             <span className="text-xs opacity-80">monedas reclamadas</span>
