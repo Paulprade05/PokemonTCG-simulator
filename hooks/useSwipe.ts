@@ -47,6 +47,11 @@ const DEFAULTS = {
 const LOCK_DISTANCE = 8;
 // Un toque no debería moverse más que esto.
 const TAP_SLOP = 10;
+// Desplazamiento mínimo para que la VELOCIDAD pueda disparar el gesto. Un toque
+// rápido deriva unos pocos píxeles y su velocidad sale enorme (8px en 15ms son
+// 533 px/s): sin esta distancia, ese roce contaba como deslizamiento y además
+// se tragaba el click. El camino por umbral (threshold) no la necesita.
+const FLICK_DISTANCE = 30;
 
 /**
  * Gestos de deslizamiento con eventos de puntero puros.
@@ -199,18 +204,30 @@ export function useSwipe(
 
       let fired = false;
       if (locked === "x") {
-        if ((dx <= -threshold || vx <= -velocity) && onSwipeLeft) {
+        if (
+          (dx <= -threshold || (vx <= -velocity && dx <= -FLICK_DISTANCE)) &&
+          onSwipeLeft
+        ) {
           onSwipeLeft();
           fired = true;
-        } else if ((dx >= threshold || vx >= velocity) && onSwipeRight) {
+        } else if (
+          (dx >= threshold || (vx >= velocity && dx >= FLICK_DISTANCE)) &&
+          onSwipeRight
+        ) {
           onSwipeRight();
           fired = true;
         }
       } else if (locked === "y") {
-        if ((dy <= -threshold || vy <= -velocity) && onSwipeUp) {
+        if (
+          (dy <= -threshold || (vy <= -velocity && dy <= -FLICK_DISTANCE)) &&
+          onSwipeUp
+        ) {
           onSwipeUp();
           fired = true;
-        } else if ((dy >= threshold || vy >= velocity) && onSwipeDown) {
+        } else if (
+          (dy >= threshold || (vy >= velocity && dy >= FLICK_DISTANCE)) &&
+          onSwipeDown
+        ) {
           onSwipeDown();
           fired = true;
         }

@@ -10,7 +10,7 @@ import ServiceWorkerRegister from "../components/pwa/ServiceWorkerRegister";
 // Fija el tema antes del primer pintado y, con él, el color de la barra del
 // navegador: si theme-color se dejara al valor estático, el tema claro saldría
 // con la barra de Safari en negro.
-const themeInit = `(function(){var t;try{t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}}catch(e){t='dark';}document.documentElement.setAttribute('data-theme',t);var m=document.querySelector('meta[name="theme-color"]');if(m){m.setAttribute('content',t==='dark'?'#080a0e':'#f4f5f8');}})();`;
+const themeInit = `(function(){var t;try{t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}}catch(e){t='dark';}document.documentElement.setAttribute('data-theme',t);var m=document.querySelector('meta[name="theme-color"]');if(m){m.setAttribute('content',t==='dark'?'#14120c':'#f4efe4');}})();`;
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -67,7 +67,7 @@ export const viewport: Viewport = {
   // data-theme (lo elige el usuario), así que la etiqueta la reescriben el
   // script de arranque y ThemeToggle. Con dos metas media-gated ese reemplazo
   // no funcionaría. Éste es sólo el valor de partida sin JS.
-  themeColor: "#080a0e",
+  themeColor: "#14120c",
   // Imprescindible para que env(safe-area-inset-*) devuelva valores reales en
   // iOS; sin esto el padding de safe-area de BottomNav siempre vale 0.
   // No se restringe la escala: el pinch-zoom sigue disponible.

@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useUser } from "@clerk/nextjs";
 import { AnimatePresence, motion } from "framer-motion";
-import { syncUserName } from "../action";
+import { syncUserName, getProfileStats } from "../action";
 import {
   getSocialOverview, addFriend, acceptFriend, removeFriendship, searchUsersByName,
   getIncomingTradeOffers, getOutgoingTradeOffers, getTradeHistory,
@@ -19,8 +19,10 @@ import { useToast } from "../../components/ui/Toast";
 import { useHaptics } from "../../hooks/useHaptics";
 import { useImmersive } from "../../components/AppShell";
 import { formatNumber } from "../../utils/format";
+import { getCollection } from "../../utils/storage";
+import { useCurrency } from "../../hooks/useGameCurrency";
 
-type Tab = "amigos" | "recibidas" | "enviadas" | "historial";
+type Tab = "perfil" | "amigos" | "recibidas" | "enviadas" | "historial";
 
 /** Baja pendiente de confirmar: una petición ignorada o una amistad eliminada. */
 type PendingRemove = { id: number; name: string; kind: "friend" | "request" };
@@ -38,6 +40,16 @@ export default function SocialPage() {
   const [incoming, setIncoming] = useState<any[]>([]);
   const [outgoing, setOutgoing] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
+
+  // El invitado no tiene servidor: sus monedas viven en este dispositivo.
+  const { coins, loaded: coinsLoaded } = useCurrency();
+
+  // Estadísticas del perfil, con carga y error PROPIOS: van en paralelo a la
+  // carga social para que un fetch lento o caído de una no arrastre a la otra.
+  const [stats, setStats] = useState<any>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [statsError, setStatsError] = useState(false);
+  const statsLoadedRef = useRef(false);
 
   const [tradeFriend, setTradeFriend] = useState<any | null>(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -99,11 +111,39 @@ export default function SocialPage() {
     });
   }, [refresh]);
 
+  // getProfileStats devuelve null tanto si falla el SQL como sin sesión, y un
+  // fallo de transporte rechaza: ambos casos acaban en el error con reintento.
+  const loadStats = useCallback(async () => {
+    if (!isSignedIn) return;
+    // Los refrescos posteriores (tras un intercambio) van en silencio sobre
+    // los datos ya en pantalla, sin volver a enseñar la carga ni un error.
+    if (!statsLoadedRef.current) {
+      setStatsLoading(true);
+      setStatsError(false);
+    }
+    try {
+      const s = await getProfileStats();
+      if (s) {
+        setStats(s);
+        statsLoadedRef.current = true;
+        setStatsError(false);
+      } else if (!statsLoadedRef.current) {
+        setStatsError(true);
+      }
+    } catch (err) {
+      console.error(err);
+      if (!statsLoadedRef.current) setStatsError(true);
+    } finally {
+      setStatsLoading(false);
+    }
+  }, [isSignedIn]);
+
   useEffect(() => {
     if (!isLoaded) return;
     if (!isSignedIn) { setLoading(false); return; }
     load();
-  }, [isLoaded, isSignedIn, load]);
+    loadStats();
+  }, [isLoaded, isSignedIn, load, loadStats]);
 
   /* ---- acciones ---- */
 
@@ -129,9 +169,13 @@ export default function SocialPage() {
     haptic("select");
     const r: any = await acceptTradeOffer(id);
     if (r?.error) toast(r.error, "error");
-    else toast("Intercambio completado", "success");
+    else {
+      toast("Intercambio completado", "success");
+      // El intercambio mueve cartas: el valor y los logros del perfil cambian.
+      loadStats();
+    }
     refresh();
-  }, [haptic, toast, refresh]);
+  }, [haptic, toast, refresh, loadStats]);
 
   const handleDeclineTrade = useCallback(async (id: number) => {
     haptic("warning");
@@ -153,11 +197,17 @@ export default function SocialPage() {
   if (!isLoaded || loading) return <Loader label="Cargando red social" />;
 
   if (!isSignedIn) {
+    // Sin sesión no hay red social, pero sí progreso local: se enseña para que
+    // la pantalla no quede vacía, con el aviso de inicio de sesión debajo.
     return (
-      <div className="flex flex-col items-center justify-center text-center py-24">
-        <h2 className="text-xl font-bold mb-2">Inicia sesión para conectar</h2>
-        <p className="ink-soft text-sm mb-5">Añade amigos e intercambia cartas.</p>
-        <Link href="/" className="btn-accent press px-6 py-2.5 rounded-xl text-sm font-semibold">Volver al inicio</Link>
+      <div className="w-full">
+        <PageHeader title="Social" subtitle="Perfil, amigos e intercambios" />
+        <GuestStats coins={coins} coinsLoaded={coinsLoaded} />
+        <div className="surface rounded-2xl flex flex-col items-center justify-center text-center py-14 px-6">
+          <h2 className="text-xl font-bold mb-2">Inicia sesión para conectar</h2>
+          <p className="ink-soft text-sm mb-5">Añade amigos e intercambia cartas.</p>
+          <Link href="/" className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center">Volver al inicio</Link>
+        </div>
       </div>
     );
   }
@@ -178,6 +228,7 @@ export default function SocialPage() {
   }
 
   const tabs: { id: Tab; label: string; badge?: number }[] = [
+    { id: "perfil", label: "Perfil" },
     { id: "amigos", label: "Amigos", badge: requests.length || undefined },
     { id: "recibidas", label: "Recibidas", badge: incoming.length || undefined },
     { id: "enviadas", label: "Enviadas", badge: outgoing.length || undefined },
@@ -188,7 +239,7 @@ export default function SocialPage() {
     <div className="w-full">
       <PageHeader
         title="Social"
-        subtitle="Amigos e intercambios"
+        subtitle="Perfil, amigos e intercambios"
         actions={
           <button
             onClick={() => { haptic("tap"); setShowAdd(true); }}
@@ -231,6 +282,14 @@ export default function SocialPage() {
           exit={{ opacity: 0, y: -8 }}
           transition={{ duration: 0.25 }}
         >
+          {tab === "perfil" && (
+            <PerfilTab
+              stats={stats}
+              loading={statsLoading}
+              error={statsError}
+              onRetry={loadStats}
+            />
+          )}
           {tab === "amigos" && (
             <AmigosTab
               friends={friends} requests={requests} myId={user?.id}
@@ -296,6 +355,147 @@ export default function SocialPage() {
         onConfirm={handleCancelConfirmed}
         onClose={() => setPendingCancel(null)}
       />
+    </div>
+  );
+}
+
+/* ---------- PERFIL ---------- */
+
+/** Estadísticas y logros del entrenador (con sesión), con datos del servidor. */
+function PerfilTab({ stats, loading, error, onRetry }: any) {
+  // Los logros se derivan de las estadísticas: no hay tabla propia en el
+  // servidor, así que su definición vive en el cliente.
+  const achievements = useMemo(() => {
+    const s = stats || {};
+    return [
+      { id: "first", name: "Primer sobre", desc: "Abre 1 sobre", done: (s.packsOpened || 0) >= 1, icon: "📦" },
+      { id: "collector", name: "Coleccionista", desc: "100 cartas únicas", done: (s.totalUnique || 0) >= 100, icon: "🗂️" },
+      { id: "hunter", name: "Cazador raro", desc: "10 cartas raras (IR+)", done: (s.rareHits || 0) >= 10, icon: "💎" },
+      { id: "rich", name: "Millonario", desc: "Colección por 10.000", done: (s.totalValue || 0) >= 10000, icon: "💰" },
+      { id: "setdone", name: "Maestro de set", desc: "Completa 1 set", done: (s.setsCompleted || 0) >= 1, icon: "🏆" },
+      { id: "veteran", name: "Veterano", desc: "Abre 100 sobres", done: (s.packsOpened || 0) >= 100, icon: "⭐" },
+    ];
+  }, [stats]);
+  const achievementsDone = achievements.filter((a) => a.done).length;
+
+  if (loading) {
+    return (
+      <div className="surface rounded-2xl py-16 flex flex-col items-center gap-4">
+        <div
+          className="w-8 h-8 border-2 rounded-full animate-spin"
+          style={{ borderColor: "var(--border)", borderTopColor: "var(--accent)" }}
+        />
+        <p className="ink-soft text-sm">Cargando tu perfil…</p>
+      </div>
+    );
+  }
+
+  if (error || !stats) {
+    return (
+      <div className="surface rounded-2xl py-16 px-6 flex flex-col items-center text-center">
+        <p className="font-medium">No se pudieron cargar tus estadísticas</p>
+        <p className="ink-soft text-sm mt-1 mb-5">Revisa tu conexión e inténtalo de nuevo.</p>
+        <button
+          onClick={onRetry}
+          className="btn-accent press touch-target px-6 rounded-xl text-sm font-semibold flex items-center justify-center"
+        >
+          Reintentar
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="surface rounded-3xl p-5 md:p-6 overflow-hidden relative">
+      <div className="absolute -top-20 -right-20 w-56 h-56 rounded-full blur-3xl pointer-events-none" style={{ background: "radial-gradient(circle, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%)" }} />
+
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-5 relative">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.3em] ink-faint">Valor de tu colección</p>
+          <p className="text-3xl md:text-4xl font-bold text-gradient mt-1 tabular-nums">
+            {formatNumber(stats.totalValue)}
+            <span className="text-base ink-faint font-normal ml-2">monedas</span>
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-2 md:gap-3 md:w-auto">
+          {[
+            { label: "Cartas", value: stats.totalCards },
+            { label: "Únicas", value: stats.totalUnique },
+            { label: "Sets", value: `${stats.setsCompleted}/${stats.setsTotal}` },
+          ].map((s) => (
+            <div key={s.label} className="surface-2 rounded-2xl px-3 md:px-5 py-2.5 text-center md:text-left">
+              <p className="text-[9px] uppercase tracking-wider ink-faint">{s.label}</p>
+              {/* "Sets" es la cadena "3/12" y no debe pasar por formatNumber. */}
+              <p className="text-base md:text-xl font-bold tabular-nums mt-0.5">
+                {typeof s.value === "number" ? formatNumber(s.value) : s.value}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Logros compactos. La etiqueta se muestra también en móvil: sin ella la
+          fila queda como seis cuadrados grises sin explicación. */}
+      <div className="mt-5 pt-4 border-t border-[var(--border)]">
+        <div className="mb-2 flex items-baseline justify-between gap-2">
+          <span className="text-[10px] uppercase tracking-wider ink-faint">Logros</span>
+          <span className="tnum text-[11px] font-semibold ink-soft">
+            {achievementsDone} de {achievements.length}
+          </span>
+        </div>
+        <div className="grid grid-cols-6 gap-1.5 sm:flex sm:gap-2">
+          {achievements.map((ach) => (
+            <div
+              key={ach.id}
+              title={`${ach.name} — ${ach.desc}`}
+              // Sin rol el div es genérico y ARIA descarta su aria-label: el
+              // lector de pantalla sólo leería el emoji.
+              role="img"
+              aria-label={`${ach.name}: ${ach.done ? "conseguido" : "pendiente"}`}
+              className={`flex aspect-square items-center justify-center rounded-xl border text-base transition sm:aspect-auto sm:h-9 sm:w-9 sm:text-lg ${
+                ach.done ? "ring-accent border-transparent" : "surface-2 opacity-30 saturate-0"
+              }`}
+            >
+              {ach.icon}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Resumen local del invitado: lo que hay guardado en este dispositivo. */
+function GuestStats({ coins, coinsLoaded }: { coins: number; coinsLoaded: boolean }) {
+  // localStorage no existe en el render del servidor: leerlo en un efecto
+  // evita un desajuste de hidratación.
+  const [local, setLocal] = useState<{ cards: number; unique: number } | null>(null);
+  useEffect(() => {
+    const col = getCollection();
+    setLocal({
+      cards: col.reduce((sum: number, c: any) => sum + (c.quantity || 1), 0),
+      unique: col.length,
+    });
+  }, []);
+
+  const tiles = [
+    { label: "Cartas", value: local ? formatNumber(local.cards) : "—" },
+    { label: "Únicas", value: local ? formatNumber(local.unique) : "—" },
+    { label: "Monedas", value: coinsLoaded ? formatNumber(coins) : "—" },
+  ];
+
+  return (
+    <div className="surface rounded-3xl p-5 mb-6 relative overflow-hidden">
+      <div className="absolute -top-20 -right-20 w-56 h-56 rounded-full blur-3xl pointer-events-none" style={{ background: "radial-gradient(circle, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%)" }} />
+      <p className="text-[10px] uppercase tracking-[0.3em] ink-faint relative">Tu progreso en este dispositivo</p>
+      <div className="grid grid-cols-3 gap-2 mt-3 relative">
+        {tiles.map((t) => (
+          <div key={t.label} className="surface-2 rounded-2xl px-3 py-2.5 text-center">
+            <p className="text-[9px] uppercase tracking-wider ink-faint">{t.label}</p>
+            <p className="text-base font-bold tabular-nums mt-0.5">{t.value}</p>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

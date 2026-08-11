@@ -1,9 +1,9 @@
 @import "tailwindcss";
 
 /* ============================================================
-   DESIGN SYSTEM v2 — "Aurora Deck"
-   Clean, dashboard-grade. Single emerald accent.
-   Theme-aware surfaces. Premium dark overlays.
+   DESIGN SYSTEM v2 — "Aurora Deck", edición papel
+   Materia cálida tipo cartulina en ambos temas. Único acento
+   esmeralda (marca). Superficies conscientes del tema.
    ============================================================ */
 
 :root {
@@ -14,57 +14,68 @@
   --danger: #f43f5e;
   --warn: #f59e0b;
   --radius: 18px;
+
+  /* Grano de papel: ruido SVG inline (sin assets remotos, la CSP los bloquea).
+     Va como CAPA DE FONDO en body y superficies, nunca como overlay fijo:
+     un overlay taparía las imágenes de las cartas y ensuciaría el texto.
+     La opacidad viaja dentro del SVG (~5%) porque background-image no acepta
+     opacidad por capa. */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23p)' opacity='0.05'/%3E%3C/svg%3E");
 }
 
-/* === LIGHT === */
+/* === LIGHT: papel crema, tinta sepia oscura === */
 :root, html[data-theme="light"] {
-  --bg: #f4f5f8;
-  --bg-2: #eceef3;
-  --ink: #0f1419;
-  --ink-soft: #5b6472;
-  --ink-faint: #8a93a3;
-  --surface: #ffffff;
-  --surface-2: #f7f8fb;
-  --surface-text: #0f1419;
-  --surface-muted: #6b7280;
-  --border: rgba(15, 20, 25, 0.08);
-  --border-strong: rgba(15, 20, 25, 0.14);
-  --glass-bg: rgba(255, 255, 255, 0.7);
-  --shadow-sm: 0 1px 2px rgba(15,20,25,0.06), 0 4px 12px -4px rgba(15,20,25,0.10);
-  --shadow-md: 0 8px 30px -12px rgba(15,20,25,0.22);
-  --shadow-lg: 0 24px 60px -20px rgba(15,20,25,0.28);
+  --bg: #f4efe4;
+  --bg-2: #ece5d4;
+  --ink: #2b241a;
+  --ink-soft: #6d6353;      /* 5.56:1 sobre --surface */
+  --ink-faint: #8a8071;     /* 3.66:1 sobre --surface */
+  --surface: #fbf8f0;
+  --surface-2: #f4eee1;
+  --surface-text: #2b241a;  /* 14.4:1 sobre --surface */
+  --surface-muted: #6d6353;
+  --border: rgba(87, 66, 33, 0.13);
+  --border-strong: rgba(87, 66, 33, 0.22);
+  --glass-bg: rgba(251, 248, 240, 0.78);
+  /* El papel proyecta sombra corta y difusa, no glow largo. */
+  --shadow-sm: 0 1px 2px rgba(62,50,32,0.07), 0 2px 6px -2px rgba(62,50,32,0.09);
+  --shadow-md: 0 2px 4px rgba(62,50,32,0.07), 0 6px 14px -6px rgba(62,50,32,0.14);
+  --shadow-lg: 0 4px 8px rgba(62,50,32,0.09), 0 12px 26px -10px rgba(62,50,32,0.18);
   --background: var(--bg);
 }
 html[data-theme="light"] body {
   background:
-    radial-gradient(600px 360px at 100% 0%, rgba(16,185,129,0.08), transparent 70%),
-    radial-gradient(600px 360px at 0% 0%, rgba(6,182,212,0.07), transparent 70%),
+    var(--grain),
+    radial-gradient(600px 360px at 100% 0%, rgba(16,185,129,0.06), transparent 70%),
+    radial-gradient(600px 360px at 0% 0%, rgba(6,182,212,0.05), transparent 70%),
     var(--bg);
 }
 
-/* === DARK === */
+/* === DARK: carbón/kraft cálido, tinta marfil === */
 html[data-theme="dark"] {
-  --bg: #080a0e;
-  --bg-2: #0d1014;
-  --ink: #eef1f5;
-  --ink-soft: #98a2b3;
-  --ink-faint: #6b7484;
-  --surface: #11151b;
-  --surface-2: #161b22;
-  --surface-text: #eef1f5;
-  --surface-muted: #98a2b3;
-  --border: rgba(255, 255, 255, 0.07);
-  --border-strong: rgba(255, 255, 255, 0.13);
-  --glass-bg: rgba(17, 21, 27, 0.72);
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.4), 0 6px 20px -8px rgba(0,0,0,0.6);
-  --shadow-md: 0 12px 40px -16px rgba(0,0,0,0.7);
-  --shadow-lg: 0 28px 70px -24px rgba(0,0,0,0.8);
+  --bg: #14120c;
+  --bg-2: #1a1710;
+  --ink: #efe9db;
+  --ink-soft: #a89f8d;      /* 6.69:1 sobre --surface */
+  --ink-faint: #7d7565;     /* 3.84:1 sobre --surface */
+  --surface: #1c1913;
+  --surface-2: #242017;
+  --surface-text: #efe9db;  /* 14.5:1 sobre --surface */
+  --surface-muted: #a89f8d;
+  --border: rgba(240, 230, 208, 0.09);
+  --border-strong: rgba(240, 230, 208, 0.16);
+  --glass-bg: rgba(28, 25, 19, 0.78);
+  /* Sombras cortas y difusas también en oscuro: pliegue, no neón. */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.35), 0 3px 8px -3px rgba(0,0,0,0.45);
+  --shadow-md: 0 2px 5px rgba(0,0,0,0.35), 0 8px 18px -8px rgba(0,0,0,0.5);
+  --shadow-lg: 0 4px 10px rgba(0,0,0,0.4), 0 14px 30px -12px rgba(0,0,0,0.55);
   --background: var(--bg);
 }
 html[data-theme="dark"] body {
   background:
-    radial-gradient(700px 420px at 100% -5%, rgba(16,185,129,0.10), transparent 65%),
-    radial-gradient(700px 420px at 0% -5%, rgba(6,182,212,0.08), transparent 65%),
+    var(--grain),
+    radial-gradient(700px 420px at 100% -5%, rgba(16,185,129,0.08), transparent 65%),
+    radial-gradient(700px 420px at 0% -5%, rgba(6,182,212,0.06), transparent 65%),
     var(--bg);
 }
 
@@ -105,15 +116,16 @@ button, a, select, input { -webkit-tap-highlight-color: transparent; }
   .backface-hidden { backface-visibility: hidden; }
   .rotate-y-180 { transform: rotateY(180deg); }
 
-  /* SURFACES (theme-aware) */
+  /* SURFACES (theme-aware). El grano va aquí, en el fondo de cada
+     superficie, para que el contenido (texto, imágenes) quede limpio. */
   .surface {
-    background: var(--surface);
+    background: var(--grain), var(--surface);
     color: var(--surface-text);
     border: 1px solid var(--border);
     box-shadow: var(--shadow-sm);
   }
   .surface-2 {
-    background: var(--surface-2);
+    background: var(--grain), var(--surface-2);
     color: var(--surface-text);
     border: 1px solid var(--border);
   }
@@ -126,10 +138,11 @@ button, a, select, input { -webkit-tap-highlight-color: transparent; }
   }
 
   .glass {
-    background: var(--glass-bg);
+    background: var(--grain), var(--glass-bg);
     color: var(--ink);
-    backdrop-filter: blur(14px) saturate(140%);
-    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    /* Menos blur y saturación: acabado mate, más papel que cristal. */
+    backdrop-filter: blur(8px) saturate(112%);
+    -webkit-backdrop-filter: blur(8px) saturate(112%);
     border: 1px solid var(--border);
     box-shadow: var(--shadow-sm);
   }

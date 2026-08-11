@@ -447,12 +447,14 @@ export default function SetAlbumPage() {
                 sobreviven al cambio de carta. */}
             <div
               ref={detailImageRef}
-              className="mx-auto w-full [@media(max-height:560px)_and_(min-width:640px)]:mx-0 [@media(max-height:560px)_and_(min-width:640px)]:shrink-0"
-              // El límite se pone al ANCHO, no al alto de la imagen: como la
-              // carta lleva `w-full`, un tope de alto la dejaría con bandas
-              // laterales. Se convierte el alto disponible a ancho con la
-              // proporción de una carta (2.5/3.5 ≈ 0.715) y así encaja exacta
-              // en pantallas bajas sin deformarse ni desbordar la hoja.
+              className="relative mx-auto w-full aspect-[2.5/3.5] [@media(max-height:560px)_and_(min-width:640px)]:mx-0 [@media(max-height:560px)_and_(min-width:640px)]:shrink-0"
+              // El límite se pone al ANCHO, no al alto de la imagen: junto con
+              // la proporción FIJA de carta (aspect 2.5/3.5) la caja mide lo
+              // mismo para todas las cartas, aunque las imágenes de la API no
+              // compartan proporción exacta: navegar no recoloca la hoja. Se
+              // convierte el alto disponible a ancho con esa proporción
+              // (2.5/3.5 ≈ 0.715) y así encaja exacta en pantallas bajas sin
+              // deformarse ni desbordar la hoja.
               style={{
                 touchAction: touchActionFor("x"),
                 maxWidth:
@@ -476,7 +478,10 @@ export default function SetAlbumPage() {
                   initial={{ opacity: 0, scale: 0.97 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-                  className="mx-auto block w-full rounded-2xl"
+                  // Mismo radio que PokemonCard y que los huecos de la
+                  // rejilla (4.5% del ancho), para que abrir la ficha no
+                  // cambie la silueta de la carta.
+                  className="absolute inset-0 h-full w-full rounded-[4.5%] object-contain"
                   style={{ boxShadow: "var(--shadow-lg)" }}
                 />
               )}

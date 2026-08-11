@@ -6,9 +6,11 @@ import { motion } from "framer-motion";
 import { SignedIn } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
 import { NAV_ITEMS } from "./nav-items";
+import SettingsSheet from "./ui/SettingsSheet";
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const [ajustesAbiertos, setAjustesAbiertos] = useState(false);
 
   // El año se calcula tras montar, nunca durante el render: el servidor de
   // Vercel corre en UTC y el navegador en la zona del usuario, así que en
@@ -64,9 +66,25 @@ export default function Sidebar() {
         )}
       </nav>
 
-      <div className="mt-auto px-3">
-        <p className="text-[10px] ink-faint">v2{year ? ` · ${year}` : ""}</p>
+      <div className="mt-auto">
+        <button
+          onClick={() => setAjustesAbiertos(true)}
+          className="touch-target group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors"
+        >
+          <span className="ink-faint transition-colors group-hover:ink">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-[22px] h-[22px]" aria-hidden="true">
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </span>
+          <span className="ink-soft text-sm font-medium transition-colors group-hover:ink">
+            Ajustes
+          </span>
+        </button>
+        <p className="px-3 pt-1 text-[10px] ink-faint">v2{year ? ` · ${year}` : ""}</p>
       </div>
+
+      <SettingsSheet open={ajustesAbiertos} onClose={() => setAjustesAbiertos(false)} />
     </aside>
   );
 }

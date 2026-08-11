@@ -11,7 +11,6 @@ import {
   savePackToCollection,
   getSetsFromDB,
   getFullCollection,
-  getProfileStats,
   claimSetCompletionBonuses,
   sellPackDuplicates,
   getWishlistIds,
@@ -23,7 +22,9 @@ import { SELL_PRICES, PACK_PRICES, RARITY_RANK } from "../utils/constanst";
 import { RARITY_GLOW } from "../utils/rarityGlow";
 import { useCurrency } from "../hooks/useGameCurrency";
 import { useHaptics } from "../hooks/useHaptics";
+import { useSound } from "../hooks/useSound";
 import { useSwipe, touchActionFor } from "../hooks/useSwipe";
+import { leerAjustes, guardarAjustes, suscribirseAjustes } from "../utils/settings";
 import { useToast } from "../components/ui/Toast";
 import { useImmersive } from "../components/AppShell";
 import PokemonCard from "../components/PokemonCard";
@@ -101,7 +102,6 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   /** El set no ha devuelto cartas: la tienda no debe parecer comprable. */
   const [loadError, setLoadError] = useState(false);
-  const [stats, setStats] = useState<any>(null);
   const [setBonus, setSetBonus] = useState<{ granted: number; sets: string[] } | null>(null);
   const [prePackIds, setPrePackIds] = useState<string[]>([]);
   const [soldInfo, setSoldInfo] = useState<{ earned: number; sold: number } | null>(null);
@@ -111,6 +111,15 @@ export default function Home() {
   const [direction, setDirection] = useState(1);
   /** Hay una acción de servidor en vuelo (compra o guardado): botones apagados. */
   const [busy, setBusy] = useState(false);
+  /**
+   * Fase de la apertura: el sobre llega sellado y hay que rasgar la tira para
+   * ver las cartas. "abierto" es el flujo de revelación de siempre.
+   */
+  const [packStage, setPackStage] = useState<"sellado" | "abierto">("sellado");
+  // Ajustes compartidos (sonido, reducir efectos): el botón de silencio de la
+  // cabecera los escribe y esta suscripción los refleja al instante.
+  const [ajustes, setAjustes] = useState(() => leerAjustes());
+  useEffect(() => suscribirseAjustes(setAjustes), []);
   const finishingRef = useRef(false);
   /**
    * El sobre en pantalla ya está persistido. Se guarda al comprarlo, así que
@@ -129,10 +138,24 @@ export default function Home() {
   const lastFlipAtRef = useRef(0);
   /** Elemento que captura los gestos de la carta durante la apertura. */
   const cardGestureRef = useRef<HTMLDivElement>(null);
+  /** Sobre sellado completo (para el atajo de teclado de la vista). */
+  const sobreRef = useRef<HTMLDivElement>(null);
+  /** Zona que escucha el arrastre de la tira de rasgado. */
+  const tearZoneRef = useRef<HTMLDivElement>(null);
+  /** Tira visual: recibe el transform a mano durante el arrastre. */
+  const tearStripRef = useRef<HTMLDivElement>(null);
+  /** La tira ya se rasgó: evita disparos dobles entre gesto, click y teclado. */
+  const tornRef = useRef(false);
+  const tearWidthRef = useRef(280);
+  const tearHapticRef = useRef(0);
+  const play = useSound();
   // Menos animación por preferencia del sistema: el aura a pantalla completa es
   // un cambio de luminancia grande y framer no desactiva la opacidad por su
   // cuenta.
   const reduceMotion = useReducedMotion();
+  // Adornos pesados (confeti, destellos, tira volando): fuera si lo pide el
+  // sistema o el ajuste propio de la app.
+  const efectosApagados = !!reduceMotion || ajustes.reducirEfectos;
 
   // La apertura ocupa toda la pantalla: escondemos la barra de pestañas.
   useImmersive(isPackOpen);
@@ -204,7 +227,6 @@ export default function Home() {
         if (data) setCoins(data.coins);
         const myCards = await getFullCollection();
         setUserCollectionIds(myCards.map((c: any) => c.id));
-        getProfileStats().then(setStats);
         getWishlistIds().then(setWishlistIds);
       } else {
         const localCards = getCollection();
@@ -266,12 +288,14 @@ export default function Home() {
       if (e.code === "Space" || e.code === "ArrowRight") {
         // Espacio es la tecla de activación de un botón: si el foco está en uno
         // de los controles de la vista, cancelar aquí el keydown lo dejaría
-        // muerto. La carta se excluye porque también lleva role="button".
+        // muerto. La carta y el sobre sellado se excluyen porque también llevan
+        // role="button" y su acción es justamente esta.
         if (e.code === "Space") {
           const btn = (e.target as HTMLElement | null)?.closest?.(
             'button,[role="button"]',
           );
-          if (btn && btn !== cardGestureRef.current) return;
+          if (btn && btn !== cardGestureRef.current && btn !== sobreRef.current)
+            return;
         }
         e.preventDefault();
         handleNextCard();
@@ -283,7 +307,7 @@ export default function Home() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPackOpen, maxRevealed, packIndex, currentPack, isSignedIn]);
+  }, [isPackOpen, maxRevealed, packIndex, currentPack, isSignedIn, packStage]);
 
   // Precarga de las siguientes cartas: la variante grande ronda el medio mega y
   // hasta ahora la descarga no empezaba hasta que la carta se montaba, así que
@@ -309,6 +333,9 @@ export default function Home() {
     setMaxRevealed(0);
     setIsPackOpen(false);
     setDirection(1);
+    // El siguiente sobre vuelve a llegar sellado.
+    setPackStage("sellado");
+    tornRef.current = false;
   };
 
   const handleBuyPack = async (type: PackType) => {
@@ -387,6 +414,7 @@ export default function Home() {
       setBusy(false);
     }
 
+    play("moneda");
     setPrePackIds([...userCollectionIds]); // snapshot ANTES del sobre
     setSoldInfo(null);
     setCurrentPackType(type);
@@ -397,12 +425,16 @@ export default function Home() {
     // Si el sobre anterior se cerró tras retroceder, direction quedaba en -1 y
     // la primera carta del nuevo entraba por el lado contrario.
     setDirection(1);
+    // El sobre entra sellado: hay que rasgar la tira para ver las cartas.
+    setPackStage("sellado");
+    tornRef.current = false;
     setIsPackOpen(true);
   };
 
   /**
    * Puesta al día tras guardar un sobre (sólo con sesión): bonus por set
-   * completado, monedas reales del servidor y estadísticas/logros del panel.
+   * completado y monedas reales del servidor. Las estadísticas y logros viven
+   * ahora en Social, así que aquí ya no se piden.
    * Nunca lanza: un fallo aquí no puede tumbar el guardado del sobre.
    */
   const refreshAfterPack = async () => {
@@ -418,11 +450,10 @@ export default function Home() {
     try {
       // Las monedas se releen del servidor (el bonus y la compra se aplican
       // allí) para que el marcador no quede desincronizado.
-      const [data, fresh] = await Promise.all([getUserData(), getProfileStats()]);
+      const data = await getUserData();
       if (data) setCoins(data.coins);
-      if (fresh) setStats(fresh);
     } catch (err) {
-      console.error("Error refrescando estadísticas:", err);
+      console.error("Error refrescando el saldo:", err);
     }
   };
 
@@ -493,6 +524,7 @@ export default function Home() {
       setCurrentPack(combined);
       setCurrentPackPrice(price);
       setIsPackOpen(false); // directo al resumen
+      play("moneda");
       haptic("success");
     } finally {
       finishingRef.current = false;
@@ -550,10 +582,28 @@ export default function Home() {
   };
 
   const handleNextCard = async () => {
+    // Con el sobre aún sellado, la tecla de avanzar rasga (accesibilidad y
+    // escritorio): es lo único que se puede hacer en esa fase.
+    if (packStage === "sellado") {
+      rasgarSobre();
+      return;
+    }
     if (!currentRevealed) {
       // El peso lo marca la carta que se está destapando, nunca la siguiente:
       // medirlo sobre la siguiente chivaba la rareza antes de verla.
       haptic(currentRank >= AURA_RANK ? "heavy" : "select");
+      play("voltear");
+      // La campanada llega justo tras el volteo, con el giro ya en marcha; su
+      // riqueza crece con el rango, igual que el aura.
+      if (currentRank >= 40) {
+        const campanada =
+          currentRank >= 85
+            ? "revelacion3"
+            : currentRank >= AURA_RANK
+              ? "revelacion2"
+              : "revelacion1";
+        window.setTimeout(() => play(campanada), 280);
+      }
       lastFlipAtRef.current = performance.now();
       setMaxRevealed((m) => Math.max(m, packIndex + 1));
       return;
@@ -562,6 +612,7 @@ export default function Home() {
       // Avanzar sólo mueve el mazo: la carta llega tapada y se destapa aparte,
       // así que aquí no hay rareza que anunciar.
       haptic("tap");
+      play("tap");
       setDirection(1);
       setPackIndex((prev) => prev + 1);
     } else {
@@ -575,6 +626,7 @@ export default function Home() {
   const handlePrevCard = () => {
     if (packIndex <= 0) return; // no hay carta anterior
     haptic("tap");
+    play("tap");
     setDirection(-1);
     setPackIndex((prev) => prev - 1);
   };
@@ -589,12 +641,70 @@ export default function Home() {
   // arrastre para dar tacto de carta física. No hay gesto vertical a propósito:
   // un flick en diagonal terminaba el sobre sin aviso ni vuelta atrás; sin
   // manejador, useSwipe le aplica resistencia y la carta vuelve a su sitio.
+  // enabled depende también de la fase: la carta no existe hasta rasgar el
+  // sobre, y el hook sólo engancha los listeners cuando enabled cambia.
   const didSwipeRef = useSwipe(cardGestureRef, {
     axis: "both",
     rotate: 6,
-    enabled: isPackOpen,
+    enabled: isPackOpen && packStage === "abierto",
     onSwipeLeft: () => handleNextCard(),
     onSwipeRight: packIndex > 0 ? () => handlePrevCard() : undefined,
+  });
+
+  /**
+   * Rasga el sobre y da paso a las cartas. Lo disparan el arrastre de la tira,
+   * un click/Enter en el sobre y las teclas de avanzar: todos pasan por aquí
+   * para que sonido, háptico y estado vayan siempre juntos.
+   */
+  const rasgarSobre = () => {
+    if (tornRef.current || packStage !== "sellado") return;
+    tornRef.current = true;
+    play("rasgar");
+    haptic("success");
+    setPackStage("abierto");
+  };
+
+  // Arrastre de la tira: el progreso se pinta escribiendo el transform a mano
+  // en onMove (sin re-render por movimiento). Al pasar el umbral se rasga al
+  // instante, sin esperar a levantar el dedo; el camino por soltar (threshold o
+  // velocidad) queda como respaldo para arrastres cortos y decididos.
+  const tearSwipeRef = useSwipe(tearZoneRef, {
+    axis: "x",
+    follow: false,
+    threshold: 80,
+    velocity: 600,
+    enabled: isPackOpen && packStage === "sellado",
+    onStart: () => {
+      tearWidthRef.current = tearZoneRef.current?.offsetWidth || 280;
+      tearHapticRef.current = 0;
+    },
+    onMove: (dx) => {
+      if (tornRef.current) return;
+      const strip = tearStripRef.current;
+      if (!strip) return;
+      const total = Math.max(90, tearWidthRef.current * 0.55);
+      const progreso = Math.min(1, Math.abs(dx) / total);
+      strip.style.transform = `translateX(${dx}px)`;
+      // Pequeños golpes según avanza el desgarro, como muescas del papel.
+      if (progreso - tearHapticRef.current >= 0.2) {
+        tearHapticRef.current = progreso;
+        haptic("tap");
+      }
+      if (progreso >= 1) rasgarSobre();
+    },
+    onEnd: () => {
+      if (tornRef.current) return;
+      // No llegó al umbral: la tira vuelve a su sitio con un muelle corto.
+      const strip = tearStripRef.current;
+      if (!strip) return;
+      strip.style.transition = "transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)";
+      strip.style.transform = "";
+      window.setTimeout(() => {
+        if (tearStripRef.current) tearStripRef.current.style.transition = "";
+      }, 260);
+    },
+    onSwipeLeft: () => rasgarSobre(),
+    onSwipeRight: () => rasgarSobre(),
   });
 
   // Revelar todo: destapa el sobre entero y deja al usuario en la última carta.
@@ -657,21 +767,6 @@ export default function Home() {
     [dupeIdsInPack, currentPack],
   );
 
-  // Logros derivados de stats
-  const achievements = useMemo(() => {
-    const s = stats || {};
-    const def = [
-      { id: "first", name: "Primer sobre", desc: "Abre 1 sobre", done: (s.packsOpened || 0) >= 1, icon: "📦" },
-      { id: "collector", name: "Coleccionista", desc: "100 cartas únicas", done: (s.totalUnique || 0) >= 100, icon: "🗂️" },
-      { id: "hunter", name: "Cazador raro", desc: "10 cartas raras (IR+)", done: (s.rareHits || 0) >= 10, icon: "💎" },
-      { id: "rich", name: "Millonario", desc: "Colección por 10.000", done: (s.totalValue || 0) >= 10000, icon: "💰" },
-      { id: "setdone", name: "Maestro de set", desc: "Completa 1 set", done: (s.setsCompleted || 0) >= 1, icon: "🏆" },
-      { id: "veteran", name: "Veterano", desc: "Abre 100 sobres", done: (s.packsOpened || 0) >= 100, icon: "⭐" },
-    ];
-    return def;
-  }, [stats]);
-  const achievementsDone = achievements.filter((a) => a.done).length;
-
   // Desglose por rareza del sobre
   const rarityBreakdown = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -689,8 +784,7 @@ export default function Home() {
       if (res.earned > 0) {
         setCoins((c) => c + res.earned);
         setSoldInfo(res);
-        // El valor de la colección y los logros cambian al vender.
-        getProfileStats().then((s) => { if (s) setStats(s); }).catch(() => {});
+        play("moneda");
       }
     } catch (err) {
       console.error("Error vendiendo repetidas:", err);
@@ -727,76 +821,8 @@ export default function Home() {
         </AnimatePresence>
       </Portal>
 
-      {/* DASHBOARD (signed-in) — panel unificado */}
-      {!selectedSet && isSignedIn && stats && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-          className="w-full mb-10 relative z-10"
-        >
-          <div className="surface rounded-3xl p-5 md:p-6 overflow-hidden relative">
-            <div className="absolute -top-20 -right-20 w-56 h-56 rounded-full blur-3xl pointer-events-none" style={{ background: "radial-gradient(circle, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%)" }} />
-
-            <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-5 relative">
-              <div>
-                <p className="text-[10px] uppercase tracking-[0.3em] ink-faint">Valor de tu colección</p>
-                <p className="text-3xl md:text-4xl font-bold text-gradient mt-1 tabular-nums">
-                  {formatNumber(stats.totalValue)}
-                  <span className="text-base ink-faint font-normal ml-2">monedas</span>
-                </p>
-              </div>
-              <div className="grid grid-cols-3 gap-2 md:gap-3 md:w-auto">
-                {[
-                  { label: "Cartas", value: stats.totalCards },
-                  { label: "Únicas", value: stats.totalUnique },
-                  { label: "Sets", value: `${stats.setsCompleted}/${stats.setsTotal}` },
-                ].map((s) => (
-                  <div key={s.label} className="surface-2 rounded-2xl px-3 md:px-5 py-2.5 text-center md:text-left">
-                    <p className="text-[9px] uppercase tracking-wider ink-faint">{s.label}</p>
-                    {/* "Sets" es la cadena "3/12" y no debe pasar por formatNumber. */}
-                    <p className="text-base md:text-xl font-bold tabular-nums mt-0.5">
-                      {typeof s.value === "number" ? formatNumber(s.value) : s.value}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Logros compactos. La etiqueta se muestra también en móvil: sin
-                ella la fila queda como seis cuadrados grises sin explicación. */}
-            <div className="mt-5 pt-4 border-t border-[var(--border)]">
-              <div className="mb-2 flex items-baseline justify-between gap-2">
-                <span className="text-[10px] uppercase tracking-wider ink-faint">
-                  Logros
-                </span>
-                <span className="tnum text-[11px] font-semibold ink-soft">
-                  {achievementsDone} de {achievements.length}
-                </span>
-              </div>
-              <div className="grid grid-cols-6 gap-1.5 sm:flex sm:gap-2">
-                {achievements.map((ach) => (
-                  <div
-                    key={ach.id}
-                    title={`${ach.name} — ${ach.desc}`}
-                    // Sin rol el div es genérico y ARIA descarta su aria-label:
-                    // el lector de pantalla sólo leería el emoji.
-                    role="img"
-                    aria-label={`${ach.name}: ${ach.done ? "conseguido" : "pendiente"}`}
-                    className={`flex aspect-square items-center justify-center rounded-xl border text-base transition sm:aspect-auto sm:h-9 sm:w-9 sm:text-lg ${
-                      ach.done
-                        ? "ring-accent border-transparent"
-                        : "surface-2 opacity-30 saturate-0"
-                    }`}
-                  >
-                    {ach.icon}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </motion.div>
-      )}
+      {/* Las estadísticas y los logros viven ahora en Social: la portada queda
+          en héroe, recompensa diaria y expansiones. */}
 
       {/* HERO INVITADO */}
       {!selectedSet && isLoaded && !isSignedIn && (
@@ -818,8 +844,20 @@ export default function Home() {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="w-full max-w-6xl flex flex-col gap-4 pb-24 relative z-10"
+          className="w-full max-w-6xl flex flex-col gap-4 pt-2 pb-24 relative z-10"
         >
+          {/* Cabecera de sección: al irse el panel de estadísticas a Social, la
+              lista necesitaba un ancla visual que abriera la portada. */}
+          {dbSets.length > 0 && (
+            <div className="flex items-baseline justify-between px-1 mb-1">
+              <h2 className="text-sm font-bold uppercase tracking-[0.2em]">
+                Expansiones
+              </h2>
+              <span className="tnum text-xs ink-faint">
+                {formatNumber(dbSets.length)} sets
+              </span>
+            </div>
+          )}
           {Object.entries(setsBySeries).map(([seriesName, sets], idx) => (
             <motion.div
               key={seriesName}
@@ -1117,6 +1155,52 @@ export default function Home() {
             )}
           </AnimatePresence>
 
+          {/* CONFETI sólo para el rango máximo: doce piezas animando transform
+              y opacidad, detrás de la carta (z-10 contra su z-20). Los valores
+              salen de un pseudoaleatorio determinista por carta para que el
+              render sea estable. Sólo salta en la carta recién destapada (la
+              frontera de maxRevealed): repetirlo al volver atrás lo devalúa.
+              Con efectos reducidos ni se monta. */}
+          {auraLevel >= 3 && packIndex === maxRevealed - 1 && !efectosApagados && (
+            <div
+              key={`confeti-${packIndex}`}
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 z-10 overflow-hidden"
+            >
+              {Array.from({ length: 12 }).map((_, i) => {
+                const s = Math.sin((packIndex + 1) * 91 + i * 37) * 10000;
+                const r = s - Math.floor(s); // 0-1 estable por (carta, pieza)
+                const ang = (i / 12) * Math.PI * 2 + r * 0.9;
+                const dx = Math.cos(ang) * (130 + r * 120);
+                const colores = [auraColor, "var(--accent)", "var(--warn)"];
+                return (
+                  <motion.span
+                    key={i}
+                    initial={{ x: 0, y: 0, opacity: 0, rotate: 0 }}
+                    animate={{
+                      x: dx,
+                      // Arco sencillo: sube empujado por el estallido y cae.
+                      y: [0, -70 - r * 90, 170 + r * 70],
+                      opacity: [0, 1, 1, 0],
+                      rotate: (r - 0.5) * 540,
+                    }}
+                    transition={{
+                      duration: 1.1 + r * 0.3,
+                      delay: 0.3 + (i % 4) * 0.05,
+                      ease: "easeOut",
+                    }}
+                    className="absolute left-1/2 top-[42%] rounded-[2px]"
+                    style={{
+                      width: 7 + Math.round(r * 4),
+                      height: 11 + Math.round(r * 4),
+                      background: colores[i % 3],
+                    }}
+                  />
+                );
+              })}
+            </div>
+          )}
+
           {/* CABECERA (56px): salir + progreso segmentado + contador */}
           <div className="w-full max-w-2xl h-14 shrink-0 flex items-center gap-3 px-3 md:px-4 relative z-20">
             {/* Salida de emergencia: mientras se guarda, este botón NO puede
@@ -1155,6 +1239,46 @@ export default function Home() {
             <span className="tnum ink-soft font-mono text-[11px] tracking-[0.2em] shrink-0">
               {packIndex + 1} / {currentPack.length}
             </span>
+
+            {/* Silencio al alcance del pulgar: la apertura es donde suena todo. */}
+            <button
+              onClick={() => {
+                const { sonido } = guardarAjustes({ sonido: !ajustes.sonido });
+                // Confirmación audible al activar; de paso desbloquea el
+                // AudioContext dentro de un click, que es lo que exige iOS.
+                if (sonido) play("tap");
+              }}
+              aria-label={
+                ajustes.sonido
+                  ? "Silenciar los efectos de sonido"
+                  : "Activar los efectos de sonido"
+              }
+              aria-pressed={ajustes.sonido}
+              className="chip press touch-target w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={`w-4 h-4 ${ajustes.sonido ? "" : "ink-faint"}`}
+              >
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                {ajustes.sonido ? (
+                  <>
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                  </>
+                ) : (
+                  <>
+                    <line x1="22" x2="16" y1="9" y2="15" />
+                    <line x1="16" x2="22" y1="9" y2="15" />
+                  </>
+                )}
+              </svg>
+            </button>
           </div>
 
           {/* La carta es una imagen animada: sin esto el lector de pantalla no
@@ -1169,7 +1293,8 @@ export default function Home() {
           <div className="relative flex-1 w-full flex items-center justify-center px-4">
             {/* El Promo Pack (SPECIAL) también usa openGoldenPack y coloca la
                 garantizada al final: se anuncia igual que en Leyenda. */}
-            {(currentPackType === "GOLDEN" || currentPackType === "SPECIAL") &&
+            {packStage === "abierto" &&
+              (currentPackType === "GOLDEN" || currentPackType === "SPECIAL") &&
               packIndex === lastIndex && (
               <motion.div
                 initial={{ opacity: 0, y: -20 }}
@@ -1180,6 +1305,156 @@ export default function Home() {
               </motion.div>
             )}
 
+            {/* SOBRE SELLADO: composición CSS con el logo del set, sin assets.
+                La tira superior se arrastra para rasgar; un click o Enter
+                también abren (escritorio y accesibilidad). El overflow-hidden
+                del sobre recorta la tira cuando sale volando: se va "fuera del
+                papel", que es justo la metáfora. */}
+            <AnimatePresence>
+              {packStage === "sellado" && (
+                <motion.div
+                  key="sobre-sellado"
+                  initial={efectosApagados ? false : { opacity: 0, scale: 0.94, y: 16 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{
+                    opacity: 0,
+                    scale: 1.04,
+                    // Mientras sale volando sigue en el DOM por encima de la
+                    // carta: sin esto retendría los toques ese medio segundo.
+                    // Va en el exit (no en style con packStage) porque
+                    // AnimatePresence congela las props del último render.
+                    pointerEvents: "none",
+                    transition: {
+                      duration: efectosApagados ? 0 : 0.3,
+                      delay: efectosApagados ? 0 : 0.14,
+                      ease: "easeOut",
+                    },
+                  }}
+                  transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute inset-0 z-20 flex items-center justify-center px-4"
+                >
+                  <div
+                    ref={sobreRef}
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Rasgar y abrir el sobre"
+                    onClick={() => {
+                      // El click sintético tras un arrastre de la tira no debe
+                      // contar como toque de apertura.
+                      if (tearSwipeRef.current) return;
+                      rasgarSobre();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        rasgarSobre();
+                      }
+                    }}
+                    className="relative cursor-pointer select-none overflow-hidden rounded-2xl border"
+                    style={{
+                      width: CARD_WIDTH,
+                      aspectRatio: "2.5 / 3.5",
+                      borderColor: "var(--border-strong)",
+                      boxShadow: "var(--shadow-md)",
+                      background:
+                        "radial-gradient(120% 70% at 50% 0%, color-mix(in srgb, var(--accent) 26%, transparent), transparent 55%), linear-gradient(165deg, color-mix(in srgb, var(--accent) 20%, var(--surface)) 0%, var(--surface) 46%, color-mix(in srgb, var(--accent) 10%, var(--surface-2)) 100%)",
+                    }}
+                  >
+                    {/* Brillo de foil: rayas diagonales muy tenues. */}
+                    <div
+                      aria-hidden="true"
+                      className="absolute inset-0 pointer-events-none"
+                      style={{
+                        background:
+                          "repeating-linear-gradient(115deg, transparent 0 14px, rgba(255,255,255,0.04) 14px 17px)",
+                      }}
+                    />
+
+                    {/* Hueco que queda al desprenderse la tira. */}
+                    <div
+                      aria-hidden="true"
+                      className="absolute top-0 inset-x-0 h-12"
+                      style={{
+                        background: "color-mix(in srgb, var(--bg) 55%, transparent)",
+                        boxShadow: "inset 0 -8px 14px rgba(0,0,0,0.28)",
+                      }}
+                    />
+
+                    {/* TIRA DE RASGADO. La capa exterior (motion) vuela al
+                        rasgarse; la interior recibe el transform del dedo. */}
+                    <motion.div
+                      exit={{
+                        x: 70,
+                        y: -150,
+                        rotate: -10,
+                        opacity: 0,
+                        transition: {
+                          duration: efectosApagados ? 0 : 0.4,
+                          ease: "easeOut",
+                        },
+                      }}
+                      className="absolute top-0 inset-x-0 z-10"
+                    >
+                      <div
+                        ref={tearZoneRef}
+                        className="relative h-12 touch-target"
+                        style={{ touchAction: touchActionFor("x") }}
+                      >
+                        <div
+                          ref={tearStripRef}
+                          className="absolute inset-0 flex items-center justify-center gap-2 px-3"
+                          style={{
+                            background:
+                              "linear-gradient(180deg, color-mix(in srgb, var(--accent) 34%, var(--surface-2)), color-mix(in srgb, var(--accent) 16%, var(--surface-2)))",
+                            // La perforación por la que se rasga la tira.
+                            borderBottom: "2px dashed var(--border-strong)",
+                          }}
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-3.5 h-3.5 ink-faint shrink-0">
+                            <path d="m11 17-5-5 5-5M18 17l-5-5 5-5" />
+                          </svg>
+                          <span className="text-[10px] font-semibold uppercase tracking-[0.25em] ink-soft whitespace-nowrap">
+                            Desliza para rasgar
+                          </span>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-3.5 h-3.5 ink-faint shrink-0">
+                            <path d="m6 17 5-5-5-5M13 17l5-5-5-5" />
+                          </svg>
+                        </div>
+                      </div>
+                    </motion.div>
+
+                    {/* Cuerpo del sobre: logo y nombre del set. */}
+                    <div className="absolute inset-x-0 top-12 bottom-0 flex flex-col items-center justify-center gap-4 px-6">
+                      {currentSetObj?.images?.logo ? (
+                        <img
+                          src={currentSetObj.images.logo}
+                          alt=""
+                          decoding="async"
+                          className="max-h-[38%] max-w-[80%] object-contain"
+                        />
+                      ) : (
+                        <span className="text-lg font-bold text-center">
+                          {currentSetObj?.name}
+                        </span>
+                      )}
+                      <div className="flex flex-col items-center gap-2">
+                        {currentSetObj?.images?.logo && (
+                          <span className="text-xs font-semibold ink-soft text-center">
+                            {currentSetObj.name}
+                          </span>
+                        )}
+                        <span className="chip px-3 py-1 text-[10px] uppercase tracking-[0.2em] ink-faint">
+                          {formatNumber(currentPack.length)} cartas
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {packStage === "abierto" && (
+            <>
             {/* El gesto va con useSwipe (eventos de puntero) y no con el drag
                 de framer: así el arrastre se pinta escribiendo el transform,
                 sin re-render por movimiento, y sigue el dedo con fidelidad. */}
@@ -1240,7 +1515,36 @@ export default function Home() {
                   </motion.div>
                 )}
               </div>
+
+              {/* DESTELLO en cartas de rango alto: un barrido de luz que cruza
+                  la carta al voltearla. Es una capa HERMANA del contenedor 3D,
+                  con transform y opacidad a secas: cualquier filter aquí (o en
+                  un ancestro) rasterizaría la carta y saldría borrosa. Sólo en
+                  la carta recién destapada, no al volver a visitarla. */}
+              {currentRevealed &&
+                currentRank >= AURA_RANK &&
+                packIndex === maxRevealed - 1 &&
+                !efectosApagados && (
+                <div
+                  key={`destello-${packIndex}`}
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 z-30 overflow-hidden rounded-[4.5%]"
+                >
+                  <motion.div
+                    initial={{ x: "-130%", opacity: 0 }}
+                    animate={{ x: "130%", opacity: [0, 0.85, 0] }}
+                    transition={{ duration: 0.7, delay: 0.3, ease: "easeOut" }}
+                    className="absolute inset-y-[-15%] w-[60%]"
+                    style={{
+                      background:
+                        "linear-gradient(100deg, transparent 12%, rgba(255,255,255,0.45) 50%, transparent 88%)",
+                    }}
+                  />
+                </div>
+              )}
             </div>
+            </>
+            )}
           </div>
 
           {/* PIE (96px): identidad de la carta + acciones. El alto es fijo a
@@ -1248,7 +1552,11 @@ export default function Home() {
               crecer aquí encoge la carta. */}
           <div className="w-full max-w-2xl h-24 shrink-0 flex flex-col items-center justify-center gap-1.5 px-4 relative z-20">
             <div className="h-10 w-full flex flex-col items-center justify-center text-center">
-              {currentRevealed ? (
+              {packStage === "sellado" ? (
+                <p className="ink-faint text-[11px] uppercase tracking-[0.2em]">
+                  Rasga la tira superior para abrir
+                </p>
+              ) : currentRevealed ? (
                 <>
                   {/* Hasta ahora la vista no decía en ningún sitio qué había
                       salido salvo en el texto para lectores de pantalla. */}
@@ -1287,25 +1595,31 @@ export default function Home() {
                   "Guardando..."
                 ) : (
                   <>
-                    {!currentRevealed
-                      ? "Voltear"
-                      : packIndex < lastIndex
-                        ? "Siguiente"
-                        : "Guardar sobre"}{" "}
+                    {packStage === "sellado"
+                      ? "Abrir sobre"
+                      : !currentRevealed
+                        ? "Voltear"
+                        : packIndex < lastIndex
+                          ? "Siguiente"
+                          : "Guardar sobre"}{" "}
                     <kbd className="ml-1 text-[10px] opacity-70 hidden sm:inline">espacio</kbd>
                   </>
                 )}
               </button>
-              <button
-                onClick={handleRevealAll}
-                disabled={busy || maxRevealed >= currentPack.length}
-                className="ink-soft hover:ink press touch-target px-4 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2 disabled:opacity-50"
-              >
-                Revelar todo
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                  <path d="m13 17 5-5-5-5M6 17l5-5-5-5" />
-                </svg>
-              </button>
+              {/* Revelar todo no aparece hasta rasgar: saltarse el sobre
+                  cerrado desde aquí vaciaría el momento que se acaba de pagar. */}
+              {packStage === "abierto" && (
+                <button
+                  onClick={handleRevealAll}
+                  disabled={busy || maxRevealed >= currentPack.length}
+                  className="ink-soft hover:ink press touch-target px-4 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2 disabled:opacity-50"
+                >
+                  Revelar todo
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                    <path d="m13 17 5-5-5-5M6 17l5-5-5-5" />
+                  </svg>
+                </button>
+              )}
             </div>
           </div>
         </motion.div>,

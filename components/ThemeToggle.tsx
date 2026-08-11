@@ -10,7 +10,7 @@ type Theme = "light" | "dark";
 // El tema lo elige el usuario con data-theme, no prefers-color-scheme, así que
 // la etiqueta theme-color no puede declararse por media query: se reescribe a
 // mano para que la barra del navegador acompañe al fondo (--bg de globals.css).
-const THEME_COLOR: Record<Theme, string> = { light: "#f4f5f8", dark: "#080a0e" };
+const THEME_COLOR: Record<Theme, string> = { light: "#f4efe4", dark: "#14120c" };
 
 const syncThemeColor = (t: Theme) => {
   document

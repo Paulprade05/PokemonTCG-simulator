@@ -340,9 +340,13 @@ export default function CardDetailModal({
             </button>
 
             {/* LEFT — CARD IMAGE PANEL */}
+            {/* shrink-0: la caja de la carta es fija; si esta columna pudiera
+                encogerse al competir con la ficha, la carta desbordaría sobre
+                ella. El pb-12 reserva sitio para el contador de posición, que
+                antes quedaba montado sobre la carta. */}
             <div
               ref={imageColRef}
-              className="relative w-full md:w-[44%] p-5 md:p-8 pt-14 md:pt-10 flex items-center justify-center"
+              className={`relative w-full md:w-[44%] shrink-0 p-5 md:p-8 pt-14 md:pt-10 ${hasNav ? "pb-12" : ""} flex items-center justify-center`}
               style={{
                 background: aura
                   ? `radial-gradient(circle at 50% 35%, ${aura.halo.replace(/[\d.]+\)$/, "0.18)")}, transparent 70%), var(--surface-2)`
@@ -390,48 +394,64 @@ export default function CardDetailModal({
                 )}
               </div>
 
-              {/* Card image with halo */}
-              <div ref={tiltRef} className="relative">
+              {/* Caja de proporción FIJA de carta (2.5/3.5). Las imágenes de
+                  la API no comparten proporción exacta: sueltas, cada carta
+                  medía distinto y navegar recolocaba todo el panel. El ancho
+                  deriva del alto del panel (--panel-max, nunca vh): la caja es
+                  idéntica para todas las cartas. */}
+              <div
+                className="relative w-full"
+                style={{
+                  maxWidth: isMobile
+                    ? "calc(var(--panel-max) * 0.42 * 0.715)"
+                    : "calc(var(--panel-max) * 0.82 * 0.715)",
+                }}
+              >
+                {/* Halo de rareza: capa HERMANA fuera del contenedor 3D (un
+                    filter dentro rasterizaría la carta y saldría borrosa) y
+                    absoluta, para que nunca empuje el layout. */}
                 {aura && (
                   <div
-                    className="absolute inset-0 -m-6 rounded-3xl blur-2xl opacity-70 pointer-events-none"
+                    aria-hidden="true"
+                    className="absolute -inset-6 rounded-[20%] blur-2xl opacity-70 pointer-events-none"
                     style={{ background: `radial-gradient(circle, ${aura.halo}, transparent 75%)` }}
                   />
                 )}
-                <motion.img
-                  key={c.id}
-                  initial={{ scale: 0.96, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                  src={c.images?.large}
-                  alt={c.name}
-                  loading="eager"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    // Un arrastre acaba en click sintético: no abrir el zoom.
-                    if (imageSwipedRef.current) return;
-                    haptic("tap");
-                    setZoomed(true);
-                  }}
-                  // El alto sale del panel (--panel-max), no de vh: así la
-                  // carta siempre cabe, tenga el viewport el tamaño que tenga.
-                  style={{
-                    maxHeight: isMobile
-                      ? "calc(var(--panel-max) * 0.42)"
-                      : "calc(var(--panel-max) * 0.82)",
-                  }}
-                  className={`relative cursor-zoom-in object-contain drop-shadow-[0_25px_50px_rgba(0,0,0,0.6)] ${c.owned === false ? "grayscale opacity-70" : ""}`}
-                />
+                <div ref={tiltRef} className="relative w-full aspect-[2.5/3.5]">
+                  <motion.img
+                    key={c.id}
+                    initial={{ scale: 0.96, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                    src={c.images?.large}
+                    alt={c.name}
+                    loading="eager"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // Un arrastre acaba en click sintético: no abrir el zoom.
+                      if (imageSwipedRef.current) return;
+                      haptic("tap");
+                      setZoomed(true);
+                    }}
+                    // Sombra con box-shadow y no drop-shadow: un filter dentro
+                    // del contexto 3D del balanceo rasterizaría la carta.
+                    style={{ borderRadius: "4.5%", boxShadow: "var(--shadow-lg)" }}
+                    className={`absolute inset-0 h-full w-full cursor-zoom-in object-contain ${c.owned === false ? "grayscale opacity-70" : ""}`}
+                  />
+                </div>
               </div>
 
-              {/* Navegación explícita, para quien no descubra el gesto */}
+              {/* Navegación explícita, para quien no descubra el gesto.
+                  transform-gpu: la carta balanceándose vive en una capa 3D y
+                  Safari la compone por encima del z-index normal; con capa
+                  propia estos controles nunca quedan tapados por ella. */}
               {hasNav && (
                 <>
                   <button
                     onClick={afterSwipeGuard(goPrev)}
                     disabled={!canPrev}
                     aria-label="Carta anterior"
-                    className="absolute left-2 top-1/2 -translate-y-1/2 z-40 w-10 h-10 rounded-full btn-ghost press flex items-center justify-center disabled:opacity-25 disabled:cursor-not-allowed"
+                    className="absolute left-2 top-1/2 -translate-y-1/2 z-40 transform-gpu w-10 h-10 rounded-full btn-ghost press flex items-center justify-center disabled:opacity-25 disabled:cursor-not-allowed"
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
                       <path d="m15 18-6-6 6-6" />
@@ -441,17 +461,19 @@ export default function CardDetailModal({
                     onClick={afterSwipeGuard(goNext)}
                     disabled={!canNext}
                     aria-label="Carta siguiente"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 z-40 w-10 h-10 rounded-full btn-ghost press flex items-center justify-center disabled:opacity-25 disabled:cursor-not-allowed"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 z-40 transform-gpu w-10 h-10 rounded-full btn-ghost press flex items-center justify-center disabled:opacity-25 disabled:cursor-not-allowed"
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
                       <path d="m9 18 6-6-6-6" />
                     </svg>
                   </button>
+                  {/* Contador en el hueco reservado bajo la carta (pb-12):
+                      misma fila de posición que la hoja del álbum. */}
                   <span
                     aria-hidden="true"
-                    className="absolute bottom-2 left-1/2 -translate-x-1/2 z-40 chip ink-soft text-[10px] px-2.5 py-1 rounded-full tnum pointer-events-none"
+                    className="absolute bottom-3 left-1/2 -translate-x-1/2 z-40 transform-gpu chip ink-soft text-[11px] px-3 py-1 rounded-full tnum pointer-events-none"
                   >
-                    {navIndex + 1} / {navList!.length}
+                    {navIndex + 1} de {navList!.length}
                   </span>
                 </>
               )}
@@ -460,12 +482,15 @@ export default function CardDetailModal({
             {/* RIGHT — DETAILS */}
             {/* Sin touchAction restringido: 'pan-y' excluye 'pinch-zoom' y
                 anulaba el gesto de ampliar dentro del modal. */}
+            {/* min-h-0 explícito: sin él, algunos motores no dejan encoger la
+                columna dentro del panel (overflow-hidden) y la fila del pie se
+                recorta en vez de quedar alcanzable con scroll. */}
             <div
               ref={detailsRef}
-              className="w-full md:w-[56%] flex flex-col bg-[var(--surface)] scroll-area custom-scrollbar relative"
+              className="w-full md:w-[56%] min-h-0 flex flex-col bg-[var(--surface)] scroll-area custom-scrollbar relative"
               data-lenis-prevent
             >
-              <div className="p-5 md:p-7 flex flex-col gap-4 relative">
+              <div className="p-5 md:p-7 pb-7 md:pb-8 flex flex-col gap-4 relative">
                 {/* HEADER */}
                 <div>
                   <div className="flex items-center gap-2 flex-wrap mb-1">

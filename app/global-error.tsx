@@ -33,7 +33,7 @@ export default function GlobalError({
           alignItems: "center",
           justifyContent: "center",
           padding: "2rem 1.5rem",
-          background: "#080a0e",
+          background: "#14120c",
           color: "#eef1f5",
           fontFamily:
             "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Arial, sans-serif",

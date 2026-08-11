@@ -2,15 +2,18 @@
 
 import { SignedIn, SignedOut, SignInButton, UserButton, useUser } from "@clerk/nextjs";
 import { motion } from "framer-motion";
+import { useState } from "react";
 import { useCurrency } from "../hooks/useGameCurrency";
 import GlobalSearch from "./GlobalSearch";
 import ThemeToggle from "./ThemeToggle";
 import DailyReward from "./DailyReward";
+import SettingsSheet from "./ui/SettingsSheet";
 import { formatNumber } from "../utils/format";
 
 export default function TopBar() {
   const { coins } = useCurrency();
   const { isLoaded } = useUser();
+  const [ajustesAbiertos, setAjustesAbiertos] = useState(false);
 
   return (
     <motion.header
@@ -63,6 +66,18 @@ export default function TopBar() {
         <SignedIn><DailyReward /></SignedIn>
         <ThemeToggle />
 
+        <button
+          onClick={() => setAjustesAbiertos(true)}
+          aria-label="Ajustes"
+          title="Ajustes"
+          className="touch-target w-11 h-11 flex items-center justify-center rounded-xl btn-ghost press"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4" aria-hidden="true">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        </button>
+
         <SignedOut>
           <SignInButton mode="modal">
             <button className="btn-accent press px-3 md:px-4 py-2 rounded-xl text-xs md:text-sm flex items-center gap-2">
@@ -80,6 +95,9 @@ export default function TopBar() {
           </div>
         </SignedIn>
       </div>
+
+      {/* La hoja monta en portal: dentro de la cabecera no ocupa sitio. */}
+      <SettingsSheet open={ajustesAbiertos} onClose={() => setAjustesAbiertos(false)} />
     </motion.header>
   );
 }

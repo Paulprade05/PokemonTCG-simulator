@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
+import { leerAjustes } from "../utils/settings";
 
 type Pattern = "tap" | "select" | "success" | "warning" | "heavy";
 
@@ -20,6 +21,10 @@ const PATTERNS: Record<Pattern, number | number[]> = {
 export function useHaptics() {
   return useCallback((pattern: Pattern = "tap") => {
     if (typeof navigator === "undefined" || !("vibrate" in navigator)) return;
+    // El ajuste se consulta en cada disparo, no al montar: así apagarlo desde
+    // la hoja de ajustes silencia al instante a los componentes ya montados
+    // sin necesidad de suscripciones.
+    if (!leerAjustes().hapticos) return;
     try {
       navigator.vibrate(PATTERNS[pattern]);
     } catch {
