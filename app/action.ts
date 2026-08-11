@@ -180,27 +180,43 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
 
   // --- 3. ACCIONES DE JUEGO (Vender / Favoritos) ---
 
-  export async function sellCardAction(cardId: string, price: number) {
+  /**
+   * Vende una copia sobrante. El precio lo calcula el SERVIDOR a partir de la
+   * rareza guardada en la base de datos.
+   *
+   * Antes llegaba como parámetro desde el navegador y se acreditaba tal cual:
+   * como las server actions son endpoints POST, cualquiera con sesión podía
+   * pedir `coins + 999999999` (o negativo, y dejar el saldo bajo cero). El
+   * cliente ya no decide cuánto vale una carta.
+   *
+   * Devuelve lo ganado y el saldo resultante, o null si no había copia sobrante.
+   */
+  export async function sellCardAction(cardId: string) {
     const { userId } = await auth();
-    if (!userId) return false;
+    if (!userId) return null;
 
     try {
-      // Solo vendemos si tiene más de 1 copia (Protección)
+      const { rows: cardRows } = await sql`SELECT rarity FROM cards WHERE id = ${cardId}`;
+      if (cardRows.length === 0) return null;
+      const price = SELL_PRICES[cardRows[0].rarity as keyof typeof SELL_PRICES] ?? 10;
+
+      // Sólo se vende si sobra alguna copia (la última está protegida).
       const result = await sql`
-        UPDATE user_collection 
-        SET quantity = quantity - 1 
+        UPDATE user_collection
+        SET quantity = quantity - 1
         WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity > 1
       `;
+      if (result.rowCount === 0) return null;
 
-      if (result.rowCount === 0) return false; 
+      const { rows } = await sql`
+        UPDATE users SET coins = coins + ${price} WHERE id = ${userId} RETURNING coins
+      `;
 
-      await sql`UPDATE users SET coins = coins + ${price} WHERE id = ${userId}`;
-
-      revalidatePath('/collection'); 
-      return true;
+      revalidatePath('/collection');
+      return { earned: price, coins: Number(rows[0]?.coins ?? 0) };
     } catch (error) {
       console.error("Error vendiendo carta:", error);
-      return false;
+      return null;
     }
   }
 
@@ -278,44 +294,42 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
       return { status: 'error' };
     }
   }
-  export async function sellAllDuplicatesAction(cardId: string, unitPrice: number) {
+  /**
+   * Vende TODAS las copias sobrantes de una carta, dejando una. El precio
+   * unitario sale de la rareza en la base de datos, no del cliente.
+   */
+  export async function sellAllDuplicatesAction(cardId: string) {
     const { userId } = await auth();
     if (!userId) return { success: false, error: "No autorizado" };
 
     try {
-      // 1. Consultamos cuántas tiene el usuario
-      const { rows } = await sql`
-        SELECT quantity FROM user_collection
-        WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity > 0
+      const { rows: info } = await sql`
+        SELECT uc.quantity, c.rarity
+        FROM user_collection uc JOIN cards c ON c.id = uc.card_id
+        WHERE uc.user_id = ${userId} AND uc.card_id = ${cardId}
       `;
+      if (info.length === 0) return { success: false, error: "No tienes la carta" };
 
-      if (rows.length === 0) return { success: false, error: "No tienes la carta" };
-
-      const currentQty = rows[0].quantity;
-      const duplicates = currentQty - 1;
-
-      // Si no hay duplicados, no hacemos nada
+      const duplicates = Number(info[0].quantity) - 1;
       if (duplicates <= 0) return { success: false, error: "No tienes duplicados" };
 
+      const unitPrice = SELL_PRICES[info[0].rarity as keyof typeof SELL_PRICES] ?? 10;
       const totalEarned = duplicates * unitPrice;
 
-      // 2. Actualizamos la colección: Dejamos la cantidad en 1
-      await sql`
-        UPDATE user_collection 
-        SET quantity = 1 
-        WHERE user_id = ${userId} AND card_id = ${cardId}
+      // Condicionado a la cantidad leída: si otra pestaña vendió entretanto,
+      // no se paga dos veces por las mismas copias.
+      const upd = await sql`
+        UPDATE user_collection SET quantity = 1
+        WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity = ${info[0].quantity}
       `;
+      if (upd.rowCount === 0) return { success: false, error: "La carta cambió, inténtalo de nuevo" };
 
-      // 3. Damos el dinero total
-      await sql`
-        UPDATE users 
-        SET coins = coins + ${totalEarned} 
-        WHERE id = ${userId}
+      const { rows } = await sql`
+        UPDATE users SET coins = coins + ${totalEarned} WHERE id = ${userId} RETURNING coins
       `;
 
       revalidatePath('/collection');
-      return { success: true, sold: duplicates, earned: totalEarned };
-
+      return { success: true, sold: duplicates, earned: totalEarned, coins: Number(rows[0]?.coins ?? 0) };
     } catch (error) {
       console.error("Error vendiendo todo:", error);
       return { success: false, error: "Error en servidor" };
@@ -593,15 +607,32 @@ export async function claimDailyReward() {
     const bonus = Math.min(newStreak * DAILY_STREAK_STEP, DAILY_STREAK_CAP);
     const totalReward = baseReward + bonus;
 
-    await sql`
+    // La condición de las 20h se repite AQUÍ, dentro del propio UPDATE.
+    // Comprobarla sólo en JavaScript dejaba una ventana entre el SELECT y el
+    // UPDATE: con dos pestañas, ambas leían la misma fecha antigua, ambas
+    // pasaban el `if` y ambas cobraban. Al ponerla en el WHERE, la segunda no
+    // afecta a ninguna fila y se rechaza.
+    const claim = await sql`
       UPDATE users
       SET coins = coins + ${totalReward},
           last_daily_claim = NOW(),
           streak = ${newStreak}
       WHERE id = ${userId}
+        AND (last_daily_claim IS NULL
+             OR last_daily_claim <= NOW() - INTERVAL '20 hours')
+      RETURNING coins
     `;
+    if (claim.rowCount === 0) {
+      return { error: "Esa recompensa ya se ha reclamado" };
+    }
+
     revalidatePath('/');
-    return { success: true, reward: totalReward, streak: newStreak };
+    return {
+      success: true,
+      reward: totalReward,
+      streak: newStreak,
+      coins: Number(claim.rows[0].coins),
+    };
   } catch (e) {
     console.error("Error daily reward:", e);
     return { error: "Error servidor" };

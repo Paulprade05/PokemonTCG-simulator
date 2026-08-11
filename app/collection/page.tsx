@@ -27,7 +27,7 @@ export default function CollectionPage() {
   const { isSignedIn, isLoaded } = useUser();
   const [cards, setCards] = useState<any[]>([]);
   const [dbSets, setDbSets] = useState<any[]>([]);
-  const { coins, addCoins } = useCurrency();
+  const { coins, addCoins, setCoins } = useCurrency();
   const [showStats, setShowStats] = useState(false);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -182,9 +182,11 @@ export default function CollectionPage() {
 
     try {
       if (isSignedIn) {
-        // sellCardAction devuelve false si la fila no se pudo actualizar.
-        const ok = await sellCardAction(cardId, price);
-        if (!ok) throw new Error("venta rechazada");
+        // El precio lo pone el servidor; el cliente adopta el saldo real que
+        // devuelve, en vez de fiarse de su propia suma optimista.
+        const res = await sellCardAction(cardId);
+        if (!res) throw new Error("venta rechazada");
+        setCoins(res.coins);
       } else {
         saveCollectionRaw(updatedCards);
       }
@@ -245,7 +247,7 @@ export default function CollectionPage() {
       // exactamente cuáles fallaron y devolvemos sólo esas, en vez de
       // deshacer un lote que en su mayoría sí se vendió.
       const results = await Promise.allSettled(
-        duplicates.map((c) => sellAllDuplicatesAction(c.id, getPrice(c.rarity))),
+        duplicates.map((c) => sellAllDuplicatesAction(c.id)),
       );
       const failed = new Map<string, number>(); // id -> cantidad previa
       let refund = 0;
@@ -307,8 +309,9 @@ export default function CollectionPage() {
 
     try {
       if (isSignedIn) {
-        const res: any = await sellAllDuplicatesAction(id, unitPrice);
+        const res: any = await sellAllDuplicatesAction(id);
         if (!res?.success) throw new Error(res?.error || "venta rechazada");
+        if (typeof res.coins === "number") setCoins(res.coins);
       } else {
         saveCollectionRaw(updatedCards);
       }
