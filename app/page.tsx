@@ -116,6 +116,12 @@ export default function Home() {
    * ver las cartas. "abierto" es el flujo de revelación de siempre.
    */
   const [packStage, setPackStage] = useState<"sellado" | "abierto">("sellado");
+  /**
+   * Sentido del rasgado (+1 derecha, -1 izquierda): la tira sale volando hacia
+   * donde se arrastró. Viaja por el `custom` de AnimatePresence porque las
+   * props del elemento saliente se congelan en su último render.
+   */
+  const [tearDir, setTearDir] = useState(1);
   // Ajustes compartidos (sonido, reducir efectos): el botón de silencio de la
   // cabecera los escribe y esta suscripción los refleja al instante.
   const [ajustes, setAjustes] = useState(() => leerAjustes());
@@ -271,6 +277,35 @@ export default function Home() {
     });
     return groups;
   }, [dbSets]);
+
+  /**
+   * Gestión del foco del diálogo inmersivo. Con el resto de la app inerte
+   * (AppShell), el foco tiene que ENTRAR aquí al abrir — si se quedara en el
+   * botón de compra, ahora inerte, el teclado y el lector de pantalla se
+   * quedarían sin punto de partida — y volver a su sitio al cerrar. Los
+   * timeouts dejan pasar el render que monta el portal / retira el inert.
+   */
+  const prevFocusRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (isPackOpen) {
+      prevFocusRef.current = (document.activeElement as HTMLElement) ?? null;
+      const t = window.setTimeout(() => {
+        (sobreRef.current ?? cardGestureRef.current)?.focus();
+      }, 30);
+      return () => window.clearTimeout(t);
+    }
+    const prev = prevFocusRef.current;
+    prevFocusRef.current = null;
+    if (prev && document.contains(prev)) {
+      const t = window.setTimeout(() => prev.focus(), 30);
+      return () => window.clearTimeout(t);
+    }
+  }, [isPackOpen]);
+
+  // Al rasgar, el relevo natural: del sobre a la carta.
+  useEffect(() => {
+    if (isPackOpen && packStage === "abierto") cardGestureRef.current?.focus();
+  }, [isPackOpen, packStage]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -656,11 +691,14 @@ export default function Home() {
    * un click/Enter en el sobre y las teclas de avanzar: todos pasan por aquí
    * para que sonido, háptico y estado vayan siempre juntos.
    */
-  const rasgarSobre = () => {
+  const rasgarSobre = (dir: 1 | -1 = 1) => {
     if (tornRef.current || packStage !== "sellado") return;
     tornRef.current = true;
     play("rasgar");
     haptic("success");
+    // En el mismo render que el cambio de fase, para que el custom de
+    // AnimatePresence ya lleve el sentido cuando la tira empiece a salir.
+    setTearDir(dir);
     setPackStage("abierto");
   };
 
@@ -690,7 +728,7 @@ export default function Home() {
         tearHapticRef.current = progreso;
         haptic("tap");
       }
-      if (progreso >= 1) rasgarSobre();
+      if (progreso >= 1) rasgarSobre(dx < 0 ? -1 : 1);
     },
     onEnd: () => {
       if (tornRef.current) return;
@@ -703,8 +741,8 @@ export default function Home() {
         if (tearStripRef.current) tearStripRef.current.style.transition = "";
       }, 260);
     },
-    onSwipeLeft: () => rasgarSobre(),
-    onSwipeRight: () => rasgarSobre(),
+    onSwipeLeft: () => rasgarSobre(-1),
+    onSwipeRight: () => rasgarSobre(1),
   });
 
   // Revelar todo: destapa el sobre entero y deja al usuario en la última carta.
@@ -1310,7 +1348,7 @@ export default function Home() {
                 también abren (escritorio y accesibilidad). El overflow-hidden
                 del sobre recorta la tira cuando sale volando: se va "fuera del
                 papel", que es justo la metáfora. */}
-            <AnimatePresence>
+            <AnimatePresence custom={tearDir}>
               {packStage === "sellado" && (
                 <motion.div
                   key="sobre-sellado"
@@ -1383,16 +1421,22 @@ export default function Home() {
                     {/* TIRA DE RASGADO. La capa exterior (motion) vuela al
                         rasgarse; la interior recibe el transform del dedo. */}
                     <motion.div
-                      exit={{
-                        x: 70,
-                        y: -150,
-                        rotate: -10,
-                        opacity: 0,
-                        transition: {
-                          duration: efectosApagados ? 0 : 0.4,
-                          ease: "easeOut",
-                        },
+                      // Variante dinámica y no un objeto: el sentido llega por
+                      // el custom de AnimatePresence en el momento de salir,
+                      // que es el único dato fresco que tiene un nodo saliente.
+                      variants={{
+                        volar: (dir: number) => ({
+                          x: 84 * dir,
+                          y: -150,
+                          rotate: -10 * dir,
+                          opacity: 0,
+                          transition: {
+                            duration: efectosApagados ? 0 : 0.4,
+                            ease: "easeOut",
+                          },
+                        }),
                       }}
+                      exit="volar"
                       className="absolute top-0 inset-x-0 z-10"
                     >
                       <div

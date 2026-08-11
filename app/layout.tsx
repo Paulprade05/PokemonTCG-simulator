@@ -63,6 +63,13 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // El zoom de página está apagado: la app debe sentirse nativa y el único
+  // zoom con sentido es el de la carta, que CardZoom implementa con su propio
+  // pellizco. El modo instalado de iOS respeta maximum-scale; en navegador,
+  // el touch-action del body cubre el resto. El zoom de accesibilidad del
+  // sistema (triple toque) no se ve afectado.
+  maximumScale: 1,
+  userScalable: false,
   // Un único valor, sin variantes por prefers-color-scheme: el tema depende de
   // data-theme (lo elige el usuario), así que la etiqueta la reescriben el
   // script de arranque y ThemeToggle. Con dos metas media-gated ese reemplazo
@@ -70,7 +77,6 @@ export const viewport: Viewport = {
   themeColor: "#14120c",
   // Imprescindible para que env(safe-area-inset-*) devuelva valores reales en
   // iOS; sin esto el padding de safe-area de BottomNav siempre vale 0.
-  // No se restringe la escala: el pinch-zoom sigue disponible.
   viewportFit: "cover",
 };
 

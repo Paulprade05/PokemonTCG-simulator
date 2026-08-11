@@ -63,7 +63,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
           {/* El saldo vive aquí para que la barra superior, la home, la
               colección y la recompensa diaria compartan el mismo número. */}
           <CurrencyProvider>
-          <div className="min-h-dvh-app">
+          {/* En modo inmersivo (apertura de sobres) el resto de la app queda
+              inerte: ni foco de teclado ni lector de pantalla pueden escaparse
+              a lo que hay detrás de la capa. Los avisos de Toast viven fuera
+              de este div (son hermanos, arriba), así que siguen anunciándose. */}
+          <div className="min-h-dvh-app" inert={immersive || undefined}>
             <Sidebar />
             {/* Content column offset by sidebar on desktop */}
             <div className="md:pl-60">

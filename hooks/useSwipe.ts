@@ -124,8 +124,8 @@ export function useSwipe(
     const onPointerDown = (e: PointerEvent) => {
       if (!cfg().enabled) return;
       if (e.button !== 0) return;
-      // Segundo dedo: es un pellizco para ampliar, no un deslizamiento.
-      // Se abandona el gesto y se devuelve el control al navegador.
+      // Segundo dedo: es un pellizco, no un deslizamiento. Se abandona el
+      // gesto; en CardZoom eso le cede el control a su zoom propio.
       if (active) {
         active = false;
         locked = null;
@@ -270,15 +270,13 @@ export function useSwipe(
 }
 
 /**
- * `touch-action` correcto para cada eje. Incluir `pinch-zoom` es importante:
- * `pan-y` a secas anula el gesto de ampliar, que es una ayuda de accesibilidad.
+ * `touch-action` correcto para cada eje. El zoom de página está apagado en
+ * toda la app (meta viewport + touch-action del body): aquí sólo se decide
+ * qué paneo se le cede al navegador para no robarle el scroll. El pellizco
+ * sobre la carta lo implementa CardZoom por su cuenta.
  */
 export function touchActionFor(axis: SwipeAxis): string {
-  if (axis === "x") return "pan-y pinch-zoom";
-  if (axis === "y") return "pan-x pinch-zoom";
-  // Para ambos ejes no se puede escribir "none" sin perder el pellizco: la
-  // especificación no deja combinarlo. Se cede el paneo vertical al navegador
-  // (que en un contenedor sin scroll no hace nada) a cambio de conservar el
-  // zoom, y el hook ya abandona el gesto en cuanto aparece un segundo dedo.
-  return "pan-y pinch-zoom";
+  if (axis === "x") return "pan-y";
+  if (axis === "y") return "pan-x";
+  return "none";
 }

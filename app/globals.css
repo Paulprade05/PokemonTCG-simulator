@@ -97,6 +97,11 @@ body {
   text-rendering: optimizeLegibility;
   overflow-x: hidden;
   -webkit-tap-highlight-color: transparent;
+  /* Sin zoom de página: la app se comporta como nativa. pan-x pan-y deja
+     pasar el scroll pero no incluye pinch-zoom, y la meta viewport hace lo
+     propio en el modo instalado de iOS. El único zoom es el de la carta
+     (CardZoom trae su propio pellizco). */
+  touch-action: pan-x pan-y;
   /* --app-height, no 100vh: en iOS vh es el viewport grande (con la barra de
      Safari escondida), así que 100vh deja el body más alto que la pantalla y
      aparece un desplazamiento fantasma. */

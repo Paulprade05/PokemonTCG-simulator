@@ -4,7 +4,10 @@
    - imágenes de cartas: caché primero con revalidación en segundo plano y tope de entradas
    Nunca toca peticiones que no sean GET (las server actions de Next son POST). */
 
-const VERSION = "v3";
+// Súbelo en cada cambio de este fichero: el byte distinto es lo que hace que
+// el navegador instale el service worker nuevo y dispare la recarga única de
+// ServiceWorkerRegister en las PWA instaladas.
+const VERSION = "v4";
 const SHELL_CACHE = `shell-${VERSION}`;
 const STATIC_CACHE = `static-${VERSION}`;
 const IMAGE_CACHE = `cards-${VERSION}`;

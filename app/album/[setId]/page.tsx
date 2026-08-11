@@ -11,6 +11,7 @@ import PokemonCard from "../../../components/PokemonCard";
 import PageHeader from "../../../components/PageHeader";
 import Loader from "../../../components/Loader";
 import Sheet from "../../../components/ui/Sheet";
+import CardZoom from "../../../components/ui/CardZoom";
 import { useHaptics } from "../../../hooks/useHaptics";
 import { useSwipe, touchActionFor } from "../../../hooks/useSwipe";
 
@@ -52,6 +53,8 @@ export default function SetAlbumPage() {
 
   const [filter, setFilter] = useState<Filter>("all");
   const [detail, setDetail] = useState<any>(null);
+  /** Visor a pantalla completa: el único sitio de la app con zoom (pellizco). */
+  const [zoomOpen, setZoomOpen] = useState(false);
 
   // Pantalla baja y ancha: el móvil girado. La ficha se reparte en dos columnas
   // y el tope de la carta cambia, así que hace falta saberlo también en JS.
@@ -143,7 +146,7 @@ export default function SetAlbumPage() {
   // El gesto se engancha sólo a la imagen: si escuchara en toda la hoja se
   // comería el scroll vertical de la ficha.
   const detailImageRef = useRef<HTMLDivElement>(null);
-  useSwipe(detailImageRef, {
+  const detailSwipeRef = useSwipe(detailImageRef, {
     axis: "x",
     threshold: 64,
     velocity: 420,
@@ -475,13 +478,29 @@ export default function SetAlbumPage() {
                   src={detailImage}
                   alt={detail.name}
                   draggable={false}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Ampliar ${detail.name}`}
                   initial={{ opacity: 0, scale: 0.97 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                  onClick={() => {
+                    // Un arrastre de navegación acaba en click sintético: no
+                    // debe abrir el visor.
+                    if (detailSwipeRef.current) return;
+                    haptic("tap");
+                    setZoomOpen(true);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      setZoomOpen(true);
+                    }
+                  }}
                   // Mismo radio que PokemonCard y que los huecos de la
                   // rejilla (4.5% del ancho), para que abrir la ficha no
                   // cambie la silueta de la carta.
-                  className="absolute inset-0 h-full w-full rounded-[4.5%] object-contain"
+                  className="absolute inset-0 h-full w-full cursor-zoom-in rounded-[4.5%] object-contain"
                   style={{ boxShadow: "var(--shadow-lg)" }}
                 />
               )}
@@ -607,6 +626,17 @@ export default function SetAlbumPage() {
           </div>
         )}
       </Sheet>
+
+      {/* Visor con pellizco. Se cierra solo si la ficha desaparece debajo. */}
+      <CardZoom
+        open={zoomOpen && !!detail}
+        src={detailImage}
+        alt={detail?.name}
+        caption={detail?.name}
+        onClose={() => setZoomOpen(false)}
+        onPrev={canPrev ? () => step(-1) : undefined}
+        onNext={canNext ? () => step(1) : undefined}
+      />
     </div>
   );
 }

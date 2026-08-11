@@ -351,8 +351,8 @@ export default function CardDetailModal({
                 background: aura
                   ? `radial-gradient(circle at 50% 35%, ${aura.halo.replace(/[\d.]+\)$/, "0.18)")}, transparent 70%), var(--surface-2)`
                   : "var(--surface-2)",
-                // touchActionFor mantiene el pinch-zoom; el scroll vertical de
-                // la página sigue siendo del navegador.
+                // "pan-y": el gesto horizontal es nuestro y el scroll vertical
+                // sigue siendo del navegador. El zoom vive en CardZoom.
                 touchAction: hasNav ? touchActionFor("x") : undefined,
               }}
             >
@@ -480,8 +480,6 @@ export default function CardDetailModal({
             </div>
 
             {/* RIGHT — DETAILS */}
-            {/* Sin touchAction restringido: 'pan-y' excluye 'pinch-zoom' y
-                anulaba el gesto de ampliar dentro del modal. */}
             {/* min-h-0 explícito: sin él, algunos motores no dejan encoger la
                 columna dentro del panel (overflow-hidden) y la fila del pie se
                 recorta en vez de quedar alcanzable con scroll. */}
