@@ -28,6 +28,7 @@ import { leerAjustes, guardarAjustes, suscribirseAjustes } from "../utils/settin
 import { useToast } from "../components/ui/Toast";
 import { useImmersive } from "../components/AppShell";
 import PokemonCard from "../components/PokemonCard";
+import BoosterPack, { type FaseSobre } from "../components/BoosterPack";
 import { formatNumber } from "../utils/format";
 import Portal from "../components/ui/Portal";
 
@@ -45,6 +46,24 @@ const CARD_WIDTH =
 
 /** Rareza a partir de la cual la revelación merece aura a pantalla completa. */
 const AURA_RANK = 70;
+
+/**
+ * Fases de la apertura (el tipo vive en components/BoosterPack). Son cuatro y
+ * no dos porque la coreografía del rasgado tiene que ser observable:
+ * "rasgando" (la tira se desprende), "abriendo" (la carta emerge mientras el
+ * sobre aún cae) y "cartas" (el sobre ya no está y se aceptan gestos). Antes
+ * todo colgaba del `exit` de AnimatePresence y no había forma de saber en qué
+ * punto estaba la apertura.
+ *
+ * Los tres valores de abajo y los @keyframes de components/BoosterPack.tsx
+ * están calibrados juntos: si cambias uno, mira el otro.
+ */
+const T_CARTA = 380; // se monta la carta y emerge de la boca del sobre
+const T_FIN = 720; // el sobre se desmonta y se aceptan gestos
+/** Toque con inercia justo tras la llegada de la última carta: cerraría el
+ *  sobre sin dejarla ver. Cubre la entrada (260ms) y el arranque de la
+ *  campanada, sin frenar a quien va rápido. */
+const GUARDA_CIERRE = 550;
 
 /**
  * Rango de una rareza con red de seguridad.
@@ -67,15 +86,24 @@ const rankOf = (rarity?: string): number => {
 };
 
 const cardVariants = {
-  enter: (dir: number) => ({
-    x: dir > 0 ? 120 : -120,
-    opacity: 0,
-    rotateY: dir > 0 ? 60 : -60,
-    scale: 0.92,
-  }),
-  center: { x: 0, opacity: 1, rotateY: 0, scale: 1 },
+  // dir === 0: la primera carta EMERGE del sobre (sube y crece), no entra de
+  // lado. Es la única que nace de la boca del envoltorio.
+  enter: (dir: number) =>
+    dir === 0
+      ? { x: 0, y: 34, opacity: 0, rotateY: 0, scale: 0.9 }
+      : {
+          x: dir > 0 ? 120 : -120,
+          y: 0,
+          opacity: 0,
+          rotateY: dir > 0 ? 60 : -60,
+          scale: 0.92,
+        },
+  // `y: 0` es obligatorio: framer sólo anima las claves presentes en el
+  // destino, y sin él la carta se quedaría 34px baja para siempre.
+  center: { x: 0, y: 0, opacity: 1, rotateY: 0, scale: 1 },
   exit: (dir: number) => ({
     x: dir > 0 ? -120 : 120,
+    y: 0,
     opacity: 0,
     rotateY: dir > 0 ? -60 : 60,
     scale: 0.92,
@@ -112,16 +140,23 @@ export default function Home() {
   /** Hay una acción de servidor en vuelo (compra o guardado): botones apagados. */
   const [busy, setBusy] = useState(false);
   /**
-   * Fase de la apertura: el sobre llega sellado y hay que rasgar la tira para
-   * ver las cartas. "abierto" es el flujo de revelación de siempre.
+   * Fase de la apertura: el sobre llega sellado, se rasga, cae, y sólo
+   * entonces mandan las cartas. La coreografía es una secuencia explícita de
+   * temporizadores (ver rasgarSobre) y no el `exit` de AnimatePresence.
    */
-  const [packStage, setPackStage] = useState<"sellado" | "abierto">("sellado");
+  const [fase, setFase] = useState<FaseSobre>("sellado");
   /**
-   * Sentido del rasgado (+1 derecha, -1 izquierda): la tira sale volando hacia
-   * donde se arrastró. Viaja por el `custom` de AnimatePresence porque las
-   * props del elemento saliente se congelan en su último render.
+   * Sentido del rasgado (+1 derecha, -1 izquierda): elige la clase
+   * `.sobre__tapa--der|izq`, que es la que lleva el arco de caída de la tira
+   * hacia el lado por el que se arrastró.
    */
   const [tearDir, setTearDir] = useState(1);
+  /**
+   * Índice cuya llegada merece fanfarria (destello y confeti). Es estado
+   * explícito y no `packIndex === maxRevealed - 1`: con la comparación, ir
+   * atrás y volver adelante volvía a disparar el premio de la última carta.
+   */
+  const [fanfarriaEn, setFanfarriaEn] = useState<number | null>(null);
   // Ajustes compartidos (sonido, reducir efectos): el botón de silencio de la
   // cabecera los escribe y esta suscripción los refleja al instante.
   const [ajustes, setAjustes] = useState(() => leerAjustes());
@@ -140,8 +175,16 @@ export default function Home() {
    * colección se duplicarían.
    */
   const savePromiseRef = useRef<Promise<unknown> | null>(null);
-  /** Momento del último volteo, para no encadenarle un toque con inercia. */
-  const lastFlipAtRef = useRef(0);
+  /** Momento de la última llegada de carta, para no encadenarle un toque con
+   *  inercia que cerrara el sobre sin dejar ver lo que acaba de salir. */
+  const ultimaLlegadaRef = useRef(0);
+  /** Temporizadores de la coreografía: salir a mitad tiene que poder anularlos. */
+  const temporizadoresRef = useRef<number[]>([]);
+  /** Marca de agua de cartas ya vistas: sólo la primera vez se celebra. */
+  const vistasRef = useRef(0);
+  /** Último índice anunciado. Guarda SÍNCRONA: en desarrollo StrictMode invoca
+   *  los efectos dos veces y el sobre sonaba doble. */
+  const anunciadoRef = useRef(-1);
   /** Elemento que captura los gestos de la carta durante la apertura. */
   const cardGestureRef = useRef<HTMLDivElement>(null);
   /** Sobre sellado completo (para el atajo de teclado de la vista). */
@@ -161,6 +204,22 @@ export default function Home() {
   // Adornos pesados (confeti, destellos, tira volando): fuera si lo pide el
   // sistema o el ajuste propio de la app.
   const efectosApagados = !!reduceMotion || ajustes.reducirEfectos;
+
+  /** Temporizador de la coreografía, anotado para poder anularlo. */
+  const programar = (fn: () => void, ms: number) => {
+    temporizadoresRef.current.push(window.setTimeout(fn, ms));
+  };
+  const limpiarTemporizadores = () => {
+    temporizadoresRef.current.forEach(window.clearTimeout);
+    temporizadoresRef.current = [];
+  };
+  // Salir a mitad de la coreografía (Escape, chevron, desmontaje) no puede
+  // dejar un setFase huérfano que abra el sobre SIGUIENTE o marque una carta
+  // como vista cuando ya no hay nadie mirando.
+  useEffect(() => {
+    if (!isPackOpen) limpiarTemporizadores();
+    return limpiarTemporizadores;
+  }, [isPackOpen]);
 
   // La apertura ocupa toda la pantalla: escondemos la barra de pestañas.
   useImmersive(isPackOpen);
@@ -182,12 +241,15 @@ export default function Home() {
 
   const lastIndex = Math.max(0, currentPack.length - 1);
   const currentCard = currentPack[packIndex];
-  // Las cartas destapadas son siempre un prefijo (sólo se avanza desde una ya
-  // vista), así que maxRevealed basta y no hace falta llevar un conjunto.
-  const currentRevealed = packIndex < maxRevealed;
+  // Ya no hay volteo: las cartas salen de cara. Lo único que decide si se ven
+  // es que la coreografía del sobre haya llegado a su punto.
+  const cartasVisibles = fase === "abriendo" || fase === "cartas";
   const currentRank = rankOf(currentCard?.rarity);
-  /** 0 nada · 1 destello · 2 aura · 3 aura y escenario a oscuras. */
-  const auraLevel = !currentRevealed
+  /** 0 nada · 1 destello · 2 aura · 3 aura y escenario a oscuras.
+   *  La guarda es cartasVisibles y no la rareza a secas: sin ella, una Hyper
+   *  Rare encendería el aura a pantalla completa DETRÁS del sobre cerrado y
+   *  chivaría el premio antes de rasgar. */
+  const auraLevel = !cartasVisibles
     ? 0
     : currentRank >= 85
       ? 3
@@ -301,10 +363,11 @@ export default function Home() {
     }
   }, [isPackOpen]);
 
-  // Al rasgar, el relevo natural: del sobre a la carta.
+  // Al rasgar, el relevo natural: del sobre a la carta. Se espera a "cartas"
+  // porque hasta entonces la zona de gestos no acepta nada.
   useEffect(() => {
-    if (isPackOpen && packStage === "abierto") cardGestureRef.current?.focus();
-  }, [isPackOpen, packStage]);
+    if (isPackOpen && fase === "cartas") cardGestureRef.current?.focus();
+  }, [isPackOpen, fase]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -341,7 +404,7 @@ export default function Home() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPackOpen, maxRevealed, packIndex, currentPack, isSignedIn, packStage]);
+  }, [isPackOpen, maxRevealed, packIndex, currentPack, isSignedIn, fase]);
 
   // Precarga de las siguientes cartas: la variante grande ronda el medio mega y
   // hasta ahora la descarga no empezaba hasta que la carta se montaba, así que
@@ -367,9 +430,15 @@ export default function Home() {
     setMaxRevealed(0);
     setIsPackOpen(false);
     setDirection(1);
-    // El siguiente sobre vuelve a llegar sellado.
-    setPackStage("sellado");
+    // El siguiente sobre vuelve a llegar sellado. Olvidar cualquiera de estas
+    // líneas (aquí o en handleBuyPack) hace que el segundo sobre nazca abierto.
+    limpiarTemporizadores();
+    setFase("sellado");
     tornRef.current = false;
+    vistasRef.current = 0;
+    anunciadoRef.current = -1;
+    ultimaLlegadaRef.current = 0;
+    setFanfarriaEn(null);
   };
 
   const handleBuyPack = async (type: PackType) => {
@@ -460,8 +529,13 @@ export default function Home() {
     // la primera carta del nuevo entraba por el lado contrario.
     setDirection(1);
     // El sobre entra sellado: hay que rasgar la tira para ver las cartas.
-    setPackStage("sellado");
+    limpiarTemporizadores();
+    setFase("sellado");
     tornRef.current = false;
+    vistasRef.current = 0;
+    anunciadoRef.current = -1;
+    ultimaLlegadaRef.current = 0;
+    setFanfarriaEn(null);
     setIsPackOpen(true);
   };
 
@@ -618,52 +692,70 @@ export default function Home() {
   const handleNextCard = async () => {
     // Con el sobre aún sellado, la tecla de avanzar rasga (accesibilidad y
     // escritorio): es lo único que se puede hacer en esa fase.
-    if (packStage === "sellado") {
+    if (fase === "sellado") {
       rasgarSobre();
       return;
     }
-    if (!currentRevealed) {
-      // El peso lo marca la carta que se está destapando, nunca la siguiente:
-      // medirlo sobre la siguiente chivaba la rareza antes de verla.
-      haptic(currentRank >= AURA_RANK ? "heavy" : "select");
-      play("voltear");
-      // La campanada llega justo tras el volteo, con el giro ya en marcha; su
-      // riqueza crece con el rango, igual que el aura.
-      if (currentRank >= 40) {
-        const campanada =
-          currentRank >= 85
-            ? "revelacion3"
-            : currentRank >= AURA_RANK
-              ? "revelacion2"
-              : "revelacion1";
-        window.setTimeout(() => play(campanada), 280);
-      }
-      lastFlipAtRef.current = performance.now();
-      setMaxRevealed((m) => Math.max(m, packIndex + 1));
-      return;
-    }
+    // Coreografía en curso: el toque se traga. Aceptarlo saltaría la carta que
+    // todavía está emergiendo del sobre.
+    if (fase !== "cartas") return;
     if (packIndex < lastIndex) {
-      // Avanzar sólo mueve el mazo: la carta llega tapada y se destapa aparte,
-      // así que aquí no hay rareza que anunciar.
-      haptic("tap");
-      play("tap");
+      // Sonido y háptico los pone la llegada, que es donde se sabe qué carta
+      // aterriza y si es la primera vez que se ve.
       setDirection(1);
       setPackIndex((prev) => prev + 1);
-    } else {
-      // Un toque con inercia justo después de destapar la última carta cerraba
-      // el sobre sin dejar verla, que es justo lo que se ha pagado.
-      if (performance.now() - lastFlipAtRef.current < 400) return;
-      await finishPack();
+      return;
     }
+    // Un toque con inercia justo después de que llegue la última carta cerraba
+    // el sobre sin dejar verla, que es justo lo que se ha pagado.
+    if (performance.now() - ultimaLlegadaRef.current < GUARDA_CIERRE) return;
+    await finishPack();
   };
 
   const handlePrevCard = () => {
+    if (fase !== "cartas") return;
     if (packIndex <= 0) return; // no hay carta anterior
-    haptic("tap");
-    play("tap");
     setDirection(-1);
     setPackIndex((prev) => prev - 1);
   };
+
+  /**
+   * LLEGADA DE CARTA. Sustituye a la rama de volteo: sin volteo, el momento que
+   * se celebra es que la carta ATERRICE. Concentrarlo aquí evita repetir el
+   * mismo bloque en el toque, el gesto, la tecla y el botón.
+   */
+  useEffect(() => {
+    if (!isPackOpen || !cartasVisibles) return;
+    if (anunciadoRef.current === packIndex) return; // re-render / StrictMode
+    anunciadoRef.current = packIndex;
+    const primera = packIndex >= vistasRef.current;
+    vistasRef.current = Math.max(vistasRef.current, packIndex + 1);
+    setMaxRevealed((m) => Math.max(m, packIndex + 1));
+    ultimaLlegadaRef.current = performance.now();
+    if (!primera) {
+      // Ya vista: sólo el clic seco de pasar de carta.
+      haptic("tap");
+      play("tap");
+      setFanfarriaEn(null);
+      return;
+    }
+    // El peso lo marca la carta que llega, nunca la siguiente.
+    haptic(currentRank >= AURA_RANK ? "heavy" : "select");
+    play("voltear"); // whoosh + click de cartón: describe igual una carta que aterriza
+    setFanfarriaEn(packIndex);
+    if (currentRank >= 40) {
+      const campanada =
+        currentRank >= 85
+          ? "revelacion3"
+          : currentRank >= AURA_RANK
+            ? "revelacion2"
+            : "revelacion1";
+      // Antes iba a 280ms para caer sobre un giro de 800ms; la entrada de la
+      // carta dura 340ms, así que la campanada se adelanta.
+      programar(() => play(campanada), 160);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPackOpen, cartasVisibles, packIndex]);
 
   const handleCardTap = () => {
     // Tras un deslizamiento el navegador emite un click sintético: se ignora.
@@ -680,7 +772,7 @@ export default function Home() {
   const didSwipeRef = useSwipe(cardGestureRef, {
     axis: "both",
     rotate: 6,
-    enabled: isPackOpen && packStage === "abierto",
+    enabled: isPackOpen && fase === "cartas",
     onSwipeLeft: () => handleNextCard(),
     onSwipeRight: packIndex > 0 ? () => handlePrevCard() : undefined,
   });
@@ -689,16 +781,28 @@ export default function Home() {
    * Rasga el sobre y da paso a las cartas. Lo disparan el arrastre de la tira,
    * un click/Enter en el sobre y las teclas de avanzar: todos pasan por aquí
    * para que sonido, háptico y estado vayan siempre juntos.
+   *
+   * Es el secuenciador de la apertura: la coreografía va en temporizadores
+   * explícitos, NO en el `exit` de AnimatePresence. Aquel desvanecía el sobre
+   * entero mientras la tira volaba (y el overflow del sobre además la
+   * recortaba), así que no se veía nada de lo que se estaba animando.
    */
   const rasgarSobre = (dir: 1 | -1 = 1) => {
-    if (tornRef.current || packStage !== "sellado") return;
+    if (tornRef.current || fase !== "sellado") return;
     tornRef.current = true;
+    limpiarTemporizadores();
     play("rasgar");
     haptic("success");
-    // En el mismo render que el cambio de fase, para que el custom de
-    // AnimatePresence ya lleve el sentido cuando la tira empiece a salir.
     setTearDir(dir);
-    setPackStage("abierto");
+    setDirection(0); // la primera carta emerge del sobre, no entra de lado
+    if (efectosApagados) {
+      // Sin coreografía ni temporizadores: las cartas, ya.
+      setFase("cartas");
+      return;
+    }
+    setFase("rasgando");
+    programar(() => setFase("abriendo"), T_CARTA);
+    programar(() => setFase("cartas"), T_FIN);
   };
 
   // Arrastre de la tira: el progreso se pinta escribiendo el transform a mano
@@ -710,7 +814,7 @@ export default function Home() {
     follow: false,
     threshold: 80,
     velocity: 600,
-    enabled: isPackOpen && packStage === "sellado",
+    enabled: isPackOpen && fase === "sellado",
     onStart: () => {
       tearWidthRef.current = sobreRef.current?.offsetWidth || 280;
       tearHapticRef.current = 0;
@@ -747,8 +851,12 @@ export default function Home() {
   // Revelar todo: destapa el sobre entero y deja al usuario en la última carta.
   // No guarda ni cierra: salir es cosa del botón de la cabecera.
   const handleRevealAll = () => {
+    if (fase !== "cartas") return;
     setDirection(1);
     setMaxRevealed(currentPack.length);
+    // Sin esta línea, la llegada trataría la última carta como recién vista y
+    // le montaría la fanfarria: revelar todo nunca ha celebrado nada.
+    vistasRef.current = currentPack.length;
     setPackIndex(lastIndex);
   };
 
@@ -1195,10 +1303,10 @@ export default function Home() {
           {/* CONFETI sólo para el rango máximo: doce piezas animando transform
               y opacidad, detrás de la carta (z-10 contra su z-20). Los valores
               salen de un pseudoaleatorio determinista por carta para que el
-              render sea estable. Sólo salta en la carta recién destapada (la
-              frontera de maxRevealed): repetirlo al volver atrás lo devalúa.
-              Con efectos reducidos ni se monta. */}
-          {auraLevel >= 3 && packIndex === maxRevealed - 1 && !efectosApagados && (
+              render sea estable. Sólo salta en la carta que acaba de llegar
+              por primera vez (fanfarriaEn): repetirlo al volver atrás lo
+              devalúa. Con efectos reducidos ni se monta. */}
+          {auraLevel >= 3 && fanfarriaEn === packIndex && !efectosApagados && (
             <div
               key={`confeti-${packIndex}`}
               aria-hidden="true"
@@ -1223,7 +1331,9 @@ export default function Home() {
                     }}
                     transition={{
                       duration: 1.1 + r * 0.3,
-                      delay: 0.3 + (i % 4) * 0.05,
+                      // Adelantado: ya no hay giro de 800ms que esperar, el
+                      // estallido acompaña a la carta que emerge.
+                      delay: 0.2 + (i % 4) * 0.05,
                       ease: "easeOut",
                     }}
                     className="absolute left-1/2 top-[42%] rounded-[2px]"
@@ -1321,7 +1431,7 @@ export default function Home() {
           {/* La carta es una imagen animada: sin esto el lector de pantalla no
               llega a decir qué ha salido. */}
           <p className="sr-only" aria-live="polite">
-            {currentRevealed
+            {cartasVisibles
               ? `Carta ${packIndex + 1} de ${currentPack.length}: ${currentCard.name}${currentCard.rarity ? `, ${currentCard.rarity}` : ""}`
               : ""}
           </p>
@@ -1330,7 +1440,7 @@ export default function Home() {
           <div className="relative flex-1 w-full flex items-center justify-center px-4">
             {/* El Promo Pack (SPECIAL) también usa openGoldenPack y coloca la
                 garantizada al final: se anuncia igual que en Leyenda. */}
-            {packStage === "abierto" &&
+            {cartasVisibles &&
               (currentPackType === "GOLDEN" || currentPackType === "SPECIAL") &&
               packIndex === lastIndex && (
               <motion.div
@@ -1342,164 +1452,28 @@ export default function Home() {
               </motion.div>
             )}
 
-            {/* SOBRE SELLADO: composición CSS con el logo del set, sin assets.
-                La tira superior se arrastra para rasgar; un click o Enter
-                también abren (escritorio y accesibilidad). El overflow-hidden
-                del sobre recorta la tira cuando sale volando: se va "fuera del
-                papel", que es justo la metáfora. */}
-            <AnimatePresence custom={tearDir}>
-              {packStage === "sellado" && (
-                <motion.div
-                  key="sobre-sellado"
-                  initial={efectosApagados ? false : { opacity: 0, scale: 0.94, y: 16 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{
-                    opacity: 0,
-                    scale: 1.04,
-                    // Mientras sale volando sigue en el DOM por encima de la
-                    // carta: sin esto retendría los toques ese medio segundo.
-                    // Va en el exit (no en style con packStage) porque
-                    // AnimatePresence congela las props del último render.
-                    pointerEvents: "none",
-                    transition: {
-                      duration: efectosApagados ? 0 : 0.3,
-                      delay: efectosApagados ? 0 : 0.14,
-                      ease: "easeOut",
-                    },
-                  }}
-                  transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-                  className="absolute inset-0 z-20 flex items-center justify-center px-4"
-                >
-                  <div
-                    ref={sobreRef}
-                    role="button"
-                    tabIndex={0}
-                    aria-label="Rasgar y abrir el sobre"
-                    onClick={() => {
-                      // El click sintético tras un arrastre de la tira no debe
-                      // contar como toque de apertura.
-                      if (tearSwipeRef.current) return;
-                      rasgarSobre();
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        rasgarSobre();
-                      }
-                    }}
-                    className="relative cursor-pointer select-none overflow-hidden rounded-2xl border"
-                    style={{
-                      width: CARD_WIDTH,
-                      aspectRatio: "2.5 / 3.5",
-                      // El arrastre vale en TODO el sobre, no sólo sobre la
-                      // tira: apuntar a una franja de 48px con el dedo es
-                      // puntería fina y el gesto se sentía roto al fallarla.
-                      touchAction: touchActionFor("x"),
-                      borderColor: "var(--border-strong)",
-                      boxShadow: "var(--shadow-md)",
-                      background:
-                        "radial-gradient(120% 70% at 50% 0%, color-mix(in srgb, var(--accent) 26%, transparent), transparent 55%), linear-gradient(165deg, color-mix(in srgb, var(--accent) 20%, var(--surface)) 0%, var(--surface) 46%, color-mix(in srgb, var(--accent) 10%, var(--surface-2)) 100%)",
-                    }}
-                  >
-                    {/* Brillo de foil: rayas diagonales muy tenues. */}
-                    <div
-                      aria-hidden="true"
-                      className="absolute inset-0 pointer-events-none"
-                      style={{
-                        background:
-                          "repeating-linear-gradient(115deg, transparent 0 14px, rgba(255,255,255,0.04) 14px 17px)",
-                      }}
-                    />
+            {/* SOBRE: composición CSS con el logo del set, sin assets. La tira
+                se arrastra para rasgar; un click o Enter también abren
+                (escritorio y accesibilidad). Sigue montado durante "rasgando"
+                y "abriendo" para que se le vea caer mientras la carta emerge;
+                lo desmonta el paso a "cartas". */}
+            {fase !== "cartas" && (
+              <BoosterPack
+                fase={fase}
+                tearDir={tearDir}
+                efectosApagados={efectosApagados}
+                sobreRef={sobreRef}
+                tiraRef={tearStripRef}
+                anchoCarta={CARD_WIDTH}
+                logo={currentSetObj?.images?.logo}
+                nombreSet={currentSetObj?.name}
+                cartas={currentPack.length}
+                gestoRef={tearSwipeRef}
+                onRasgar={rasgarSobre}
+              />
+            )}
 
-                    {/* Hueco que queda al desprenderse la tira. */}
-                    <div
-                      aria-hidden="true"
-                      className="absolute top-0 inset-x-0 h-12"
-                      style={{
-                        background: "color-mix(in srgb, var(--bg) 55%, transparent)",
-                        boxShadow: "inset 0 -8px 14px rgba(0,0,0,0.28)",
-                      }}
-                    />
-
-                    {/* TIRA DE RASGADO. La capa exterior (motion) vuela al
-                        rasgarse; la interior recibe el transform del dedo. */}
-                    <motion.div
-                      // Variante dinámica y no un objeto: el sentido llega por
-                      // el custom de AnimatePresence en el momento de salir,
-                      // que es el único dato fresco que tiene un nodo saliente.
-                      variants={{
-                        volar: (dir: number) => ({
-                          x: 84 * dir,
-                          y: -150,
-                          rotate: -10 * dir,
-                          opacity: 0,
-                          transition: {
-                            duration: efectosApagados ? 0 : 0.4,
-                            ease: "easeOut",
-                          },
-                        }),
-                      }}
-                      exit="volar"
-                      className="absolute top-0 inset-x-0 z-10"
-                    >
-                      <div
-                        className="relative h-12 touch-target"
-                        style={{ touchAction: touchActionFor("x") }}
-                      >
-                        <div
-                          ref={tearStripRef}
-                          className="absolute inset-0 flex items-center justify-center gap-2 px-3"
-                          style={{
-                            background:
-                              "linear-gradient(180deg, color-mix(in srgb, var(--accent) 34%, var(--surface-2)), color-mix(in srgb, var(--accent) 16%, var(--surface-2)))",
-                            // La perforación por la que se rasga la tira.
-                            borderBottom: "2px dashed var(--border-strong)",
-                          }}
-                        >
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-3.5 h-3.5 ink-faint shrink-0">
-                            <path d="m11 17-5-5 5-5M18 17l-5-5 5-5" />
-                          </svg>
-                          <span className="text-[10px] font-semibold uppercase tracking-[0.25em] ink-soft whitespace-nowrap">
-                            Desliza para rasgar
-                          </span>
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-3.5 h-3.5 ink-faint shrink-0">
-                            <path d="m6 17 5-5-5-5M13 17l5-5-5-5" />
-                          </svg>
-                        </div>
-                      </div>
-                    </motion.div>
-
-                    {/* Cuerpo del sobre: logo y nombre del set. */}
-                    <div className="absolute inset-x-0 top-12 bottom-0 flex flex-col items-center justify-center gap-4 px-6">
-                      {currentSetObj?.images?.logo ? (
-                        <img
-                          src={currentSetObj.images.logo}
-                          alt=""
-                          decoding="async"
-                          className="max-h-[38%] max-w-[80%] object-contain"
-                        />
-                      ) : (
-                        <span className="text-lg font-bold text-center">
-                          {currentSetObj?.name}
-                        </span>
-                      )}
-                      <div className="flex flex-col items-center gap-2">
-                        {currentSetObj?.images?.logo && (
-                          <span className="text-xs font-semibold ink-soft text-center">
-                            {currentSetObj.name}
-                          </span>
-                        )}
-                        <span className="chip px-3 py-1 text-[10px] uppercase tracking-[0.2em] ink-faint">
-                          {formatNumber(currentPack.length)} cartas
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {packStage === "abierto" && (
+            {cartasVisibles && (
             <>
             {/* El gesto va con useSwipe (eventos de puntero) y no con el drag
                 de framer: así el arrastre se pinta escribiendo el transform,
@@ -1517,12 +1491,12 @@ export default function Home() {
               }}
               role="button"
               tabIndex={0}
-              aria-label={
-                currentRevealed
-                  ? `${currentCard.name}${currentCard.rarity ? `, ${currentCard.rarity}` : ""}`
-                  : "Girar carta"
-              }
-              className="relative z-20 cursor-pointer select-none"
+              // La carta siempre está de cara: la etiqueta dice qué es y qué
+              // pasa al tocarla, que ya no es girarla.
+              aria-label={`${currentCard.name}${currentCard.rarity ? `, ${currentCard.rarity}` : ""}. ${
+                packIndex < lastIndex ? "Siguiente carta" : "Guardar sobre"
+              }`}
+              className="relative z-40 cursor-pointer select-none"
               style={{
                 width: CARD_WIDTH,
                 touchAction: touchActionFor("both"),
@@ -1538,18 +1512,26 @@ export default function Home() {
                     key={packIndex}
                     custom={direction}
                     variants={cardVariants}
-                    initial="enter"
+                    initial={efectosApagados ? false : "enter"}
                     animate="center"
                     exit="exit"
-                    transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
+                    // La primera (direction 0) emerge del sobre y va algo más
+                    // larga; los relevos entre cartas siguen siendo secos.
+                    transition={{
+                      duration: direction === 0 ? 0.34 : 0.26,
+                      ease: [0.16, 1, 0.3, 1],
+                    }}
                     className="absolute inset-0"
                   >
-                    <PokemonCard card={currentCard} reveal={currentRevealed} useHighRes={true} />
+                    {/* reveal siempre: las cartas salen de cara. Además nacen
+                        fuera del contexto 3D (ver PokemonCard), así que se
+                        pintan a resolución nativa desde el primer fotograma. */}
+                    <PokemonCard card={currentCard} reveal={true} useHighRes={true} />
                   </motion.div>
                 </AnimatePresence>
                 {/* La insignia va fuera del bloque animado: con las cartas
                     solapándose se verían dos a la vez durante el relevo. */}
-                {newCardIndexes.has(packIndex) && currentRevealed && (
+                {newCardIndexes.has(packIndex) && cartasVisibles && (
                   <motion.div
                     key={`nueva-${packIndex}`}
                     initial={{ scale: 0, x: -20 }}
@@ -1563,13 +1545,12 @@ export default function Home() {
               </div>
 
               {/* DESTELLO en cartas de rango alto: un barrido de luz que cruza
-                  la carta al voltearla. Es una capa HERMANA del contenedor 3D,
+                  la carta al llegar. Es una capa HERMANA del contenedor 3D,
                   con transform y opacidad a secas: cualquier filter aquí (o en
                   un ancestro) rasterizaría la carta y saldría borrosa. Sólo en
-                  la carta recién destapada, no al volver a visitarla. */}
-              {currentRevealed &&
+                  la carta recién llegada, no al volver a visitarla. */}
+              {fanfarriaEn === packIndex &&
                 currentRank >= AURA_RANK &&
-                packIndex === maxRevealed - 1 &&
                 !efectosApagados && (
                 <div
                   key={`destello-${packIndex}`}
@@ -1579,7 +1560,7 @@ export default function Home() {
                   <motion.div
                     initial={{ x: "-130%", opacity: 0 }}
                     animate={{ x: "130%", opacity: [0, 0.85, 0] }}
-                    transition={{ duration: 0.7, delay: 0.3, ease: "easeOut" }}
+                    transition={{ duration: 0.7, delay: 0.16, ease: "easeOut" }}
                     className="absolute inset-y-[-15%] w-[60%]"
                     style={{
                       background:
@@ -1598,11 +1579,7 @@ export default function Home() {
               crecer aquí encoge la carta. */}
           <div className="w-full max-w-2xl h-24 shrink-0 flex flex-col items-center justify-center gap-1.5 px-4 relative z-20">
             <div className="h-10 w-full flex flex-col items-center justify-center text-center">
-              {packStage === "sellado" ? (
-                <p className="ink-faint text-[11px] uppercase tracking-[0.2em]">
-                  Rasga la tira superior para abrir
-                </p>
-              ) : currentRevealed ? (
+              {cartasVisibles ? (
                 <>
                   {/* Hasta ahora la vista no decía en ningún sitio qué había
                       salido salvo en el texto para lectores de pantalla. */}
@@ -1627,34 +1604,34 @@ export default function Home() {
                 </>
               ) : (
                 <p className="ink-faint text-[11px] uppercase tracking-[0.2em]">
-                  Toca la carta para darle la vuelta
+                  Rasga la tira superior para abrir
                 </p>
               )}
             </div>
             <div className="flex items-center justify-center gap-2 w-full">
               <button
                 onClick={handleNextCard}
-                disabled={busy}
+                // Durante la coreografía no hay nada que pulsar: el sobre ya
+                // se está rasgando y la carta viene de camino.
+                disabled={busy || (fase !== "sellado" && fase !== "cartas")}
                 className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-60"
               >
                 {busy ? (
                   "Guardando..."
                 ) : (
                   <>
-                    {packStage === "sellado"
+                    {fase !== "cartas"
                       ? "Abrir sobre"
-                      : !currentRevealed
-                        ? "Voltear"
-                        : packIndex < lastIndex
-                          ? "Siguiente"
-                          : "Guardar sobre"}{" "}
+                      : packIndex < lastIndex
+                        ? "Siguiente"
+                        : "Guardar sobre"}{" "}
                     <kbd className="ml-1 text-[10px] opacity-70 hidden sm:inline">espacio</kbd>
                   </>
                 )}
               </button>
               {/* Revelar todo no aparece hasta rasgar: saltarse el sobre
                   cerrado desde aquí vaciaría el momento que se acaba de pagar. */}
-              {packStage === "abierto" && (
+              {fase === "cartas" && (
                 <button
                   onClick={handleRevealAll}
                   disabled={busy || maxRevealed >= currentPack.length}
