@@ -5,7 +5,46 @@
   import { sql } from '@vercel/postgres';
   import { revalidatePath } from 'next/cache';
   import { SELL_PRICES, RARITY_RANK, STARTING_COINS, DAILY_BASE, DAILY_STREAK_STEP, DAILY_STREAK_CAP, SET_COMPLETION_BONUS } from "../utils/constanst";
-  import { loadLocalSets } from "../services/localData";
+  import { loadLocalSets, loadLocalCards } from "../services/localData";
+
+  // Las columnas y tablas auxiliares (recompensa diaria, tema, lista de deseos y
+  // premios de set) se crean una sola vez por instancia, no en cada invocación.
+  // Un ALTER TABLE ... ADD COLUMN IF NOT EXISTS toma un candado ACCESS EXCLUSIVE
+  // sobre `users` —la tabla más caliente de la app— aunque la columna ya exista;
+  // repetirlo en cada cobro, venta o lectura de saldo serializaba todo el tráfico
+  // contra ella. Se memoiza en una promesa: si la creación falla, se reintenta.
+  let schemaReady: Promise<void> | null = null;
+  function ensureSchema(): Promise<void> {
+    if (!schemaReady) {
+      schemaReady = (async () => {
+        await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily_claim TIMESTAMP`;
+        await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS streak INT DEFAULT 0`;
+        await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT`;
+        await sql`
+          CREATE TABLE IF NOT EXISTS wishlist (
+            user_id TEXT NOT NULL,
+            card_id TEXT NOT NULL,
+            added_at TIMESTAMP DEFAULT NOW(),
+            PRIMARY KEY (user_id, card_id)
+          )
+        `;
+        await sql`
+          CREATE TABLE IF NOT EXISTS set_rewards (
+            user_id TEXT NOT NULL,
+            set_id TEXT NOT NULL,
+            rewarded_at TIMESTAMP DEFAULT NOW(),
+            PRIMARY KEY (user_id, set_id)
+          )
+        `;
+      })().catch((e) => {
+        // No cachear el fallo: la próxima llamada vuelve a intentar la creación.
+        schemaReady = null;
+        throw e;
+      });
+    }
+    return schemaReady;
+  }
+
   // --- 1. GESTIÓN DE USUARIO Y MONEDAS ---
 
   export async function getUserData() {
@@ -13,12 +52,18 @@
     if (!userId) return null;
 
     try {
-      const { rows } = await sql`SELECT * FROM users WHERE id = ${userId}`;
-      if (rows.length > 0) return { coins: rows[0].coins };
-
-      console.log(`🆕 Creando usuario: ${userId}`);
-      await sql`INSERT INTO users (id, coins) VALUES (${userId}, ${STARTING_COINS})`;
-      return { coins: STARTING_COINS };
+      // Un único upsert idempotente hace de lectura, de creación y de reparación
+      // a la vez. Antes eran un SELECT y, si faltaba, un INSERT: dos peticiones
+      // simultáneas de un usuario nuevo (home + cabecera + diaria arrancan a la
+      // vez) pasaban ambas el SELECT vacío y la segunda reventaba con clave
+      // duplicada, devolviendo saldo vacío. El COALESCE además repara filas que
+      // syncUserName pudiera haber creado sin `coins`.
+      const { rows } = await sql`
+        INSERT INTO users (id, coins) VALUES (${userId}, ${STARTING_COINS})
+        ON CONFLICT (id) DO UPDATE SET coins = COALESCE(users.coins, ${STARTING_COINS})
+        RETURNING coins
+      `;
+      return { coins: Number(rows[0].coins) };
     } catch (error) {
       console.error("❌ Error getUserData:", error);
       return null;
@@ -59,104 +104,80 @@
     }
   }
 
-  /**
-   * @deprecated Escribe un total absoluto que viene del cliente: se fía de él y
-   * pisa ingresos concurrentes. Para gastar usa `spendCoinsAction`.
-   */
-  export async function updateCoins(newAmount: number) {
-    const { userId } = await auth();
-    if (!userId) throw new Error("No autorizado");
-
-    try {
-      await sql`UPDATE users SET coins = ${newAmount} WHERE id = ${userId}`;
-      revalidatePath('/');
-      return true;
-    } catch (error) {
-      console.error("❌ Error updateCoins:", error);
-      return false;
-    }
-  }
+  // `updateCoins` se eliminó: escribía un total absoluto que llegaba del cliente
+  // sin validar, así que cualquiera con sesión podía fijarse el saldo a voluntad
+  // (era un endpoint POST vivo por estar exportada en un fichero 'use server').
+  // No tenía consumidores. Para gastar monedas se usa `spendCoinsAction`, que
+  // resta de forma atómica en la base de datos.
 
   // --- 2. GESTIÓN DE LA COLECCIÓN ---
 
  // --- 2. GESTIÓN DE LA COLECCIÓN ---
 
-// 👇 Añadimos "packPrice" como segundo parámetro (puedes cambiar el 100 por lo que cuesten tus sobres)
+// Contrato compatible con el cliente (app/page.tsx): sigue recibiendo el array
+// de cartas del sobre, pero de cada carta SÓLO se usa el `id`. El resto de los
+// campos (nombre, rareza, imágenes...) se ignoran a propósito.
+//
+// Antes se insertaban esas cartas tal cual en la tabla maestra `cards` y se
+// acreditaban en la colección. Como una server action es un endpoint POST
+// invocable directamente, un cliente podía inventarse cartas Hyper Rare, meterlas
+// en el catálogo de TODOS y luego revenderlas: monedas infinitas y catálogo
+// contaminado. Ahora sólo se acreditan ids que YA existan en `cards`, y esta
+// acción no escribe nunca en `cards`.
 export async function savePackToCollection(cards: any[], packPrice: number = 100, packCount: number = 1) {
   const { userId } = await auth();
   if (!userId) return { success: false, error: "No logueado" };
 
+  // Validación de las estadísticas que alimentan el ranking de amigos: sin
+  // esto se podía pasar packCount = 1e9 o packPrice negativo y encabezar el
+  // ranking de sobres abiertos sin abrir uno.
+  if (!Number.isInteger(packCount) || packCount < 1 || packCount > 10) {
+    return { success: false, error: "packCount inválido" };
+  }
+  if (!Number.isFinite(packPrice) || packPrice <= 0 || packPrice > 10000) {
+    return { success: false, error: "packPrice inválido" };
+  }
+  // Tope de tamaño: un sobre legítimo trae ~10 cartas; con packCount<=10 eso son
+  // ~100. Un array mucho mayor sólo puede ser un payload de abuso.
+  if (!Array.isArray(cards) || cards.length > packCount * 20) {
+    return { success: false, error: "Sobre inválido" };
+  }
+
   try {
-    // Antes esto eran dos consultas en serie POR CARTA: 21 viajes a la base de
-    // datos para un sobre de 10 y más de 200 para un ×10, todos en el camino
-    // crítico de la apertura. Agrupadas, el coste deja de crecer con el número
-    // de cartas.
-    //
-    // Las repeticiones se cuentan aquí y no en la base de datos porque
-    // Postgres rechaza un ON CONFLICT ... DO UPDATE que toque la misma fila dos
-    // veces dentro de una misma sentencia, y un sobre puede traer la misma
-    // carta más de una vez.
-    const porCarta = new Map<string, { card: any; quantity: number }>();
+    // Contamos repeticiones por id: un sobre puede traer la misma carta varias
+    // veces y así se acredita la cantidad correcta en un solo upsert.
+    const porCarta = new Map<string, number>();
     for (const card of cards) {
-      const previa = porCarta.get(card.id);
-      if (previa) previa.quantity += 1;
-      else porCarta.set(card.id, { card, quantity: 1 });
+      const id = card?.id;
+      if (typeof id !== "string" || id.length === 0) continue;
+      porCarta.set(id, (porCarta.get(id) || 0) + 1);
     }
-    const entradas = Array.from(porCarta.values());
+    const ids = Array.from(porCarta.keys());
+    const counts = ids.map((id) => porCarta.get(id)!);
 
-    if (entradas.length > 0) {
-      // Los $n los genera el índice del bucle, nunca los datos: cada valor
-      // viaja como parámetro, igual que con la plantilla etiquetada.
-
-      // 1. INSERTAR EN TABLA MAESTRA (Si no existe)
-      const cardParams: any[] = [];
-      const cardRows = entradas.map(({ card }, i) => {
-        cardParams.push(
-          card.id,
-          card.name,
-          card.rarity || 'Common',
-          JSON.stringify(card.images),
-          card.set?.id || card.setId || 'unknown_set',
-          card.number || '',
-          card.artist || 'Desconocido',
-          card.flavorText || '',
-          JSON.stringify(card.tcgplayer || {}),
-        );
-        const base = i * 9;
-        return `(${Array.from({ length: 9 }, (_, k) => `$${base + k + 1}`).join(', ')})`;
-      });
-      await sql.query(
-        `INSERT INTO cards (id, name, rarity, images, set_id, number, artist, flavor_text, tcgplayer)
-         VALUES ${cardRows.join(', ')}
-         ON CONFLICT (id) DO NOTHING`,
-        cardParams,
-      );
-
-      // 2. INSERTAR EN COLECCIÓN DE USUARIO (Incrementar cantidad)
-      // El usuario es el mismo en todas las filas, así que reutiliza $1.
-      const collParams: any[] = [userId];
-      const collRows = entradas.map(({ card, quantity }, i) => {
-        collParams.push(card.id, quantity);
-        const base = 1 + i * 2;
-        return `($1, $${base + 1}, $${base + 2})`;
-      });
+    if (ids.length > 0) {
+      // El JOIN contra `cards` es la validación: sólo se acreditan cartas que
+      // existan de verdad en el catálogo maestro. Las cartas inventadas por el
+      // cliente no casan y se descartan silenciosamente. Parametrizado con
+      // unnest, sin concatenar datos en la cadena.
       await sql.query(
         `INSERT INTO user_collection (user_id, card_id, quantity)
-         VALUES ${collRows.join(', ')}
+         SELECT $1, x.id, x.cnt
+         FROM unnest($2::text[], $3::int[]) AS x(id, cnt)
+         JOIN cards c ON c.id = x.id
          ON CONFLICT (user_id, card_id)
          DO UPDATE SET quantity = user_collection.quantity + EXCLUDED.quantity`,
-        collParams,
+        [userId, ids, counts],
       );
     }
 
-    // 🚨 NUEVO: SUMAR A LAS ESTADÍSTICAS DEL JUGADOR 🚨
+    // Estadísticas del jugador (ya validadas arriba).
     await sql`
       UPDATE users
       SET packs_opened = COALESCE(packs_opened, 0) + ${packCount},
           money_spent = COALESCE(money_spent, 0) + ${packPrice}
       WHERE id = ${userId}
     `;
-    // ================================================
 
     revalidatePath('/collection');
     return { success: true };
@@ -227,18 +248,25 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
       if (cardRows.length === 0) return null;
       const price = SELL_PRICES[cardRows[0].rarity as keyof typeof SELL_PRICES] ?? 10;
 
-      // Sólo se vende si sobra alguna copia (la última está protegida).
-      const result = await sql`
-        UPDATE user_collection
-        SET quantity = quantity - 1
-        WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity > 1
-      `;
-      if (result.rowCount === 0) return null;
-
+      // Descuento y abono en UNA sola sentencia (CTE): o pasan los dos o ninguno.
+      // En dos sentencias separadas, si el proceso moría entre medias (timeout,
+      // deploy, corte) la copia desaparecía sin abono. El abono sólo ocurre si la
+      // venta tocó una fila (EXISTS), y la condición `quantity > 1` protege la
+      // última copia sin ventana entre lectura y escritura.
       const { rows } = await sql`
-        UPDATE users SET coins = coins + ${price} WHERE id = ${userId} RETURNING coins
+        WITH venta AS (
+          UPDATE user_collection
+          SET quantity = quantity - 1
+          WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity > 1
+          RETURNING 1
+        )
+        UPDATE users SET coins = coins + ${price}
+        WHERE id = ${userId} AND EXISTS (SELECT 1 FROM venta)
+        RETURNING coins
       `;
+      if (rows.length === 0) return null;
 
+      revalidatePath('/');
       revalidatePath('/collection');
       return { earned: price, coins: Number(rows[0]?.coins ?? 0) };
     } catch (error) {
@@ -267,22 +295,28 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
 
       const isFav = currentStatus.rows[0]?.is_favorite || false;
 
-      // 2. Comprobar límite de 10 (solo si vamos a activar el favorito)
       if (!isFav) {
-        const countResult = await sql`
-          SELECT count(*) as total FROM user_collection
-          WHERE user_id = ${userId} AND is_favorite = true AND quantity > 0
+        // Al ACTIVAR, el límite de 10 va dentro del propio UPDATE: comprobarlo
+        // antes en una consulta aparte dejaba una ventana en la que dos pestañas
+        // pasaban el recuento con 9 favoritos y acababan en 11. La subconsulta se
+        // evalúa de forma atómica con la escritura; si ya hay 10, no toca fila.
+        const upd = await sql`
+          UPDATE user_collection
+          SET is_favorite = true
+          WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity > 0
+            AND 10 > (
+              SELECT count(*) FROM user_collection
+              WHERE user_id = ${userId} AND is_favorite = true AND quantity > 0
+            )
         `;
-        const totalFavs = parseInt(countResult.rows[0].total);
-        if (totalFavs >= 10) return { error: "¡Límite de 10 favoritos alcanzado!" };
+        if (upd.rowCount === 0) return { error: "¡Límite de 10 favoritos alcanzado!" };
+      } else {
+        await sql`
+          UPDATE user_collection
+          SET is_favorite = false
+          WHERE user_id = ${userId} AND card_id = ${cardId}
+        `;
       }
-
-      // 3. Cambiar el estado
-      await sql`
-        UPDATE user_collection 
-        SET is_favorite = ${!isFav} 
-        WHERE user_id = ${userId} AND card_id = ${cardId}
-      `;
 
       revalidatePath('/collection');
       return { success: true, isFavorite: !isFav };
@@ -295,21 +329,34 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
 
   // --- 4. HERRAMIENTAS DE SINCRONIZACIÓN (Opcional si usas JSON local) ---
 
-  export async function syncSetToDatabase(setId: string, cards: any[]) {
+  // El segundo parámetro se conserva sólo por compatibilidad con la llamada del
+  // cliente (app/page.tsx) y se IGNORA a propósito: no se puede fiar de las
+  // cartas que le manden. En vez de insertar ese payload en la tabla maestra
+  // `cards` (por donde se colaban cartas falsas visibles para todos), reconstruye
+  // las cartas en el servidor desde el catálogo local, que valida el setId contra
+  // el directorio de datos. Un setId inventado no casa con ningún fichero y no
+  // siembra nada. Además exige sesión: era la única escritura del fichero sin
+  // auth, invocable por cualquier anónimo. (requireAdmin no encaja aquí: espera
+  // un Request de route handler, no una server action; y la siembra la disparan
+  // usuarios normales al abrir un set, no sólo un administrador.)
+  export async function syncSetToDatabase(setId: string, _clientCards?: unknown) {
+    const { userId } = await auth();
+    if (!userId) return { status: 'unauthorized' };
     try {
       const { count } = (await sql`SELECT count(*) FROM cards WHERE set_id = ${setId}`).rows[0];
-      
+
       if (parseInt(count) > 0) return { status: 'already_synced' };
 
-      console.log(`📥 Sincronizando ${setId} con la base de datos...`);
+      const cards = (await loadLocalCards(setId)) as any[];
+      if (cards.length === 0) return { status: 'unknown_set' };
 
       for (const card of cards) {
         await sql`
           INSERT INTO cards (id, name, rarity, images, set_id, number, artist, flavor_text, tcgplayer)
           VALUES (
-            ${card.id}, ${card.name}, ${card.rarity || 'Common'}, 
-            ${JSON.stringify(card.images)}, ${setId}, ${card.number || '???'},       
-            ${card.artist || 'Artista Desconocido'}, ${card.flavorText || ''},   
+            ${card.id}, ${card.name}, ${card.rarity || 'Common'},
+            ${JSON.stringify(card.images)}, ${setId}, ${card.number || '???'},
+            ${card.artist || 'Artista Desconocido'}, ${card.flavorText || ''},
             ${JSON.stringify(card.tcgplayer || {})}
           ) ON CONFLICT (id) DO NOTHING;
         `;
@@ -343,18 +390,23 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
       const unitPrice = SELL_PRICES[info[0].rarity as keyof typeof SELL_PRICES] ?? 10;
       const totalEarned = duplicates * unitPrice;
 
-      // Condicionado a la cantidad leída: si otra pestaña vendió entretanto,
-      // no se paga dos veces por las mismas copias.
-      const upd = await sql`
-        UPDATE user_collection SET quantity = 1
-        WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity = ${info[0].quantity}
-      `;
-      if (upd.rowCount === 0) return { success: false, error: "La carta cambió, inténtalo de nuevo" };
-
+      // Descuento y abono en una sola sentencia (CTE): la venta se condiciona a
+      // la cantidad leída (si otra pestaña vendió entretanto, no toca fila) y el
+      // abono sólo ocurre si la venta tocó una fila. Así no se paga dos veces ni
+      // se pierde la carta si el proceso muere entre ambas escrituras.
       const { rows } = await sql`
-        UPDATE users SET coins = coins + ${totalEarned} WHERE id = ${userId} RETURNING coins
+        WITH venta AS (
+          UPDATE user_collection SET quantity = 1
+          WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity = ${info[0].quantity}
+          RETURNING 1
+        )
+        UPDATE users SET coins = coins + ${totalEarned}
+        WHERE id = ${userId} AND EXISTS (SELECT 1 FROM venta)
+        RETURNING coins
       `;
+      if (rows.length === 0) return { success: false, error: "La carta cambió, inténtalo de nuevo" };
 
+      revalidatePath('/');
       revalidatePath('/collection');
       return { success: true, sold: duplicates, earned: totalEarned, coins: Number(rows[0]?.coins ?? 0) };
     } catch (error) {
@@ -390,15 +442,27 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
   // Añade esto al final de tu src/app/action.ts
 
   export async function getTrainerCollection(trainerId: string) {
+    // El perfil de entrenador es visible entre usuarios de la app (se comparte
+    // por enlace /trainer/[id]), pero no debe quedar abierto a cualquiera sin
+    // sesión: antes bastaba conocer un id de Clerk para volcar la colección,
+    // cantidades y favoritos de otra persona sin siquiera iniciar sesión.
+    const { userId } = await auth();
+    if (!userId) return [];
+    if (!trainerId || typeof trainerId !== "string") return [];
+
     try {
-      // Hacemos un JOIN entre tus dos tablas correctas: user_collection y cards
+      // JOIN a `sets` para traer el nombre del set: antes se leía row.set_name,
+      // que la consulta no seleccionaba, así que set.name salía siempre undefined.
+      // LEFT JOIN para no descartar cartas cuyo set no esté todavía en `sets`.
       const { rows } = await sql`
-        SELECT 
-          c.*, 
-          uc.quantity, 
-          uc.is_favorite
+        SELECT
+          c.*,
+          uc.quantity,
+          uc.is_favorite,
+          s.name AS set_name
         FROM user_collection uc
         JOIN cards c ON uc.card_id = c.id
+        LEFT JOIN sets s ON s.id = c.set_id
         WHERE uc.user_id = ${trainerId} AND uc.quantity > 0
       `;
 
@@ -433,20 +497,32 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
     if (userId === friendId) return { error: "No puedes añadirte a ti mismo" };
 
     try {
+      // El destinatario debe existir: sin esta comprobación, cualquier cadena
+      // creaba una fila colgante que luego aparecía como "Entrenador" fantasma.
+      const { rows: target } = await sql`SELECT 1 FROM users WHERE id = ${friendId}`;
+      if (target.length === 0) {
+        return { error: "Ese entrenador no existe." };
+      }
+
       // Comprobar si ya existe la amistad o la petición
       const { rows: existing } = await sql`
-        SELECT * FROM friendships 
+        SELECT 1 FROM friendships
         WHERE (user_id = ${userId} AND friend_id = ${friendId})
           OR (user_id = ${friendId} AND friend_id = ${userId})
       `;
-      
+
       if (existing.length > 0) {
         return { error: "Ya sois amigos o hay una petición pendiente." };
       }
 
+      // ON CONFLICT DO NOTHING como red de seguridad: la dedupe real de peticiones
+      // cruzadas simultáneas necesita un índice único simétrico en `friendships`
+      // (LEAST/GREATEST de user_id y friend_id), que debe crear la migración —
+      // aquí no se puede añadir el DDL sin afectar al camino caliente.
       await sql`
         INSERT INTO friendships (user_id, friend_id, status)
         VALUES (${userId}, ${friendId}, 'pending')
+        ON CONFLICT DO NOTHING
       `;
       return { success: true };
     } catch (error) {
@@ -464,12 +540,15 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
     const displayName = user.username || user.firstName || "Entrenador";
 
     try {
-      // Guarda o actualiza el nombre en tu tabla 'users'
+      // Incluimos `coins` con COALESCE: si esta función gana la carrera de
+      // creación frente a getUserData, el usuario nace con su saldo inicial en
+      // vez de con coins NULL (que dejaba el saldo vacío y bloqueaba spendCoins).
       await sql`
-        INSERT INTO users (id, username) 
-        VALUES (${user.id}, ${displayName})
-        ON CONFLICT (id) 
-        DO UPDATE SET username = ${displayName}
+        INSERT INTO users (id, username, coins)
+        VALUES (${user.id}, ${displayName}, ${STARTING_COINS})
+        ON CONFLICT (id)
+        DO UPDATE SET username = ${displayName},
+                      coins = COALESCE(users.coins, ${STARTING_COINS})
       `;
     } catch (error) {
       console.error("Error sincronizando nombre de usuario:", error);
@@ -607,8 +686,7 @@ export async function claimDailyReward() {
   const { userId } = await auth();
   if (!userId) return { error: "No autorizado" };
   try {
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily_claim TIMESTAMP`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS streak INT DEFAULT 0`;
+    await ensureSchema();
 
     const { rows } = await sql`SELECT last_daily_claim, streak FROM users WHERE id = ${userId}`;
     if (rows.length === 0) return { error: "Usuario no existe" };
@@ -670,8 +748,7 @@ export async function getDailyStatus() {
   const { userId } = await auth();
   if (!userId) return { available: false };
   try {
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily_claim TIMESTAMP`;
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS streak INT DEFAULT 0`;
+    await ensureSchema();
     const { rows } = await sql`SELECT last_daily_claim, streak FROM users WHERE id = ${userId}`;
     if (rows.length === 0) return { available: true, streak: 0 };
     const last = rows[0].last_daily_claim;
@@ -806,8 +883,19 @@ export async function getCardFromDB(cardId: string) {
 export async function searchCardsInDB(query: string, page = 1, pageSize = 10) {
   try {
     const { userId } = await auth();
-    const term = `%${query.toLowerCase()}%`;
-    const offset = Math.max(0, (page - 1) * pageSize);
+
+    // page y pageSize llegan del cliente: se acotan en el servidor. Sin esto,
+    // pageSize = 1e9 volcaba la tabla `cards` entera en cada tecla del buscador,
+    // y valores negativos o no numéricos rompían la consulta.
+    const size = Math.min(50, Math.max(1, Math.trunc(Number(pageSize) || 10)));
+    const p = Math.max(1, Math.trunc(Number(page) || 1));
+    const offset = (p - 1) * size;
+
+    // Escapamos los comodines de LIKE (%, _ y la propia barra de escape): sin
+    // esto, buscar "%" o "_" devolvía el catálogo completo. Backslash es el
+    // carácter de escape por defecto de LIKE en Postgres.
+    const safeTerm = String(query ?? "").toLowerCase().replace(/[\\%_]/g, (m) => `\\${m}`);
+    const term = `%${safeTerm}%`;
 
     // Total
     const { rows: countRows } = await sql`
@@ -823,7 +911,7 @@ export async function searchCardsInDB(query: string, page = 1, pageSize = 10) {
         FROM cards c
         WHERE LOWER(c.name) LIKE ${term}
         ORDER BY c.name ASC
-        LIMIT ${pageSize} OFFSET ${offset}
+        LIMIT ${size} OFFSET ${offset}
       `;
       rows = res.rows;
     } else {
@@ -832,7 +920,7 @@ export async function searchCardsInDB(query: string, page = 1, pageSize = 10) {
         FROM cards
         WHERE LOWER(name) LIKE ${term}
         ORDER BY name ASC
-        LIMIT ${pageSize} OFFSET ${offset}
+        LIMIT ${size} OFFSET ${offset}
       `;
       rows = res.rows;
     }
@@ -853,7 +941,7 @@ export async function searchCardsInDB(query: string, page = 1, pageSize = 10) {
       set: setMap[r.set_id] || { id: r.set_id },
       owned: r.owned,
     }));
-    return { data, total, page, pageSize };
+    return { data, total, page: p, pageSize: size };
   } catch (e) {
     console.error("searchCardsInDB error:", e);
     return { data: [], total: 0, page, pageSize };
@@ -866,14 +954,7 @@ export async function claimSetCompletionBonuses() {
   const { userId } = await auth();
   if (!userId) return { granted: 0, sets: [] };
   try {
-    await sql`
-      CREATE TABLE IF NOT EXISTS set_rewards (
-        user_id TEXT NOT NULL,
-        set_id TEXT NOT NULL,
-        rewarded_at TIMESTAMP DEFAULT NOW(),
-        PRIMARY KEY (user_id, set_id)
-      )
-    `;
+    await ensureSchema();
     // Unique owned cards per set
     const { rows: owned } = await sql`
       SELECT c.set_id, COUNT(*)::int AS owned
@@ -897,9 +978,18 @@ export async function claimSetCompletionBonuses() {
       const meta = totals[row.set_id];
       if (!meta || !meta.total) continue;
       if (row.owned >= meta.total && !rewarded.has(row.set_id)) {
-        await sql`INSERT INTO set_rewards (user_id, set_id) VALUES (${userId}, ${row.set_id}) ON CONFLICT DO NOTHING`;
-        granted += BONUS;
-        completedSets.push(meta.name);
+        // El abono se condiciona a que el INSERT insertara DE VERDAD: la clave
+        // primaria (user_id, set_id) arbitra la carrera. Antes se sumaba el bonus
+        // aunque el ON CONFLICT DO NOTHING no tocara nada, así que dos pestañas
+        // completando el set a la vez cobraban el bonus dos veces.
+        const ins = await sql`
+          INSERT INTO set_rewards (user_id, set_id) VALUES (${userId}, ${row.set_id})
+          ON CONFLICT DO NOTHING
+        `;
+        if ((ins.rowCount ?? 0) > 0) {
+          granted += BONUS;
+          completedSets.push(meta.name);
+        }
       }
     }
 
@@ -919,7 +1009,10 @@ export async function claimSetCompletionBonuses() {
 // Vende 1 copia de cada (sin bajar de 1), acredita precio segun rareza.
 export async function sellPackDuplicates(cardIds: string[]) {
   const { userId } = await auth();
-  if (!userId || !cardIds || cardIds.length === 0) return { earned: 0, sold: 0 };
+  if (!userId || !Array.isArray(cardIds) || cardIds.length === 0) return { earned: 0, sold: 0 };
+  // Tope de entrada: un ×10 trae como mucho ~100 cartas. Un array mayor sólo
+  // puede ser abuso, y cada id son un par de consultas.
+  if (cardIds.length > 200) return { earned: 0, sold: 0 };
   try {
     // Contar cuántas veces aparece cada id en el sobre
     const counts: Record<string, number> = {};
@@ -940,12 +1033,28 @@ export async function sellPackDuplicates(cardIds: string[]) {
       const sellable = Math.min(qtyToSell, Math.max(0, have - 1));
       if (sellable <= 0) continue;
       const price = SELL_PRICES[rarity as keyof typeof SELL_PRICES] || 10;
-      await sql`UPDATE user_collection SET quantity = quantity - ${sellable} WHERE user_id = ${userId} AND card_id = ${cardId}`;
+
+      // Descuento y abono de esta carta en UNA sentencia (CTE) con la condición
+      // de cantidad repetida DENTRO del UPDATE (quantity >= sellable + 1). Antes,
+      // entre el SELECT y este UPDATE no se re-verificaba nada: dos pestañas
+      // (o dos taps en "vender duplicados") leían ambas la misma cantidad y
+      // restaban dos veces, dejando la fila negativa y pagando doble. El guard y
+      // el EXISTS cierran la ventana y sólo abonan si de verdad se restó.
+      const upd = await sql`
+        WITH venta AS (
+          UPDATE user_collection SET quantity = quantity - ${sellable}
+          WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity >= ${sellable + 1}
+          RETURNING 1
+        )
+        UPDATE users SET coins = coins + ${price * sellable}
+        WHERE id = ${userId} AND EXISTS (SELECT 1 FROM venta)
+        RETURNING coins
+      `;
+      if (upd.rows.length === 0) continue; // otra pestaña se adelantó: no se cobra
       earned += price * sellable;
       sold += sellable;
     }
-    if (earned > 0) {
-      await sql`UPDATE users SET coins = coins + ${earned} WHERE id = ${userId}`;
+    if (sold > 0) {
       revalidatePath('/');
       revalidatePath('/collection');
     }
@@ -961,20 +1070,15 @@ export async function toggleWishlist(cardId: string) {
   const { userId } = await auth();
   if (!userId) return { error: "No logueado" };
   try {
-    await sql`
-      CREATE TABLE IF NOT EXISTS wishlist (
-        user_id TEXT NOT NULL,
-        card_id TEXT NOT NULL,
-        added_at TIMESTAMP DEFAULT NOW(),
-        PRIMARY KEY (user_id, card_id)
-      )
-    `;
+    await ensureSchema();
     const { rows } = await sql`SELECT 1 FROM wishlist WHERE user_id = ${userId} AND card_id = ${cardId}`;
     if (rows.length > 0) {
       await sql`DELETE FROM wishlist WHERE user_id = ${userId} AND card_id = ${cardId}`;
+      revalidatePath('/collection');
       return { wishlisted: false };
     }
     await sql`INSERT INTO wishlist (user_id, card_id) VALUES (${userId}, ${cardId}) ON CONFLICT DO NOTHING`;
+    revalidatePath('/collection');
     return { wishlisted: true };
   } catch (e) {
     console.error("toggleWishlist error:", e);
@@ -986,14 +1090,7 @@ export async function getWishlistIds() {
   const { userId } = await auth();
   if (!userId) return [];
   try {
-    await sql`
-      CREATE TABLE IF NOT EXISTS wishlist (
-        user_id TEXT NOT NULL,
-        card_id TEXT NOT NULL,
-        added_at TIMESTAMP DEFAULT NOW(),
-        PRIMARY KEY (user_id, card_id)
-      )
-    `;
+    await ensureSchema();
     const { rows } = await sql`SELECT card_id FROM wishlist WHERE user_id = ${userId}`;
     return rows.map((r: any) => r.card_id);
   } catch (e) {
@@ -1026,7 +1123,7 @@ export async function getUserTheme(): Promise<"light" | "dark" | null> {
   const { userId } = await auth();
   if (!userId) return null;
   try {
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT`;
+    await ensureSchema();
     const { rows } = await sql`SELECT theme FROM users WHERE id = ${userId}`;
     const t = rows[0]?.theme;
     if (t === "light" || t === "dark") return t;
@@ -1042,10 +1139,14 @@ export async function setUserTheme(theme: "light" | "dark") {
   if (!userId) return { error: "No logueado" };
   if (theme !== "light" && theme !== "dark") return { error: "Tema inválido" };
   try {
-    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT`;
+    await ensureSchema();
+    // Incluimos coins con COALESCE por el mismo motivo que syncUserName: si este
+    // upsert llegara a crear la fila del usuario, que nazca con su saldo inicial
+    // y no con coins NULL.
     await sql`
-      INSERT INTO users (id, theme) VALUES (${userId}, ${theme})
-      ON CONFLICT (id) DO UPDATE SET theme = ${theme}
+      INSERT INTO users (id, theme, coins) VALUES (${userId}, ${theme}, ${STARTING_COINS})
+      ON CONFLICT (id) DO UPDATE SET theme = ${theme},
+                                     coins = COALESCE(users.coins, ${STARTING_COINS})
     `;
     return { success: true };
   } catch (e) {

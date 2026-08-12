@@ -258,7 +258,12 @@ export const PACK_PRICES = {
   STANDARD: 50,
   PREMIUM: 220,
   GOLDEN: 600,
-  SPECIAL: 600,
+  // 700 y no 600: en las colecciones especiales (Trainer Gallery, Galarian
+  // Gallery) TODO lo que cae es carta cara y a 600 la reventa media daba el
+  // 101-105% del coste — una imprenta lenta pero infinita. Medido con 800
+  // sobres simulados por set: a 700 el peor caso (Crown Zenith GG, 629 de
+  // reventa media) queda en el 90%.
+  SPECIAL: 700,
 } as const;
 
 // Monedas iniciales (nuevo usuario / invitado)

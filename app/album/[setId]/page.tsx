@@ -50,6 +50,7 @@ export default function SetAlbumPage() {
   const [allSetCards, setAllSetCards] = useState<any[]>([]);
   const [ownedCards, setOwnedCards] = useState<Map<string, any>>(new Map());
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const [filter, setFilter] = useState<Filter>("all");
   const [detail, setDetail] = useState<any>(null);
@@ -68,35 +69,42 @@ export default function SetAlbumPage() {
     return () => mq.removeEventListener("change", sync);
   }, []);
 
-  useEffect(() => {
-    async function fetchAlbumData() {
-      if (!isLoaded) return;
-      setLoading(true);
-      try {
-        const sets = await getSetsFromDB();
-        const currentSet = sets.find((s: any) => s.id === setId);
-        if (currentSet) setSetInfo(currentSet);
+  // En useCallback para poder reintentar desde el estado de error. Todo va
+  // dentro del mismo try: si getCardsFromSet o getSetsFromDB fallan (PWA sin
+  // cobertura, 500) o el setId de la URL no existe, `loadError` ofrece
+  // reintentar en vez de dejar el álbum vacío disfrazado de «¡Álbum completo!».
+  const fetchAlbumData = useCallback(async () => {
+    if (!isLoaded) return;
+    setLoading(true);
+    setLoadError(false);
+    try {
+      const sets = await getSetsFromDB();
+      const currentSet = sets.find((s: any) => s.id === setId);
+      if (currentSet) setSetInfo(currentSet);
 
-        const blueprintCards = await getCardsFromSet(setId);
-        setAllSetCards(blueprintCards);
+      const blueprintCards = await getCardsFromSet(setId);
+      setAllSetCards(blueprintCards);
 
-        let userCards = [];
-        if (isSignedIn) userCards = await getFullCollection();
-        else userCards = getCollection();
+      let userCards = [];
+      if (isSignedIn) userCards = await getFullCollection();
+      else userCards = getCollection();
 
-        const ownedMap = new Map();
-        userCards.forEach((card: any) => {
-          if (card.id.startsWith(setId + "-")) ownedMap.set(card.id, card);
-        });
-        setOwnedCards(ownedMap);
-      } catch (error) {
-        console.error("Error cargando el álbum:", error);
-      } finally {
-        setLoading(false);
-      }
+      const ownedMap = new Map();
+      userCards.forEach((card: any) => {
+        if (card.id.startsWith(setId + "-")) ownedMap.set(card.id, card);
+      });
+      setOwnedCards(ownedMap);
+    } catch (error) {
+      console.error("Error cargando el álbum:", error);
+      setLoadError(true);
+    } finally {
+      setLoading(false);
     }
-    fetchAlbumData();
   }, [setId, isSignedIn, isLoaded]);
+
+  useEffect(() => {
+    fetchAlbumData();
+  }, [fetchAlbumData]);
 
   // Blueprint ordenado por número de carta cuando es numérico.
   const sortedCards = useMemo(
@@ -235,6 +243,28 @@ export default function SetAlbumPage() {
 
   if (loading) return <Loader label="Abriendo álbum" />;
 
+  if (loadError) {
+    return (
+      <div className="select-none w-full">
+        <PageHeader
+          back="/collection"
+          logo={setInfo?.images?.logo}
+          title={setInfo?.name || "Álbum"}
+        />
+        <div className="surface rounded-2xl px-6 py-16 flex flex-col items-center gap-4 text-center">
+          <p className="text-sm ink-soft">No se pudo cargar esta expansión. Comprueba tu conexión.</p>
+          <button
+            type="button"
+            onClick={() => { haptic("tap"); fetchAlbumData(); }}
+            className="btn-accent press touch-target rounded-xl px-5 text-sm font-semibold flex items-center justify-center"
+          >
+            Reintentar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const total = setInfo?.total || allSetCards.length || 1;
   const owned = ownedCards.size;
   const percent = Math.round((owned / total) * 100);
@@ -341,11 +371,22 @@ export default function SetAlbumPage() {
         {/* GRID 3x3 BLUEPRINT */}
         {visibleCards.length === 0 ? (
           <div className="surface rounded-2xl py-14 px-6 text-center">
+            {/* «¡Álbum completo!» sólo es cierto con el filtro «Me faltan» vacío.
+                Con «Todas» vacío el blueprint no llegó (o el set no existe): no
+                se puede afirmar que esté completo. */}
             <p className="text-sm font-medium ink">
-              {filter === "owned" ? "Aún no tienes cartas de esta expansión" : "¡Álbum completo!"}
+              {filter === "owned"
+                ? "Aún no tienes cartas de esta expansión"
+                : filter === "missing"
+                  ? "¡Álbum completo!"
+                  : "No hay cartas para mostrar"}
             </p>
             <p className="text-xs ink-faint mt-1">
-              {filter === "owned" ? "Abre sobres para empezar a rellenarlo" : "No te falta ninguna carta aquí"}
+              {filter === "owned"
+                ? "Abre sobres para empezar a rellenarlo"
+                : filter === "missing"
+                  ? "No te falta ninguna carta aquí"
+                  : "Vuelve a intentarlo más tarde"}
             </p>
           </div>
         ) : (

@@ -56,6 +56,25 @@ export default function SocialPage() {
   const [pendingRemove, setPendingRemove] = useState<PendingRemove | null>(null);
   const [pendingCancel, setPendingCancel] = useState<PendingCancel | null>(null);
 
+  // Acciones de intercambio/amistad en vuelo, por id. Sin cerrojo, dos toques
+  // rápidos en «Aceptar» lanzan dos acceptTradeOffer concurrentes: el estado
+  // pasa a 'accepted' al final de la acción, así que ambas pasan el filtro
+  // 'pending' y las cartas se transfieren dos veces. Mismo patrón que el
+  // saleLockRef de colección: el ref es el cerrojo real (setState no se ve
+  // hasta el siguiente render) y el Set de estado deshabilita los botones.
+  const [busyIds, setBusyIds] = useState<Set<number>>(new Set());
+  const busyLockRef = useRef<Set<number>>(new Set());
+  const beginBusy = useCallback((id: number) => {
+    if (busyLockRef.current.has(id)) return false;
+    busyLockRef.current.add(id);
+    setBusyIds((prev) => { const next = new Set(prev); next.add(id); return next; });
+    return true;
+  }, []);
+  const endBusy = useCallback((id: number) => {
+    busyLockRef.current.delete(id);
+    setBusyIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
+  }, []);
+
   // Al confirmar, ConfirmSheet cierra y el pendiente pasa a null, pero la hoja
   // sigue montada durante la animación de salida: sin conservar el último valor
   // el texto se veía cambiar a "undefined" mientras se cierra.
@@ -148,12 +167,17 @@ export default function SocialPage() {
   /* ---- acciones ---- */
 
   const handleAcceptFriend = useCallback(async (id: number, name: string) => {
+    if (!beginBusy(id)) return;
     haptic("select");
-    const r: any = await acceptFriend(id);
-    if (r?.error) toast(r.error, "error");
-    else toast(`Ahora eres amigo de ${name}`, "success");
-    refresh();
-  }, [haptic, toast, refresh]);
+    try {
+      const r: any = await acceptFriend(id);
+      if (r?.error) toast(r.error, "error");
+      else toast(`Ahora eres amigo de ${name}`, "success");
+      await refresh();
+    } finally {
+      endBusy(id);
+    }
+  }, [haptic, toast, refresh, beginBusy, endBusy]);
 
   const handleRemoveConfirmed = useCallback(async () => {
     if (!pendingRemove) return;
@@ -166,33 +190,49 @@ export default function SocialPage() {
   }, [pendingRemove, haptic, toast, refresh]);
 
   const handleAcceptTrade = useCallback(async (id: number) => {
+    if (!beginBusy(id)) return;
     haptic("select");
-    const r: any = await acceptTradeOffer(id);
-    if (r?.error) toast(r.error, "error");
-    else {
-      toast("Intercambio completado", "success");
-      // El intercambio mueve cartas: el valor y los logros del perfil cambian.
-      loadStats();
+    try {
+      const r: any = await acceptTradeOffer(id);
+      if (r?.error) toast(r.error, "error");
+      else {
+        toast("Intercambio completado", "success");
+        // El intercambio mueve cartas: el valor y los logros del perfil cambian.
+        loadStats();
+      }
+      await refresh();
+    } finally {
+      endBusy(id);
     }
-    refresh();
-  }, [haptic, toast, refresh, loadStats]);
+  }, [haptic, toast, refresh, loadStats, beginBusy, endBusy]);
 
   const handleDeclineTrade = useCallback(async (id: number) => {
+    if (!beginBusy(id)) return;
     haptic("warning");
-    const r: any = await declineTradeOffer(id);
-    if (r?.error) toast(r.error, "error");
-    else toast("Oferta rechazada", "info");
-    refresh();
-  }, [haptic, toast, refresh]);
+    try {
+      const r: any = await declineTradeOffer(id);
+      if (r?.error) toast(r.error, "error");
+      else toast("Oferta rechazada", "info");
+      await refresh();
+    } finally {
+      endBusy(id);
+    }
+  }, [haptic, toast, refresh, beginBusy, endBusy]);
 
   const handleCancelConfirmed = useCallback(async () => {
     if (!pendingCancel) return;
+    const { id } = pendingCancel;
+    if (!beginBusy(id)) return;
     haptic("warning");
-    const r: any = await cancelTradeOffer(pendingCancel.id);
-    if (r?.error) toast(r.error, "error");
-    else toast("Oferta cancelada", "info");
-    refresh();
-  }, [pendingCancel, haptic, toast, refresh]);
+    try {
+      const r: any = await cancelTradeOffer(id);
+      if (r?.error) toast(r.error, "error");
+      else toast("Oferta cancelada", "info");
+      await refresh();
+    } finally {
+      endBusy(id);
+    }
+  }, [pendingCancel, haptic, toast, refresh, beginBusy, endBusy]);
 
   if (!isLoaded || loading) return <Loader label="Cargando red social" />;
 
@@ -294,6 +334,7 @@ export default function SocialPage() {
             <AmigosTab
               friends={friends} requests={requests} myId={user?.id}
               onAccept={handleAcceptFriend}
+              busyIds={busyIds}
               onRemove={(id: number, name: string, kind: "friend" | "request") => {
                 haptic("tap");
                 setPendingRemove({ id, name, kind });
@@ -306,11 +347,13 @@ export default function SocialPage() {
               offers={incoming}
               onAccept={handleAcceptTrade}
               onDecline={handleDeclineTrade}
+              busyIds={busyIds}
             />
           )}
           {tab === "enviadas" && (
             <OutgoingTab
               offers={outgoing}
+              busyIds={busyIds}
               onCancel={(id: number, name: string) => { haptic("tap"); setPendingCancel({ id, name }); }}
             />
           )}
@@ -501,7 +544,7 @@ function GuestStats({ coins, coinsLoaded }: { coins: number; coinsLoaded: boolea
 }
 
 /* ---------- AMIGOS ---------- */
-function AmigosTab({ friends, requests, myId, onAccept, onRemove, onTrade }: any) {
+function AmigosTab({ friends, requests, myId, onAccept, onRemove, onTrade, busyIds }: any) {
   const medal = ["🥇", "🥈", "🥉"];
   return (
     <div className="flex flex-col gap-5">
@@ -516,7 +559,13 @@ function AmigosTab({ friends, requests, myId, onAccept, onRemove, onTrade }: any
                   <span className="font-medium text-sm truncate">{r.requester_name}</span>
                 </div>
                 <div className="flex gap-3 shrink-0">
-                  <button onClick={() => onAccept(r.id, r.requester_name)} className="btn-accent press touch-target px-3 py-2 rounded-lg text-xs font-semibold">Aceptar</button>
+                  <button
+                    onClick={() => onAccept(r.id, r.requester_name)}
+                    disabled={busyIds?.has(r.id)}
+                    className="btn-accent press touch-target px-3 py-2 rounded-lg text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {busyIds?.has(r.id) ? "Procesando…" : "Aceptar"}
+                  </button>
                   <button onClick={() => onRemove(r.id, r.requester_name, "request")} className="btn-ghost press touch-target px-3 py-2 rounded-lg text-xs">Ignorar</button>
                 </div>
               </div>
@@ -592,11 +641,15 @@ function OfferCards({ cards, label, tint }: { cards: any[]; label: string; tint:
   );
 }
 
-function IncomingTab({ offers, onAccept, onDecline }: any) {
+function IncomingTab({ offers, onAccept, onDecline, busyIds }: any) {
   if (offers.length === 0) return <EmptyState text="No tienes ofertas pendientes" />;
   return (
     <div className="flex flex-col gap-3">
-      {offers.map((o: any) => (
+      {offers.map((o: any) => {
+        // Con una acción en vuelo se bloquean ambos botones de la oferta:
+        // aceptar y rechazar la misma oferta a la vez la transferiría dos veces.
+        const busy = busyIds?.has(o.id);
+        return (
         <div key={o.id} className="surface rounded-2xl p-4">
           <div className="flex items-center gap-2 mb-3">
             <Avatar name={o.senderName} small />
@@ -610,16 +663,29 @@ function IncomingTab({ offers, onAccept, onDecline }: any) {
             <OfferCards cards={o.requested} label="Entregas" tint="text-cyan-400" />
           </div>
           <div className="flex gap-2">
-            <button onClick={() => onAccept(o.id)} className="flex-1 btn-accent press touch-target py-2.5 rounded-xl text-sm font-semibold">Aceptar</button>
-            <button onClick={() => onDecline(o.id)} className="btn-ghost press touch-target px-5 py-2.5 rounded-xl text-sm">Rechazar</button>
+            <button
+              onClick={() => onAccept(o.id)}
+              disabled={busy}
+              className="flex-1 btn-accent press touch-target py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {busy ? "Procesando…" : "Aceptar"}
+            </button>
+            <button
+              onClick={() => onDecline(o.id)}
+              disabled={busy}
+              className="btn-ghost press touch-target px-5 py-2.5 rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Rechazar
+            </button>
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
-function OutgoingTab({ offers, onCancel }: any) {
+function OutgoingTab({ offers, onCancel, busyIds }: any) {
   if (offers.length === 0) return <EmptyState text="No tienes ofertas enviadas" />;
   return (
     <div className="flex flex-col gap-3">
@@ -637,7 +703,13 @@ function OutgoingTab({ offers, onCancel }: any) {
             </svg>
             <OfferCards cards={o.requested} label="Pides" tint="text-cyan-400" />
           </div>
-          <button onClick={() => onCancel(o.id, o.receiverName)} className="btn-ghost press touch-target w-full py-2.5 rounded-xl text-sm">Cancelar oferta</button>
+          <button
+            onClick={() => onCancel(o.id, o.receiverName)}
+            disabled={busyIds?.has(o.id)}
+            className="btn-ghost press touch-target w-full py-2.5 rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {busyIds?.has(o.id) ? "Procesando…" : "Cancelar oferta"}
+          </button>
         </div>
       ))}
     </div>

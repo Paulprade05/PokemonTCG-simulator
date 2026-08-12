@@ -1,21 +1,11 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  images: {
-    remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: 'images.pokemontcg.io',
-        port: '',
-        pathname: '/**',
-      },
-      {
-        protocol: 'https',
-        hostname: 'tcg.pokemon.com',
-        port: '',
-        pathname: '/**',
-      },
-    ],
-  },
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  // Sin next/image en la app: las cartas se pintan con <img> a propósito
+  // (presupuesto de datos, ver PokemonCard). El bloque images.remotePatterns
+  // no autorizaba nada, así que se retira para no sugerir una optimización
+  // de imágenes que no existe.
+  poweredByHeader: false,
 };
 
 export default nextConfig;

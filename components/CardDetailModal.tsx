@@ -10,6 +10,7 @@ import { useHaptics } from "../hooks/useHaptics";
 import { useSwipe, touchActionFor } from "../hooks/useSwipe";
 import CardZoom from "./ui/CardZoom";
 import Portal from "./ui/Portal";
+import { useToast } from "./ui/Toast";
 
 // Umbrales del gesto de cierre (los mismos que usa components/ui/Sheet).
 const CLOSE_OFFSET = 110;
@@ -68,9 +69,15 @@ export default function CardDetailModal({
   const [wishlisted, setWishlisted] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const haptic = useHaptics();
+  const toast = useToast();
   const detailsRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<HTMLDivElement>(null);
   const imageColRef = useRef<HTMLDivElement>(null);
+  /** Panel del diálogo: recibe el foco al abrir y atrapa el Tab. */
+  const panelRef = useRef<HTMLDivElement>(null);
+  /** Cerrojo del toggle de deseos: dos toques rápidos cruzaban dos peticiones
+   *  cuyo orden de respuesta dejaba el marcador al revés. */
+  const wishBusyRef = useRef(false);
   /** Contenedor de la carta que recibe el balanceo 3D. */
   const tiltRef = useRef<HTMLDivElement>(null);
   /** Vista de sólo la carta, a pantalla completa. */
@@ -173,7 +180,13 @@ export default function CardDetailModal({
 
   useEffect(() => {
     if (!card?.id || !isSignedIn) return;
-    getWishlistIds().then((ids: string[]) => setWishlisted(ids.includes(card.id)));
+    // Guardia de obsolescencia: al deslizar rápido entre cartas, la respuesta
+    // de una carta anterior no debe pisar el marcador de la que se ve ahora.
+    let cancelled = false;
+    getWishlistIds()
+      .then((ids: string[]) => { if (!cancelled) setWishlisted(ids.includes(card.id)); })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [card?.id, isSignedIn]);
 
   useEffect(() => {
@@ -201,22 +214,73 @@ export default function CardDetailModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [card, hasNav, goPrev, goNext]);
 
+  // Gestión del foco del diálogo. Sin esto, al abrir con Enter desde la rejilla
+  // el foco se queda en la carta de fondo: Tab recorre la página tapada (con el
+  // scroll bloqueado) y un lector de pantalla no entra en el diálogo pese al
+  // aria-modal. Se ancla a la PRESENCIA del modal (no a la identidad de la
+  // carta) para no re-enfocar al navegar entre cartas.
+  const modalOpen = !!card;
+  useEffect(() => {
+    if (!modalOpen) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    panelRef.current?.focus({ preventScroll: true });
+    // Al cerrar, el foco vuelve al elemento que abrió el diálogo.
+    return () => { previouslyFocused?.focus?.(); };
+  }, [modalOpen]);
+
+  /** Atrapa el Tab dentro del panel mientras el diálogo está abierto. */
+  const trapTab = (e: React.KeyboardEvent) => {
+    if (e.key !== "Tab") return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const focusables = panel.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusables.length === 0) { e.preventDefault(); panel.focus({ preventScroll: true }); return; }
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey) {
+      if (active === first || active === panel) { e.preventDefault(); last.focus(); }
+    } else if (active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
   const handleToggleWishlist = async () => {
     if (!card?.id) return;
+    if (wishBusyRef.current) return;
+    wishBusyRef.current = true;
     const prev = wishlisted;
     setWishlisted(!prev);
-    const res: any = await toggleWishlist(card.id);
-    if (res?.error) { setWishlisted(prev); alert(res.error); }
-    else if (typeof res?.wishlisted === "boolean") setWishlisted(res.wishlisted);
+    try {
+      const res: any = await toggleWishlist(card.id);
+      // toast en vez de alert(): en la PWA instalada alert() muestra el dominio
+      // en la cabecera nativa y congela la interacción.
+      if (res?.error) { setWishlisted(prev); toast(res.error, "error"); }
+      else if (typeof res?.wishlisted === "boolean") setWishlisted(res.wishlisted);
+    } catch {
+      setWishlisted(prev);
+      toast("No se pudo actualizar deseos. Revisa tu conexión.", "error");
+    } finally {
+      wishBusyRef.current = false;
+    }
   };
 
   useEffect(() => {
     setEnriched(null);
     if (!card?.id) return;
     setLoadingEnrich(true);
+    // Sin guardia, abrir A y deslizar a B antes de que resuelva A hacía que
+    // setEnriched(A) llegara mientras se muestra B (mergeCard rellenaba B con
+    // datos de A). Descartamos toda respuesta que ya no corresponde a la carta.
+    let cancelled = false;
     getCardFromDB(card.id)
-      .then((db) => { if (db) setEnriched(db); })
-      .finally(() => setLoadingEnrich(false));
+      .then((db) => { if (!cancelled && db) setEnriched(db); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoadingEnrich(false); });
+    return () => { cancelled = true; };
   }, [card?.id]);
 
   const isEmpty = (v: any) =>
@@ -265,6 +329,9 @@ export default function CardDetailModal({
           onClick={onClose}
         >
           <motion.div
+            ref={panelRef}
+            tabIndex={-1}
+            onKeyDown={trapTab}
             role="dialog"
             aria-modal="true"
             aria-label={`Detalle de ${c.name}`}

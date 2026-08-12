@@ -99,6 +99,9 @@ export function useSwipe(
     let locked: "x" | "y" | null = null;
     let active = false;
     let pointerId = -1;
+    // Id del temporizador que limpia la transition/willChange tras la animación
+    // de retorno: se guarda para poder cancelarlo si empieza otro gesto antes.
+    let releaseTimer = 0;
 
     // El transform puede ir a otro elemento: así se arrastra un panel entero
     // tirando sólo de su asa.
@@ -118,13 +121,15 @@ export function useSwipe(
       if (animate) {
         target.style.transition = "transform 0.32s cubic-bezier(0.32, 0.72, 0, 1)";
         target.style.transform = "";
-        window.setTimeout(() => {
+        clearTimeout(releaseTimer);
+        releaseTimer = window.setTimeout(() => {
           target.style.transition = "";
           // Se libera la capa: un will-change permanente deja la textura
           // rasterizada a una escala fija y el contenido se ve borroso.
           target.style.willChange = "";
         }, 340);
       } else {
+        clearTimeout(releaseTimer);
         target.style.transition = "";
         target.style.transform = "";
         target.style.willChange = "";
@@ -148,7 +153,12 @@ export function useSwipe(
       startY = lastY = e.clientY;
       startT = lastT = e.timeStamp || performance.now();
       locked = null;
-      el.style.transition = "";
+      // Un gesto nuevo puede empezar mientras la carta anterior aún vuelve a su
+      // sitio: se cancela esa animación de retorno y su temporizador sobre el
+      // MISMO elemento que lleva el transform (moved), para que el arrastre no
+      // herede la transition de 0,32s ni lo limpien a mitad de gesto.
+      clearTimeout(releaseTimer);
+      moved().style.transition = "";
       // Sólo mientras dura el gesto, nunca de forma permanente.
       moved().style.willChange = "transform";
       cfg().onStart?.();
@@ -273,8 +283,17 @@ export function useSwipe(
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
+      clearTimeout(releaseTimer);
       el.style.transform = "";
       el.style.transition = "";
+      // Si el hook se desmonta a mitad de arrastre, el followTarget se quedaría
+      // desplazado: se devuelve a su sitio también.
+      const ft = optsRef.current.followTarget?.current;
+      if (ft) {
+        ft.style.transform = "";
+        ft.style.transition = "";
+        ft.style.willChange = "";
+      }
     };
   }, [ref, options.enabled]);
 

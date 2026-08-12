@@ -7,16 +7,20 @@
 // Súbelo en cada cambio de este fichero: el byte distinto es lo que hace que
 // el navegador instale el service worker nuevo y dispare la recarga única de
 // ServiceWorkerRegister en las PWA instaladas.
-const VERSION = "v4";
+const VERSION = "v6"; // v6: cachea imágenes opacas, precache tolerante y tope de páginas
 const SHELL_CACHE = `shell-${VERSION}`;
 const STATIC_CACHE = `static-${VERSION}`;
 const IMAGE_CACHE = `cards-${VERSION}`;
 const PAGES_CACHE = `pages-${VERSION}`;
 
-const SHELL_ASSETS = [
-  "/offline.html",
+// Imprescindible para el modo offline: la propia página y el icono que ella
+// muestra. Su fallo debe hacer fallar el install para que el navegador
+// reintente, en lugar de dejar una versión sin página offline.
+const CORE_ASSETS = ["/offline.html", "/icons/icon-192.png"];
+// Deseables pero no críticos: que un 404 transitorio del CDN en cualquiera de
+// ellos no tumbe el precache imprescindible.
+const OPTIONAL_ASSETS = [
   "/manifest.webmanifest",
-  "/icons/icon-192.png",
   "/icons/icon-512.png",
   "/icons/apple-touch-icon.png",
 ];
@@ -25,14 +29,22 @@ const IMAGE_HOSTS = ["images.pokemontcg.io", "tcg.pokemon.com"];
 // Dos variantes por carta (small 245w + large 734w) desde que el <img> usa
 // srcSet: con 700 entradas se expulsaban cartas ya vistas a mitad de álbum.
 const MAX_IMAGE_ENTRIES = 1400;
+// Cada navegación cachea su HTML: sin tope, pages-vN crece hasta que el
+// navegador purga el origen entero (y con él la caché de cartas).
+const MAX_PAGE_ENTRIES = 40;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches
-      .open(SHELL_CACHE)
-      .then((cache) => cache.addAll(SHELL_ASSETS))
-      .then(() => self.skipWaiting())
-      .catch(() => self.skipWaiting()),
+    (async () => {
+      const cache = await caches.open(SHELL_CACHE);
+      // addAll es atómico: se reserva para lo imprescindible y SIN catch. Si
+      // falla, el install falla, el SW anterior sigue al mando y el register()
+      // de la próxima carga lo reintenta (autocurativo).
+      await cache.addAll(CORE_ASSETS);
+      // Los opcionales se añaden por separado tolerando fallos individuales.
+      await Promise.allSettled(OPTIONAL_ASSETS.map((asset) => cache.add(asset)));
+      await self.skipWaiting();
+    })(),
   );
 });
 
@@ -67,20 +79,31 @@ async function trimCache(cacheName, maxEntries) {
   );
 }
 
-async function cacheFirst(request, cacheName, { trim } = {}) {
+async function cacheFirst(request, cacheName, { trim, allowOpaque } = {}) {
   const cache = await caches.open(cacheName);
-  const hit = await cache.match(request);
+  // Las imágenes de cartas (allowOpaque) sólo viven en su propia caché; para el
+  // resto —estáticos propios— se cae a la búsqueda global entre cachés, de modo
+  // que el icono de offline.html, precacheado en SHELL_CACHE, se encuentre
+  // aunque la petición abra STATIC_CACHE y no salga roto sin conexión.
+  const hit =
+    (await cache.match(request)) ||
+    (allowOpaque ? undefined : await caches.match(request));
+  // Las imágenes cross-origin sin CORS devuelven respuesta opaca (status 0,
+  // ok=false); para esos hosts se cachea igual, o cards-vN quedaría vacía y no
+  // habría cartas sin conexión. Para lo demás se sigue exigiendo res.ok.
+  const cacheable = (res) =>
+    res && (res.ok || (allowOpaque && res.type === "opaque"));
   if (hit) {
     // Revalida en segundo plano sin bloquear la respuesta.
     fetch(request)
       .then((res) => {
-        if (res && res.ok) cache.put(request, res.clone());
+        if (cacheable(res)) cache.put(request, res.clone());
       })
       .catch(() => {});
     return hit;
   }
   const res = await fetch(request);
-  if (res && res.ok) {
+  if (cacheable(res)) {
     await cache.put(request, res.clone());
     if (trim) trimCache(cacheName, trim);
   }
@@ -92,7 +115,10 @@ async function networkFirstPage(event) {
   try {
     const preload = await event.preloadResponse;
     const res = preload || (await fetch(event.request));
-    if (res && res.ok) cache.put(event.request, res.clone());
+    if (res && res.ok) {
+      cache.put(event.request, res.clone());
+      trimCache(PAGES_CACHE, MAX_PAGE_ENTRIES);
+    }
     return res;
   } catch (err) {
     const hit = await cache.match(event.request);
@@ -120,9 +146,10 @@ self.addEventListener("fetch", (event) => {
   // Imágenes de cartas: viven mucho tiempo y son el grueso del peso.
   if (IMAGE_HOSTS.includes(url.hostname)) {
     event.respondWith(
-      cacheFirst(request, IMAGE_CACHE, { trim: MAX_IMAGE_ENTRIES }).catch(
-        () => fetch(request),
-      ),
+      cacheFirst(request, IMAGE_CACHE, {
+        trim: MAX_IMAGE_ENTRIES,
+        allowOpaque: true,
+      }).catch(() => fetch(request)),
     );
     return;
   }

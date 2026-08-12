@@ -10,6 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useUser } from "@clerk/nextjs";
 import { STARTING_COINS } from "../utils/constanst";
 
 /**
@@ -35,12 +36,29 @@ interface CurrencyValue {
 
 const CurrencyContext = createContext<CurrencyValue | null>(null);
 
-const STORAGE_KEY = "coins";
+/**
+ * Clave heredada, global entre cuentas. Se conserva sólo para migrar su valor
+ * UNA vez a la clave del invitado y no resetear a nadie al separar los saldos.
+ */
+const LEGACY_KEY = "coins";
+
+/**
+ * Cada identidad guarda su saldo bajo su propia clave: `coins:<userId>` con
+ * sesión y `coins:guest` como invitado. Antes todo compartía la clave "coins",
+ * así que al cerrar sesión el invitado heredaba el saldo cacheado de la última
+ * cuenta y dos pestañas con sesiones distintas se pisaban vía el evento storage.
+ */
+const keyFor = (userId: string | null | undefined) =>
+  userId ? `coins:${userId}` : "coins:guest";
 
 /** Descarta NaN, negativos y basura de un localStorage manipulado. */
 const sanitize = (n: number) => (Number.isFinite(n) && n >= 0 ? Math.floor(n) : null);
 
 export function CurrencyProvider({ children }: { children: ReactNode }) {
+  // Hasta que Clerk resuelve la sesión no se sabe qué clave leer.
+  const { user, isLoaded } = useUser();
+  const storageKey = keyFor(user?.id);
+
   const [coins, setCoinsState] = useState(STARTING_COINS);
   const [loaded, setLoaded] = useState(false);
 
@@ -51,6 +69,12 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
    * mismo tick no pueden colarse leyendo ambos el saldo antiguo.
    */
   const coinsRef = useRef(STARTING_COINS);
+  /**
+   * Clave activa, leída por los efectos de persistencia sin re-suscribirse
+   * cuando cambia la identidad (evita escrituras a la clave equivocada durante
+   * el cambio de sesión).
+   */
+  const storageKeyRef = useRef(storageKey);
 
   const commit = useCallback((next: number) => {
     const safe = Math.max(0, Math.floor(next));
@@ -59,20 +83,42 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
     return safe;
   }, []);
 
+  // Carga inicial y cambios de identidad: cada cuenta (y el invitado) lee su
+  // propia clave. Espera a que Clerk resuelva la sesión: leer antes mezclaría el
+  // saldo del invitado con el de la cuenta.
   useEffect(() => {
-    const saved = sanitize(parseInt(localStorage.getItem(STORAGE_KEY) ?? "", 10));
-    if (saved !== null) commit(saved);
+    if (!isLoaded) return;
+    const esInvitado = storageKey === "coins:guest";
+    storageKeyRef.current = storageKey;
+    let raw = localStorage.getItem(storageKey);
+    // Migración única: el saldo del invitado vivía en la clave global "coins".
+    // Se adopta (y se retira la clave vieja) para no resetear a nadie a cero al
+    // separar los saldos.
+    if (raw === null && esInvitado) {
+      const legacy = localStorage.getItem(LEGACY_KEY);
+      if (legacy !== null) {
+        raw = legacy;
+        try {
+          localStorage.removeItem(LEGACY_KEY);
+        } catch {
+          /* almacenamiento inaccesible */
+        }
+      }
+    }
+    const saved = sanitize(parseInt(raw ?? "", 10));
+    commit(saved !== null ? saved : STARTING_COINS);
     setLoaded(true);
-  }, [commit]);
+  }, [isLoaded, storageKey, commit]);
 
   useEffect(() => {
-    if (loaded) localStorage.setItem(STORAGE_KEY, String(coins));
+    if (loaded) localStorage.setItem(storageKeyRef.current, String(coins));
   }, [coins, loaded]);
 
-  // Otra pestaña de la misma app cambia el saldo: nos ponemos al día.
+  // Otra pestaña de la misma app (misma identidad) cambia el saldo: nos ponemos
+  // al día. El ref evita re-suscribirse en cada cambio de sesión.
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (e.key !== STORAGE_KEY || e.newValue === null) return;
+      if (e.key !== storageKeyRef.current || e.newValue === null) return;
       const parsed = sanitize(parseInt(e.newValue, 10));
       if (parsed !== null) commit(parsed);
     };

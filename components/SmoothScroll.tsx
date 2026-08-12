@@ -6,6 +6,10 @@ import Lenis from "lenis";
 export default function SmoothScroll() {
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    // Lenis 1.x no suaviza el scroll táctil (syncTouch off), así que en el
+    // iPhone instalado no aporta nada; sin este corte, el requestAnimationFrame
+    // correría para siempre gastando batería y compitiendo con framer-motion.
+    if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) return;
 
     const lenis = new Lenis({
       duration: 0.6,

@@ -867,25 +867,29 @@ export default function CollectionPage() {
                 </button>
               )}
 
-              <button
-                onClick={() => {
-                  const { id, is_favorite } = actionCardLive;
-                  setActionCard(null);
-                  applyToggleFavorite(id, is_favorite);
-                }}
-                className="btn-ghost press rounded-2xl py-3.5 text-sm font-medium flex items-center justify-center gap-2 touch-target"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill={actionCardLive.is_favorite ? "currentColor" : "none"}
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  className="w-4 h-4"
+              {/* Deseados sólo con sesión: al invitado la acción le fallaría
+                  siempre («No estás logueado»), así que no se le ofrece. */}
+              {isSignedIn && (
+                <button
+                  onClick={() => {
+                    const { id, is_favorite } = actionCardLive;
+                    setActionCard(null);
+                    applyToggleFavorite(id, is_favorite);
+                  }}
+                  className="btn-ghost press rounded-2xl py-3.5 text-sm font-medium flex items-center justify-center gap-2 touch-target"
                 >
-                  <path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 5.5 5.5 5.5 0 0 1 21.5 12c-2.5 4.5-9.5 9-9.5 9z" />
-                </svg>
-                {actionCardLive.is_favorite ? "Quitar de deseados" : "Añadir a deseados"}
-              </button>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill={actionCardLive.is_favorite ? "currentColor" : "none"}
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    className="w-4 h-4"
+                  >
+                    <path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 5.5 5.5 5.5 0 0 1 21.5 12c-2.5 4.5-9.5 9-9.5 9z" />
+                  </svg>
+                  {actionCardLive.is_favorite ? "Quitar de deseados" : "Añadir a deseados"}
+                </button>
+              )}
 
               <button
                 onClick={() => setActionCard(null)}
@@ -901,7 +905,10 @@ export default function CollectionPage() {
       <CardDetailModal
         card={selectedCard}
         onClose={() => setSelectedCard(null)}
-        onToggleFavorite={handleToggleFavInModal}
+        // El favorito/deseados vive en el servidor: al invitado (localStorage)
+        // le fallaría siempre con «No estás logueado», así que se le oculta el
+        // corazón, igual que ya se oculta el botón de deseos del modal.
+        onToggleFavorite={isSignedIn ? handleToggleFavInModal : undefined}
         onSellAll={handleSellAllFromModal}
         cards={navIds}
         index={selectedIndex}

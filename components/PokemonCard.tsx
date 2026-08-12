@@ -22,7 +22,84 @@ interface PokemonCardProps {
   interactive?: boolean; // tilt 3D + tracking — desactivar en grids
 }
 
-function PokemonCardInner({
+// Sin srcSet a propósito. Sólo hay dos variantes (245w y 734w) y en un iPhone
+// la celda pide ~386px físicos, así que el navegador elegiría SIEMPRE la
+// grande: recorrer un álbum de 258 cartas pasaría de 45 MB a 151 MB de
+// descarga. En rejilla mandan los datos; la nitidez la gana el camino rápido,
+// que pinta la carta sin capa compositada y por tanto a resolución nativa.
+function pickImageUrl(card: any, useHighRes: boolean): string | undefined {
+  const smallUrl: string | undefined = card.images?.small;
+  const largeUrl: string | undefined = card.images?.large;
+  return useHighRes ? largeUrl || smallUrl : smallUrl || largeUrl;
+}
+
+/** La ilustración o, si la carta no trae imágenes, el hueco con su nombre. */
+function CardFace({
+  card,
+  useHighRes,
+  loading,
+}: {
+  card: any;
+  useHighRes: boolean;
+  loading: "eager" | "lazy";
+}) {
+  const imageUrl = pickImageUrl(card, useHighRes);
+  if (imageUrl) {
+    return (
+      <img
+        src={imageUrl}
+        alt={card.name}
+        // La carta grande es el contenido principal de la pantalla: no
+        // debe esperar al observer de lazy-loading.
+        loading={loading}
+        decoding="async"
+        className="w-full h-full object-contain"
+      />
+    );
+  }
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-2 text-center">
+      {card.number && (
+        <span className="text-xs font-semibold tnum ink-soft">#{card.number}</span>
+      )}
+      {/* El nombre es la única información útil del hueco: ink-soft (>=5,5:1),
+          no ink-faint (~3,7:1), que a ~11px no llega al mínimo de texto. */}
+      <span className="text-[0.7rem] leading-tight ink-soft line-clamp-3">
+        {card.name || "Carta sin imagen"}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Camino rápido de las rejillas (colección, álbum, entrenador, resumen).
+ *
+ * Sin perspectiva, sin `preserve-3d`, sin reverso y sin motion: un álbum de
+ * 258 cartas creaba 258 capas compositadas y el scroll iba a tirones. Aquí
+ * la carta es una imagen y ya.
+ *
+ * Es un componente propio y sin hooks a propósito: así esas mismas 258 cartas
+ * no instancian motion values, springs ni un timeout de 900ms por carta que
+ * jamás usarían.
+ */
+function PokemonCardStatic({
+  card,
+  useHighRes,
+}: {
+  card: any;
+  useHighRes: boolean;
+}) {
+  return (
+    <div
+      className="relative w-full aspect-[2.5/3.5] overflow-hidden rounded-[4.5%] border border-[var(--border)] bg-[var(--surface-2)]"
+      style={{ boxShadow: "var(--shadow-md)" }}
+    >
+      <CardFace card={card} useHighRes={useHighRes} loading="lazy" />
+    </div>
+  );
+}
+
+function PokemonCardInteractive({
   card,
   reveal = false,
   useHighRes = false,
@@ -81,61 +158,6 @@ function PokemonCardInner({
 
   // El volumen sólo se necesita al girar o mientras se inclina con el puntero.
   const flat = settled && !isFlipped && !isHovered;
-
-  const smallUrl: string | undefined = card.images?.small;
-  const largeUrl: string | undefined = card.images?.large;
-  const imageUrl = useHighRes ? largeUrl || smallUrl : smallUrl || largeUrl;
-
-  // Sin srcSet a propósito. Sólo hay dos variantes (245w y 734w) y en un iPhone
-  // la celda pide ~386px físicos, así que el navegador elegiría SIEMPRE la
-  // grande: recorrer un álbum de 258 cartas pasaría de 45 MB a 151 MB de
-  // descarga. En rejilla mandan los datos; la nitidez la gana el camino rápido,
-  // que pinta la carta sin capa compositada y por tanto a resolución nativa.
-
-  /** Hueco cuando la carta no trae imágenes: mejor que un esqueleto eterno. */
-  const placeholder = (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-2 text-center">
-      {card.number && (
-        <span className="text-xs font-semibold tnum ink-soft">#{card.number}</span>
-      )}
-      <span className="text-[0.7rem] leading-tight ink-faint line-clamp-3">
-        {card.name || "Carta sin imagen"}
-      </span>
-    </div>
-  );
-
-  const image = (loading: "eager" | "lazy") =>
-    imageUrl ? (
-      <img
-        src={imageUrl}
-        alt={card.name}
-        // La carta grande es el contenido principal de la pantalla: no
-        // debe esperar al observer de lazy-loading.
-        loading={loading}
-        decoding="async"
-        className="w-full h-full object-contain"
-      />
-    ) : (
-      placeholder
-    );
-
-  /**
-   * Camino rápido de las rejillas (colección, álbum, entrenador, resumen).
-   *
-   * Sin perspectiva, sin `preserve-3d`, sin reverso y sin motion: un álbum de
-   * 258 cartas creaba 258 capas compositadas y el scroll iba a tirones. Aquí
-   * la carta es una imagen y ya.
-   */
-  if (!interactive && reveal) {
-    return (
-      <div
-        className="relative w-full aspect-[2.5/3.5] overflow-hidden rounded-[4.5%] border border-[var(--border)] bg-[var(--surface-2)]"
-        style={{ boxShadow: "var(--shadow-md)" }}
-      >
-        {image("lazy")}
-      </div>
-    );
-  }
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!interactive || !cardRef.current || isFlipped) return;
@@ -234,7 +256,11 @@ function PokemonCardInner({
                 : "var(--shadow-md)",
           }}
         >
-          {image(useHighRes ? "eager" : "lazy")}
+          <CardFace
+            card={card}
+            useHighRes={useHighRes}
+            loading={useHighRes ? "eager" : "lazy"}
+          />
 
           {hasHoloEffect && interactive && (
             <motion.div
@@ -277,6 +303,19 @@ function PokemonCardInner({
       </motion.div>
     </div>
   );
+}
+
+/**
+ * Decide qué carta renderizar. No llama a ningún hook, así que el return
+ * condicional es válido: cada componente hijo llama SIEMPRE a los suyos.
+ */
+function PokemonCardInner(props: PokemonCardProps) {
+  if (!props.interactive && props.reveal) {
+    return (
+      <PokemonCardStatic card={props.card} useHighRes={props.useHighRes ?? false} />
+    );
+  }
+  return <PokemonCardInteractive {...props} />;
 }
 
 const PokemonCard = memo(PokemonCardInner, (a, b) =>

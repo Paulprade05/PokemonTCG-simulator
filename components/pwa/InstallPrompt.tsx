@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { isIOS, isSafari, isStandaloneDisplay } from "../../utils/platform";
+import { isIOS, isStandaloneDisplay } from "../../utils/platform";
 
 const DISMISS_KEY = "pwa-install-dismissed";
 // Tras descartarlo no volvemos a insistir en dos semanas.
@@ -68,10 +68,12 @@ export default function InstallPrompt() {
     };
     window.addEventListener("beforeinstallprompt", onBeforeInstall);
 
-    // iOS nunca dispara el evento: mostramos las instrucciones tras un momento
-    // para no tapar la primera impresión de la app.
+    // En iOS ningún navegador dispara el evento, pero desde iOS 16.4 Chrome,
+    // Edge y Firefox también instalan con Compartir → Añadir a inicio (el mismo
+    // gesto que Safari), así que las instrucciones se muestran en todos ellos.
+    // Tras un momento, para no tapar la primera impresión de la app.
     let timer: ReturnType<typeof setTimeout> | undefined;
-    if (isIOS() && isSafari()) {
+    if (isIOS()) {
       timer = setTimeout(() => {
         setIosMode(true);
         setVisible(true);

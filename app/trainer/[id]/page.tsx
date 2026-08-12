@@ -126,6 +126,7 @@ export default function TrainerProfilePage() {
         <div>
           <button
             onClick={() => setShowStats(!showStats)}
+            aria-expanded={showStats}
             className="w-full surface surface-hover rounded-2xl px-5 py-4 flex justify-between items-center"
           >
             <div className="flex items-center gap-3">
@@ -254,13 +255,19 @@ export default function TrainerProfilePage() {
           // las tres pantallas y en móvil caben tres por fila.
           <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 md:gap-4 lg:grid-cols-6">
             {processedCards.map((card) => (
-              <div
-                key={card.id}
-                className="relative group cursor-zoom-in"
-                onClick={() => setSelectedCard(card)}
-              >
+              <div key={card.id} className="relative group">
                 {card.quantity > 1 && (
-                  <div className="absolute -top-2 -right-2 z-30 bg-white text-black text-[10px] font-bold w-6 h-6 flex items-center justify-center rounded-full border border-white/20 shadow-lg">
+                  // Variables de tema, no bg-white/text-black: el blanco fijo
+                  // quedaba invisible en tema claro. Mismo badge que colección.
+                  <div
+                    className="absolute -top-2 -right-2 z-30 text-[10px] font-bold w-6 h-6 flex items-center justify-center rounded-full tnum"
+                    style={{
+                      background: "var(--ink)",
+                      color: "var(--bg)",
+                      border: "1px solid var(--border-strong)",
+                      boxShadow: "var(--shadow-sm)",
+                    }}
+                  >
                     {card.quantity}
                   </div>
                 )}
@@ -271,9 +278,19 @@ export default function TrainerProfilePage() {
                     </svg>
                   </div>
                 )}
-                <div className="transition transform group-hover:-translate-y-1 duration-300 pointer-events-none">
-                  <PokemonCard card={card} reveal={true} interactive={false} />
-                </div>
+                {/* <button> y no <div onClick>: sin rol ni tabIndex la carta era
+                    inalcanzable con teclado y un lector no anunciaba nada
+                    accionable. Igual que la rejilla de colección. */}
+                <button
+                  type="button"
+                  aria-label={`Ver ${card.name}`}
+                  className="block w-full cursor-zoom-in text-left"
+                  onClick={() => setSelectedCard(card)}
+                >
+                  <div className="transition transform group-hover:-translate-y-1 duration-300 pointer-events-none">
+                    <PokemonCard card={card} reveal={true} interactive={false} />
+                  </div>
+                </button>
                 {/* En táctil no hay hover: el contador se ve siempre en móvil */}
                 <div className="mt-2 flex justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
                   <span className="chip ink-soft text-[10px] px-2 py-1 rounded-full">

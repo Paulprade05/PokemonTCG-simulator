@@ -10,14 +10,18 @@ import ServiceWorkerRegister from "../components/pwa/ServiceWorkerRegister";
 // Fija el tema antes del primer pintado y, con él, el color de la barra del
 // navegador: si theme-color se dejara al valor estático, el tema claro saldría
 // con la barra de Safari en negro.
-const themeInit = `(function(){var t;try{t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}}catch(e){t='dark';}document.documentElement.setAttribute('data-theme',t);var m=document.querySelector('meta[name="theme-color"]');if(m){m.setAttribute('content',t==='dark'?'#14120c':'#f4efe4');}})();`;
+const themeInit = `(function(){var t;try{t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}}catch(e){t='dark';}document.documentElement.setAttribute('data-theme',t);var m=document.querySelector('meta[name="theme-color"]');if(!m){m=document.createElement('meta');m.setAttribute('name','theme-color');document.head.appendChild(m);}m.setAttribute('content',t==='dark'?'#14120c':'#f4efe4');})();`;
 
-const inter = Inter({ subsets: ["latin"] });
+// Se carga como variable CSS (además de la clase) para que la utilidad
+// font-sans resuelva a la webfont real y no a la familia literal "Inter", que
+// en iOS/Android no existe como fuente del sistema.
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 /** Pantallas de arranque de iOS. La media query debe coincidir exactamente con
  *  el tamaño lógico y el pixel ratio del dispositivo o iOS la ignora. */
 const STARTUP_IMAGES = [
   { w: 440, h: 956, r: 3, file: "1320x2868" }, // iPhone 16 Pro Max
+  { w: 420, h: 912, r: 3, file: "1260x2736" }, // iPhone Air (2025)
   { w: 402, h: 874, r: 3, file: "1206x2622" }, // iPhone 16 Pro
   { w: 430, h: 932, r: 3, file: "1290x2796" }, // 14 Pro Max · 15/16 Plus
   { w: 393, h: 852, r: 3, file: "1179x2556" }, // 14 Pro · 15/16
@@ -87,7 +91,7 @@ export default function RootLayout({
 }>) {
   return (
     <ClerkProvider>
-      <html lang="es" suppressHydrationWarning>
+      <html lang="es" className={inter.variable} suppressHydrationWarning>
         <head>
           <script dangerouslySetInnerHTML={{ __html: themeInit }} />
         </head>

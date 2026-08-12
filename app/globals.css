@@ -82,9 +82,10 @@ html[data-theme="dark"] body {
 @theme inline {
   --color-background: var(--bg);
   --color-foreground: var(--ink);
-  /* Pilas reales: --font-geist-* no se declara en ninguna parte, así que
-     font-sans/font-mono quedaban inválidas y heredaban la fuente del body. */
-  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  /* next/font registra la webfont con un nombre interno con hash, no "Inter":
+     se referencia por su variable (--font-inter, declarada en layout.tsx) para
+     que font-sans resuelva a la fuente real y no caiga al system-ui. */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -92,7 +93,7 @@ html { scroll-behavior: smooth; }
 
 body {
   color: var(--ink);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow-x: hidden;
@@ -135,7 +136,6 @@ input, textarea, [contenteditable="true"] {
   .perspective-1000 { perspective: 1000px; }
   .preserve-3d { transform-style: preserve-3d; }
   .backface-hidden { backface-visibility: hidden; }
-  .rotate-y-180 { transform: rotateY(180deg); }
 
   /* SURFACES (theme-aware). El grano va aquí, en el fondo de cada
      superficie, para que el contenido (texto, imágenes) quede limpio. */
@@ -224,8 +224,6 @@ input, textarea, [contenteditable="true"] {
   .ink-faint { color: var(--ink-faint); }
   .text-muted { color: var(--ink-soft); }
   .accent { color: var(--accent); }
-  .tracking-wider-2 { letter-spacing: 0.2em; }
-  .tracking-wider-3 { letter-spacing: 0.3em; }
 
   .text-gradient {
     background: linear-gradient(120deg, var(--accent) 0%, var(--accent-2) 55%, var(--accent-3) 100%);
@@ -255,47 +253,17 @@ input, textarea, [contenteditable="true"] {
   .progress-bar { background: linear-gradient(90deg, var(--accent), var(--accent-3)); transition: width .7s cubic-bezier(0.16,1,0.3,1); }
   .progress-bar-blue { background: linear-gradient(90deg, var(--accent-2), #38bdf8); transition: width .7s cubic-bezier(0.16,1,0.3,1); }
 
-  .fade-in { animation: fadeIn .5s cubic-bezier(0.16,1,0.3,1) both; }
-
-  .skeleton { position: relative; overflow: hidden; background: color-mix(in srgb, var(--ink) 5%, transparent); border-radius: 0.9rem; }
-  .skeleton::after {
-    content: ""; position: absolute; inset: 0; transform: translateX(-100%);
-    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ink) 7%, transparent), transparent);
-    animation: skeleton-sweep 1.4s infinite;
-  }
-
-  .aurora-blob { position: absolute; border-radius: 9999px; filter: blur(90px); opacity: 0.18; pointer-events: none; will-change: transform; }
-
   /* GLOW ring for accent elements */
   .ring-accent { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent), 0 8px 28px -8px color-mix(in srgb, var(--accent) 35%, transparent); }
 }
 
-@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes text-shine { to { background-position: 200% center; } }
-@keyframes skeleton-sweep { 100% { transform: translateX(100%); } }
-@keyframes pulse-slow { 0%,100% { opacity: 1; } 50% { opacity: .8; } }
-.animate-pulse-slow { animation: pulse-slow 3s ease-in-out infinite; }
 
 /* Lenis */
 html.lenis, html.lenis body { height: auto; }
 .lenis.lenis-smooth { scroll-behavior: auto !important; }
 .lenis.lenis-smooth [data-lenis-prevent] { overscroll-behavior: contain; }
 .lenis.lenis-stopped { overflow: hidden; }
-
-/* HOLO */
-@keyframes shine-move { 0% { background-position: 200% center; } 100% { background-position: -200% center; } }
-.holo-overlay {
-  position: absolute; inset: 0; z-index: 20; pointer-events: none; border-radius: inherit;
-  background: linear-gradient(115deg, transparent 30%, rgba(255,255,255,0.4) 45%, rgba(255,255,255,0.4) 55%, transparent 70%);
-  background-size: 400% 100%; mix-blend-mode: overlay; animation: shine-move 4s infinite linear; opacity: 0.8;
-}
-@keyframes holo-shimmer { 0% { background-position: 200% center; opacity: 0.2; } 50% { opacity: 0.9; } 100% { background-position: -200% center; opacity: 0.2; } }
-.holo-glare {
-  background:
-    linear-gradient(115deg, transparent 15%, rgba(255,255,255,0.4) 25%, rgba(255,50,200,0.5) 35%, rgba(50,255,255,0.5) 45%, rgba(255,255,255,0.4) 55%, transparent 65%),
-    repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.15) 3px, rgba(255,255,255,0.15) 4px);
-  background-size: 200% auto, 12px 12px; animation: holo-shimmer 4s linear infinite; mix-blend-mode: color-dodge; pointer-events: none;
-}
 
 /* ============================================================
    MOBILE / PWA — safe areas, viewport real y teclado

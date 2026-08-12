@@ -155,6 +155,12 @@ export default function Home() {
   const [prePackIds, setPrePackIds] = useState<string[]>([]);
   const [soldInfo, setSoldInfo] = useState<{ earned: number; sold: number } | null>(null);
   const [sellingDupes, setSellingDupes] = useState(false);
+  /**
+   * El sobre no llegó a persistir (fallo de red/BD con sesión, o cuota local en
+   * invitado). Con él a true no se ofrece vender repetidas: se venderían contra
+   * una colección que aún no incluye el sobre.
+   */
+  const [packSaveFailed, setPackSaveFailed] = useState(false);
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
   const [openSeries, setOpenSeries] = useState<Record<string, boolean>>({});
   const [direction, setDirection] = useState(1);
@@ -199,6 +205,16 @@ export default function Home() {
   /** Momento de la última llegada de carta, para no encadenarle un toque con
    *  inercia que cerrara el sobre sin dejar ver lo que acaba de salir. */
   const ultimaLlegadaRef = useRef(0);
+  /**
+   * Cuenta de ventas de repetidas confirmadas. refreshAfterPack lo consulta
+   * antes y después de leer el saldo del servidor: si el usuario vendió mientras
+   * ese saldo (pre-venta) viajaba, adoptarlo como valor absoluto borraría las
+   * monedas de la venta; en ese caso sólo se aplica el bonus como incremento.
+   */
+  const ventasRef = useRef(0);
+  /** Temporizador del toast de bonus de set: sin guardarlo, un segundo set
+   *  completado en menos de 6s haría que el primer temporizador borrara su toast. */
+  const bonusTimerRef = useRef<number | null>(null);
   /** Temporizadores de la coreografía: salir a mitad tiene que poder anularlos. */
   const temporizadoresRef = useRef<number[]>([]);
   /** Marca de agua de cartas ya vistas: sólo la primera vez se celebra. */
@@ -249,6 +265,15 @@ export default function Home() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  // Al desmontar la página se cancela el temporizador del toast de bonus para no
+  // dejar un setState huérfano en vuelo.
+  useEffect(
+    () => () => {
+      if (bonusTimerRef.current) clearTimeout(bonusTimerRef.current);
+    },
+    [],
+  );
+
   // La vista de apertura ocupa toda la pantalla: el documento de debajo no debe
   // poder desplazarse, igual que hacen el resto de overlays del proyecto.
   useEffect(() => {
@@ -292,42 +317,85 @@ export default function Home() {
     !efectosApagados && fase !== "cartas" ? (T_FANFARRIA - T_CARTA) / 1000 : 0;
 
   const currentSetObj = dbSets.find((s) => s.id === selectedSet);
+
+  /**
+   * Un set "abrible" tiene la pirámide normal de rarezas. Los subsets
+   * especiales (Trainer Gallery, Shiny Vault, Galarian Gallery, promos) no
+   * tienen morralla: TODO lo que cae es carta cara, así que un sobre estándar
+   * de 50 se revende por 500-700 — una imprenta de dinero. Medido con 2000
+   * sobres simulados por set: Shiny Vault rinde el 1046% del coste y Galarian
+   * Gallery el 1357%. El servidor no lo frena: esas cartas son REALES y están
+   * en la BD; sólo se cierra la brecha ofreciendo ahí únicamente el Promo Pack.
+   *
+   * El nombre y el total no bastan (Shiny Vault son 122 cartas y no lleva
+   * "gallery"), así que además se mira la COMPOSICIÓN real en cuanto cargan las
+   * cartas: sin comunes suficientes, no es un set de sobre estándar.
+   */
+  const composicionEspecial = useMemo(() => {
+    if (!allCards || allCards.length === 0) return false;
+    const comunes = allCards.filter((c) => c.rarity === "Common").length;
+    const relleno = allCards.filter(
+      (c) => c.rarity === "Common" || c.rarity === "Uncommon",
+    ).length;
+    return comunes < 8 || relleno / allCards.length < 0.2;
+  }, [allCards]);
+
   const isSpecialSet = currentSetObj
     ? currentSetObj.name.toLowerCase().includes("promos") ||
       currentSetObj.name.toLowerCase().includes("gallery") ||
       currentSetObj.series === "POP" ||
       currentSetObj.series === "Other" ||
-      currentSetObj.total < 69
+      currentSetObj.total < 69 ||
+      composicionEspecial
     : false;
 
   useEffect(() => {
     (async () => {
-      const sets = await getSetsFromDB();
-      // Sort by release date desc when available
-      sets.sort((a: any, b: any) => {
-        const da = a.releaseDate ? new Date(a.releaseDate).getTime() : 0;
-        const db = b.releaseDate ? new Date(b.releaseDate).getTime() : 0;
-        return db - da;
-      });
-      setDbSets(sets);
+      try {
+        const sets = await getSetsFromDB();
+        // Sort by release date desc when available
+        sets.sort((a: any, b: any) => {
+          const da = a.releaseDate ? new Date(a.releaseDate).getTime() : 0;
+          const db = b.releaseDate ? new Date(b.releaseDate).getTime() : 0;
+          return db - da;
+        });
+        setDbSets(sets);
+      } catch (err) {
+        // getSetsFromDB rechaza ante fallo de red: sin capturarlo la portada se
+        // quedaba sin expansiones y sin aviso (rechazo no manejado).
+        console.error("Error cargando las expansiones:", err);
+        toast("No se pudieron cargar las expansiones. Revisa tu conexión.", "error");
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     const syncUserData = async () => {
       if (!isLoaded) return;
-      if (isSignedIn) {
-        const data = await getUserData();
-        if (data) setCoins(data.coins);
-        const myCards = await getFullCollection();
-        setUserCollectionIds(myCards.map((c: any) => c.id));
-        getWishlistIds().then(setWishlistIds);
-      } else {
-        const localCards = getCollection();
-        setUserCollectionIds(localCards.map((c: any) => c.id));
+      try {
+        if (isSignedIn) {
+          const data = await getUserData();
+          if (data) setCoins(data.coins);
+          const myCards = await getFullCollection();
+          setUserCollectionIds(myCards.map((c: any) => c.id));
+          // Un fallo de deseados no puede tumbar el resto de la sincronización.
+          getWishlistIds().then(setWishlistIds).catch(() => {});
+        } else {
+          const localCards = getCollection();
+          setUserCollectionIds(localCards.map((c: any) => c.id));
+        }
+      } catch (err) {
+        // Las server actions rechazan ante fallo de red (su try/catch interno
+        // sólo cubre errores SQL). Sin capturarlo, el rechazo quedaba sin
+        // manejar y colección y saldo se quedaban vacíos EN SILENCIO: el sobre
+        // Leyenda "garantizaba" cartas ya poseídas y todo salía marcado "Nueva".
+        console.error("Error sincronizando datos de usuario:", err);
+        toast("No se pudieron cargar tus datos. Revisa tu conexión.", "error");
       }
     };
     syncUserData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSignedIn, isLoaded, setCoins]);
 
   const loadAndSync = useCallback(async () => {
@@ -466,12 +534,19 @@ export default function Home() {
     anunciadoRef.current = -1;
     ultimaLlegadaRef.current = 0;
     setFanfarriaEn(null);
+    setPackSaveFailed(false);
   };
 
   const handleBuyPack = async (type: PackType) => {
     if (finishingRef.current) return;
     if (!allCards || allCards.length === 0) {
       toast("Las cartas no se han cargado. Recarga la página.", "error");
+      return;
+    }
+    // Cinturón además de la tienda: en un set sin morralla, cualquier sobre
+    // que no sea el Promo Pack revende por 10x su coste (ver composicionEspecial).
+    if (composicionEspecial && type !== "SPECIAL") {
+      toast("Esta colección especial sólo tiene Promo Pack", "error");
       return;
     }
     const price = PACK_PRICES[type];
@@ -499,6 +574,7 @@ export default function Home() {
     setBusy(true);
     packSavedRef.current = false;
     savePromiseRef.current = null;
+    setPackSaveFailed(false);
     try {
       if (isSignedIn) {
         // Con sesión manda el servidor: cobra de forma atómica y devuelve el
@@ -530,9 +606,15 @@ export default function Home() {
       } else if (!spendCoins(price)) {
         // Invitado: el saldo sólo vive en este dispositivo.
         return;
-      } else {
-        saveToCollection(newPack);
+      } else if (saveToCollection(newPack)) {
         packSavedRef.current = true;
+      } else {
+        // Ya cobrado: si el guardado local revienta (cuota de localStorage) se
+        // reembolsa el precio para no dejar al invitado sin cartas y sin saldo.
+        addCoins(price);
+        toast("No se pudo guardar el sobre en este dispositivo", "error");
+        haptic("warning");
+        return;
       }
     } catch (err) {
       console.error("Error descontando monedas:", err);
@@ -573,11 +655,16 @@ export default function Home() {
    * Nunca lanza: un fallo aquí no puede tumbar el guardado del sobre.
    */
   const refreshAfterPack = async () => {
+    let granted = 0;
     try {
       const res = await claimSetCompletionBonuses();
       if (res.granted > 0) {
+        granted = res.granted;
         setSetBonus({ granted: res.granted, sets: res.sets });
-        setTimeout(() => setSetBonus(null), 6000);
+        // El id se guarda: completar un segundo set en menos de 6s no debe dejar
+        // que el temporizador del primer bonus borre el toast del segundo.
+        if (bonusTimerRef.current) clearTimeout(bonusTimerRef.current);
+        bonusTimerRef.current = window.setTimeout(() => setSetBonus(null), 6000);
       }
     } catch (err) {
       console.error("Error reclamando bonus de set:", err);
@@ -585,8 +672,19 @@ export default function Home() {
     try {
       // Las monedas se releen del servidor (el bonus y la compra se aplican
       // allí) para que el marcador no quede desincronizado.
+      const ventasAntes = ventasRef.current;
       const data = await getUserData();
-      if (data) setCoins(data.coins);
+      if (!data) return;
+      if (ventasRef.current === ventasAntes) {
+        // Nadie vendió repetidas mientras el saldo viajaba: se adopta el valor
+        // autoritativo del servidor (ya incluye el bonus aplicado allí).
+        setCoins(data.coins);
+      } else if (granted > 0) {
+        // Hubo una venta en paralelo cuyo delta ya está en el marcador; este
+        // saldo (pre-venta) lo borraría. En vez de pisarlo se aplica sólo el
+        // bonus como incremento, que compone bien con el delta de la venta.
+        setCoins((c) => c + granted);
+      }
     } catch (err) {
       console.error("Error refrescando el saldo:", err);
     }
@@ -597,11 +695,17 @@ export default function Home() {
     if (finishingRef.current) return;
     finishingRef.current = true;
     setBusy(true);
+    setPackSaveFailed(false);
     // Todo va en try/finally: antes, un fallo de red dejaba finishingRef en
     // true y los botones de compra bloqueados para el resto de la sesión.
     try {
       if (!allCards || allCards.length === 0) {
         toast("Las cartas no se han cargado. Recarga la página.", "error");
+        return;
+      }
+      // Mismo cinturón que handleBuyPack: sin morralla no hay sobre barato.
+      if (composicionEspecial && type !== "SPECIAL") {
+        toast("Esta colección especial sólo tiene Promo Pack", "error");
         return;
       }
       const price = PACK_PRICES[type] * count;
@@ -641,8 +745,12 @@ export default function Home() {
           await refreshAfterPack();
         } else if (!spendCoins(price)) {
           return;
-        } else {
-          saveToCollection(combined);
+        } else if (!saveToCollection(combined)) {
+          // Invitado: si el guardado local revienta (cuota de localStorage) se
+          // reembolsa lo cobrado y el resumen queda marcado como no guardado.
+          addCoins(price);
+          toast("No se pudieron guardar los sobres en este dispositivo", "error");
+          saved = false;
         }
       } catch (err) {
         console.error("Error guardando los sobres:", err);
@@ -650,6 +758,12 @@ export default function Home() {
         saved = false;
       }
       packSavedRef.current = saved;
+      // Con el guardado sin cuajar no se ofrece vender repetidas: se venderían
+      // contra una colección que aún no incluye estos sobres. No se reintenta
+      // automáticamente porque savePackToCollection no es idempotente (acredita
+      // las cartas y luego actualiza estadísticas en sentencias separadas), así
+      // que un reintento tras un fallo posterior al abono duplicaría cartas.
+      setPackSaveFailed(!saved);
 
       setPrePackIds(ownedSnapshot);
       // Sólo damos por poseídas las cartas si el guardado salió bien.
@@ -685,17 +799,18 @@ export default function Home() {
           const res = await savePackToCollection(currentPack, currentPackPrice);
           packSavedRef.current = res?.success === true;
         } else {
-          saveToCollection(currentPack);
-          packSavedRef.current = true;
+          packSavedRef.current = saveToCollection(currentPack);
         }
       }
       if (packSavedRef.current) {
         const newPackIds = currentPack.map((c) => c.id);
         setUserCollectionIds((prev) => [...prev, ...newPackIds]);
+        setPackSaveFailed(false);
         haptic("success");
       } else {
         // Con el sobre sin guardar no se dan por poseídas sus cartas: si no, la
         // colección enseñaría cartas que no están en la base de datos.
+        setPackSaveFailed(true);
         toast("No se pudo guardar el sobre en la nube", "error");
         haptic("warning");
       }
@@ -703,6 +818,7 @@ export default function Home() {
       // Una caída de red al guardar no puede dejar el sobre a medias: se avisa
       // y se sale igualmente al resumen, con las cartas ya en pantalla.
       console.error("Error guardando el sobre:", err);
+      setPackSaveFailed(true);
       toast("No se pudo guardar el sobre en la nube", "error");
     } finally {
       // Sin este finally, un fallo dejaba finishingRef en true y los botones de
@@ -968,11 +1084,21 @@ export default function Home() {
     if (!isSignedIn || dupeIdsInPack.length === 0 || sellingDupes) return;
     setSellingDupes(true);
     try {
+      // El resumen se muestra con el guardado del sobre AÚN en vuelo (finishPack
+      // cierra la vista antes de esperarlo). Sin aguardarlo, el servidor todavía
+      // tiene quantity=1 para estas cartas y sellable=0: la venta saldría a 0 y
+      // el botón no haría nada visible.
+      await savePromiseRef.current;
       const res = await sellPackDuplicates(dupeIdsInPack);
       if (res.earned > 0) {
+        // ventasRef avisa a refreshAfterPack de que hay una venta cuyo delta ya
+        // está en el marcador, para que no lo pise con un saldo pre-venta.
+        ventasRef.current += 1;
         setCoins((c) => c + res.earned);
         setSoldInfo(res);
         play("moneda");
+      } else {
+        toast("No había repetidas que vender", "error");
       }
     } catch (err) {
       console.error("Error vendiendo repetidas:", err);
@@ -1790,7 +1916,7 @@ export default function Home() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2 md:gap-3 w-full md:w-auto">
-              {isSignedIn && dupeIdsInPack.length > 0 && !soldInfo && (
+              {isSignedIn && dupeIdsInPack.length > 0 && !soldInfo && !packSaveFailed && (
                 <button
                   onClick={handleSellPackDupes}
                   disabled={sellingDupes}

@@ -30,7 +30,10 @@ export default function BottomNav({ hidden = false }: { hidden?: boolean }) {
             {it.icon}
           </span>
         </div>
-        <span className={`text-[10px] font-medium transition-colors ${active ? "ink" : "ink-faint"}`}>
+        {/* La etiqueta inactiva sube a ink-soft: a 10px, ink-faint (~3,6:1) no
+            llega al mínimo AA de 4,5:1. El icono sí puede quedarse en ink-faint
+            (gráfico: basta 3:1). */}
+        <span className={`text-[10px] font-medium transition-colors ${active ? "ink" : "ink-soft"}`}>
           {it.label}
         </span>
       </Link>

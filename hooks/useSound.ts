@@ -30,6 +30,13 @@ const obtenerCtx = (): AudioContext | null => {
     (window as unknown as { webkitAudioContext?: typeof AudioContext })
       .webkitAudioContext;
   if (!Ctor) return null;
+  // Un contexto cerrado (interrupción larga de audio en iOS, error de hardware)
+  // ya no reanuda: se descarta para recrearlo en el siguiente gesto. El buffer
+  // de ruido va atado a su sampleRate, así que también se reinicia.
+  if (ctx && ctx.state === "closed") {
+    ctx = null;
+    ruidoBlanco = null;
+  }
   if (!ctx) {
     try {
       ctx = new Ctor();

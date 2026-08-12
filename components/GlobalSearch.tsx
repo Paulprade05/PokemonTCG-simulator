@@ -23,6 +23,7 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Hit[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searchError, setSearchError] = useState(false);
   const [selected, setSelected] = useState<any | null>(null);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -43,7 +44,12 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
         if (triggerRef.current?.offsetParent) setOpen(true);
       }
       if (!open) return;
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") { setOpen(false); return; }
+      // Con el campo enfocado (el caso normal: se autoenfoca al abrir) las
+      // flechas mueven el cursor del texto; no deben paginar la rejilla por
+      // debajo ni relanzar la búsqueda con otra página.
+      const target = e.target as HTMLElement | null;
+      if (target && (target === inputRef.current || target.closest("input,textarea,[contenteditable]"))) return;
       if (e.key === "ArrowLeft" && total > PAGE_SIZE) setPage((p) => Math.max(1, p - 1));
       if (e.key === "ArrowRight" && total > PAGE_SIZE) setPage((p) => Math.min(Math.ceil(total / PAGE_SIZE), p + 1));
     };
@@ -72,15 +78,30 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
 
   // Debounced search (with pagination)
   useEffect(() => {
-    if (!query.trim()) { setResults([]); setTotal(0); return; }
+    // Al vaciar el campo hay que apagar «Buscando…»: si no, borrar el texto
+    // antes de 250ms lo dejaba clavado con el campo vacío.
+    if (!query.trim()) { setResults([]); setTotal(0); setLoading(false); setSearchError(false); return; }
     setLoading(true);
+    setSearchError(false);
+    // clearTimeout no cancela una petición ya lanzada: sin esta bandera, la
+    // respuesta lenta de un texto anterior pisa los resultados del actual.
+    let cancelled = false;
     const handle = setTimeout(async () => {
-      const res: any = await searchCardsInDB(query, page, PAGE_SIZE);
-      setResults(res.data || []);
-      setTotal(res.total || 0);
-      setLoading(false);
+      try {
+        const res: any = await searchCardsInDB(query, page, PAGE_SIZE);
+        if (cancelled) return;
+        setResults(res.data || []);
+        setTotal(res.total || 0);
+      } catch (err) {
+        // Sin catch, un rechazo (sin conexión, el caso primario de la PWA)
+        // dejaba el spinner eterno y una promesa sin gestionar.
+        console.error(err);
+        if (!cancelled) { setResults([]); setTotal(0); setSearchError(true); }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }, 250);
-    return () => clearTimeout(handle);
+    return () => { cancelled = true; clearTimeout(handle); };
   }, [query, page]);
 
   const openSearch = () => { haptic("tap"); setOpen(true); };
@@ -176,10 +197,15 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                   style={{ paddingBottom: "max(1rem, calc(var(--sab) - var(--keyboard) + 1rem))" }}
                 >
                   {loading && <p className="text-xs ink-faint text-center py-8">Buscando…</p>}
-                  {!loading && query && results.length === 0 && (
+                  {!loading && searchError && (
+                    <p className="text-xs text-center py-8" style={{ color: "var(--danger)" }}>
+                      No se pudo buscar. Revisa tu conexión.
+                    </p>
+                  )}
+                  {!loading && !searchError && query && results.length === 0 && (
                     <p className="text-xs ink-faint text-center py-8">Sin resultados.</p>
                   )}
-                  {!loading && !query && (
+                  {!loading && !searchError && !query && (
                     <div className="text-xs ink-faint px-2 py-4 leading-relaxed">
                       <p className="mb-2">Ejemplos:</p>
                       <ul className="space-y-1 font-mono">
