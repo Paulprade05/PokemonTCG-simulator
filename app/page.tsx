@@ -55,11 +55,18 @@ const AURA_RANK = 70;
  * todo colgaba del `exit` de AnimatePresence y no había forma de saber en qué
  * punto estaba la apertura.
  *
- * Los tres valores de abajo y los @keyframes de components/BoosterPack.tsx
+ * Los valores de abajo y los @keyframes de components/BoosterPack.tsx
  * están calibrados juntos: si cambias uno, mira el otro.
+ *
+ * Línea de tiempo desde el rasgado (t=0): la tira vuela (0-460), a los 420
+ * monta la carta y sube desde detrás del cuerpo del sobre (650ms), a los 620
+ * el cuerpo cae (480ms) CRUZÁNDOSE con la carta que sube, a los 950 la
+ * primera carta ya está asentada y se celebra, y a los 1150 mandan los
+ * gestos y botones.
  */
-const T_CARTA = 380; // se monta la carta y emerge de la boca del sobre
-const T_FIN = 720; // el sobre se desmonta y se aceptan gestos
+const T_CARTA = 420; // se monta la carta: la tira ya casi ha salido
+const T_FANFARRIA = 950; // la PRIMERA carta ya se asentó: háptico, campanada y fanfarria
+const T_FIN = 1150; // el sobre se desmonta y se aceptan gestos y botones
 /** Toque con inercia justo tras la llegada de la última carta: cerraría el
  *  sobre sin dejarla ver. Cubre la entrada (260ms) y el arranque de la
  *  campanada, sin frenar a quien va rápido. */
@@ -86,27 +93,41 @@ const rankOf = (rarity?: string): number => {
 };
 
 const cardVariants = {
-  // dir === 0: la primera carta EMERGE del sobre (sube y crece), no entra de
-  // lado. Es la única que nace de la boca del envoltorio.
+  // dir === 0: la primera carta EMERGE de la boca del sobre. SIN fade a
+  // propósito: la oclusión la pone el sobre (su capa va a z-50, la carta a
+  // z-40) y un fundido delataría el truco — la carta ya estaba dentro.
+  // Arranca ALINEADA con el sobre (y:0, oculta del todo tras él): si naciera
+  // desplazada hacia abajo, su parte baja asomaría por DEBAJO del sobre en el
+  // primer fotograma — justo el "aparece de la nada" que se quiere matar.
   enter: (dir: number) =>
     dir === 0
-      ? { x: 0, y: 34, opacity: 0, rotateY: 0, scale: 0.9 }
+      ? { x: 0, y: 0, opacity: 1, rotate: 0, rotateY: 0, scale: 0.97 }
       : {
-          x: dir > 0 ? 120 : -120,
+          // Desde el ancho completo de la carta y con un vuelco sutil (rotate
+          // 2D), además del giro de canto que ya traía.
+          x: dir > 0 ? "100%" : "-100%",
           y: 0,
           opacity: 0,
+          rotate: dir * -2,
           rotateY: dir > 0 ? 60 : -60,
           scale: 0.92,
         },
-  // `y: 0` es obligatorio: framer sólo anima las claves presentes en el
-  // destino, y sin él la carta se quedaría 34px baja para siempre.
-  center: { x: 0, y: 0, opacity: 1, rotateY: 0, scale: 1 },
+  // `y: 0` (y `rotate: 0`) son obligatorios: framer sólo anima las claves
+  // presentes en el destino, y sin ellos la carta se quedaría baja o torcida.
+  // Para la primera carta el destino son FOTOGRAMAS: sube 90px por la boca
+  // (la única salida visible, el sobre tapa el resto) y se asienta de vuelta
+  // al centro mientras el cuerpo del sobre cae por detrás.
+  center: (dir: number) =>
+    dir === 0
+      ? { x: 0, y: [0, -90, 0], opacity: 1, rotate: 0, rotateY: 0, scale: [0.97, 0.99, 1] }
+      : { x: 0, y: 0, opacity: 1, rotate: 0, rotateY: 0, scale: 1 },
   exit: (dir: number) => ({
     x: dir > 0 ? -120 : 120,
     y: 0,
     opacity: 0,
+    rotate: dir * 2,
     rotateY: dir > 0 ? -60 : 60,
-    scale: 0.92,
+    scale: 0.94,
   }),
 };
 
@@ -263,6 +284,12 @@ export default function Home() {
   const auraColor =
     (currentCard?.rarity && RARITY_GLOW[currentCard.rarity]) ||
     "color-mix(in srgb, var(--accent) 45%, transparent)";
+  /** La PRIMERA carta monta con el sobre aún cayendo (fase "abriendo"): el
+   *  aura y el escenario esperan a la fanfarria (T_FANFARRIA) para no
+   *  encenderse detrás del envoltorio. En el resto de llegadas, al instante.
+   *  Es un delay de framer, no un temporizador: cerrar la vista lo desmonta. */
+  const retardoAura =
+    !efectosApagados && fase !== "cartas" ? (T_FANFARRIA - T_CARTA) / 1000 : 0;
 
   const currentSetObj = dbSets.find((s) => s.id === selectedSet);
   const isSpecialSet = currentSetObj
@@ -739,20 +766,36 @@ export default function Home() {
       setFanfarriaEn(null);
       return;
     }
+    // El deslizamiento suena YA: es el ruido de la carta saliendo del sobre
+    // (o aterrizando, si viene de lado).
+    play("voltear");
     // El peso lo marca la carta que llega, nunca la siguiente.
-    haptic(currentRank >= AURA_RANK ? "heavy" : "select");
-    play("voltear"); // whoosh + click de cartón: describe igual una carta que aterriza
-    setFanfarriaEn(packIndex);
-    if (currentRank >= 40) {
-      const campanada =
-        currentRank >= 85
-          ? "revelacion3"
-          : currentRank >= AURA_RANK
-            ? "revelacion2"
-            : "revelacion1";
-      // Antes iba a 280ms para caer sobre un giro de 800ms; la entrada de la
-      // carta dura 340ms, así que la campanada se adelanta.
-      programar(() => play(campanada), 160);
+    const rango = currentRank;
+    const celebrar = () => {
+      haptic(rango >= AURA_RANK ? "heavy" : "select");
+      setFanfarriaEn(packIndex);
+      if (rango >= 40) {
+        const campanada =
+          rango >= 85
+            ? "revelacion3"
+            : rango >= AURA_RANK
+              ? "revelacion2"
+              : "revelacion1";
+        // Un pelín después del golpe: la campanada corona, no compite.
+        programar(() => play(campanada), 160);
+      }
+    };
+    if (fase !== "cartas") {
+      // Primera carta del sobre: todavía está emergiendo (fase "abriendo").
+      // La celebración espera a que se asiente (T_FANFARRIA). Va por
+      // programar(): salir a mitad (Escape, chevron) la anula y no suena ni
+      // vibra nada con la vista ya cerrada. anunciadoRef ya garantiza que no
+      // se programe dos veces. Con efectos apagados nunca se entra aquí: la
+      // fase salta directa a "cartas" y se celebra al instante, sin
+      // temporizador.
+      programar(celebrar, T_FANFARRIA - T_CARTA);
+    } else {
+      celebrar();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPackOpen, cartasVisibles, packIndex]);
@@ -1269,7 +1312,7 @@ export default function Home() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: auraLevel >= 3 ? 0.78 : 0.5 }}
                 exit={{ opacity: 0, transition: { duration: 0.15 } }}
-                transition={{ duration: reduceMotion ? 0 : 0.6, ease: "easeOut" }}
+                transition={{ duration: reduceMotion ? 0 : 0.6, ease: "easeOut", delay: retardoAura }}
                 className="pointer-events-none absolute inset-0 z-0"
                 style={{
                   background:
@@ -1291,7 +1334,7 @@ export default function Home() {
                 // La salida va corta y aparte: con los 1,2 s de entrada, el
                 // resplandor de una rara seguía tiñendo la carta siguiente.
                 exit={{ opacity: 0, transition: { duration: 0.15 } }}
-                transition={{ duration: reduceMotion ? 0 : 1.2, ease: "easeOut" }}
+                transition={{ duration: reduceMotion ? 0 : 1.2, ease: "easeOut", delay: retardoAura }}
                 className="pointer-events-none absolute inset-0 z-0"
                 style={{
                   background: `radial-gradient(circle at 50% 46%, ${auraColor}, color-mix(in srgb, ${auraColor} 30%, transparent) 45%, transparent 72%)`,
@@ -1515,12 +1558,19 @@ export default function Home() {
                     initial={efectosApagados ? false : "enter"}
                     animate="center"
                     exit="exit"
-                    // La primera (direction 0) emerge del sobre y va algo más
-                    // larga; los relevos entre cartas siguen siendo secos.
-                    transition={{
-                      duration: direction === 0 ? 0.34 : 0.26,
-                      ease: [0.16, 1, 0.3, 1],
-                    }}
+                    // La primera (direction 0) EMERGE del sobre en dos
+                    // tiempos: sube por la boca (420→805ms desde el rasgado)
+                    // y se asienta (805→1120ms) mientras el cuerpo cae detrás
+                    // (620-1100ms). Los relevos entre cartas siguen secos.
+                    transition={
+                      direction === 0
+                        ? {
+                            duration: 0.7,
+                            times: [0, 0.55, 1],
+                            ease: ["easeOut", "easeInOut"],
+                          }
+                        : { duration: 0.26, ease: [0.16, 1, 0.3, 1] }
+                    }
                     className="absolute inset-0"
                   >
                     {/* reveal siempre: las cartas salen de cara. Además nacen
@@ -1534,9 +1584,18 @@ export default function Home() {
                 {newCardIndexes.has(packIndex) && cartasVisibles && (
                   <motion.div
                     key={`nueva-${packIndex}`}
-                    initial={{ scale: 0, x: -20 }}
-                    animate={{ scale: 1, x: 0 }}
-                    transition={{ type: "spring", bounce: 0.5 }}
+                    // Nada sale de la nada: fundido corto en vez de resorte. En
+                    // la primera carta espera a la fanfarria (la carta aún está
+                    // emergiendo tras el sobre); en el resto, al instante.
+                    initial={efectosApagados ? false : { opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{
+                      duration: 0.2,
+                      delay:
+                        !efectosApagados && fase !== "cartas"
+                          ? (T_FANFARRIA - T_CARTA) / 1000
+                          : 0,
+                    }}
                     className="absolute -top-3 -left-3 z-50 bg-emerald-500 text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-lg"
                   >
                     Nueva
@@ -1578,71 +1637,135 @@ export default function Home() {
               propósito: CARD_WIDTH descuenta exactamente estos 96px, así que
               crecer aquí encoge la carta. */}
           <div className="w-full max-w-2xl h-24 shrink-0 flex flex-col items-center justify-center gap-1.5 px-4 relative z-20">
-            <div className="h-10 w-full flex flex-col items-center justify-center text-center">
-              {cartasVisibles ? (
-                <>
-                  {/* Hasta ahora la vista no decía en ningún sitio qué había
-                      salido salvo en el texto para lectores de pantalla. */}
-                  <p className="text-sm font-semibold ink leading-tight truncate max-w-full">
-                    {currentCard.name}
-                  </p>
-                  <p className="ink-faint text-[10px] uppercase tracking-[0.16em] leading-tight flex items-center gap-1.5">
-                    {RARITY_GLOW[currentCard.rarity] && (
-                      // El color de rareza va como punto y no como color de
-                      // texto: son rgba fijos y en tema claro no contrastan.
-                      <span
-                        aria-hidden="true"
-                        className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
-                        style={{ background: RARITY_GLOW[currentCard.rarity] }}
-                      />
-                    )}
-                    <span className="truncate">
-                      {currentCard.rarity || "Sin rareza"} ·{" "}
-                      {formatNumber(SELL_PRICES[currentCard.rarity] || 10)} monedas
-                    </span>
-                  </p>
-                </>
-              ) : (
-                <p className="ink-faint text-[11px] uppercase tracking-[0.2em]">
-                  Rasga la tira superior para abrir
-                </p>
-              )}
-            </div>
-            <div className="flex items-center justify-center gap-2 w-full">
-              <button
-                onClick={handleNextCard}
-                // Durante la coreografía no hay nada que pulsar: el sobre ya
-                // se está rasgando y la carta viene de camino.
-                disabled={busy || (fase !== "sellado" && fase !== "cartas")}
-                className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-60"
-              >
-                {busy ? (
-                  "Guardando..."
-                ) : (
-                  <>
-                    {fase !== "cartas"
-                      ? "Abrir sobre"
-                      : packIndex < lastIndex
-                        ? "Siguiente"
-                        : "Guardar sobre"}{" "}
-                    <kbd className="ml-1 text-[10px] opacity-70 hidden sm:inline">espacio</kbd>
-                  </>
+            {/* NADA SALE DE LA NADA: cada estado del rótulo entra y sale en
+                fundido, en capa absoluta dentro de un alto reservado (h-10)
+                para que nada salte de sitio. AnimatePresence sólo para estos
+                elementos pequeños del pie: la coreografía del sobre sigue en
+                CSS, que es lo que la hizo fiable. */}
+            <div className="relative h-10 w-full">
+              <AnimatePresence initial={false}>
+                {fase === "sellado" && (
+                  <motion.p
+                    key="rasga"
+                    exit={{ opacity: 0, transition: { duration: efectosApagados ? 0 : 0.15 } }}
+                    className="absolute inset-0 flex items-center justify-center ink-faint text-[11px] uppercase tracking-[0.2em]"
+                  >
+                    Rasga la tira superior para abrir
+                  </motion.p>
                 )}
-              </button>
-              {/* Revelar todo no aparece hasta rasgar: saltarse el sobre
-                  cerrado desde aquí vaciaría el momento que se acaba de pagar. */}
-              {fase === "cartas" && (
-                <button
-                  onClick={handleRevealAll}
-                  disabled={busy || maxRevealed >= currentPack.length}
-                  className="ink-soft hover:ink press touch-target px-4 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2 disabled:opacity-50"
-                >
-                  Revelar todo
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                    <path d="m13 17 5-5-5-5M6 17l5-5-5-5" />
-                  </svg>
-                </button>
-              )}
+                {fase === "rasgando" && (
+                  <motion.p
+                    key="abriendo"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 0.6 }}
+                    exit={{ opacity: 0, transition: { duration: 0.15 } }}
+                    transition={{ duration: 0.2 }}
+                    className="absolute inset-0 flex items-center justify-center ink-faint text-[11px] uppercase tracking-[0.2em]"
+                  >
+                    Abriendo…
+                  </motion.p>
+                )}
+                {cartasVisibles && (
+                  <motion.div
+                    key={`identidad-${packIndex}`}
+                    // La identidad de la PRIMERA carta espera a la fanfarria:
+                    // aparecer antes chivaría el premio con la carta aún
+                    // emergiendo tras el sobre.
+                    initial={efectosApagados ? false : { opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, transition: { duration: efectosApagados ? 0 : 0.15 } }}
+                    transition={{
+                      duration: 0.2,
+                      delay:
+                        !efectosApagados && fase !== "cartas"
+                          ? (T_FANFARRIA - T_CARTA) / 1000
+                          : 0,
+                    }}
+                    className="absolute inset-0 flex flex-col items-center justify-center text-center"
+                  >
+                    {/* Hasta ahora la vista no decía en ningún sitio qué había
+                        salido salvo en el texto para lectores de pantalla. */}
+                    <p className="text-sm font-semibold ink leading-tight truncate max-w-full">
+                      {currentCard.name}
+                    </p>
+                    <p className="ink-faint text-[10px] uppercase tracking-[0.16em] leading-tight flex items-center gap-1.5">
+                      {RARITY_GLOW[currentCard.rarity] && (
+                        // El color de rareza va como punto y no como color de
+                        // texto: son rgba fijos y en tema claro no contrastan.
+                        <span
+                          aria-hidden="true"
+                          className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+                          style={{ background: RARITY_GLOW[currentCard.rarity] }}
+                        />
+                      )}
+                      <span className="truncate">
+                        {currentCard.rarity || "Sin rareza"} ·{" "}
+                        {formatNumber(SELL_PRICES[currentCard.rarity] || 10)} monedas
+                      </span>
+                    </p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+            {/* Los botones también reservan su hueco (h-11 dentro del pie fijo
+                de h-24) y entran en fundido al llegar su fase: durante la
+                coreografía no hay nada que pulsar y el pie queda en silencio. */}
+            <div className="relative h-11 w-full">
+              <AnimatePresence initial={false}>
+                {fase === "sellado" && (
+                  <motion.div
+                    key="abrir"
+                    exit={{ opacity: 0, transition: { duration: efectosApagados ? 0 : 0.15 } }}
+                    className="absolute inset-0 flex items-center justify-center gap-2"
+                  >
+                    <button
+                      onClick={handleNextCard}
+                      disabled={busy}
+                      className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-60"
+                    >
+                      Abrir sobre{" "}
+                      <kbd className="ml-1 text-[10px] opacity-70 hidden sm:inline">espacio</kbd>
+                    </button>
+                  </motion.div>
+                )}
+                {fase === "cartas" && (
+                  <motion.div
+                    key="acciones"
+                    initial={efectosApagados ? false : { opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.22 }}
+                    className="absolute inset-0 flex items-center justify-center gap-2"
+                  >
+                    <button
+                      onClick={handleNextCard}
+                      disabled={busy}
+                      className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-60"
+                    >
+                      {busy ? (
+                        "Guardando..."
+                      ) : (
+                        <>
+                          {packIndex < lastIndex ? "Siguiente" : "Guardar sobre"}{" "}
+                          <kbd className="ml-1 text-[10px] opacity-70 hidden sm:inline">espacio</kbd>
+                        </>
+                      )}
+                    </button>
+                    {/* Revelar todo no aparece hasta rasgar: saltarse el sobre
+                        cerrado desde aquí vaciaría el momento que se acaba de
+                        pagar. */}
+                    <button
+                      onClick={handleRevealAll}
+                      disabled={busy || maxRevealed >= currentPack.length}
+                      className="ink-soft hover:ink press touch-target px-4 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2 disabled:opacity-50"
+                    >
+                      Revelar todo
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                        <path d="m13 17 5-5-5-5M6 17l5-5-5-5" />
+                      </svg>
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
         </motion.div>,

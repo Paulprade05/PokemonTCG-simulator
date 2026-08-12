@@ -74,8 +74,13 @@ const CSS = `
     inset 0 1px 0 rgba(255,255,255,.22),
     var(--shadow-lg);
 }
+/* El cuerpo espera QUIETO a que la tira salga y la carta empiece a subir
+   (0-620ms desde el rasgado); sólo entonces cae. El delay de 620ms casa con
+   T_CARTA=420 de app/page.tsx: entre 620 y 1100 el cuerpo baja cruzándose
+   con la carta que emerge. Va con forwards y sin both: durante el delay no
+   se aplica ningún fotograma y el cuerpo no se mueve. */
 .sobre[data-fase="rasgando"] .sobre__cuerpo,
-.sobre[data-fase="abriendo"] .sobre__cuerpo { animation: sobre-cuerpo-cae 380ms linear 200ms forwards; }
+.sobre[data-fase="abriendo"] .sobre__cuerpo { animation: sobre-cuerpo-cae 480ms linear 620ms forwards; }
 
 /* Rayado lenticular: el arcoíris impreso del envoltorio. */
 .sobre__rayas {
@@ -161,11 +166,18 @@ const CSS = `
   80%  { transform: translate3d(-112px,110px,0) rotate(-31deg); opacity: .8; }
   100% { transform: translate3d(-140px,222px,0) rotate(-44deg); opacity: 0; }
 }
+/* Respingo corto (el único: el cuerpo ya no se mueve en "rasgando") y caída
+   acelerada dibujada en POSICIONES: cada tramo recorre más que el anterior.
+   Mientras el cuerpo cae, la carta sube por la boca y vuelve a asentarse
+   (keyframes y:[0,-90,0] en app/page.tsx): se cruzan y el relevo no deja
+   hueco ni deja nunca a la carta asomando por debajo del sobre. */
 @keyframes sobre-cuerpo-cae {
-  0%   { transform: translate3d(0,0,0) scale(1);        opacity: 1; }
-  16%  { transform: translate3d(0,-8px,0) scale(1.015); opacity: 1; }
-  40%  { transform: translate3d(0,6px,0) scale(1);      opacity: .95; }
-  100% { transform: translate3d(0,132px,0) scale(.92);  opacity: 0; }
+  0%   { transform: translate3d(0,0,0) scale(1);         opacity: 1; }
+  18%  { transform: translate3d(0,-6px,0) scale(1.01);   opacity: 1; }
+  40%  { transform: translate3d(0,14px,0) scale(1);      opacity: 1; }
+  62%  { transform: translate3d(0,56px,0) scale(.98);    opacity: .92; }
+  82%  { transform: translate3d(0,112px,0) scale(.955);  opacity: .55; }
+  100% { transform: translate3d(0,170px,0) scale(.93);   opacity: 0; }
 }
 `;
 
@@ -184,9 +196,13 @@ export default function BoosterPack({
 }: BoosterPackProps) {
   return (
     <div
-      // z-30 para que la tira que cae pase POR ENCIMA del pie (z-20) esos
-      // ~100ms finales; la carta va a z-40 y sigue emergiendo por delante.
-      className={`absolute inset-0 z-30 flex items-center justify-center px-4${
+      // z-50 SIEMPRE (la carta va a z-40): durante la emergencia el sobre
+      // pinta POR ENCIMA de la carta, que sube desde detrás del cuerpo — esa
+      // oclusión ES el truco, sin clipping. Fijo y sin cambios por fase: un
+      // salto de z a mitad de animación se nota. La capa vive en la zona
+      // flex-1, así que no solapa cabecera ni pie; la tira al volar sí pasa
+      // por encima del pie (z-20) y es deseable: es física.
+      className={`absolute inset-0 z-50 flex items-center justify-center px-4${
         efectosApagados ? "" : " sobre-capa"
       }`}
       // Mientras el sobre cae ya no acepta toques: los tiene que recibir la
