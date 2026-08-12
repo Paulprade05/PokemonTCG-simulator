@@ -1,4 +1,40 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+Simulador de Pokémon TCG: colección, apertura de sobres e intercambios. PWA
+instalable, pensada sobre todo para iPhone.
+
+## Variables de entorno
+
+| Variable | ¿Obligatoria? | Para qué |
+|---|---|---|
+| `POSTGRES_URL` | Sí | Base de datos (la pone Vercel Postgres). |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` | Sí | Inicio de sesión. |
+| `CRON_SECRET` | Sí para la sincronización | Vercel la envía como `Authorization: Bearer` al ejecutar el cron. Sin ella, `/api/cron/sync-sets` responde 503 y no sincroniza nada. |
+| `ADMIN_SECRET` | Sí para administrar | Protege `/ingest-tcg`, `/seed-database`, `/migrate-schema`, `/migrate-social` y `/db-stats`. Sin ella, esas rutas responden 503. |
+| `POKEMONTCG_API_KEY` | No, pero recomendable | Sin clave, los límites de api.pokemontcg.io son bajos y los reintentos por 429 se comen el presupuesto de tiempo del cron. |
+
+Genera los secretos con:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+**Importante:** en Vercel las variables sólo llegan a los despliegues NUEVOS.
+Después de crear o cambiar una hay que redesplegar; si no, la aplicación sigue
+ejecutándose con el valor anterior.
+
+## Sets nuevos automáticos
+
+`vercel.json` programa `/api/cron/sync-sets` una vez al día (05:00 UTC; el plan
+Hobby de Vercel no permite más). Compara el catálogo de api.pokemontcg.io con la
+base de datos, y descarga los sets que falten y los incompletos, empezando por
+los más recientes.
+
+Está pensado para el tope de 60 segundos del plan Hobby: trabaja con un
+presupuesto de tiempo y es reanudable, así que un set grande que no quepa en una
+ejecución lo termina la siguiente. Se puede forzar un set concreto con
+`?setId=me5`.
+
+La aplicación no necesita ningún cambio para mostrarlos: lee los sets de la base
+de datos, y las probabilidades de sobre se calculan por rareza, no por id de set.
 
 ## Getting Started
 
