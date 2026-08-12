@@ -2,8 +2,12 @@ import { sql } from '@vercel/postgres';
 import { NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { requireAdmin } from '../_admin-auth';
 
 export async function GET(request: Request) {
+  const noAutorizado = requireAdmin(request);
+  if (noAutorizado) return noAutorizado;
+
   try {
     const { searchParams } = new URL(request.url);
     const forceUpdate = searchParams.get('force') === 'true';

@@ -1,7 +1,11 @@
 import { sql } from "@vercel/postgres";
 import { NextResponse } from "next/server";
+import { requireAdmin } from "../_admin-auth";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const noAutorizado = requireAdmin(request);
+  if (noAutorizado) return noAutorizado;
+
   try {
     // CARDS — add missing rich columns (NULL-safe, JSONB).
     const cardAlters = [

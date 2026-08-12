@@ -45,8 +45,18 @@ const DEFAULTS = {
 
 // Píxeles antes de decidir si el gesto es horizontal o vertical.
 const LOCK_DISTANCE = 8;
-// Un toque no debería moverse más que esto.
-const TAP_SLOP = 10;
+/**
+ * Deriva que se le perdona a un toque antes de dejar de considerarlo toque.
+ *
+ * Un dedo real sobre un cristal se mueve: apoyar y levantar desplaza del orden
+ * de 10-15px, y más aún sobre un objetivo grande como una carta. Con el listón
+ * en 10px, tocar la carta para girarla fallaba muy a menudo — el gesto no
+ * llegaba a dispararse (no alcanza threshold ni FLICK_DISTANCE), pero el
+ * click posterior sí se descartaba, así que el toque no hacía absolutamente
+ * nada. 24px es la holgura habitual para distinguir toque de arrastre en
+ * táctil, y sigue muy por debajo del umbral real de gesto (70px).
+ */
+const TAP_SLOP = 24;
 // Desplazamiento mínimo para que la VELOCIDAD pueda disparar el gesto. Un toque
 // rápido deriva unos pocos píxeles y su velocidad sale enorme (8px en 15ms son
 // 533 px/s): sin esta distancia, ese roce contaba como deslizamiento y además
@@ -234,8 +244,10 @@ export function useSwipe(
       }
 
       // Marcamos el gesto para que el click sintético posterior se ignore.
-      didSwipeRef.current =
-        fired || Math.abs(dx) > TAP_SLOP || Math.abs(dy) > TAP_SLOP;
+      // Se mide la distancia real recorrida, no la de cada eje por separado:
+      // un arrastre en diagonal de 20+20 es un arrastre, no un toque.
+      const recorrido = Math.hypot(dx, dy);
+      didSwipeRef.current = fired || recorrido > TAP_SLOP;
       if (didSwipeRef.current) {
         window.setTimeout(() => {
           didSwipeRef.current = false;

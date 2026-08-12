@@ -1,5 +1,6 @@
 import { sql } from "@vercel/postgres";
 import { NextResponse } from "next/server";
+import { requireAdmin } from "../_admin-auth";
 
 const API = "https://api.pokemontcg.io/v2";
 const PAGE_SIZE = 250;
@@ -108,6 +109,9 @@ async function upsertCard(c: any) {
 }
 
 export async function GET(request: Request) {
+  const noAutorizado = requireAdmin(request);
+  if (noAutorizado) return noAutorizado;
+
   try {
     const { searchParams } = new URL(request.url);
     const onlySetId = searchParams.get("setId"); // ingest one set only

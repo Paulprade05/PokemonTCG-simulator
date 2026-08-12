@@ -146,8 +146,7 @@ export default function Home() {
   const cardGestureRef = useRef<HTMLDivElement>(null);
   /** Sobre sellado completo (para el atajo de teclado de la vista). */
   const sobreRef = useRef<HTMLDivElement>(null);
-  /** Zona que escucha el arrastre de la tira de rasgado. */
-  const tearZoneRef = useRef<HTMLDivElement>(null);
+  /** Sobre entero: escucha el arrastre de rasgado (ver sobreRef abajo). */
   /** Tira visual: recibe el transform a mano durante el arrastre. */
   const tearStripRef = useRef<HTMLDivElement>(null);
   /** La tira ya se rasgó: evita disparos dobles entre gesto, click y teclado. */
@@ -706,14 +705,14 @@ export default function Home() {
   // en onMove (sin re-render por movimiento). Al pasar el umbral se rasga al
   // instante, sin esperar a levantar el dedo; el camino por soltar (threshold o
   // velocidad) queda como respaldo para arrastres cortos y decididos.
-  const tearSwipeRef = useSwipe(tearZoneRef, {
+  const tearSwipeRef = useSwipe(sobreRef, {
     axis: "x",
     follow: false,
     threshold: 80,
     velocity: 600,
     enabled: isPackOpen && packStage === "sellado",
     onStart: () => {
-      tearWidthRef.current = tearZoneRef.current?.offsetWidth || 280;
+      tearWidthRef.current = sobreRef.current?.offsetWidth || 280;
       tearHapticRef.current = 0;
     },
     onMove: (dx) => {
@@ -1392,6 +1391,10 @@ export default function Home() {
                     style={{
                       width: CARD_WIDTH,
                       aspectRatio: "2.5 / 3.5",
+                      // El arrastre vale en TODO el sobre, no sólo sobre la
+                      // tira: apuntar a una franja de 48px con el dedo es
+                      // puntería fina y el gesto se sentía roto al fallarla.
+                      touchAction: touchActionFor("x"),
                       borderColor: "var(--border-strong)",
                       boxShadow: "var(--shadow-md)",
                       background:
@@ -1440,7 +1443,6 @@ export default function Home() {
                       className="absolute top-0 inset-x-0 z-10"
                     >
                       <div
-                        ref={tearZoneRef}
                         className="relative h-12 touch-target"
                         style={{ touchAction: touchActionFor("x") }}
                       >

@@ -97,6 +97,13 @@ body {
   text-rendering: optimizeLegibility;
   overflow-x: hidden;
   -webkit-tap-highlight-color: transparent;
+  /* Nada de seleccionar texto: en un juego, mantener el dedo pulsado debe
+     abrir la ficha de una carta, no sacar la lupa y el menú de copiar de
+     iOS. -webkit-touch-callout apaga además el menú del pulsado largo sobre
+     imágenes. Los campos de escritura se exceptúan justo debajo. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   /* Sin zoom de página: la app se comporta como nativa. pan-x pan-y deja
      pasar el scroll pero no incluye pinch-zoom, y la meta viewport hace lo
      propio en el modo instalado de iOS. El único zoom es el de la carta
@@ -109,6 +116,15 @@ body {
 }
 
 button, a, select, input { -webkit-tap-highlight-color: transparent; }
+
+/* Excepción a la regla de arriba: en un campo de escritura hay que poder
+   seleccionar, cortar y pegar. Sin esto, el buscador de la colección y el de
+   entrenadores quedarían sin cursor de selección. */
+input, textarea, [contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
