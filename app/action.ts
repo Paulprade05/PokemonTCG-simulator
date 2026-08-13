@@ -4,8 +4,20 @@
   import { auth, currentUser } from "@clerk/nextjs/server";
   import { sql } from '@vercel/postgres';
   import { revalidatePath } from 'next/cache';
-  import { SELL_PRICES, RARITY_RANK, STARTING_COINS, DAILY_BASE, DAILY_STREAK_STEP, DAILY_STREAK_CAP, SET_COMPLETION_BONUS } from "../utils/constanst";
+  import { AVAILABLE_SETS, SELL_PRICES, RARITY_RANK, STARTING_COINS, DAILY_BASE, DAILY_STREAK_STEP, DAILY_STREAK_CAP, SET_COMPLETION_BONUS } from "../utils/constanst";
   import { loadLocalSets, loadLocalCards } from "../services/localData";
+  import {
+    OFERTAS_ACTIVAS,
+    caducidadDelCiclo,
+    cumpleFiltro,
+    generarOfertas,
+    pagoDelLote,
+    precioDeVenta,
+    semillaDelCiclo,
+    setDeCarta,
+    type CartaMinima,
+    type Requisito,
+  } from "../utils/mercado";
 
   // Las columnas y tablas auxiliares (recompensa diaria, tema, lista de deseos y
   // premios de set) se crean una sola vez por instancia, no en cada invocación.
@@ -34,6 +46,21 @@
             set_id TEXT NOT NULL,
             rewarded_at TIMESTAMP DEFAULT NOW(),
             PRIMARY KEY (user_id, set_id)
+          )
+        `;
+        // Ofertas del mercado ya cobradas. La PK (usuario, ciclo, oferta) es
+        // quien arbitra la carrera: dos pestañas cobrando la misma oferta a la
+        // vez chocan en el índice único y sólo una inserta, así que sólo una
+        // cobra. `ciclo` es la semilla de mercado.ts, no una fecha: el tablón
+        // se deriva de ella y no hace falta guardarlo.
+        await sql`
+          CREATE TABLE IF NOT EXISTS market_claims (
+            user_id TEXT NOT NULL,
+            ciclo BIGINT NOT NULL,
+            oferta_id TEXT NOT NULL,
+            pago INT NOT NULL DEFAULT 0,
+            claimed_at TIMESTAMP DEFAULT NOW(),
+            PRIMARY KEY (user_id, ciclo, oferta_id)
           )
         `;
       })().catch((e) => {
@@ -1152,5 +1179,629 @@ export async function setUserTheme(theme: "light" | "dark") {
   } catch (e) {
     console.error("setUserTheme error:", e);
     return { error: "Error servidor" };
+  }
+}
+
+/* ==================================================================== *
+ * MERCADO DE LOTES
+ * ====================================================================
+ *
+ * REGLA DE ORO: del cliente sólo se acepta QUÉ oferta quiere cobrar y QUÉ
+ * cartas entrega. Ni el pago, ni el multiplicador, ni la rareza, ni el valor
+ * del lote: todo eso se recalcula aquí contra la tabla `cards`. Ver la nota
+ * larga sobre por qué en la cabecera de `cumplirOferta`.
+ * ==================================================================== */
+
+/** Tope de cartas por entrega. La oferta más glotona pide 28 (12+10+6). */
+const MAX_CARTAS_ENTREGA = 40;
+
+/** Ids de carta plausibles ("sv3pt5-207", "swsh12pt5gg-GG01"). */
+const ID_CARTA = /^[a-zA-Z0-9._-]{1,40}$/;
+
+/** Categorías cuyo requisito mira el CONJUNTO, no cada carta por separado. */
+const CATEGORIAS_DE_CONJUNTO = ["playset", "arcoiris", "evolucion"];
+
+interface CartaMercado extends CartaMinima {
+  /** Copias que posee el usuario (con sesión sale de user_collection). */
+  cantidad: number;
+  /** SELL_PRICES de su rareza, calculado en el servidor. */
+  precio: number;
+}
+
+/**
+ * Expansiones que el mercado puede exigir: las que se pueden abrir con sobre
+ * estándar (AVAILABLE_SETS) y además tienen datos en el repositorio.
+ *
+ * POR QUÉ NO SALE DE LA TABLA `sets`: el tablón se deriva de esta lista, así
+ * que tiene que ser IDÉNTICA al pintarlo y al cobrarlo. Postgres no garantiza
+ * el orden de los empates de `release_date`, y una ingesta a medias cambiaría
+ * la lista a mitad de ciclo: en ambos casos la oferta que el jugador ve dejaría
+ * de existir al pulsar "cumplir". Derivada del código desplegado es estable.
+ */
+let setsMercadoCache: string[] | null = null;
+async function setsDelMercado(): Promise<string[]> {
+  if (setsMercadoCache) return setsMercadoCache;
+  const abribles = AVAILABLE_SETS.map((s) => s.id);
+  try {
+    const locales = (await loadLocalSets()) as { id: string }[];
+    const conDatos = new Set(locales.map((s) => s.id));
+    const ids = abribles.filter((id) => conDatos.has(id));
+    // Sin respaldo legible preferimos el catálogo entero a un tablón vacío.
+    setsMercadoCache = ids.length > 0 ? ids : abribles;
+  } catch {
+    setsMercadoCache = abribles;
+  }
+  return setsMercadoCache;
+}
+
+/** El tablón vigente. Puro: misma semilla ⇒ mismas ofertas, aquí y en el cliente. */
+async function tablonVigente() {
+  const ciclo = semillaDelCiclo(Date.now());
+  const ofertas = generarOfertas(ciclo, await setsDelMercado(), OFERTAS_ACTIVAS);
+  return { ciclo, ofertas };
+}
+
+const listaSegura = (v: unknown): any[] => (Array.isArray(v) ? v : []);
+
+/** JSONB de la BD → array. Un `null` guardado no puede llegar a un .some(). */
+function comoLista(valor: unknown): any[] {
+  if (typeof valor === "string") {
+    try {
+      return listaSegura(JSON.parse(valor));
+    } catch {
+      return [];
+    }
+  }
+  return listaSegura(valor);
+}
+
+/** Fila de `cards` → carta que entienden cumpleFiltro y precioDeVenta. */
+function cartaDesdeFila(row: any, cantidad: number): CartaMercado {
+  const carta: CartaMinima = {
+    id: row.id,
+    name: row.name,
+    rarity: row.rarity ?? undefined,
+    supertype: row.supertype ?? undefined,
+    subtypes: comoLista(row.subtypes),
+    types: comoLista(row.types),
+    evolvesFrom: row.evolves_from ?? undefined,
+    hp: row.hp ?? undefined,
+    artist: row.artist ?? undefined,
+    nationalPokedexNumbers: comoLista(row.national_pokedex_numbers),
+    set: { id: row.set_id },
+  };
+  return { ...carta, cantidad, precio: precioDeVenta(carta) };
+}
+
+/** Carta del respaldo local (camelCase) → la misma forma. */
+function cartaDesdeLocal(c: any, cantidad: number): CartaMercado {
+  const carta: CartaMinima = {
+    id: c.id,
+    name: c.name,
+    rarity: c.rarity ?? undefined,
+    supertype: c.supertype ?? undefined,
+    subtypes: listaSegura(c.subtypes),
+    types: listaSegura(c.types),
+    evolvesFrom: c.evolvesFrom ?? undefined,
+    hp: c.hp ?? undefined,
+    artist: c.artist ?? undefined,
+    nationalPokedexNumbers: listaSegura(c.nationalPokedexNumbers),
+    set: { id: c.set?.id ?? undefined },
+  };
+  return { ...carta, cantidad, precio: precioDeVenta(carta) };
+}
+
+const COLUMNAS_MERCADO = `c.id, c.name, c.rarity, c.supertype, c.subtypes, c.types,
+       c.evolves_from, c.hp, c.artist, c.national_pokedex_numbers, c.set_id`;
+
+/**
+ * ¿Esta carta suelta sirve para este requisito? El set se comprueba APARTE del
+ * filtro, tal y como documenta utils/mercado.ts.
+ */
+function sirveParaRequisito(carta: CartaMinima, r: Requisito): boolean {
+  if (r.setId !== null && setDeCarta(carta) !== r.setId) return false;
+  return cumpleFiltro(carta, r.filtro);
+}
+
+const mismoNombre = (a: unknown, b: unknown): boolean =>
+  String(a ?? "").trim().toLowerCase() === String(b ?? "").trim().toLowerCase();
+
+const enMinusculas = (v: unknown) => String(v ?? "").trim().toLowerCase();
+
+/** Qué cartas puede recibir un hueco del reparto. */
+type Hueco = (carta: CartaMinima) => boolean;
+
+/** Requisitos DISTINTOS de éste que también aceptarían la carta. */
+function utilidadEnOtros(carta: CartaMinima, propio: Requisito, todos: Requisito[]): number {
+  return todos.filter((r) => r !== propio && sirveParaRequisito(carta, r)).length;
+}
+
+/**
+ * Conjuntos de cartas (por índice) que podrían satisfacer un requisito de
+ * "playset" (N copias de la misma carta) o de "evolucion" (cadena encadenada
+ * por evolvesFrom). Son enumerables de verdad: no hay heurística que sesgue el
+ * resultado, sólo un orden para probar antes las opciones más prometedoras.
+ */
+function opcionesDeConjunto(
+  cartas: CartaMinima[],
+  r: Requisito,
+  disponibles: number[],
+  todosLosRequisitos: Requisito[],
+): number[][] {
+  const elegibles = disponibles.filter((i) => sirveParaRequisito(cartas[i], r));
+  const opciones: number[][] = [];
+
+  if (r.filtro.categoria === "playset") {
+    // `cantidad` copias de LA MISMA carta: agrupar por id y coger un grupo.
+    const porId = new Map<string, number[]>();
+    for (const i of elegibles) {
+      const grupo = porId.get(cartas[i].id) ?? [];
+      grupo.push(i);
+      porId.set(cartas[i].id, grupo);
+    }
+    for (const grupo of porId.values()) {
+      if (grupo.length >= r.cantidad) opciones.push(grupo.slice(0, r.cantidad));
+    }
+  } else if (r.filtro.categoria === "evolucion") {
+    // Cadena: B.evolvesFrom === A.name. El catálogo sólo pide 2 o 3 eslabones.
+    if (r.cantidad !== 2 && r.cantidad !== 3) return [];
+    for (const a of elegibles) {
+      for (const b of elegibles) {
+        if (b === a || !mismoNombre(cartas[b].evolvesFrom, cartas[a].name)) continue;
+        if (r.cantidad === 2) {
+          opciones.push([a, b]);
+          continue;
+        }
+        for (const c of elegibles) {
+          if (c === a || c === b) continue;
+          if (mismoNombre(cartas[c].evolvesFrom, cartas[b].name)) opciones.push([a, b, c]);
+        }
+      }
+    }
+  }
+
+  // Sin repetidas y probando primero las que menos falta hacen en los demás
+  // requisitos: así la primera combinación que se prueba suele ser la buena.
+  const vistas = new Set<string>();
+  return opciones
+    .filter((o) => {
+      const clave = [...o].sort((x, y) => x - y).join(",");
+      if (vistas.has(clave)) return false;
+      vistas.add(clave);
+      return true;
+    })
+    .map((o) => ({
+      o,
+      coste: o.reduce((t, i) => t + utilidadEnOtros(cartas[i], r, todosLosRequisitos), 0),
+    }))
+    .sort((a, b) => a.coste - b.coste)
+    .slice(0, 24)
+    .map((x) => x.o);
+}
+
+/** Subconjuntos de `k` elementos, hasta `tope`. */
+function combinaciones<T>(lista: T[], k: number, tope: number): T[][] {
+  const salida: T[][] = [];
+  if (k <= 0 || lista.length < k) return salida;
+  const actual: T[] = [];
+  const bajar = (desde: number) => {
+    if (salida.length >= tope) return;
+    if (actual.length === k) {
+      salida.push([...actual]);
+      return;
+    }
+    for (let i = desde; i < lista.length; i++) {
+      actual.push(lista[i]);
+      bajar(i + 1);
+      actual.pop();
+    }
+  };
+  bajar(0);
+  return salida;
+}
+
+/**
+ * ¿Se pueden repartir EXACTAMENTE estas cartas entre estos huecos?
+ *
+ * Es un emparejamiento bipartito (cartas ↔ huecos) resuelto con caminos
+ * aumentantes. Un voraz daría falsos negativos —bastaría que una carta valiera
+ * para dos requisitos y se gastara en el que no tocaba para rechazar una
+ * entrega legítima— y un falso negativo aquí es una oferta que el jugador ve
+ * completa y no puede cobrar nunca.
+ */
+function emparejaHuecos(cartas: CartaMinima[], indices: number[], huecos: Hueco[]): boolean {
+  if (huecos.length !== indices.length) return false;
+  if (huecos.length === 0) return true;
+
+  const compatible = huecos.map((acepta) => indices.map((i) => acepta(cartas[i])));
+  const huecoDeCarta = new Array<number>(indices.length).fill(-1);
+
+  const buscar = (hueco: number, visitadas: boolean[]): boolean => {
+    for (let c = 0; c < indices.length; c++) {
+      if (visitadas[c] || !compatible[hueco][c]) continue;
+      visitadas[c] = true;
+      if (huecoDeCarta[c] === -1 || buscar(huecoDeCarta[c], visitadas)) {
+        huecoDeCarta[c] = hueco;
+        return true;
+      }
+    }
+    return false;
+  };
+
+  for (let h = 0; h < huecos.length; h++) {
+    if (!buscar(h, new Array<boolean>(indices.length).fill(false))) return false;
+  }
+  return true;
+}
+
+/**
+ * Validación de la entrega: ¿estas cartas cumplen TODOS los requisitos, sin
+ * sobrar ninguna? Cada carta cuenta una sola vez (no se puede reutilizar la
+ * misma copia para dos requisitos) y el total tiene que cuadrar al dedillo, así
+ * que nadie puede colar cartas de más para inflar el valor del lote.
+ *
+ * Los tres requisitos "de conjunto" se tratan aparte porque el emparejamiento
+ * no sabe expresarlos: playset y evolución se enumeran (son pocas opciones) y
+ * el arcoíris se convierte en un hueco POR TIPO, que es exactamente lo que
+ * pide ("N cartas de N tipos distintos") y vuelve a caber en el emparejamiento.
+ */
+function entregaValida(cartas: CartaMinima[], requisitos: Requisito[]): boolean {
+  const pedidas = requisitos.reduce((t, r) => t + r.cantidad, 0);
+  if (cartas.length !== pedidas) return false;
+
+  const todos = cartas.map((_, i) => i);
+  const enumerables = requisitos.filter(
+    (r) => r.filtro.categoria === "playset" || r.filtro.categoria === "evolucion",
+  );
+  const arcoiris = requisitos.filter((r) => r.filtro.categoria === "arcoiris");
+  const simples = requisitos.filter((r) => !CATEGORIAS_DE_CONJUNTO.includes(r.filtro.categoria));
+
+  const opciones = enumerables.map((r) => opcionesDeConjunto(cartas, r, todos, requisitos));
+  if (opciones.some((o) => o.length === 0)) return false;
+
+  // Cortafuegos de CPU: esto corre en una server action, no en un batch.
+  let presupuesto = 400;
+
+  const conArcoiris = (k: number, restantes: number[], huecos: Hueco[]): boolean => {
+    if (presupuesto-- <= 0) return false;
+    if (k === arcoiris.length) return emparejaHuecos(cartas, restantes, huecos);
+    const r = arcoiris[k];
+    const tipos = Array.from(
+      new Set(
+        restantes
+          .filter((i) => sirveParaRequisito(cartas[i], r))
+          .flatMap((i) => listaSegura(cartas[i].types).map(enMinusculas)),
+      ),
+    );
+    for (const combinacion of combinaciones(tipos, r.cantidad, 200)) {
+      const conTipos = combinacion.map<Hueco>(
+        (tipo) => (c) =>
+          sirveParaRequisito(c, r) && listaSegura(c.types).map(enMinusculas).includes(tipo),
+      );
+      if (conArcoiris(k + 1, restantes, huecos.concat(conTipos))) return true;
+    }
+    return false;
+  };
+
+  const explorar = (k: number, usadas: Set<number>): boolean => {
+    if (presupuesto <= 0) return false;
+    if (k === enumerables.length) {
+      const restantes = todos.filter((i) => !usadas.has(i));
+      const huecos: Hueco[] = [];
+      for (const r of simples) {
+        for (let i = 0; i < r.cantidad; i++) huecos.push((c) => sirveParaRequisito(c, r));
+      }
+      return conArcoiris(0, restantes, huecos);
+    }
+    for (const opcion of opciones[k]) {
+      if (opcion.some((i) => usadas.has(i))) continue;
+      const siguientes = new Set(usadas);
+      opcion.forEach((i) => siguientes.add(i));
+      if (explorar(k + 1, siguientes)) return true;
+    }
+    return false;
+  };
+
+  return explorar(0, new Set<number>());
+}
+
+/**
+ * Tablón vigente + qué ofertas ha cobrado ya este usuario en este ciclo.
+ * Funciona sin sesión (el invitado ve el tablón; cobrar es otra cosa).
+ */
+export async function getMercado() {
+  const { ciclo, ofertas } = await tablonVigente();
+  const caduca = caducidadDelCiclo(ciclo);
+
+  const { userId } = await auth();
+  if (!userId) return { ciclo, caduca, ofertas, cumplidas: [] as string[], conSesion: false };
+
+  try {
+    await ensureSchema();
+    const { rows } = await sql`
+      SELECT oferta_id FROM market_claims
+      WHERE user_id = ${userId} AND ciclo = ${ciclo}
+    `;
+    return {
+      ciclo,
+      caduca,
+      ofertas,
+      cumplidas: rows.map((r: any) => String(r.oferta_id)),
+      conSesion: true,
+    };
+  } catch (e) {
+    console.error("getMercado error:", e);
+    // El tablón se puede pintar igual; lo que no se sabe es qué está cobrado.
+    return { ciclo, caduca, ofertas, cumplidas: [] as string[], conSesion: true };
+  }
+}
+
+/**
+ * Cartas del usuario que sirven para ALGUNA oferta del ciclo, con su cantidad
+ * y su precio de venta. Sólo se devuelve lo que el tablón necesita: mandar la
+ * colección entera son cientos de kilobytes en móvil para nada.
+ *
+ * `idsInvitado` es el camino del invitado (colección en localStorage): sirve
+ * para hidratar por id y enseñarle su progreso. Las cantidades que devuelve ese
+ * camino son 1 y las corrige el cliente con las suyas; da igual, porque el
+ * invitado no cobra y este dato no toca el dinero.
+ */
+export async function getCartasMercado(idsInvitado?: string[]) {
+  const { ciclo, ofertas } = await tablonVigente();
+  const requisitos = ofertas.flatMap((o) => o.requisitos);
+  const relevante = (c: CartaMinima) => requisitos.some((r) => sirveParaRequisito(c, r));
+
+  const { userId } = await auth();
+
+  try {
+    if (userId) {
+      const { rows } = await sql.query(
+        `SELECT ${COLUMNAS_MERCADO}, uc.quantity
+         FROM user_collection uc
+         JOIN cards c ON c.id = uc.card_id
+         WHERE uc.user_id = $1 AND uc.quantity > 0`,
+        [userId],
+      );
+      const cartas = rows
+        .map((row: any) => cartaDesdeFila(row, Number(row.quantity) || 0))
+        .filter((c) => c.cantidad > 0 && relevante(c));
+      return { ciclo, cartas, conSesion: true };
+    }
+
+    // --- invitado ---
+    if (!Array.isArray(idsInvitado) || idsInvitado.length === 0) {
+      return { ciclo, cartas: [] as CartaMercado[], conSesion: false };
+    }
+    const ids = Array.from(
+      new Set(idsInvitado.filter((id) => typeof id === "string" && ID_CARTA.test(id))),
+    ).slice(0, 1200);
+
+    const encontradas = new Map<string, CartaMercado>();
+    try {
+      const { rows } = await sql.query(
+        `SELECT ${COLUMNAS_MERCADO} FROM cards c WHERE c.id = ANY($1::text[])`,
+        [ids],
+      );
+      for (const row of rows) encontradas.set(row.id, cartaDesdeFila(row, 1));
+    } catch (e) {
+      // Sin Postgres configurado el invitado sigue jugando: tira del JSON local.
+      console.error("getCartasMercado (BD invitado):", e);
+    }
+
+    const faltan = ids.filter((id) => !encontradas.has(id));
+    if (faltan.length > 0) {
+      const porSet = new Map<string, string[]>();
+      for (const id of faltan) {
+        const corte = id.lastIndexOf("-");
+        if (corte <= 0) continue;
+        const setId = id.slice(0, corte);
+        const lista = porSet.get(setId) ?? [];
+        lista.push(id);
+        porSet.set(setId, lista);
+      }
+      // Tope de expansiones a abrir: un localStorage manipulado no puede
+      // convertir esta lectura en cien lecturas de disco.
+      for (const [setId, pedidas] of Array.from(porSet.entries()).slice(0, 40)) {
+        const locales = (await loadLocalCards(setId)) as any[];
+        const porId = new Map(locales.map((c) => [c.id, c]));
+        for (const id of pedidas) {
+          const c = porId.get(id);
+          if (c) encontradas.set(id, cartaDesdeLocal(c, 1));
+        }
+      }
+    }
+
+    return {
+      ciclo,
+      cartas: Array.from(encontradas.values()).filter(relevante),
+      conSesion: false,
+    };
+  } catch (e) {
+    console.error("getCartasMercado error:", e);
+    return { ciclo, cartas: [] as CartaMercado[], conSesion: Boolean(userId) };
+  }
+}
+
+/**
+ * Cumplir una oferta: entrega el lote y cobra.
+ *
+ * SEGURIDAD — por qué el cliente no puede inflar el pago:
+ *  1. Del navegador sólo llegan el id de la oferta y los ids de las cartas. No
+ *     hay parámetro de precio, de multiplicador ni de valor del lote que pudiera
+ *     falsearse: como toda server action es un endpoint POST, cualquier campo
+ *     de dinero que se aceptara sería un "ponme el saldo que yo diga".
+ *  2. La oferta se REGENERA aquí con la semilla del ciclo vigente. Un id de
+ *     oferta inventado (o el de ayer, más goloso) no aparece en el tablón y se
+ *     rechaza: el multiplicador y la dificultad son los que dicta el generador.
+ *  3. Las cartas se releen de `cards` por su id y se comprueba contra
+ *     `user_collection` que el usuario las tiene. Rareza, tipo, PS, ilustrador
+ *     y expansión salen de la BD, nunca del payload.
+ *  4. El pago es pagoDelLote(oferta, Σ SELL_PRICES reales), con el techo de
+ *     prima que fija utils/mercado.ts. Entregar Hyper Rares en vez de comunes
+ *     no dispara el pago: la prima está topada por dificultad.
+ *  5. Cobro y consumo van en UNA sentencia, y la PK de market_claims arbitra
+ *     la carrera entre pestañas.
+ */
+export async function cumplirOferta(ofertaId: string, cardIds: string[]) {
+  const { userId } = await auth();
+  if (!userId) return { ok: false as const, error: "sesion" as const };
+
+  if (typeof ofertaId !== "string" || ofertaId.length === 0 || ofertaId.length > 200) {
+    return { ok: false as const, error: "peticion" as const };
+  }
+  if (
+    !Array.isArray(cardIds) ||
+    cardIds.length === 0 ||
+    cardIds.length > MAX_CARTAS_ENTREGA ||
+    !cardIds.every((id) => typeof id === "string" && ID_CARTA.test(id))
+  ) {
+    return { ok: false as const, error: "peticion" as const };
+  }
+
+  const { ciclo, ofertas } = await tablonVigente();
+  const oferta = ofertas.find((o) => o.id === ofertaId);
+  // Ni inventada ni de un ciclo anterior: sólo se cobra lo que está en el tablón.
+  if (!oferta) return { ok: false as const, error: "caducada" as const };
+
+  // Copias pedidas por id (un playset entrega el mismo id varias veces).
+  const porId = new Map<string, number>();
+  for (const id of cardIds) porId.set(id, (porId.get(id) ?? 0) + 1);
+  const ids = Array.from(porId.keys());
+  const cantidades = ids.map((id) => porId.get(id)!);
+
+  try {
+    await ensureSchema();
+
+    // La colección manda: si no la tienes, no la entregas.
+    const { rows } = await sql.query(
+      `SELECT ${COLUMNAS_MERCADO}, uc.quantity
+       FROM user_collection uc
+       JOIN cards c ON c.id = uc.card_id
+       WHERE uc.user_id = $1 AND uc.card_id = ANY($2::text[]) AND uc.quantity > 0`,
+      [userId, ids],
+    );
+    if (rows.length !== ids.length) return { ok: false as const, error: "posesion" as const };
+
+    // Se despliega el multiconjunto: una entrada por copia entregada, con los
+    // datos de la BD. A partir de aquí el payload del cliente ya no pinta nada.
+    const entregadas: CartaMercado[] = [];
+    for (const row of rows) {
+      const piden = porId.get(row.id) ?? 0;
+      if (Number(row.quantity) < piden) return { ok: false as const, error: "posesion" as const };
+      const carta = cartaDesdeFila(row, Number(row.quantity));
+      for (let i = 0; i < piden; i++) entregadas.push(carta);
+    }
+
+    if (!entregaValida(entregadas, oferta.requisitos)) {
+      return { ok: false as const, error: "requisitos" as const };
+    }
+
+    const valorLote = entregadas.reduce((total, c) => total + c.precio, 0);
+    const pago = pagoDelLote(oferta, valorLote);
+    if (!Number.isFinite(pago) || pago <= 0) return { ok: false as const, error: "pago" as const };
+
+    // Marca, abono y consumo en UNA sentencia:
+    //  - `bloqueo` toma un FOR UPDATE sobre las filas de la colección que se van
+    //    a gastar. Es lo que serializa DOS ENTREGAS DISTINTAS que comparten
+    //    carta. La PK de market_claims sólo impide repetir la MISMA oferta: sin
+    //    este bloqueo, dos pestañas cumpliendo ofertas DIFERENTES con las mismas
+    //    cartas leían ambas la misma instantánea, insertaban cada una su marca
+    //    (ids de oferta distintos, sin conflicto), cobraban las dos, y sólo la
+    //    primera descontaba —el guard `quantity >= cantidad` del consumo hace
+    //    que la segunda salte la fila—. Resultado: pagado dos veces, cartas
+    //    gastadas una. Con FOR UPDATE la segunda espera aquí y, al despertar,
+    //    lee la cantidad YA descontada, así que `suficiente` le sale falso.
+    //    El ORDER BY fija el orden de bloqueo y evita interbloqueos entre dos
+    //    entregas que compartan varias cartas en distinto orden.
+    //  - `suficiente` mira, sobre esas filas bloqueadas, que ninguna carta se
+    //    quede corta; la marca sólo se inserta si el lote cuadra, para que un
+    //    intento fallido no queme la oferta.
+    //  - el abono depende de que la marca se insertara: si otra pestaña ya la
+    //    tenía, el ON CONFLICT no devuelve fila y aquí no se paga nada.
+    //  - el consumo depende del abono, así que las cartas nunca desaparecen sin
+    //    que el dinero haya entrado (el orden inverso podía cobrar el sobre y
+    //    dejar al jugador sin cartas si el abono no tocaba fila).
+    const { rows: resultado } = await sql.query(
+      `WITH entregas AS (
+         SELECT * FROM unnest($3::text[], $4::int[]) AS t(card_id, cantidad)
+       ),
+       bloqueo AS (
+         SELECT uc.card_id, uc.quantity
+         FROM user_collection uc
+         JOIN entregas e ON e.card_id = uc.card_id
+         WHERE uc.user_id = $1
+         ORDER BY uc.card_id
+         FOR UPDATE OF uc
+       ),
+       suficiente AS (
+         SELECT bool_and(b.card_id IS NOT NULL) AS ok
+         FROM entregas e
+         LEFT JOIN bloqueo b
+           ON b.card_id = e.card_id AND b.quantity >= e.cantidad
+       ),
+       marca AS (
+         INSERT INTO market_claims (user_id, ciclo, oferta_id, pago)
+         SELECT $1, $2, $5, $6
+         WHERE (SELECT ok FROM suficiente)
+           -- Sin fila en users el abono no tocaría nada y la marca dejaría la
+           -- oferta quemada sin haber pagado: mejor no marcarla siquiera.
+           AND EXISTS (SELECT 1 FROM users WHERE id = $1)
+         ON CONFLICT DO NOTHING
+         RETURNING 1
+       ),
+       abono AS (
+         UPDATE users SET coins = COALESCE(coins, 0) + $6
+         WHERE id = $1 AND EXISTS (SELECT 1 FROM marca)
+         RETURNING coins
+       ),
+       consumo AS (
+         UPDATE user_collection uc
+         SET quantity = uc.quantity - e.cantidad
+         FROM entregas e
+         WHERE uc.user_id = $1 AND uc.card_id = e.card_id AND uc.quantity >= e.cantidad
+           AND EXISTS (SELECT 1 FROM abono)
+         RETURNING 1
+       )
+       SELECT (SELECT coins FROM abono) AS coins,
+              (SELECT count(*) FROM consumo) AS consumidas`,
+      [userId, ciclo, ids, cantidades, oferta.id, pago],
+    );
+
+    const coins = resultado[0]?.coins;
+    if (coins === null || coins === undefined) {
+      // No se pagó: o la oferta ya estaba cobrada, o la colección cambió entre
+      // la lectura y la escritura (otra pestaña vendiendo las mismas cartas).
+      const { rows: yaEstaba } = await sql`
+        SELECT 1 FROM market_claims
+        WHERE user_id = ${userId} AND ciclo = ${ciclo} AND oferta_id = ${oferta.id}
+      `;
+      return {
+        ok: false as const,
+        error: (yaEstaba.length > 0 ? "repetida" : "posesion") as "repetida" | "posesion",
+      };
+    }
+
+    const consumidas = Number(resultado[0]?.consumidas ?? 0);
+    if (consumidas !== ids.length) {
+      // No debería pasar (el guard `suficiente` va en la misma instantánea):
+      // si pasa, alguien vendió una carta a la vez. Queda anotado.
+      console.error(
+        `mercado: entrega parcial usuario=${userId} oferta=${oferta.id} ${consumidas}/${ids.length}`,
+      );
+    }
+
+    revalidatePath("/");
+    revalidatePath("/collection");
+    revalidatePath("/mercado");
+    return {
+      ok: true as const,
+      pago,
+      valorLote,
+      coins: Number(coins),
+      entregadas: cardIds.length,
+    };
+  } catch (e) {
+    console.error("cumplirOferta error:", e);
+    return { ok: false as const, error: "servidor" as const };
   }
 }

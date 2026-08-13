@@ -39,6 +39,11 @@ interface RawCard {
   attacks?: unknown[];
   weaknesses?: unknown[];
   retreatCost?: unknown[];
+  // Los usa el mercado (filtros de etapa, línea evolutiva y región). Están en
+  // los JSON desde siempre; sólo faltaba servirlos.
+  subtypes?: unknown[];
+  evolvesFrom?: string;
+  nationalPokedexNumbers?: number[];
 }
 
 let setsCache: unknown[] | null = null;
@@ -119,6 +124,11 @@ export async function loadLocalCards(setId: string) {
         weaknesses: card.weaknesses ?? [],
         retreatCost: card.retreatCost ?? [],
         supertype: card.supertype,
+        // Mismo trío que sirve la BD (services/pokemon.ts): sin ellos el
+        // respaldo local dejaría el mercado ciego a etapa, evolución y región.
+        subtypes: card.subtypes ?? [],
+        evolvesFrom: card.evolvesFrom,
+        nationalPokedexNumbers: card.nationalPokedexNumbers ?? [],
       }))
       .sort((a, b) => {
         const na = Number(a.number);

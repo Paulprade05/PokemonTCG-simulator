@@ -28,6 +28,13 @@ export async function getCardsFromSet(setId: string) {
     // La base de datos devuelve snake_case (set_id), pero tu app usa camelCase (setId).
     // Además, hay que convertir los strings JSON de vuelta a objetos.
     const parseJson = (v: any) => (typeof v === 'string' ? JSON.parse(v) : v);
+    // Las columnas JSONB guardan `null` cuando la carta no traía el dato (la
+    // ingesta escribe JSON.stringify(v ?? null)). Quien consume estas listas las
+    // recorre con .some()/.map(), así que un null reventaría: se normaliza a [].
+    const parseArray = (v: unknown): unknown[] => {
+      const parsed = parseJson(v);
+      return Array.isArray(parsed) ? parsed : [];
+    };
     return rows.map((row: any) => ({
       id: row.id,
       name: row.name,
@@ -39,11 +46,18 @@ export async function getCardsFromSet(setId: string) {
       artist: row.artist,
       flavorText: row.flavor_text,
       hp: row.hp,
-      types: parseJson(row.types || '[]'),
-      attacks: parseJson(row.attacks || '[]'),
-      weaknesses: parseJson(row.weaknesses || '[]'),
-      retreatCost: parseJson(row.retreat_cost || '[]'),
+      types: parseArray(row.types),
+      attacks: parseArray(row.attacks),
+      weaknesses: parseArray(row.weaknesses),
+      retreatCost: parseArray(row.retreat_cost),
       supertype: row.supertype,
+      // Estos tres los escribe la ingesta (columnas subtypes, evolves_from y
+      // national_pokedex_numbers) pero el mapeo los descartaba. Sin ellos los
+      // filtros del mercado de "etapa", "evolucion" y "pokedex" no casan con
+      // ninguna carta: la oferta se vuelve imposible sin decir por qué.
+      subtypes: parseArray(row.subtypes),
+      evolvesFrom: row.evolves_from ?? undefined,
+      nationalPokedexNumbers: parseArray(row.national_pokedex_numbers),
     }));
 
   } catch (error) {

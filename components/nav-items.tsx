@@ -28,6 +28,14 @@ export const NAV_ITEMS: NavItem[] = [
     icon: I(<><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>),
   },
   {
+    href: "/mercado",
+    label: "Mercado",
+    // Sin requireAuth a propósito: el invitado puede mirar el tablón (la propia
+    // pantalla le explica que para cobrar necesita sesión).
+    match: (p) => p.startsWith("/mercado"),
+    icon: I(<><path d="M3 9h18l-1.5 10.5a2 2 0 0 1-2 1.5H6.5a2 2 0 0 1-2-1.5z" /><path d="M8 9V6a4 4 0 0 1 8 0v3" /></>),
+  },
+  {
     href: "/friends",
     label: "Social",
     requireAuth: true,
