@@ -83,29 +83,18 @@ const V_APARTA = [0, 0.074, 0.083, 0.088, 0.09];
 const V_GIRO = [0, -0.7, -1.1, -1.3, -1.4];
 const V_OPACIDAD = [1, 0.5, 0.2, 0.06, 0];
 
-/** ABANICO: el mazo abierto bajo el dedo. `sep` es la tira visible de cada
- *  carta (0.060·W = 18,5px con W=307,5: borde entero y un dedo de arte —
- *  insinúa el botín, no lo revela). */
-const ABANICO = {
-  escala: 0.46,
-  sep: 0.06,
-  arco: 0.045,
-  giro: 2.4, // grados por carta de separación al centro del mazo
-  realce: 1.15,
-  alza: 0.05,
-};
-
 /**
- * Fracción del ancho de la carta que se ve de cada una con el abanico abierto.
+ * Escalón de la escalera, en PÍXELES y no en fracción del ancho: lo que se
+ * pide es ver "literalmente unos 10 píxeles del borde", y eso no debe encoger
+ * ni crecer con el tamaño de la carta.
  *
- * 12% es el canto: el marco lateral y el primer dedo de ilustración. Basta para
- * distinguir un full art (el arte sangra hasta el borde) o un dorado del marco
- * amarillo de una común, y no llega ni de lejos al nombre, que empieza pasado
- * el 15% y se lee entre el 20% y el 60%. Es la diferencia entre "creo que hay
- * algo bueno ahí" y "sé exactamente qué me ha tocado": lo primero invita a
- * seguir pasando cartas, lo segundo se lo carga.
+ * 10px es el canto puro: el filo del marco y, en un full art o una dorada, el
+ * arte o el metalizado sangrando hasta el borde. Suficiente para saber que ahí
+ * hay algo especial; imposible para saber qué carta es.
  */
-const CANTO_VISIBLE = 0.12;
+const PASO_PX = 10;
+/** Componente vertical del escalón: da la diagonal del mazo en la mano. */
+const PASO_ALTO_PX = 7;
 
 /* ---------------------------- GESTO ------------------------------- */
 /** Un roce no mueve la selección. */
@@ -167,16 +156,31 @@ function reposo(j: number, p: number, W: number, apilado: boolean): Pose {
 
 /** Mazo abierto: las diez repartidas en arco, centradas en el MAZO (no en la
  *  selección) para que el abanico no se descuelgue a un lado al pasar cartas. */
-function abanico(j: number, p: number, W: number, n: number): Pose {
-  const uMax = (n - 1) / 2 || 1;
-  const u = j - (n - 1) / 2;
-  // 1 en la seleccionada y 0 a una carta de distancia: sólo ella se realza.
-  const foco = Math.max(0, 1 - Math.abs(j - p));
+/**
+ * ESCALERA. Las cartas se escalonan en diagonal desde la seleccionada, como un
+ * mazo abierto en la mano: cada una asoma exactamente PASO_PX del canto de la
+ * de delante, y nada más.
+ *
+ * No hay giro ni cambio de escala: con las cartas en paralelo el escalón es
+ * constante y el ojo lee los cantos de un vistazo. En abanico, la rotación
+ * hacía que el trozo visible cambiara de grosor según la posición, que es
+ * justo lo que estorba para comparar.
+ *
+ * El solape hace todo el trabajo: la carta j queda tapada por la j-1 salvo su
+ * escalón, así que el canto visible es literalmente PASO_PX. Sólo la
+ * seleccionada se ve entera, que es la que estás mirando.
+ */
+function escalera(j: number, p: number): Pose {
+  const d = j - p;
   return {
-    x: W * ABANICO.sep * u,
-    y: W * (ABANICO.arco * (u / uMax) ** 2 - ABANICO.alza * foco),
-    g: ABANICO.giro * u,
-    s: ABANICO.escala * (1 + (ABANICO.realce - 1) * foco),
+    // A la derecha las que faltan, a la izquierda las ya vistas: la escalera
+    // atraviesa la seleccionada y da sensación de posición en el mazo.
+    x: PASO_PX * d,
+    // Sube al alejarse hacia delante y baja hacia atrás: la diagonal de un
+    // mazo apoyado en la mano.
+    y: -PASO_ALTO_PX * d,
+    g: 0,
+    s: 1,
     o: 1,
   };
 }
@@ -284,25 +288,19 @@ export default function MazoCartas({
         const r = reposo(j, p, W, apilado);
         let { x, y, g, s, o } = r;
         if (v > 0) {
-          const a = abanico(j, p, W, n);
+          const a = escalera(j, p);
           x = r.x + (a.x - r.x) * v;
           y = r.y + (a.y - r.y) * v;
           g = r.g + (a.g - r.g) * v;
           s = r.s + (a.s - r.s) * v;
-          // La opacidad sólo sube: el abanico enseña TODAS las ranuras.
+          // La opacidad sólo sube: la escalera enseña TODAS las ranuras.
           o = r.o + (1 - r.o) * v;
         }
-        // EN ABANICO SÓLO SE VE EL CANTO. Sin recorte, la carta del extremo
-        // derecho no la tapa ninguna y se leía entera —nombre incluido—, que
-        // es justo lo que no se quiere: el abanico sirve para saber si asoma
-        // un full art o algo dorado, no para saber QUÉ carta es. El recorte se
-        // interpola con el propio abanico (v), así que al cerrar vuelve sola a
-        // la carta completa sin ningún salto.
-        const cantoPct = CANTO_VISIBLE * 100;
-        el.style.clipPath =
-          v > 0.001
-            ? `inset(0 ${(100 - (cantoPct + (100 - cantoPct) * (1 - v))).toFixed(2)}% 0 0)`
-            : "";
+        // Sin recorte: en escalera el solape ya deja a la vista exactamente el
+        // escalón (PASO_PX) de cada carta, y sólo la seleccionada —la que
+        // estás mirando— se ve entera. El clip-path que hacía falta con el
+        // abanico sobra aquí, y de paso se ahorra un contexto de apilado por
+        // ranura.
         el.style.transition = ms
           ? `transform ${ms}ms cubic-bezier(.16,1,.3,1), opacity ${ms}ms linear`
           : "none";
