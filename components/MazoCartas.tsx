@@ -95,6 +95,18 @@ const ABANICO = {
   alza: 0.05,
 };
 
+/**
+ * Fracción del ancho de la carta que se ve de cada una con el abanico abierto.
+ *
+ * 12% es el canto: el marco lateral y el primer dedo de ilustración. Basta para
+ * distinguir un full art (el arte sangra hasta el borde) o un dorado del marco
+ * amarillo de una común, y no llega ni de lejos al nombre, que empieza pasado
+ * el 15% y se lee entre el 20% y el 60%. Es la diferencia entre "creo que hay
+ * algo bueno ahí" y "sé exactamente qué me ha tocado": lo primero invita a
+ * seguir pasando cartas, lo segundo se lo carga.
+ */
+const CANTO_VISIBLE = 0.12;
+
 /* ---------------------------- GESTO ------------------------------- */
 /** Un roce no mueve la selección. */
 const F_ZONA_MUERTA = 0.075;
@@ -280,6 +292,17 @@ export default function MazoCartas({
           // La opacidad sólo sube: el abanico enseña TODAS las ranuras.
           o = r.o + (1 - r.o) * v;
         }
+        // EN ABANICO SÓLO SE VE EL CANTO. Sin recorte, la carta del extremo
+        // derecho no la tapa ninguna y se leía entera —nombre incluido—, que
+        // es justo lo que no se quiere: el abanico sirve para saber si asoma
+        // un full art o algo dorado, no para saber QUÉ carta es. El recorte se
+        // interpola con el propio abanico (v), así que al cerrar vuelve sola a
+        // la carta completa sin ningún salto.
+        const cantoPct = CANTO_VISIBLE * 100;
+        el.style.clipPath =
+          v > 0.001
+            ? `inset(0 ${(100 - (cantoPct + (100 - cantoPct) * (1 - v))).toFixed(2)}% 0 0)`
+            : "";
         el.style.transition = ms
           ? `transform ${ms}ms cubic-bezier(.16,1,.3,1), opacity ${ms}ms linear`
           : "none";
