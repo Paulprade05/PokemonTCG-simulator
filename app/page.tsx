@@ -28,7 +28,8 @@ import { leerAjustes, guardarAjustes, suscribirseAjustes } from "../utils/settin
 import { useToast } from "../components/ui/Toast";
 import { useImmersive } from "../components/AppShell";
 import PokemonCard from "../components/PokemonCard";
-import BoosterPack, { type FaseSobre } from "../components/BoosterPack";
+import MazoCartas from "../components/MazoCartas";
+import BoosterPack, { semillaDeSobre, type FaseSobre } from "../components/BoosterPack";
 import { formatNumber } from "../utils/format";
 import Portal from "../components/ui/Portal";
 
@@ -92,45 +93,6 @@ const rankOf = (rarity?: string): number => {
   return 0;
 };
 
-const cardVariants = {
-  // dir === 0: la primera carta EMERGE de la boca del sobre. SIN fade a
-  // propósito: la oclusión la pone el sobre (su capa va a z-50, la carta a
-  // z-40) y un fundido delataría el truco — la carta ya estaba dentro.
-  // Arranca ALINEADA con el sobre (y:0, oculta del todo tras él): si naciera
-  // desplazada hacia abajo, su parte baja asomaría por DEBAJO del sobre en el
-  // primer fotograma — justo el "aparece de la nada" que se quiere matar.
-  enter: (dir: number) =>
-    dir === 0
-      ? { x: 0, y: 0, opacity: 1, rotate: 0, rotateY: 0, scale: 0.97 }
-      : {
-          // Desde el ancho completo de la carta y con un vuelco sutil (rotate
-          // 2D), además del giro de canto que ya traía.
-          x: dir > 0 ? "100%" : "-100%",
-          y: 0,
-          opacity: 0,
-          rotate: dir * -2,
-          rotateY: dir > 0 ? 60 : -60,
-          scale: 0.92,
-        },
-  // `y: 0` (y `rotate: 0`) son obligatorios: framer sólo anima las claves
-  // presentes en el destino, y sin ellos la carta se quedaría baja o torcida.
-  // Para la primera carta el destino son FOTOGRAMAS: sube 90px por la boca
-  // (la única salida visible, el sobre tapa el resto) y se asienta de vuelta
-  // al centro mientras el cuerpo del sobre cae por detrás.
-  center: (dir: number) =>
-    dir === 0
-      ? { x: 0, y: [0, -90, 0], opacity: 1, rotate: 0, rotateY: 0, scale: [0.97, 0.99, 1] }
-      : { x: 0, y: 0, opacity: 1, rotate: 0, rotateY: 0, scale: 1 },
-  exit: (dir: number) => ({
-    x: dir > 0 ? -120 : 120,
-    y: 0,
-    opacity: 0,
-    rotate: dir * 2,
-    rotateY: dir > 0 ? -60 : 60,
-    scale: 0.94,
-  }),
-};
-
 export default function Home() {
   const { coins, setCoins, spendCoins, addCoins } = useCurrency();
   const { isSignedIn, isLoaded } = useUser();
@@ -163,6 +125,12 @@ export default function Home() {
   const [packSaveFailed, setPackSaveFailed] = useState(false);
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
   const [openSeries, setOpenSeries] = useState<Record<string, boolean>>({});
+  /**
+   * Sentido del último avance: +1 adelante, -1 atrás y 0 "la primera carta sale
+   * del sobre". Con el mazo persistente ya no hay entradas ni salidas laterales
+   * que orientar, así que su único consumidor es `emerge`: el 0 es lo que le
+   * dice al mazo que tiene que hacer la coreografía de emergencia.
+   */
   const [direction, setDirection] = useState(1);
   /** Hay una acción de servidor en vuelo (compra o guardado): botones apagados. */
   const [busy, setBusy] = useState(false);
@@ -178,6 +146,12 @@ export default function Home() {
    * hacia el lado por el que se arrastró.
    */
   const [tearDir, setTearDir] = useState(1);
+  /**
+   * Sorteo del envoltorio de ESTE sobre (pliegues, reflejos, sombras). Se fija
+   * al comprar y no se vuelve a tocar: el sobre no puede cambiar de arrugas a
+   * mitad del rasgado.
+   */
+  const [semillaSobre, setSemillaSobre] = useState(0);
   /**
    * Índice cuya llegada merece fanfarria (destello y confeti). Es estado
    * explícito y no `packIndex === maxRevealed - 1`: con la comparación, ir
@@ -224,6 +198,13 @@ export default function Home() {
   const anunciadoRef = useRef(-1);
   /** Elemento que captura los gestos de la carta durante la apertura. */
   const cardGestureRef = useRef<HTMLDivElement>(null);
+  /**
+   * Buzón del ref "acabo de arrastrar": el hook de gestos vive ahora en
+   * MazoCartas (es él quien mueve las ranuras), pero el onClick de la zona
+   * sigue siendo de la página y necesita consultarlo para ignorar el click
+   * sintético que el navegador emite tras un arrastre.
+   */
+  const gestoMazoRef = useRef<React.RefObject<boolean> | null>(null);
   /** Sobre sellado completo (para el atajo de teclado de la vista). */
   const sobreRef = useRef<HTMLDivElement>(null);
   /** Sobre entero: escucha el arrastre de rasgado (ver sobreRef abajo). */
@@ -232,6 +213,10 @@ export default function Home() {
   /** La tira ya se rasgó: evita disparos dobles entre gesto, click y teclado. */
   const tornRef = useRef(false);
   const tearWidthRef = useRef(280);
+  /** Sobres abiertos en esta sesión: entra en la semilla del envoltorio para
+   *  que dos sobres seguidos del mismo set no salgan clavados. NO lo reinicia
+   *  resetPackState a propósito: "otro sobre" trae otro envoltorio. */
+  const aperturasRef = useRef(0);
   const tearHapticRef = useRef(0);
   const play = useSound();
   // Menos animación por preferencia del sistema: el aura a pantalla completa es
@@ -501,15 +486,15 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPackOpen, maxRevealed, packIndex, currentPack, isSignedIn, fase]);
 
-  // Precarga de las siguientes cartas: la variante grande ronda el medio mega y
-  // hasta ahora la descarga no empezaba hasta que la carta se montaba, así que
-  // cada avance enseñaba un rectángulo gris. Un colchón de dos basta; las diez
-  // de golpe serían ~5 MB para quien salga en la carta 2. El service worker ya
-  // cachea images.pokemontcg.io, así que no se descarga dos veces.
+  // Precarga de las dos siguientes. La ventana de alta resolución del mazo es
+  // ±1, pero la ranura +1 todavía enseña el DORSO (no se destapa hasta que se
+  // llega a ella), así que su imagen grande no está pedida: sin este colchón,
+  // el primer avance del sobre enseñaría medio segundo de rectángulo vacío.
+  // El service worker ya cachea images.pokemontcg.io: no se descarga dos veces.
   useEffect(() => {
     if (!isPackOpen) return;
-    for (const offset of [1, 2]) {
-      const url = currentPack[packIndex + offset]?.images?.large;
+    for (const salto of [1, 2]) {
+      const url = currentPack[packIndex + salto]?.images?.large;
       if (url) new Image().src = url;
     }
   }, [isPackOpen, packIndex, currentPack]);
@@ -639,6 +624,7 @@ export default function Home() {
     setDirection(1);
     // El sobre entra sellado: hay que rasgar la tira para ver las cartas.
     limpiarTemporizadores();
+    setSemillaSobre(semillaDeSobre(selectedSet, aperturasRef.current++));
     setFase("sellado");
     tornRef.current = false;
     vistasRef.current = 0;
@@ -863,6 +849,18 @@ export default function Home() {
   };
 
   /**
+   * Salto a una carta concreta: lo pide el mazo al soltar el arrastre, que ya
+   * ha decidido el destino (y ya ha escrito el cierre del abanico hacia él).
+   * El tope lo garantiza el propio mazo: nunca pasa de maxRevealed.
+   */
+  const handleIrACarta = (destino: number) => {
+    if (fase !== "cartas") return;
+    if (destino === packIndex) return;
+    setDirection(destino > packIndex ? 1 : -1);
+    setPackIndex(destino);
+  };
+
+  /**
    * LLEGADA DE CARTA. Sustituye a la rama de volteo: sin volteo, el momento que
    * se celebra es que la carta ATERRICE. Concentrarlo aquí evita repetir el
    * mismo bloque en el toque, el gesto, la tecla y el botón.
@@ -918,23 +916,9 @@ export default function Home() {
 
   const handleCardTap = () => {
     // Tras un deslizamiento el navegador emite un click sintético: se ignora.
-    if (didSwipeRef.current) return;
+    if (gestoMazoRef.current?.current) return;
     handleNextCard();
   };
-
-  // Gestos de la carta: izquierda y derecha para pasar. El giro acompaña al
-  // arrastre para dar tacto de carta física. No hay gesto vertical a propósito:
-  // un flick en diagonal terminaba el sobre sin aviso ni vuelta atrás; sin
-  // manejador, useSwipe le aplica resistencia y la carta vuelve a su sitio.
-  // enabled depende también de la fase: la carta no existe hasta rasgar el
-  // sobre, y el hook sólo engancha los listeners cuando enabled cambia.
-  const didSwipeRef = useSwipe(cardGestureRef, {
-    axis: "both",
-    rotate: 6,
-    enabled: isPackOpen && fase === "cartas",
-    onSwipeLeft: () => handleNextCard(),
-    onSwipeRight: packIndex > 0 ? () => handlePrevCard() : undefined,
-  });
 
   /**
    * Rasga el sobre y da paso a las cartas. Lo disparan el arrastre de la tira,
@@ -1016,6 +1000,11 @@ export default function Home() {
     // Sin esta línea, la llegada trataría la última carta como recién vista y
     // le montaría la fanfarria: revelar todo nunca ha celebrado nada.
     vistasRef.current = currentPack.length;
+    // Único salto que se salta la ventana de alta resolución del mazo (±1): la
+    // última ranura pasa de pequeña a frontal de golpe. Se pide su imagen
+    // grande ya para que no enseñe un fotograma de imagen escalada.
+    const u = currentPack[lastIndex]?.images?.large;
+    if (u) new Image().src = u;
     setPackIndex(lastIndex);
   };
 
@@ -1638,15 +1627,18 @@ export default function Home() {
                 nombreSet={currentSetObj?.name}
                 cartas={currentPack.length}
                 gestoRef={tearSwipeRef}
+                semilla={semillaSobre}
                 onRasgar={rasgarSobre}
               />
             )}
 
             {cartasVisibles && (
             <>
-            {/* El gesto va con useSwipe (eventos de puntero) y no con el drag
-                de framer: así el arrastre se pinta escribiendo el transform,
-                sin re-render por movimiento, y sigue el dedo con fidelidad. */}
+            {/* ZONA DE GESTO. Sigue siendo de la página (foco, rol de botón,
+                Enter y el relevo de foco al rasgar), pero quien escucha el
+                arrastre es el mazo: useSwipe se engancha aquí desde
+                MazoCartas y mueve las ranuras escribiendo transforms, sin un
+                solo re-render por movimiento. */}
             <div
               ref={cardGestureRef}
               onClick={handleCardTap}
@@ -1671,42 +1663,32 @@ export default function Home() {
                 touchAction: touchActionFor("both"),
               }}
             >
-              {/* la perspectiva va en el padre directo de la carta animada */}
-              <div className="relative w-full aspect-[2.5/3.5] perspective-1000">
-                {/* Sin mode="wait": las dos cartas son absolute inset-0 dentro
-                    de este padre, así que se cruzan sin descolocar nada y se
-                    ahorra el medio segundo de zona vacía entre carta y carta. */}
-                <AnimatePresence custom={direction}>
-                  <motion.div
-                    key={packIndex}
-                    custom={direction}
-                    variants={cardVariants}
-                    initial={efectosApagados ? false : "enter"}
-                    animate="center"
-                    exit="exit"
-                    // La primera (direction 0) EMERGE del sobre en dos
-                    // tiempos: sube por la boca (420→805ms desde el rasgado)
-                    // y se asienta (805→1120ms) mientras el cuerpo cae detrás
-                    // (620-1100ms). Los relevos entre cartas siguen secos.
-                    transition={
-                      direction === 0
-                        ? {
-                            duration: 0.7,
-                            times: [0, 0.55, 1],
-                            ease: ["easeOut", "easeInOut"],
-                          }
-                        : { duration: 0.26, ease: [0.16, 1, 0.3, 1] }
-                    }
-                    className="absolute inset-0"
-                  >
-                    {/* reveal siempre: las cartas salen de cara. Además nacen
-                        fuera del contexto 3D (ver PokemonCard), así que se
-                        pintan a resolución nativa desde el primer fotograma. */}
-                    <PokemonCard card={currentCard} reveal={true} useHighRes={true} />
-                  </motion.div>
-                </AnimatePresence>
-                {/* La insignia va fuera del bloque animado: con las cartas
-                    solapándose se verían dos a la vez durante el relevo. */}
+              {/* MAZO: las diez ranuras montadas de una vez. Cambiar de carta
+                  sólo mueve transforms (nada monta ni desmonta) y arrastrar
+                  abre el abanico bajo el dedo. La coreografía de emergencia de
+                  la primera carta la hace ahora el MARCO del mazo, con los
+                  mismos fotogramas: sube por la boca y se asienta mientras el
+                  cuerpo del sobre cae por detrás. Sin perspective: un contexto
+                  3D con diez cartas dentro las rasterizaría todas. */}
+              <div className="relative w-full aspect-[2.5/3.5]">
+                <MazoCartas
+                  cartas={currentPack}
+                  indice={packIndex}
+                  maxRevealed={maxRevealed}
+                  emerge={direction === 0}
+                  // La pila nace maciza y se abre cuando la primera carta ya se
+                  // asentó (T_FANFARRIA, que es cuando aparece fanfarriaEn) o
+                  // en cuanto mandan los gestos: ese medio segundo de "respiro"
+                  // es lo que hace descubrible el abanico sin un solo cartel.
+                  desplegado={fase === "cartas" || fanfarriaEn !== null}
+                  efectosApagados={efectosApagados}
+                  habilitado={isPackOpen && fase === "cartas"}
+                  zonaRef={cardGestureRef}
+                  gestoRef={gestoMazoRef}
+                  onSeleccionar={handleIrACarta}
+                />
+                {/* La insignia va fuera del mazo: es de la carta actual, no de
+                    la ranura, y dentro se movería con el abanico. */}
                 {newCardIndexes.has(packIndex) && cartasVisibles && (
                   <motion.div
                     key={`nueva-${packIndex}`}
@@ -1730,17 +1712,22 @@ export default function Home() {
               </div>
 
               {/* DESTELLO en cartas de rango alto: un barrido de luz que cruza
-                  la carta al llegar. Es una capa HERMANA del contenedor 3D,
-                  con transform y opacidad a secas: cualquier filter aquí (o en
-                  un ancestro) rasterizaría la carta y saldría borrosa. Sólo en
-                  la carta recién llegada, no al volver a visitarla. */}
+                  la carta al llegar. Es una capa HERMANA del mazo, con
+                  transform y opacidad a secas: cualquier filter aquí (o en un
+                  ancestro) rasterizaría la carta y saldría borrosa. Sólo en la
+                  carta recién llegada, no al volver a visitarla.
+                  z-[45] y no z-30: al quitar el perspective del contenedor, el
+                  mazo dejó de crear contexto de apilado propio y sus ranuras
+                  (la frontal va a z-40) compiten aquí mismo — con z-30 el
+                  barrido pasaba POR DETRÁS de la carta y no se veía. Sigue por
+                  debajo del sobre (z-50), que está fuera de esta zona. */}
               {fanfarriaEn === packIndex &&
                 currentRank >= AURA_RANK &&
                 !efectosApagados && (
                 <div
                   key={`destello-${packIndex}`}
                   aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 z-30 overflow-hidden rounded-[4.5%]"
+                  className="pointer-events-none absolute inset-0 z-[45] overflow-hidden rounded-[4.5%]"
                 >
                   <motion.div
                     initial={{ x: "-130%", opacity: 0 }}

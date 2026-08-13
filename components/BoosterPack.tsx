@@ -1,10 +1,130 @@
 "use client";
 
-import type { RefObject } from "react";
+import { useMemo, type RefObject } from "react";
 import { touchActionFor } from "../hooks/useSwipe";
 import { formatNumber } from "../utils/format";
 
 export type FaseSobre = "sellado" | "rasgando" | "abriendo" | "cartas";
+
+/* ------------------------------------------------------------------ */
+/* ENVOLTORIO SORTEADO                                                 */
+/*                                                                     */
+/* Cada sobre trae sus propios pliegues, reflejos y sombras. El sorteo  */
+/* es DETERMINISTA a partir de una semilla y se calcula una sola vez    */
+/* (useMemo): BoosterPack se re-renderiza tres veces mientras está en   */
+/* pantalla (los setFase de la coreografía), y con Math.random() en el  */
+/* cuerpo los pliegues saltarían DURANTE el rasgado.                    */
+/*                                                                     */
+/* Lo de FÁBRICA no se sortea: crimpado, tira, banda y rayado           */
+/* lenticular son impresión, idénticos en todos los sobres. La          */
+/* variación sólo convence si hay una referencia regular contra la que  */
+/* compararla.                                                          */
+/* ------------------------------------------------------------------ */
+
+/** Mulberry32: un PRNG de 32 bits, sin estado global y reproducible. */
+function prngSobre(semilla: number) {
+  let a = semilla >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Semilla de un sobre concreto (FNV-1a sobre "set#apertura"). El número de
+ * apertura entra en la mezcla para que dos sobres seguidos del mismo set no
+ * salgan clavados: "otro sobre" trae otro envoltorio.
+ */
+export function semillaDeSobre(setId: string | null | undefined, apertura: number): number {
+  const s = `${setId ?? "?"}#${apertura}`;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/**
+ * Custom properties del envoltorio.
+ *
+ * La variable maestra es `--luz`: de dónde viene la luz (-1 izquierda, +1
+ * derecha). Manda sobre la inclinación de las arrugas, la posición de los dos
+ * reflejos, el peso de cada costura, el sentido del barrido y hacia dónde cae
+ * la sombra propia. Dos luces contradictorias es exactamente lo que delata un
+ * degradado como degradado.
+ */
+function derivarSobre(semilla: number): Record<string, string> {
+  const r = prngSobre(semilla);
+  const ent = (a: number, b: number) => a + r() * (b - a);
+  const luz = ent(-1, 1);
+
+  // Barrido: el ancho manda en el recorrido, para que el destello entre y
+  // salga del todo sea cual sea. Con --br-w 36% salen -150% y 420%, que es
+  // exactamente el recorrido de siempre.
+  const brW = ent(30, 42);
+  // Sentido del barrido: con la luz a la derecha, el reflejo cruza al revés.
+  const x0 = -5400 / brW;
+  const x1 = 15120 / brW;
+
+  const vars: Record<string, string> = {
+    "--luz": luz.toFixed(3),
+
+    // Arrugas casi verticales: 4 cuartos, una arruga suelta en cada uno.
+    "--pl-a1": `${(90 + luz * 5).toFixed(1)}deg`,
+    // Familia cruzada a mitad de fuerza: una transversal marcada leería a
+    // cartón, no a film.
+    "--pl-a2": `${ent(172, 188).toFixed(1)}deg`,
+
+    // Abolladura: el film hundido contra el taco de cartas.
+    "--dt-x": `${ent(30, 70).toFixed(1)}%`,
+    "--dt-y": `${ent(34, 66).toFixed(1)}%`,
+
+    // Reflejos. Elipses muy aplastadas (el alto es un tercio del ancho): el
+    // metalizado estira el reflejo a lo largo del rayado. Círculos = juguete.
+    "--gl1-x": `${(50 + luz * 26).toFixed(1)}%`,
+    "--gl1-y": `${ent(16, 34).toFixed(1)}%`,
+    "--gl1-w": `${ent(28, 44).toFixed(1)}%`,
+    "--gl1-h": `${ent(8, 15).toFixed(1)}%`,
+    "--gl1-a": ent(0.1, 0.2).toFixed(3),
+    "--gl2-x": `${(50 - luz * 20).toFixed(1)}%`,
+    "--gl2-y": `${ent(58, 80).toFixed(1)}%`,
+    "--gl2-w": `${ent(20, 34).toFixed(1)}%`,
+    "--gl2-h": `${ent(6, 12).toFixed(1)}%`,
+    "--gl2-a": ent(0.06, 0.13).toFixed(3),
+
+    // Costuras laterales: pesa más la que queda a contraluz.
+    "--sm-izq": (0.38 + luz * 0.12).toFixed(3),
+    "--sm-der": (0.38 - luz * 0.12).toFixed(3),
+
+    "--br-w": `${brW.toFixed(1)}%`,
+    "--br-rot": `${ent(6, 12).toFixed(1)}deg`,
+    "--br-dur": `${ent(4.6, 6.8).toFixed(2)}s`,
+    // Sin este desfase el destello caería siempre en el mismo instante desde
+    // que el sobre entra, que es lo que lo delata como bucle.
+    "--br-delay": `${ent(0, 2.2).toFixed(2)}s`,
+    "--br-x0": `${(luz >= 0 ? x0 : x1).toFixed(1)}%`,
+    "--br-x1": `${(luz >= 0 ? x1 : x0).toFixed(1)}%`,
+  };
+
+  // Cada arruga ocupa [x-4, x+5] y los cuartos son 10-21 / 31-42 / 52-63 /
+  // 73-84: el final máximo de una (26) queda por debajo del inicio mínimo de
+  // la siguiente (27), así que los stops nunca se cruzan.
+  for (let i = 0; i < 4; i++) {
+    vars[`--pl-x${i + 1}`] = `${(10 + i * 21 + r() * 11).toFixed(1)}%`;
+    vars[`--pl-v${i + 1}`] = ent(0.09, 0.2).toFixed(3);
+    vars[`--pl-b${i + 1}`] = ent(0.1, 0.24).toFixed(3);
+  }
+  for (let i = 0; i < 2; i++) {
+    vars[`--pl-y${i + 1}`] = `${(24 + i * 34 + r() * 14).toFixed(1)}%`;
+    vars[`--pl-w${i + 1}`] = ent(0.05, 0.12).toFixed(3);
+    vars[`--pl-z${i + 1}`] = ent(0.05, 0.14).toFixed(3);
+  }
+  return vars;
+}
 
 interface BoosterPackProps {
   fase: FaseSobre;
@@ -22,6 +142,8 @@ interface BoosterPackProps {
   cartas: number;
   /** true justo tras un arrastre: el click sintético que sigue no abre. */
   gestoRef: RefObject<boolean>;
+  /** Sorteo del envoltorio: pliegues, reflejos y sombras de ESTE sobre. */
+  semilla: number;
   onRasgar: () => void;
 }
 
@@ -69,9 +191,13 @@ const CSS = `
       color-mix(in srgb, var(--accent-2) 14%, var(--surface-2)) 80%,
       color-mix(in srgb, var(--ink) 18%, var(--surface-2)) 100%);
   box-shadow:
-    inset 12px 0 20px -14px rgba(0,0,0,.45),
-    inset -12px 0 20px -14px rgba(0,0,0,.45),
+    /* Las dos costuras pesan distinto según de dónde venga la luz. */
+    inset 12px 0 20px -14px rgba(0,0,0,var(--sm-izq,.45)),
+    inset -12px 0 20px -14px rgba(0,0,0,var(--sm-der,.45)),
     inset 0 1px 0 rgba(255,255,255,.22),
+    /* Sombra propia al lado CONTRARIO de la luz. El overflow:hidden de esta
+       misma regla recorta a sus hijos, nunca a su propia sombra exterior. */
+    calc(var(--luz,0) * -7px) 16px 26px -14px rgba(0,0,0,.42),
     var(--shadow-lg);
 }
 /* El cuerpo espera QUIETO a que la tira salga y la carta empiece a subir
@@ -82,21 +208,82 @@ const CSS = `
 .sobre[data-fase="rasgando"] .sobre__cuerpo,
 .sobre[data-fase="abriendo"] .sobre__cuerpo { animation: sobre-cuerpo-cae 480ms linear 620ms forwards; }
 
-/* Rayado lenticular: el arcoíris impreso del envoltorio. */
+/* Rayado lenticular: el arcoíris IMPRESO del envoltorio. No se sortea — es de
+   fábrica, igual que el crimpado. Cuatro bandas por periodo (tinta, veta de
+   acento, hueco y filo blanco) en vez de las dos rayitas grises de antes. */
 .sobre__rayas {
   position: absolute; inset: 0; pointer-events: none; opacity: .55;
   background: repeating-linear-gradient(102deg,
-    transparent 0 6px,
-    color-mix(in srgb, var(--ink) 6%, transparent) 6px 7px,
-    transparent 7px 13px,
-    rgba(255,255,255,.14) 13px 14px);
+    transparent 0 3px,
+    color-mix(in srgb, var(--ink) 7%, transparent) 3px 4px,
+    color-mix(in srgb, var(--accent-2) 24%, transparent) 4px 5px,
+    transparent 5px 6px,
+    rgba(255,255,255,.16) 6px 7px);
 }
-/* Barrido de reflejo. transform, no background-position: lo lleva el compositor. */
+/* PLIEGUES: cada arruga es un par valle (negro) + ceja (blanco) pegado a 1,2%
+   del valle — un pliegue real es una sombra con un filo iluminado al lado, no
+   una raya oscura. Los valles van en rgba(0,0,0,…) y NO en var(--ink): en
+   oscuro --ink es marfil y el valle saldría claro. Una sombra es negra en los
+   dos temas; lo único que cambia es cuánta cabe, y de eso se encarga el
+   opacity de abajo.
+   Escala: con W≈300 el sobre mide 279×419, así que 1% horizontal ≈ 2,8px —
+   un valle de 0,5% son 1,4px y una ceja de 1,2% son 3,4px. */
+.sobre__pliegues {
+  position: absolute; inset: 0; pointer-events: none; opacity: .46;
+  background:
+    linear-gradient(var(--pl-a1,90deg),
+      transparent calc(var(--pl-x1,16%) - 4%),
+      rgba(0,0,0,var(--pl-v1,.14)) var(--pl-x1,16%),
+      rgba(255,255,255,var(--pl-b1,.16)) calc(var(--pl-x1,16%) + 1.2%),
+      transparent calc(var(--pl-x1,16%) + 5%),
+      transparent calc(var(--pl-x2,37%) - 4%),
+      rgba(0,0,0,var(--pl-v2,.14)) var(--pl-x2,37%),
+      rgba(255,255,255,var(--pl-b2,.16)) calc(var(--pl-x2,37%) + 1.2%),
+      transparent calc(var(--pl-x2,37%) + 5%),
+      transparent calc(var(--pl-x3,58%) - 4%),
+      rgba(0,0,0,var(--pl-v3,.14)) var(--pl-x3,58%),
+      rgba(255,255,255,var(--pl-b3,.16)) calc(var(--pl-x3,58%) + 1.2%),
+      transparent calc(var(--pl-x3,58%) + 5%),
+      transparent calc(var(--pl-x4,79%) - 4%),
+      rgba(0,0,0,var(--pl-v4,.14)) var(--pl-x4,79%),
+      rgba(255,255,255,var(--pl-b4,.16)) calc(var(--pl-x4,79%) + 1.2%),
+      transparent calc(var(--pl-x4,79%) + 5%)),
+    linear-gradient(var(--pl-a2,180deg),
+      transparent calc(var(--pl-y1,30%) - 5%),
+      rgba(0,0,0,var(--pl-w1,.08)) var(--pl-y1,30%),
+      rgba(255,255,255,var(--pl-z1,.09)) calc(var(--pl-y1,30%) + 1.2%),
+      transparent calc(var(--pl-y1,30%) + 6%),
+      transparent calc(var(--pl-y2,64%) - 5%),
+      rgba(0,0,0,var(--pl-w2,.08)) var(--pl-y2,64%),
+      rgba(255,255,255,var(--pl-z2,.09)) calc(var(--pl-y2,64%) + 1.2%),
+      transparent calc(var(--pl-y2,64%) + 6%)),
+    radial-gradient(58% 34% at var(--dt-x,50%) var(--dt-y,50%), rgba(0,0,0,.15), transparent 72%);
+}
+html[data-theme="dark"] .sobre__pliegues { opacity: .66; }
+/* REFLEJOS: capa PROPIA y por ENCIMA del rayado. Meterlos en el background del
+   cuerpo los dejaría DEBAJO de la impresión, que es al revés de como funciona
+   un envoltorio: la tinta va bajo el film y el reflejo, sobre él. Y aparte de
+   los pliegues, porque su opacity por tema los dejaría en nada. */
+.sobre__luces {
+  position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(var(--gl1-w,36%) var(--gl1-h,11%) at var(--gl1-x,50%) var(--gl1-y,24%),
+      rgba(255,255,255,var(--gl1-a,.15)), transparent 70%),
+    radial-gradient(var(--gl2-w,26%) var(--gl2-h,9%) at var(--gl2-x,50%) var(--gl2-y,70%),
+      rgba(255,255,255,var(--gl2-a,.09)), transparent 72%);
+}
+/* Barrido de reflejo. transform, no background-position: lo lleva el
+   compositor. Dos crestas y no una: un reflejo real sobre film metalizado
+   rebota dos veces (el filo y el cuerpo del pliegue). */
 .sobre__brillo {
-  position: absolute; top: -25%; bottom: -25%; left: 0; width: 36%; pointer-events: none;
-  background: linear-gradient(100deg, transparent 0%, rgba(255,255,255,.12) 42%,
-    rgba(255,255,255,.26) 50%, rgba(255,255,255,.12) 58%, transparent 100%);
-  animation: sobre-brillo 5.5s cubic-bezier(.45,0,.2,1) infinite;
+  position: absolute; top: -25%; bottom: -25%; left: 0; width: var(--br-w,36%); pointer-events: none;
+  background: linear-gradient(100deg, transparent 0%,
+    rgba(255,255,255,.09) 30%,
+    rgba(255,255,255,.30) 46%,
+    rgba(255,255,255,.07) 53%,
+    rgba(255,255,255,.20) 61%,
+    transparent 100%);
+  animation: sobre-brillo var(--br-dur,5.5s) cubic-bezier(.45,0,.2,1) var(--br-delay,0s) infinite;
 }
 /* Interior del sobre, a la vista en cuanto la tira empieza a despegarse. */
 .sobre__boca {
@@ -147,7 +334,13 @@ const CSS = `
 
 @keyframes sobre-entra  { from { opacity:0; transform: translate3d(0,16px,0) scale(.94); } to { opacity:1; transform:none; } }
 @keyframes sobre-flota  { 0%,100% { transform: translate3d(0,0,0); } 50% { transform: translate3d(0,-5px,0); } }
-@keyframes sobre-brillo { 0% { transform: translate3d(-150%,0,0) rotate(9deg); } 55%,100% { transform: translate3d(420%,0,0) rotate(9deg); } }
+/* El recorrido sale del ancho de la tira (--br-x0/x1 ya vienen calculados):
+   entra y sale del sobre por completo sea cual sea el ancho sorteado, y con
+   la luz a la derecha cruza en sentido contrario. */
+@keyframes sobre-brillo {
+  0%       { transform: translate3d(var(--br-x0,-150%),0,0) rotate(var(--br-rot,9deg)); }
+  55%,100% { transform: translate3d(var(--br-x1,420%),0,0) rotate(var(--br-rot,9deg)); }
+}
 
 /* El "peso" va en la POSICIÓN de los fotogramas, no en curvas por tramo: con
    linear el arco sale idéntico en todos los motores. Sube corto (el impulso
@@ -192,8 +385,12 @@ export default function BoosterPack({
   nombreSet,
   cartas,
   gestoRef,
+  semilla,
   onRasgar,
 }: BoosterPackProps) {
+  // Una sola vez por sobre: durante el rasgado hay tres re-renders (setFase) y
+  // los pliegues no pueden re-sortearse a mitad de la coreografía.
+  const film = useMemo(() => derivarSobre(semilla), [semilla]);
   return (
     <div
       // z-50 SIEMPRE (la carta va a z-40): durante la emergencia el sobre
@@ -238,6 +435,9 @@ export default function BoosterPack({
         data-fase={fase}
         data-quieto={efectosApagados ? "si" : undefined}
         style={{
+          // El sorteo va PRIMERO: son custom properties que heredan todas las
+          // capas del sobre, nunca propiedades de caja.
+          ...film,
           // 0.93 con 2.5/3.76 da 1.399·W de alto = el alto exacto de la carta:
           // el sobre ocupa su misma ranura y la carta sale del mismo hueco.
           width: `calc(${anchoCarta} * 0.93)`,
@@ -250,6 +450,11 @@ export default function BoosterPack({
         {/* CUERPO — aquí vive el overflow-hidden, no en .sobre */}
         <div className="sobre__cuerpo">
           <div className="sobre__rayas" aria-hidden="true" />
+          {/* Pliegues y reflejos NO se mueven: reducir efectos no es reducir
+              detalle, así que se pintan también con efectosApagados. Se
+              rasterizan una vez al montar y no cuestan nada después. */}
+          <div className="sobre__pliegues" aria-hidden="true" />
+          <div className="sobre__luces" aria-hidden="true" />
           {!efectosApagados && <div className="sobre__brillo" aria-hidden="true" />}
           {/* Boca: el interior que queda a la vista al despegarse la tira.
               Pintada siempre; mientras arrastras se va destapando por el borde. */}

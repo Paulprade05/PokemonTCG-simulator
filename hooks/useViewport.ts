@@ -42,6 +42,13 @@ export function useViewport(): ViewportState {
       if (vv && vv.scale > 1.01) return;
 
       const height = vv ? vv.height : window.innerHeight;
+      // --app-height es la unidad de la que cuelga TODO el layout: los paneles,
+      // los topes de las hojas y CARD_WIDTH. Una lectura transitoria de 0 (o
+      // absurda) del visualViewport la propagaba tal cual y colapsaba la
+      // interfaz entera a tamaño cero, sin forma de recuperarse hasta el
+      // siguiente evento. Ante una medida imposible se conserva la anterior.
+      if (!Number.isFinite(height) || height < 120) return;
+
       const rawKeyboard = vv
         ? window.innerHeight - vv.height - vv.offsetTop
         : 0;
