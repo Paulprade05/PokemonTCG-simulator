@@ -6,7 +6,7 @@ import { motion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
 import { cumplirOferta, getCartasMercado, getMercado } from "../action";
 import {
-  TECHO_PRIMA,
+  copiasEntregables,
   cumpleFiltro,
   pagoDelLote,
   setDeCarta,
@@ -29,22 +29,19 @@ import Loader from "../../components/Loader";
  * ------------------------------------------------------------------ */
 
 interface CartaMercado extends CartaMinima {
-  /** Copias que tiene el jugador. */
+  /**
+   * Copias que tiene el jugador EN TOTAL. Las entregables son
+   * `copiasEntregables(cantidad)`, nunca `cantidad`: ver la nota de `repartir`.
+   */
   cantidad: number;
   /** SELL_PRICES de su rareza (lo calcula el servidor). */
   precio: number;
 }
 
-/** Una copia concreta apartada para un requisito. */
-interface Elegida {
-  carta: CartaMercado;
-  /** true si entregarla vacía esa carta del álbum. */
-  vacia: boolean;
-}
-
 interface ParteReparto {
   requisito: Requisito;
-  elegidas: Elegida[];
+  /** Copias apartadas para este requisito (una entrada por copia entregada). */
+  elegidas: CartaMercado[];
   /** Unidades conseguidas (tipos para el arcoíris, copias para el playset...). */
   progreso: number;
 }
@@ -53,9 +50,8 @@ interface Reparto {
   partes: ParteReparto[];
   completa: boolean;
   ids: string[];
+  /** Precio suelto del lote: lo que darían las cartas vendidas una a una. */
   valor: number;
-  /** Cartas que desaparecerían del álbum al entregar el lote. */
-  vaciadas: number;
 }
 
 /**
@@ -74,6 +70,8 @@ const PRIORIDAD: Record<Categoria, number> = {
   hp: 3,
   rareza: 3,
   supertipo: 3,
+  numero: 3,
+  inicial: 3,
   tipo: 4,
   set: 5,
 };
@@ -92,19 +90,31 @@ const comparar = (a: CartaMercado, b: CartaMercado) =>
   a.precio - b.precio || b.cantidad - a.cantidad || a.id.localeCompare(b.id);
 
 /**
- * Elige, para cada requisito, las cartas MÁS BARATAS que lo cumplen.
+ * Elige, para cada requisito, las cartas MÁS BARATAS que lo cumplen, contando
+ * SÓLO DUPLICADOS.
  *
- * POR QUÉ LO MÁS BARATO: el mercado paga multiplicador × precio de venta del
- * lote, con la prima topada. Entregar una Hyper Rare de 250 donde vale una
- * común de 2 no sube el cobro más que unas monedas y regala la carta buena.
+ * POR QUÉ SÓLO DUPLICADOS, Y POR QUÉ AQUÍ Y NO AL FINAL: el mercado sólo compra
+ * las copias que sobran, y el servidor exige tener `entregadas + 1` de cada
+ * carta. Si esta función repartiera sobre las copias POSEÍDAS y el filtro se
+ * aplicara después, el progreso diría "5/5", el botón se pondría verde y el
+ * cobro fallaría: el peor fallo posible en esta pantalla. Por eso el fondo
+ * común del que se reparte ya son los duplicados —`copiasEntregables`, la misma
+ * función que usa el servidor— y todo lo que sale de aquí (progreso, barra,
+ * lote, valor) está medido en duplicados por construcción.
+ *
+ * POR QUÉ LO MÁS BARATO: el pago es multiplicador × precio de venta del lote, y
+ * el multiplicador ya está fijado en la oferta. Entregar la carta cara que
+ * también cumple sube el cobro unas monedas y regala la carta buena; el
+ * requisito lleva banda de rareza, así que lo barato cumple igual.
  *
  * Esta propuesta es sólo eso, una propuesta: el servidor vuelve a comprobar
- * posesión y requisitos con los datos de la base de datos.
+ * posesión, duplicados y requisitos con los datos de la base de datos.
  */
 function repartir(oferta: Oferta, cartas: CartaMercado[]): Reparto {
-  // Copias sin apartar, por id. Una carta no puede valer para dos requisitos.
+  // Copias ENTREGABLES sin apartar, por id (la copia del álbum nunca entra en
+  // este fondo). Una carta no puede valer para dos requisitos.
   const libres = new Map<string, number>();
-  for (const c of cartas) libres.set(c.id, c.cantidad);
+  for (const c of cartas) libres.set(c.id, copiasEntregables(c.cantidad));
   const libre = (c: CartaMercado) => libres.get(c.id) ?? 0;
   const apartar = (c: CartaMercado, n = 1) => libres.set(c.id, libre(c) - n);
 
@@ -118,8 +128,26 @@ function repartir(oferta: Oferta, cartas: CartaMercado[]): Reparto {
 
   const porIndice = new Map<number, { elegidas: CartaMercado[]; progreso: number }>();
 
-  for (const { requisito: r, indice } of orden) {
-    const candidatas = cartas.filter((c) => libre(c) > 0 && sirve(c, r)).sort(comparar);
+  for (let k = 0; k < orden.length; k++) {
+    const { requisito: r, indice } = orden[k];
+    // Requisitos que aún no se han servido: las cartas que también les valen
+    // hay que gastarlas LO ÚLTIMO. Sin esto, "8 de tipo Fuego o Lucha" + "3 de
+    // Kalos" se rompía en cuanto las tres cartas de Kalos más baratas eran
+    // además de tipo Fuego: el requisito exigente se quedaba sin material que
+    // sólo él podía usar y la oferta se veía incompleta teniéndolo todo. Es el
+    // mismo criterio (`utilidadEnOtros`) con el que el servidor ordena sus
+    // opciones, y por eso las dos partes convergen en el mismo lote.
+    const pendientes = orden.slice(k + 1).map((x) => x.requisito);
+    // La utilidad se calcula una vez por carta y no dentro del comparador: el
+    // sort la pediría O(n log n) veces y cada una recorre los filtros.
+    const utilidad = new Map<string, number>();
+    const candidatas = cartas.filter((c) => libre(c) > 0 && sirve(c, r));
+    for (const c of candidatas) {
+      utilidad.set(c.id, pendientes.filter((p) => sirve(c, p)).length);
+    }
+    candidatas.sort(
+      (a, b) => (utilidad.get(a.id) ?? 0) - (utilidad.get(b.id) ?? 0) || comparar(a, b),
+    );
     let elegidas: CartaMercado[] = [];
     let progreso = 0;
 
@@ -180,23 +208,9 @@ function repartir(oferta: Oferta, cartas: CartaMercado[]): Reparto {
     porIndice.set(indice, { elegidas, progreso });
   }
 
-  // Cuántas copias se entregan de cada carta: sirve para avisar de las que
-  // desaparecen del álbum.
-  const entregadasPorId = new Map<string, number>();
-  for (const { elegidas } of porIndice.values()) {
-    for (const c of elegidas) entregadasPorId.set(c.id, (entregadasPorId.get(c.id) ?? 0) + 1);
-  }
-
   const partes: ParteReparto[] = oferta.requisitos.map((requisito, indice) => {
     const { elegidas, progreso } = porIndice.get(indice) ?? { elegidas: [], progreso: 0 };
-    return {
-      requisito,
-      progreso,
-      elegidas: elegidas.map((carta) => ({
-        carta,
-        vacia: (entregadasPorId.get(carta.id) ?? 0) >= carta.cantidad,
-      })),
-    };
+    return { requisito, progreso, elegidas };
   });
 
   const todas = partes.flatMap((p) => p.elegidas);
@@ -205,9 +219,8 @@ function repartir(oferta: Oferta, cartas: CartaMercado[]): Reparto {
   return {
     partes,
     completa,
-    ids: todas.map((e) => e.carta.id),
-    valor: todas.reduce((total, e) => total + e.carta.precio, 0),
-    vaciadas: new Set(todas.filter((e) => e.vacia).map((e) => e.carta.id)).size,
+    ids: todas.map((c) => c.id),
+    valor: todas.reduce((total, c) => total + c.precio, 0),
   };
 }
 
@@ -259,7 +272,8 @@ const ERRORES: Record<string, string> = {
   sesion: "Inicia sesión para cobrar en el mercado.",
   peticion: "Esa entrega no es válida.",
   caducada: "El tablón ha cambiado. Recarga para ver las ofertas nuevas.",
-  posesion: "Ya no tienes alguna de esas cartas. Recarga y vuelve a intentarlo.",
+  posesion: "Ya no te sobran algunas de esas cartas. Recarga y vuelve a intentarlo.",
+  duplicados: "Sólo se entregan duplicados: de cada carta tiene que quedarte una copia.",
   requisitos: "Ese lote no cumple lo que pide la oferta.",
   repetida: "Esa oferta ya la habías cobrado.",
   pago: "El comprador no paga nada por ese lote.",
@@ -286,12 +300,14 @@ export default function MercadoPage() {
       if (conSpinner) setEstado("cargando");
       try {
         // El invitado guarda su colección en este dispositivo: se mandan los
-        // ids para que el servidor los hidrate y pueda ver su progreso.
+        // ids para que el servidor los hidrate y pueda ver su progreso. Sólo
+        // los de las cartas de las que le SOBRA alguna copia: de las demás no
+        // hay nada que entregar, así que hidratarlas sería payload tirado.
         const idsInvitado = isSignedIn
           ? undefined
           : getCollection()
-              .map((c) => c.id)
-              .filter(Boolean);
+              .filter((c) => Boolean(c.id) && copiasEntregables(c.quantity || 1) > 0)
+              .map((c) => c.id);
         const [tablon, coleccion] = await Promise.all([
           getMercado(),
           getCartasMercado(idsInvitado),
@@ -299,7 +315,9 @@ export default function MercadoPage() {
 
         let lista = coleccion.cartas as CartaMercado[];
         if (!isSignedIn) {
-          // Las cantidades del invitado sólo las sabe el navegador.
+          // Las cantidades del invitado sólo las sabe el navegador: el servidor
+          // devuelve 1 de relleno y aquí se pone la real, que es la que decide
+          // cuántos duplicados hay.
           const copias = new Map(getCollection().map((c) => [c.id, c.quantity || 1]));
           lista = lista.map((c) => ({ ...c, cantidad: copias.get(c.id) ?? 1 }));
         }
@@ -458,9 +476,9 @@ export default function MercadoPage() {
       )}
 
       <p className="text-[11px] ink-faint text-center mt-6 mb-2 max-w-lg mx-auto leading-relaxed">
-        El comprador paga el precio de venta del lote multiplicado, con un presupuesto máximo de
-        prima por encargo. Se entregan las cartas más baratas que cumplan: lo caro no se paga
-        mejor.
+        Al mercado sólo van duplicados: de cada carta que entregues te queda siempre una copia en
+        el álbum, así que ningún encargo te deja un hueco. El comprador paga su cuota entera sobre
+        el precio de venta del lote, sin topes, y se proponen las cartas más baratas que cumplan.
       </p>
     </>
   );
@@ -539,7 +557,9 @@ function TarjetaOferta({
           <p className="text-xl font-bold tnum" style={{ color }}>
             ×{oferta.multiplicador.toFixed(2).replace(".", ",")}
           </p>
-          <p className="text-[10px] ink-faint">máx +{TECHO_PRIMA[oferta.dificultad]}</p>
+          {/* Ya no hay presupuesto máximo: la cuota se aplica entera a todo el
+              lote, así que lo que hay que explicar es sobre qué se aplica. */}
+          <p className="text-[10px] ink-faint">sobre el precio suelto</p>
         </div>
       </header>
 
@@ -551,6 +571,9 @@ function TarjetaOferta({
             <div className="flex items-start justify-between gap-3 mb-2">
               <p className="text-xs leading-snug flex-1">{parte.requisito.descripcion}</p>
               <span
+                // El progreso está medido en DUPLICADOS, no en cartas poseídas:
+                // es la única cifra que casa con lo que el servidor aceptará.
+                title="Contando sólo las copias que te sobran"
                 className={`text-xs font-semibold tnum shrink-0 ${
                   parte.progreso >= parte.requisito.cantidad ? "accent" : "ink-faint"
                 }`}
@@ -567,10 +590,12 @@ function TarjetaOferta({
                 }}
               />
             </div>
+            {/* La regla no se repite aquí a propósito: ya la dice la descripción
+                de cada oferta y el botón ("Te faltan duplicados"). Repetirla en
+                cada requisito son catorce líneas iguales en una pantalla. */}
             {parte.elegidas.length > 0 && (
               <p className="text-[10px] ink-faint mt-2 leading-relaxed">
-                Entregarías:{" "}
-                {resumirCartas(parte.elegidas)}
+                Entregarías: {resumirCartas(parte.elegidas)}
               </p>
             )}
           </li>
@@ -579,20 +604,38 @@ function TarjetaOferta({
 
       <div className="mt-auto flex flex-col gap-2">
         {completa && reparto && (
-          <div className="flex items-baseline justify-between gap-2 text-xs">
-            <span className="ink-soft">
-              Lote {formatNumber(reparto.valor)} + prima {formatNumber(prima)}
-            </span>
-            <span className="text-base font-bold accent tnum">
-              {formatNumber(pago)} monedas
-            </span>
+          // El desglose completo: qué valen las cartas sueltas, qué cuota paga
+          // el comprador y qué sale al final. Sin topes que explicar, las tres
+          // cifras encajan y el jugador puede comprobar la cuenta.
+          <div className="surface-2 rounded-2xl px-3.5 py-3 flex flex-col gap-1.5">
+            <div className="flex items-baseline justify-between gap-2 text-xs">
+              <span className="ink-soft">Precio suelto del lote</span>
+              <span className="tnum">{formatNumber(reparto.valor)}</span>
+            </div>
+            <div className="flex items-baseline justify-between gap-2 text-xs">
+              <span className="ink-soft">Cuota del comprador</span>
+              <span className="tnum" style={{ color }}>
+                ×{oferta.multiplicador.toFixed(2).replace(".", ",")}
+              </span>
+            </div>
+            <div
+              className="flex items-baseline justify-between gap-2 pt-1.5 mt-0.5"
+              style={{ borderTop: "1px solid color-mix(in srgb, var(--ink) 10%, transparent)" }}
+            >
+              <span className="text-xs font-semibold">
+                Total{" "}
+                <span className="ink-faint font-normal">(+{formatNumber(prima)} de prima)</span>
+              </span>
+              <span className="text-base font-bold accent tnum">
+                {formatNumber(pago)} monedas
+              </span>
+            </div>
           </div>
         )}
 
-        {completa && reparto && reparto.vaciadas > 0 && (
-          <p className="text-[10px]" style={{ color: "var(--warn)" }}>
-            Ojo: {reparto.vaciadas === 1 ? "una carta saldría" : `${reparto.vaciadas} cartas saldrían`} de
-            tu álbum (no te quedan más copias).
+        {completa && reparto && (
+          <p className="text-[10px] ink-faint leading-relaxed">
+            Entregas duplicados: de cada carta del lote te queda una copia en el álbum.
           </p>
         )}
 
@@ -611,7 +654,9 @@ function TarjetaOferta({
                 ? "Inicia sesión para cobrar"
                 : completa
                   ? "Cumplir encargo"
-                  : "Te faltan cartas"}
+                  : // "Duplicados" y no "cartas": es la respuesta a por qué el
+                    // progreso dice 3/5 con cinco cartas que encajan en el álbum.
+                    "Te faltan duplicados"}
         </button>
       </div>
     </motion.article>
@@ -622,12 +667,24 @@ function TarjetaOferta({
  * FORMATO
  * ------------------------------------------------------------------ */
 
-/** "Pikachu ×2, Bulbasaur" — agrupa las copias repetidas. */
-function resumirCartas(elegidas: Elegida[]): string {
-  const cuenta = new Map<string, number>();
-  for (const e of elegidas) cuenta.set(e.carta.name, (cuenta.get(e.carta.name) ?? 0) + 1);
-  return Array.from(cuenta.entries())
-    .map(([nombre, n]) => (n > 1 ? `${nombre} ×${n}` : nombre))
+/**
+ * "Pikachu ×2 (de 3), Bulbasaur (de 2)" — agrupa las copias repetidas y dice de
+ * cuántas salen, que es lo que responde a la pregunta de siempre: "¿me quedo
+ * sin la carta?". Nunca: por construcción se entrega como mucho `cantidad - 1`.
+ */
+function resumirCartas(elegidas: CartaMercado[]): string {
+  // Se agrupa por ID, no por nombre: dos ediciones distintas del mismo Pokémon
+  // son dos cartas con dos cantidades, y mezclarlas mentiría en el "(de N)".
+  const cuenta = new Map<string, { nombre: string; copias: number; total: number }>();
+  for (const c of elegidas) {
+    const actual = cuenta.get(c.id);
+    if (actual) actual.copias += 1;
+    else cuenta.set(c.id, { nombre: String(c.name ?? ""), copias: 1, total: c.cantidad });
+  }
+  return Array.from(cuenta.values())
+    .map(({ nombre, copias, total }) =>
+      copias > 1 ? `${nombre} ×${copias} (de ${total})` : `${nombre} (de ${total})`,
+    )
     .join(", ");
 }
 

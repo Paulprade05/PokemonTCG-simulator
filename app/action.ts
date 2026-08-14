@@ -7,8 +7,10 @@
   import { AVAILABLE_SETS, SELL_PRICES, RARITY_RANK, STARTING_COINS, DAILY_BASE, DAILY_STREAK_STEP, DAILY_STREAK_CAP, SET_COMPLETION_BONUS } from "../utils/constanst";
   import { loadLocalSets, loadLocalCards } from "../services/localData";
   import {
+    COPIAS_RESERVADAS,
     OFERTAS_ACTIVAS,
     caducidadDelCiclo,
+    copiasEntregables,
     cumpleFiltro,
     generarOfertas,
     pagoDelLote,
@@ -1190,9 +1192,15 @@ export async function setUserTheme(theme: "light" | "dark") {
  * cartas entrega. Ni el pago, ni el multiplicador, ni la rareza, ni el valor
  * del lote: todo eso se recalcula aquí contra la tabla `cards`. Ver la nota
  * larga sobre por qué en la cabecera de `cumplirOferta`.
+ *
+ * SÓLO DUPLICADOS: al mercado sólo van las copias que SOBRAN. De cada carta
+ * entregada el jugador conserva COPIAS_RESERVADAS, así que entregar N copias
+ * exige tener N + COPIAS_RESERVADAS. La regla vive en utils/mercado.ts
+ * (`copiasEntregables`) y aquí no se reimplementa: se llama. El álbum nunca se
+ * vacía, ni con dos pestañas a la vez (ver el CTE de `cumplirOferta`).
  * ==================================================================== */
 
-/** Tope de cartas por entrega. La oferta más glotona pide 28 (12+10+6). */
+/** Tope de cartas por entrega. La oferta más glotona pide 30 (MAX_CARTAS_OFERTA). */
 const MAX_CARTAS_ENTREGA = 40;
 
 /** Ids de carta plausibles ("sv3pt5-207", "swsh12pt5gg-GG01"). */
@@ -1537,14 +1545,25 @@ export async function getMercado() {
 }
 
 /**
- * Cartas del usuario que sirven para ALGUNA oferta del ciclo, con su cantidad
- * y su precio de venta. Sólo se devuelve lo que el tablón necesita: mandar la
- * colección entera son cientos de kilobytes en móvil para nada.
+ * Cartas del usuario que sirven para ALGUNA oferta del ciclo, con su CANTIDAD
+ * REAL y su precio de venta. Sólo se devuelve lo que el tablón necesita: mandar
+ * la colección entera son cientos de kilobytes en móvil para nada.
+ *
+ * POR QUÉ SE DEVUELVE LA CANTIDAD REAL Y NO LOS DUPLICADOS YA RESTADOS: la
+ * pantalla necesita las dos cifras (entrega 2 de las 3 que tienes) y la regla
+ * tiene una sola definición, `copiasEntregables`, que aplican cliente y servidor
+ * por igual. Si aquí se restara la copia reservada, el cliente tendría que
+ * "des-restarla" para pintar el total y habría dos versiones de la misma regla.
+ *
+ * Las cartas de las que sólo hay UNA copia no se mandan: con la regla de
+ * duplicados no se pueden entregar, así que no aportan nada al progreso y
+ * ocupan payload. Es un filtro de ancho de banda, no la regla: la regla la
+ * vuelve a aplicar `cumplirOferta` sobre la BD.
  *
  * `idsInvitado` es el camino del invitado (colección en localStorage): sirve
- * para hidratar por id y enseñarle su progreso. Las cantidades que devuelve ese
- * camino son 1 y las corrige el cliente con las suyas; da igual, porque el
- * invitado no cobra y este dato no toca el dinero.
+ * para hidratar por id y enseñarle su progreso. Ahí el servidor NO conoce las
+ * cantidades (devuelve 1 de relleno) y las corrige el cliente con las suyas; da
+ * igual, porque el invitado no cobra y este dato no toca el dinero.
  */
 export async function getCartasMercado(idsInvitado?: string[]) {
   const { ciclo, ofertas } = await tablonVigente();
@@ -1564,7 +1583,10 @@ export async function getCartasMercado(idsInvitado?: string[]) {
       );
       const cartas = rows
         .map((row: any) => cartaDesdeFila(row, Number(row.quantity) || 0))
-        .filter((c) => c.cantidad > 0 && relevante(c));
+        // `copiasEntregables > 0` es "tengo al menos un duplicado". Misma
+        // función que usa el cobro, así que lo que la pantalla ve entregable y
+        // lo que el servidor acepta no pueden discrepar.
+        .filter((c) => copiasEntregables(c.cantidad) > 0 && relevante(c));
       return { ciclo, cartas, conSesion: true };
     }
 
@@ -1576,6 +1598,9 @@ export async function getCartasMercado(idsInvitado?: string[]) {
       new Set(idsInvitado.filter((id) => typeof id === "string" && ID_CARTA.test(id))),
     ).slice(0, 1200);
 
+    // Cantidad 1 = "no la sé". El cliente la sustituye por la de su
+    // localStorage antes de repartir; si no lo hiciera, `copiasEntregables(1)`
+    // es 0 y el invitado vería su progreso a cero, que es el fallo seguro.
     const encontradas = new Map<string, CartaMercado>();
     try {
       const { rows } = await sql.query(
@@ -1634,11 +1659,20 @@ export async function getCartasMercado(idsInvitado?: string[]) {
  *     oferta inventado (o el de ayer, más goloso) no aparece en el tablón y se
  *     rechaza: el multiplicador y la dificultad son los que dicta el generador.
  *  3. Las cartas se releen de `cards` por su id y se comprueba contra
- *     `user_collection` que el usuario las tiene. Rareza, tipo, PS, ilustrador
- *     y expansión salen de la BD, nunca del payload.
- *  4. El pago es pagoDelLote(oferta, Σ SELL_PRICES reales), con el techo de
- *     prima que fija utils/mercado.ts. Entregar Hyper Rares en vez de comunes
- *     no dispara el pago: la prima está topada por dificultad.
+ *     `user_collection` que el usuario las tiene, Y QUE LE SOBRAN: entregar N
+ *     copias exige tener N + COPIAS_RESERVADAS (`copiasEntregables`). La
+ *     comprobación está por triplicado y a propósito: aquí en JS (para dar un
+ *     error legible), dentro del CTE sobre las filas ya bloqueadas con FOR
+ *     UPDATE (para que dos pestañas no se salten la reserva entre la lectura y
+ *     la escritura) y en el propio UPDATE del consumo (último cerrojo, por si
+ *     alguien llegara a esa sentencia por otro camino). Rareza, tipo, PS,
+ *     ilustrador y expansión salen de la BD, nunca del payload.
+ *  4. El pago es pagoDelLote(oferta, Σ SELL_PRICES reales): multiplicador por
+ *     valor, SIN TOPE. Lo que impide que entregar cartas caras dispare la prima
+ *     no es un recorte al pago, son dos frenos de utils/mercado.ts: cada
+ *     requisito lleva banda de rareza CERRADA (la carta más cara que puede
+ *     entrar en un lote vale 70) y sólo se entregan duplicados (de las caras
+ *     rara vez hay dos). Por eso aquí no hay ni puede haber un `Math.min`.
  *  5. Cobro y consumo van en UNA sentencia, y la PK de market_claims arbitra
  *     la carrera entre pestañas.
  */
@@ -1687,7 +1721,11 @@ export async function cumplirOferta(ofertaId: string, cardIds: string[]) {
     const entregadas: CartaMercado[] = [];
     for (const row of rows) {
       const piden = porId.get(row.id) ?? 0;
-      if (Number(row.quantity) < piden) return { ok: false as const, error: "posesion" as const };
+      // SÓLO DUPLICADOS: no basta con tener `piden` copias, tienen que SOBRAR
+      // `piden`. Una carta con una sola copia no se puede entregar jamás.
+      if (copiasEntregables(Number(row.quantity)) < piden) {
+        return { ok: false as const, error: "duplicados" as const };
+      }
       const carta = cartaDesdeFila(row, Number(row.quantity));
       for (let i = 0; i < piden; i++) entregadas.push(carta);
     }
@@ -1714,7 +1752,13 @@ export async function cumplirOferta(ofertaId: string, cardIds: string[]) {
     //    El ORDER BY fija el orden de bloqueo y evita interbloqueos entre dos
     //    entregas que compartan varias cartas en distinto orden.
     //  - `suficiente` mira, sobre esas filas bloqueadas, que ninguna carta se
-    //    quede corta; la marca sólo se inserta si el lote cuadra, para que un
+    //    quede corta CONTANDO LA COPIA RESERVADA ($7): pide
+    //    `quantity >= cantidad + COPIAS_RESERVADAS`, que es exactamente
+    //    `copiasEntregables(quantity) >= cantidad` escrito en SQL. Esta es la
+    //    comprobación que hace imposible vaciar el álbum con dos pestañas: la
+    //    de JS lee una instantánea sin bloquear y podría quedarse vieja; ésta
+    //    corre sobre las filas ya bloqueadas, dentro de la misma sentencia que
+    //    descuenta. La marca sólo se inserta si el lote cuadra, para que un
     //    intento fallido no queme la oferta.
     //  - el abono depende de que la marca se insertara: si otra pestaña ya la
     //    tenía, el ON CONFLICT no devuelve fila y aquí no se paga nada.
@@ -1737,7 +1781,7 @@ export async function cumplirOferta(ofertaId: string, cardIds: string[]) {
          SELECT bool_and(b.card_id IS NOT NULL) AS ok
          FROM entregas e
          LEFT JOIN bloqueo b
-           ON b.card_id = e.card_id AND b.quantity >= e.cantidad
+           ON b.card_id = e.card_id AND b.quantity >= e.cantidad + $7::int
        ),
        marca AS (
          INSERT INTO market_claims (user_id, ciclo, oferta_id, pago)
@@ -1758,19 +1802,21 @@ export async function cumplirOferta(ofertaId: string, cardIds: string[]) {
          UPDATE user_collection uc
          SET quantity = uc.quantity - e.cantidad
          FROM entregas e
-         WHERE uc.user_id = $1 AND uc.card_id = e.card_id AND uc.quantity >= e.cantidad
+         WHERE uc.user_id = $1 AND uc.card_id = e.card_id
+           AND uc.quantity >= e.cantidad + $7::int
            AND EXISTS (SELECT 1 FROM abono)
          RETURNING 1
        )
        SELECT (SELECT coins FROM abono) AS coins,
               (SELECT count(*) FROM consumo) AS consumidas`,
-      [userId, ciclo, ids, cantidades, oferta.id, pago],
+      [userId, ciclo, ids, cantidades, oferta.id, pago, COPIAS_RESERVADAS],
     );
 
     const coins = resultado[0]?.coins;
     if (coins === null || coins === undefined) {
       // No se pagó: o la oferta ya estaba cobrada, o la colección cambió entre
-      // la lectura y la escritura (otra pestaña vendiendo las mismas cartas).
+      // la lectura y la escritura (otra pestaña vendiendo o entregando las
+      // mismas cartas) y a alguna carta dejó de sobrarle la copia que se pedía.
       const { rows: yaEstaba } = await sql`
         SELECT 1 FROM market_claims
         WHERE user_id = ${userId} AND ciclo = ${ciclo} AND oferta_id = ${oferta.id}
