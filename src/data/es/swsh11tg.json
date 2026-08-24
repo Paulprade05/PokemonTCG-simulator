@@ -1,0 +1,42 @@
+{
+ "set": {
+  "id": "swsh11tg",
+  "idEs": "swsh11.5tg",
+  "nombre": "Origen Perdido Galería de Entrenador",
+  "nombreEn": "Lost Origin Trainer Gallery",
+  "logo": null,
+  "serie": "Espada y Escudo"
+ },
+ "sinPareja": [],
+ "resumen": {
+  "locales": 30,
+  "traducidas": 7,
+  "sinPareja": 0,
+  "sinImagenEs": 30,
+  "nombresCambiados": 7,
+  "identicasOmitidas": 23
+ },
+ "cartas": {
+  "swsh11tg-TG08": {
+   "n": "Arcanine de Hisui"
+  },
+  "swsh11tg-TG23": {
+   "n": "Descubrimiento de Aventurera"
+  },
+  "swsh11tg-TG24": {
+   "n": "Órdenes de Jefes"
+  },
+  "swsh11tg-TG25": {
+   "n": "Chef"
+  },
+  "swsh11tg-TG26": {
+   "n": "Naboru"
+  },
+  "swsh11tg-TG27": {
+   "n": "Cathy"
+  },
+  "swsh11tg-TG28": {
+   "n": "Sally"
+  }
+ }
+}

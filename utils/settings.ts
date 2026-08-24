@@ -7,6 +7,73 @@
  * escucha "storage" para que dos pestañas no se desincronicen.
  */
 
+/* ------------------------------------------------------------------ *
+ * IDIOMA DE LAS CARTAS
+ * ------------------------------------------------------------------ *
+ *
+ * Vive FUERA del objeto `Ajustes` y con clave propia, calcado del tema: lo lee
+ * el script antiparpadeo de app/layout.tsx, que corre antes del bundle y no
+ * puede permitirse parsear un JSON con cuatro campos más.
+ *
+ * Tres escrituras, tres lectores distintos:
+ *   - `localStorage` es la preferencia del DISPOSITIVO, la que recupera el
+ *     script de arranque en la siguiente carga.
+ *   - la COOKIE es la que lee el servidor: la traducción ocurre allí (ver
+ *     services/idiomaServidor.ts), así que sin cookie las cartas llegarían en
+ *     inglés por muy en español que estuviera el interruptor.
+ *   - el atributo `data-idioma` del <html> es el espejo: las DOS hojas de
+ *     ajustes montadas a la vez lo observan para reflejar el estado sin
+ *     mantener cada una su copia.
+ *
+ * El tipo se importa SÓLO como tipo: `import type` se borra al compilar, así
+ * que services/idioma.ts —y con él indice.json— no entra en el bundle del
+ * navegador por esta puerta.
+ */
+import type { Idioma } from "../services/idioma";
+
+export type { Idioma };
+
+/** Clave del dispositivo en localStorage. */
+export const CLAVE_IDIOMA = "lang";
+/** Nombre de la cookie. Debe coincidir con services/idiomaServidor.ts. */
+export const COOKIE_IDIOMA = "tcg-idioma";
+/** Inglés: es el idioma en el que están los datos y lo que había hasta hoy. */
+export const IDIOMA_PREDETERMINADO: Idioma = "en";
+
+/** Cualquier cosa que no sea "es" es inglés. */
+export const saneaIdioma = (v: unknown): Idioma => (v === "es" ? "es" : "en");
+
+/** Idioma aplicado ahora mismo. En el servidor, el predeterminado. */
+export function leerIdioma(): Idioma {
+  if (typeof document === "undefined") return IDIOMA_PREDETERMINADO;
+  const enElHtml = document.documentElement.getAttribute("data-idioma");
+  if (enElHtml === "es" || enElHtml === "en") return enElHtml;
+  try {
+    return saneaIdioma(window.localStorage.getItem(CLAVE_IDIOMA));
+  } catch {
+    return IDIOMA_PREDETERMINADO;
+  }
+}
+
+/**
+ * Escribe el idioma en las tres fuentes que lo leen. No recarga ni avisa a
+ * nadie de que hay que recargar: de eso decide quien llama (SettingsSheet).
+ */
+export function aplicarIdioma(idioma: Idioma): void {
+  const i = saneaIdioma(idioma);
+  document.documentElement.setAttribute("data-idioma", i);
+  try {
+    window.localStorage.setItem(CLAVE_IDIOMA, i);
+  } catch {
+    // Sin almacenamiento: la cookie sola ya hace que el servidor traduzca.
+  }
+  // `Lax` y un año: la cookie no viaja en peticiones de terceros y sobrevive a
+  // cerrar la app instalada. No lleva nada personal, sólo "en" o "es".
+  document.cookie = `${COOKIE_IDIOMA}=${i};path=/;max-age=31536000;samesite=lax`;
+  // No hace falta anunciar el cambio: quien lo refleja (las dos hojas de
+  // ajustes) observa `data-idioma`, que se acaba de escribir arriba.
+}
+
 export interface Ajustes {
   /** Efectos de sonido de la apertura de sobres y la interfaz. */
   sonido: boolean;

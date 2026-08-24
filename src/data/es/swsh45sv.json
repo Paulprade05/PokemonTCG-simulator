@@ -1,0 +1,78 @@
+{
+ "set": {
+  "id": "swsh45sv",
+  "idEs": "swsh4.5sv",
+  "nombre": "Destinos Brillantes Tesoro Brillante",
+  "nombreEn": "Shining Fates Shiny Vault",
+  "logo": null,
+  "serie": "Espada y Escudo"
+ },
+ "sinPareja": [],
+ "resumen": {
+  "locales": 122,
+  "traducidas": 19,
+  "sinPareja": 0,
+  "sinImagenEs": 122,
+  "nombresCambiados": 19,
+  "identicasOmitidas": 103
+ },
+ "cartas": {
+  "swsh45sv-SV020": {
+   "n": "Mr. Mime de Galar"
+  },
+  "swsh45sv-SV021": {
+   "n": "Mr. Rime de Galar"
+  },
+  "swsh45sv-SV023": {
+   "n": "Darumaka de Galar"
+  },
+  "swsh45sv-SV024": {
+   "n": "Darmanitan de Galar"
+  },
+  "swsh45sv-SV047": {
+   "n": "Ponyta de Galar"
+  },
+  "swsh45sv-SV048": {
+   "n": "Rapidash de Galar"
+  },
+  "swsh45sv-SV049": {
+   "n": "Corsola de Galar"
+  },
+  "swsh45sv-SV050": {
+   "n": "Cursola de Galar"
+  },
+  "swsh45sv-SV063": {
+   "n": "Farfetch'd de Galar"
+  },
+  "swsh45sv-SV064": {
+   "n": "Sirfetch'd de Galar"
+  },
+  "swsh45sv-SV065": {
+   "n": "Yamask de Galar"
+  },
+  "swsh45sv-SV066": {
+   "n": "Runerigus de Galar"
+  },
+  "swsh45sv-SV077": {
+   "n": "Weezing de Galar"
+  },
+  "swsh45sv-SV078": {
+   "n": "Zigzagoon de Galar"
+  },
+  "swsh45sv-SV079": {
+   "n": "Linoone de Galar"
+  },
+  "swsh45sv-SV080": {
+   "n": "Obstagoon de Galar"
+  },
+  "swsh45sv-SV086": {
+   "n": "Meowth de Galar"
+  },
+  "swsh45sv-SV087": {
+   "n": "Perrserker de Galar"
+  },
+  "swsh45sv-SV088": {
+   "n": "Stunfisk de Galar"
+  }
+ }
+}

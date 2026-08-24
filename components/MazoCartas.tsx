@@ -9,124 +9,117 @@ import { useSwipe } from "../hooks/useSwipe";
 /**
  * MAZO DE LA APERTURA (app/page.tsx, VIEW 3).
  *
- * Las diez ranuras se montan UNA vez y se quedan montadas: pasar de carta sólo
- * mueve transforms. Antes cada avance montaba y desmontaba un <motion.div>
- * (con su <img> grande recién pedida), y ese relevo es lo que se sentía tosco.
+ * DE UNA EN UNA. Se ve UNA carta y sólo una. Arrastrar pasa de carta —
+ * izquierda avanza, derecha retrocede— pero no destapa nada del resto: no hay
+ * abanico, no hay escalera y no asoma el canto de ninguna otra. Se probaron las
+ * dos formas de enseñar el mazo entero bajo el dedo y las dos se descartaron.
  *
- * Arrastrar abre el mazo en abanico bajo el dedo: se ven los cantos de las diez
- * y al soltar el mazo se cierra sobre la que estabas mirando.
- *
- * ---------------------------------------------------------------------------
- * INVARIANTE DE ESPACIO — el único número que no se puede rebasar.
- *
- * CARD_WIDTH = min(82vw, 360px, …). En el caso peor W = 0.82·vw, así que a cada
- * lado del borde de la carta frontal sólo sobran (vw − W)/2 = 0.1098·W hasta el
- * borde del viewport. El diálogo lleva overflow-hidden: lo que se pase sale
- * cortado en recto. NADA puede rebasar el borde de la carta frontal en más de
- * 0.1098·W (es decir, nada puede llegar más allá de 0.61·W del centro).
- *
- * Como el término (W/2)(1−s) de abajo deja el borde de cada ranura girada a
- * ras del de la frontal, lo que sobresale es el apartado MÁS lo que el giro
- * añade a la caja envolvente:
- *   sobresale = asoma + s·(cos g − 1 + 1.4·sin g)/2     (1.4 = 3.5/2.5)
- * Y en el abanico, donde no hay reanclaje: |x| + s·(cos g + 1.4·sin g)/2.
- * Medido en el navegador con W = 307,5 (getBoundingClientRect de las diez):
- *   · reposo p=0 (peor pendiente):            0.5981·W  ✔
- *   · reposo p=9 (peor vista):                0.6098·W  ✔ justo en el límite
- *   · abanico p=3 (selección al centro):      0.5562·W  ✔
- *   · abanico p=0 y p=9 (selección al borde): 0.5992·W  ✔
+ * Entonces, ¿por qué siguen aquí las diez ranuras? Por FLUIDEZ, no por estética:
+ * se montan UNA vez y se quedan montadas, así que pasar de carta es sólo mover
+ * transforms. Cuando cada avance montaba y desmontaba un <motion.div> (con su
+ * <img> grande recién pedida), ese relevo era lo que se sentía tosco. Las nueve
+ * que no se ven están apartadas fuera de la pantalla y a opacidad 0; la de al
+ * lado ya tiene su imagen grande decodificada para cuando le toque salir.
  *
  * ---------------------------------------------------------------------------
- * NITIDEZ — tres reglas, se rompen las tres a la vez o ninguna.
+ * INVARIANTE DE ESPACIO — en reposo NO se ve nada más que la carta de delante.
  *
- * 1. `will-change: transform` en las ranuras SÓLO con el dedo abajo. Se pone en
- *    onStart, cuando la frontal está a escala 1 (se rasteriza a su tamaño
- *    máximo) y durante el arrastre las escalas sólo BAJAN: encoger una capa ya
- *    rasterizada no emborrona nunca.
- * 2. Ninguna transición corre sobre una ranura que CREZCA: la destino cierra de
- *    0.529 a 1.0 (+89%), así que se le quita el will-change ANTES de escribirle
- *    la transición y repinta cada fotograma a tamaño real.
+ * CARD_WIDTH = min(82vw, 360px, …). En el caso peor W = 0.82·vw, así que el
+ * borde del viewport cae a 0.61·W del centro de la carta y el diálogo lleva
+ * overflow-hidden. Las apartadas se van a F_SALIDA·W, que está calculado para
+ * dejar su canto más cercano en 0.676·W: fuera de la pantalla, ni un píxel
+ * asomando. En pantallas anchas (W = 360px con vw de sobra) sí caben al lado, y
+ * por eso van ADEMÁS a opacidad 0. Las dos condiciones son necesarias.
+ *
+ * Mientras una carta SALE sí la corta el borde de la pantalla, y así debe ser:
+ * eso es lo que significa salirse de la pantalla. Lo que no puede pasar —y era
+ * el defecto del abanico— es que una carta quieta aparezca cortada en recto.
+ *
+ * ---------------------------------------------------------------------------
+ * NITIDEZ.
+ *
+ * 1. Ninguna pose lleva escala. Ni una. Así ninguna capa se rasteriza a un
+ *    tamaño para pintarse a otro, que es la única forma de emborronar una carta
+ *    promocionada (el abanico encogía las de detrás hasta 0.529 y la que
+ *    volvía crecía un 89%: allí sí había que despromocionar antes de la
+ *    transición, aquí no hace falta).
+ * 2. `will-change` sólo en las ranuras que se están moviendo y sólo mientras se
+ *    mueven. Un will-change permanente deja la textura congelada.
  * 3. Ni filter, ni drop-shadow, ni backdrop-filter, ni mix-blend-mode, ni
- *    perspective, ni preserve-3d aquí ni en ningún ancestro. El grosor del taco
- *    va en box-shadow.
- *
- * Regla de bolsillo: promociona sólo lo que va a encoger; lo que crezca más de
- * un 8% que crezca despromocionado.
+ *    perspective, ni preserve-3d aquí ni en ningún ancestro. La sombra de la
+ *    carta va en box-shadow.
  *
  * ---------------------------------------------------------------------------
- * FÍSICA DEL GESTO — por qué el mazo se mueve como papel y no como una lista.
+ * FÍSICA DEL GESTO — por qué pasar de carta se siente como papel.
  *
- * 1. MIENTRAS ARRASTRAS. El transform se escribe desde el propio pointermove:
- *    sin setState, sin rAF y sin transition (todas las ranuras a "none"), así
- *    que el mazo va pegado al dedo sin un fotograma de deuda. En los topes hay
- *    goma: p se recorta al rango y la resistencia se pinta como un tirón del
- *    mazo entero por su diagonal, con una ley asintótica que nunca llega a
- *    pararse del todo.
+ * 1. MIENTRAS ARRASTRAS. La carta que ves sigue al dedo con resistencia
+ *    creciente (nunca se despega del centro más de SIGUE_MAX_F·W) y detrás no
+ *    aparece nada. El transform se escribe desde el propio pointermove: sin
+ *    setState, sin rAF y sin transition, así que va pegada al dedo sin un
+ *    fotograma de deuda. La selección de destino sí se lleva la cuenta
+ *    completa —con zona muerta y paso de carta— pero NO se pinta: se resuelve
+ *    al soltar.
  * 2. AL SOLTAR. Se mide la velocidad (media móvil de VENTANA_VEL_MS) y se
- *    proyecta con deceleración exponencial: un lanzamiento arrastra varias
- *    cartas y frena, un empujón corto engancha a la de al lado. El destino se
- *    redondea SIEMPRE a una ranura del rango, nunca se queda a medias.
+ *    proyecta con deceleración exponencial: un lanzamiento salta varias cartas
+ *    y frena, un empujón corto engancha a la de al lado. El destino se redondea
+ *    SIEMPRE a una carta del rango, nunca se queda a medias.
  * 3. LA LLEGADA. Duración proporcional al recorrido (T_CIERRE_MIN..MAX) con
- *    muelle suave, y escalonada: la carta que sueltas aterriza primero y el
- *    resto la sigue con RETARDO_CARTA_MS por cada carta de distancia. Un mazo
- *    real no se cierra en bloque, y ese desfase es todo lo que hace falta.
+ *    muelle suave: la que sale se va por donde iba el dedo y la que entra llega
+ *    del lado contrario y se cuadra con un "clac". Nunca hay tres cartas en
+ *    pantalla: el fundido se come a la que sale antes de que acabe de irse.
  *
  * Las tres comparten el mismo reloj: el will-change vive exactamente lo que
- * dura la coreografía (duración + retardo del último + margen) y se limpia.
+ * dura la llegada (duración + margen) y se limpia.
  */
 
 /* ------------------------------------------------------------------ */
-/* GEOMETRÍA — todo en fracciones de W (el ancho de la carta frontal). */
+/* GEOMETRÍA — sólo hay dos poses: la de delante y la de fuera.        */
 /* ------------------------------------------------------------------ */
 
 /**
- * PENDIENTES (d = j − p ≥ 0, saturado a 4). x = (W/2)(1−s) + W·D_ASOMA[d].
- * El término (W/2)(1−s) reancla el borde derecho tras la escala, así que
- * D_ASOMA es LITERALMENTE la tira visible de cada carta.
- */
-const D_ESCALA = [1, 0.955, 0.913, 0.874, 0.838];
-const D_ASOMA = [0, 0.024, 0.043, 0.057, 0.068];
-const D_BAJA = [0, 0.013, 0.026, 0.038, 0.05];
-const D_GIRO = [0, 0.8, 1.6, 2.4, 3.0]; // grados
-const D_OPACIDAD = [1, 0.92, 0.82, 0.7, 0.55];
-
-/**
- * VISTAS (k = p − j > 0). Se apartan al otro lado; escala y caída reutilizan
- * las tablas D_ por k, porque una carta ya vista pesa lo mismo que una por ver.
+ * Apartado de las que no se ven, en anchos de carta. Es el número del
+ * invariante de arriba: deja la carta ENTERA fuera de la pantalla en el caso
+ * peor (W = 0.82·vw, borde del viewport a 0.61·W del centro).
  *
- * La cola va MUY comprimida (0.076 → 0.086 → 0.092 → 0.094) y no repartida:
- * el presupuesto de 0.1098·W tiene que cubrir el apartado MÁS lo que el giro
- * añade a la caja envolvente, y esa penalización crece con k. Medido: con el
- * reparto ancho de la primera versión, la vista k=3 se salía a 0.117·W y el
- * overflow-hidden del diálogo la cortaba en recto.
+ * Con el giro de GIRO_SALIDA grados la caja envolvente ensancha, así que la
+ * media anchura no es 0.5·W sino (W/2)·cos g + (h/2)·sen g = 0.524·W (h = 1.4·W,
+ * la proporción 2.5/3.5). El canto más cercano cae entonces en
+ * 1.2 − 0.524 = 0.676·W: 0.066·W (unos 20px) por fuera del recorte del diálogo.
+ * Por debajo de 1.135 empezaría a asomar.
  */
-const V_APARTA = [0, 0.074, 0.083, 0.088, 0.09];
-const V_GIRO = [0, -0.7, -1.1, -1.3, -1.4];
-const V_OPACIDAD = [1, 0.5, 0.2, 0.06, 0];
-
+const F_SALIDA = 1.2;
 /**
- * Escalón de la escalera, en PÍXELES y no en fracción del ancho: lo que se
- * pide es ver "literalmente unos 10 píxeles del borde", y eso no debe encoger
- * ni crecer con el tamaño de la carta.
- *
- * 10px es el canto puro: el filo del marco y, en un full art o una dorada, el
- * arte o el metalizado sangrando hasta el borde. Suficiente para saber que ahí
- * hay algo especial; imposible para saber qué carta es.
+ * Vuelco de papel de la que entra y de la que sale, en grados. Es carácter, no
+ * información: 2° se leen como una carta que se echa a un lado, y al ser un
+ * giro puro (sin escala) no toca la nitidez.
  */
-const PASO_PX = 10;
-/** Componente vertical del escalón: da la diagonal del mazo en la mano. */
-const PASO_ALTO_PX = 7;
+const GIRO_SALIDA = 2;
 
 /* ---------------------------- GESTO ------------------------------- */
 /** Un roce no mueve la selección. */
 const F_ZONA_MUERTA = 0.075;
 /** Arrastre que vale una carta. */
 const F_PASO = 0.3;
-/** Arrastre con el que el abanico llega al 100%. */
-const F_ABRE = 0.18;
 /* El cruce de decisión cae en ZONA_MUERTA + PASO/2 = 0.225·W = 69px con
    W=307,5, contra los 70px del threshold de siempre: la memoria muscular
    del deslizamiento de toda la vida da exactamente el mismo resultado. */
+
+/**
+ * SEGUIMIENTO. Lo que se aparta del centro la carta que estás mirando, como
+ * función de lo que ha viajado el dedo: g(e) = MAX·e/(e + MAX/K), con
+ * g'(0) = K y g(∞) = MAX.
+ *
+ * Es una goma, y va aquí y no en los topes del mazo por una razón: al no
+ * enseñarse el resto de cartas, mover la que ves es el ÚNICO acuse de recibo
+ * que tiene el gesto. Con K = 0.7 arranca casi pegada al dedo (se nota desde
+ * el primer píxel) y con MAX = 0.26·W nunca llega a destapar medio hueco: en
+ * el punto de decisión (69px de dedo) la carta se ha ido 30px, un 10% de su
+ * ancho, que es exactamente lo que hace falta para saber que ahí hay un gesto.
+ * Y como nunca alcanza el máximo, el mazo siempre responde algo: no hay tope
+ * duro que dé la sensación de que la pantalla se ha colgado.
+ */
+const SIGUE_MAX_F = 0.26;
+const SIGUE_K = 0.7;
 
 /* --------------------------- INERCIA ------------------------------ */
 /**
@@ -163,7 +156,7 @@ const TAU_INERCIA_MS = 90;
 /** Tope de la proyección: más de tres cartas de más y ya no puedes apuntar. */
 const TOPE_INERCIA = 3;
 
-/* ------------------------ CIERRE DEL MAZO ------------------------- */
+/* ------------------------- LLEGADA / CIERRE ----------------------- */
 /**
  * DURACIÓN PROPORCIONAL AL RECORRIDO. Un ajuste de nada llega enseguida y un
  * lanzamiento de tres cartas tiene peso. Los extremos son los de un gesto de
@@ -174,81 +167,42 @@ const TOPE_INERCIA = 3;
  * 180 + 240/3 = 260ms EXACTOS, que es el T_CIERRE fijo de siempre. El relevo
  * por toque, teclado y botón conserva su tempo al milisegundo; lo único que
  * cambia es que un ajuste corto llega antes y un salto largo llega después.
+ *
+ * El peor caso, 420ms, sigue por debajo de los 550ms de GUARDA_CIERRE
+ * (app/page.tsx): la carta SIEMPRE termina de asentarse antes de que se acepte
+ * el toque que guarda el sobre.
  */
 const T_CIERRE_MIN = 180;
 const T_CIERRE_MAX = 420;
 /** Recorrido, en cartas, que satura la duración. */
 const D_REF_CIERRE = 3;
 /**
- * Cerrar el abanico también es recorrido aunque no cambies de carta: las del
- * fondo se traen 90px. Vale 0,6 cartas para que soltar sin moverse cierre en
- * ~230ms y no en el mínimo seco.
- */
-const F_PESO_ABANICO = 0.6;
-/**
  * MUELLE de papel. Medido: sobrepasa el 4,1% del recorrido a la mitad del
- * tiempo y dedica la otra mitad a asentarse. En la carta que más viaja (90px de
- * escalera) son 3,7px de rebote; en un ajuste de 15px, 0,6px. Es el "clac" del
- * taco al cuadrarse, no una goma: un muelle de verdad (overshoot del 15-20%)
- * en diez cartas a la vez parece gelatina.
+ * tiempo y dedica la otra mitad a asentarse. Es el "clac" de la carta al
+ * cuadrarse, no una goma: un muelle de verdad (overshoot del 15-20%) parece
+ * gelatina.
  *
  * Sólo va en el transform. En la opacidad, un sobrepaso se saldría de [0,1], y
- * el recorte se ve como un parpadeo: allí sigue mandando una rampa lineal.
- * Y no toca la nitidez: en la escalera todas las escalas son 1, así que el
- * sobrepaso mueve traslaciones, nunca agranda una capa ya rasterizada.
+ * el recorte se ve como un parpadeo: allí manda una rampa lineal.
  */
 const CURVA_MUELLE = "cubic-bezier(.2,1.35,.3,1)";
-/** La de siempre, sin sobrepaso: la usa el despliegue de la pila. */
-const CURVA_SALIDA = "cubic-bezier(.16,1,.3,1)";
 /**
- * ESCALONADO DE LA LLEGADA. La carta que sueltas aterriza primero y las demás
- * la siguen: un mazo real no se cierra en bloque. 11ms por carta de distancia a
- * la seleccionada está en el centro de la banda que se lee como "flujo": por
- * debajo de 8 no se distingue de un cierre simultáneo y por encima de 14 se ven
- * diez cartas cayendo por separado.
+ * Fracción de la duración que dura el fundido. Corto a propósito: la carta que
+ * sale se apaga en la primera mitad del viaje y termina de irse ya invisible,
+ * así que nunca se ven dos cartas a la vez con entidad. Es lo que hace que
+ * salgan DE UNA EN UNA también en pantallas anchas, donde el apartado de
+ * F_SALIDA·W no basta para sacarlas del campo de visión.
  */
-const RETARDO_CARTA_MS = 11;
-/**
- * Tope del escalonado: sin él, la carta 0 vista desde la 9 saldría 99ms tarde y
- * el cierre pasaría de medio segundo. 70ms (≈6,4 cartas) deja la cola bien
- * marcada y mantiene el peor caso en 420+70 = 490ms, por debajo de los 550ms de
- * GUARDA_CIERRE (app/page.tsx): el mazo SIEMPRE termina de asentarse antes de
- * que se acepte el toque que guarda el sobre.
- */
-const RETARDO_TOPE_MS = 70;
+const F_FUNDIDO = 0.55;
 /** Margen tras el último fotograma antes de despromocionar las capas. */
 const T_LIMPIEZA_MS = 80;
-/** La pila apilada se abre en abanico de reposo: más lento, es un respiro. */
-const T_DESPLIEGUE = 380;
 
-/* ------------------------------ GOMA ------------------------------ */
-/**
- * Tirón máximo del mazo ENTERO en los extremos, en píxeles a lo largo de su
- * diagonal. 18px es visible de sobra (casi dos escalones de 10px) y sigue por
- * debajo de los 35px que hay entre el borde de la carta frontal y el del
- * viewport en el caso peor (W = 0,82·vw), así que la carta que estás mirando
- * nunca llega a tocar el recorte del diálogo.
- */
-const GOMA_MAX_PX = 18;
-/**
- * Pendiente inicial del tirón: el mazo arranca siguiendo al dedo a algo menos
- * de un tercio y se va frenando. La mitad del recorrido se alcanza a los 64px
- * de sobrearrastre, que es más o menos lo que se pasa uno al lanzar.
- */
-const GOMA_K = 0.28;
-
-/**
- * Resistencia asintótica: g(e) = MAX·e/(e + MAX/K), con g'(0) = K.
- *
- * Antes el exceso se dividía por cuatro y se recortaba EN SECO a 0,45 de carta:
- * pasado ese punto el dedo seguía moviéndose y el mazo no, que es literalmente
- * la sensación de tope duro que se quería quitar. Ahora nunca llega al máximo,
- * así que el mazo siempre responde algo, y como el tirón ya no viaja dentro de
- * `p` (viaja aparte, en píxeles), round(p) no puede salirse de [0, tope] ni
- * por asomo: se acabó realzar y vibrar en una ranura donde luego no se aterriza.
- */
-const goma = (excesoPx: number) =>
-  (GOMA_MAX_PX * excesoPx) / (excesoPx + GOMA_MAX_PX / GOMA_K);
+/** Resistencia asintótica del seguimiento, en px: nunca llega al máximo. */
+const seguir = (dxPx: number, W: number) => {
+  const e = Math.abs(dxPx);
+  const max = SIGUE_MAX_F * W;
+  return Math.sign(dxPx) * ((max * e) / (e + max / SIGUE_K));
+};
 
 /** Duración del cierre para un recorrido dado, en cartas. */
 const duracionCierre = (recorrido: number) =>
@@ -257,79 +211,34 @@ const duracionCierre = (recorrido: number) =>
       (T_CIERRE_MAX - T_CIERRE_MIN) * Math.min(1, Math.abs(recorrido) / D_REF_CIERRE),
   );
 
-const interp = (tabla: number[], d: number) => {
-  const ultimo = tabla.length - 1;
-  if (d <= 0) return tabla[0];
-  if (d >= ultimo) return tabla[ultimo];
-  const i = Math.floor(d);
-  return tabla[i] + (tabla[i + 1] - tabla[i]) * (d - i);
-};
+type Pose = { x: number; g: number; o: number };
 
-type Pose = { x: number; y: number; g: number; s: number; o: number };
-
-/** Mazo cerrado: la carta actual de frente, el resto asomando el canto. */
-function reposo(j: number, p: number, W: number, apilado: boolean): Pose {
-  const d = j - p;
-  // Sin desplegar, el mazo es un bloque macizo: todas las ranuras exactamente
-  // detrás de la frontal (así el sobre emerge como un objeto sólido).
-  if (!apilado) {
-    return Math.abs(d) < 0.5
-      ? { x: 0, y: 0, g: 0, s: 1, o: 1 }
-      : { x: 0, y: 0, g: 0, s: 1, o: 0 };
-  }
-  if (d >= 0) {
-    const dd = Math.min(d, 4);
-    const s = interp(D_ESCALA, dd);
-    return {
-      x: (W / 2) * (1 - s) + W * interp(D_ASOMA, dd),
-      y: W * interp(D_BAJA, dd),
-      g: interp(D_GIRO, dd),
-      s,
-      o: interp(D_OPACIDAD, dd),
-    };
-  }
-  const k = Math.min(-d, 4);
-  const s = interp(D_ESCALA, k);
-  return {
-    x: -((W / 2) * (1 - s) + W * interp(V_APARTA, k)),
-    y: W * interp(D_BAJA, k),
-    g: interp(V_GIRO, k),
-    s,
-    o: interp(V_OPACIDAD, k),
-  };
-}
-
-/** Mazo abierto: las diez repartidas en arco, centradas en el MAZO (no en la
- *  selección) para que el abanico no se descuelgue a un lado al pasar cartas. */
 /**
- * ESCALERA. Las cartas se escalonan en diagonal desde la seleccionada, como un
- * mazo abierto en la mano: cada una asoma exactamente PASO_PX del canto de la
- * de delante, y nada más.
+ * Pose de la ranura j con la carta p delante. Sólo hay dos: la de p (centrada,
+ * entera y sin transform) y la del resto (fuera de la pantalla y a opacidad 0,
+ * a un lado o al otro según ya se hayan pasado o estén por ver).
  *
- * No hay giro ni cambio de escala: con las cartas en paralelo el escalón es
- * constante y el ojo lee los cantos de un vistazo. En abanico, la rotación
- * hacía que el trozo visible cambiara de grosor según la posición, que es
- * justo lo que estorba para comparar.
- *
- * El solape hace todo el trabajo: la carta j queda tapada por la j-1 salvo su
- * escalón, así que el canto visible es literalmente PASO_PX. Sólo la
- * seleccionada se ve entera, que es la que estás mirando.
+ * p es SIEMPRE un entero. El arrastre ya no mueve la selección a medias, así
+ * que no existen poses intermedias que calcular: el paso de una carta a otra lo
+ * interpola la transición CSS, propiedad a propiedad.
  */
-function escalera(j: number, p: number): Pose {
-  const d = j - p;
-  return {
-    // A la derecha las que faltan, a la izquierda las ya vistas: la escalera
-    // atraviesa la seleccionada y da sensación de posición en el mazo.
-    x: PASO_PX * d,
-    // Sube al alejarse hacia delante y baja hacia atrás: la diagonal de un
-    // mazo apoyado en la mano.
-    y: -PASO_ALTO_PX * d,
-    g: 0,
-    s: 1,
-    o: 1,
-  };
+function pose(j: number, p: number, W: number): Pose {
+  if (j === p) return { x: 0, g: 0, o: 1 };
+  const lado = j > p ? 1 : -1;
+  return { x: lado * F_SALIDA * W, g: lado * GIRO_SALIDA, o: 0 };
 }
 
+/**
+ * La carta de delante en reposo se queda SIN transform: sin capa, sin escala y
+ * sin contexto de apilado propio, que es la condición exacta que PokemonCard
+ * necesita para pintarse a la densidad de la pantalla.
+ */
+function escribirTransform(el: HTMLElement, x: number, g: number) {
+  el.style.transform =
+    x === 0 && g === 0
+      ? ""
+      : `translate3d(${x.toFixed(2)}px, 0, 0) rotate(${g.toFixed(2)}deg)`;
+}
 
 interface MazoCartasProps {
   cartas: any[];
@@ -338,8 +247,6 @@ interface MazoCartasProps {
   maxRevealed: number;
   /** La primera carta del sobre: el MARCO hace la coreografía de emergencia. */
   emerge: boolean;
-  /** La pila ya puede abrirse en abanico de reposo (a partir de T_FANFARRIA). */
-  desplegado: boolean;
   efectosApagados: boolean;
   /** Gestos activos: sólo en fase "cartas". */
   habilitado: boolean;
@@ -360,7 +267,6 @@ export default function MazoCartas({
   indice,
   maxRevealed,
   emerge,
-  desplegado,
   efectosApagados,
   habilitado,
   zonaRef,
@@ -372,9 +278,10 @@ export default function MazoCartas({
   const ranurasRef = useRef<(HTMLDivElement | null)[]>([]);
   /** Ancho de la carta frontal: se lee una vez por gesto, nunca por fotograma. */
   const anchoRef = useRef(0);
-  /** Selección continua bajo el dedo (fraccional durante el arrastre). */
+  /** Selección continua bajo el dedo. Se lleva la cuenta pero NO se pinta: sólo
+   *  decide dónde se aterriza al soltar. */
   const pRef = useRef(indice);
-  /** Último Math.round(p) al que se le puso el z-index y el detente háptico. */
+  /** Carta que está delante: la única visible y la única que mueve el arrastre. */
   const focoRef = useRef(-1);
   /** Deslizamiento confirmado por el hook: -1 izquierda, +1 derecha, 0 nada. */
   const flingRef = useRef(0);
@@ -382,24 +289,26 @@ export default function MazoCartas({
   const gestoVivoRef = useRef(false);
   const limpiezaRef = useRef(0);
   const montadoRef = useRef(false);
-  const desplegadoPrevRef = useRef(desplegado);
   /** Muestras (t, dx) del arrastre para medir la velocidad al soltar. */
   const muestrasRef = useRef<{ t: number; dx: number }[]>([]);
   /** Último desplazamiento visto: onEnd no recibe ninguno. */
   const dxRef = useRef(0);
-  /** Apertura del abanico (0-1) en el último fotograma del arrastre. */
-  const fRef = useRef(0);
+  /** Píxeles que la carta visible está apartada del centro por el arrastre. */
+  const arrastreRef = useRef(0);
+  /** El gesto ya ha colocado el mazo (transiciones apagadas) en este arrastre. */
+  const arrastrandoRef = useRef(false);
+  /** Detente háptico: última carta bajo la que ha cruzado el dedo. */
+  const detenteRef = useRef(-1);
   /**
-   * Destino cuyo cierre ya escribió el gesto. El re-render que provoca
+   * Destino cuya llegada ya escribió el gesto. El re-render que provoca
    * onSeleccionar dispara el layout effect, y sin esta marca volvería a escribir
-   * el mismo destino con la duración por defecto y sin escalonado, aplanando la
-   * coreografía que el gesto acababa de calcular.
+   * el mismo destino con la duración por defecto, aplanando la coreografía que
+   * el gesto acababa de calcular.
    */
   const cierreRef = useRef(-1);
   /**
-   * Última cadena de `transition` escrita en cada ranura. Durante el arrastre el
-   * valor es siempre "none": comparar evita que el motor de estilo reparsee diez
-   * declaraciones en cada pointermove (a 120Hz son 1.200 por segundo tiradas).
+   * Última cadena de `transition` escrita en cada ranura. Comparar evita que el
+   * motor de estilo reparsee diez declaraciones cada vez que se coloca el mazo.
    */
   const transRef = useRef<string[]>([]);
   /** Índice anterior: da el recorrido del relevo por toque, tecla o botón. */
@@ -416,8 +325,11 @@ export default function MazoCartas({
     return anchoRef.current;
   }, [zonaRef]);
 
-  /** z-index: sólo se escribe cuando cambia la carta enfocada, jamás por
-   *  fotograma (tocarlo en cada movimiento fuerza recomposición del árbol). */
+  /**
+   * z-index: sólo se escribe cuando cambia la carta de delante, jamás por
+   * fotograma (tocarlo en cada movimiento fuerza recomposición del árbol). En
+   * el relevo importa que la que ENTRA vaya por encima de la que sale.
+   */
   const escribirZ = useCallback((foco: number) => {
     for (let j = 0; j < ranurasRef.current.length; j++) {
       const el = ranurasRef.current[j];
@@ -426,86 +338,49 @@ export default function MazoCartas({
   }, []);
 
   /**
-   * ÚNICO punto de todo el proyecto que escribe el transform de una ranura.
-   * React no toca nunca `transform` ni `opacity` aquí, así que sus re-renders
-   * (cambio de índice, de variante de imagen…) no pisan el gesto en curso.
-   * Es idempotente: escribir dos veces el mismo destino no reinicia nada,
-   * porque una transición CSS sólo arranca si el valor calculado cambia.
+   * ÚNICO punto que coloca el mazo entero. React no toca nunca `transform` ni
+   * `opacity` aquí, así que sus re-renders (cambio de índice, de variante de
+   * imagen…) no pisan el gesto en curso. Es idempotente: escribir dos veces el
+   * mismo destino no reinicia nada, porque una transición CSS sólo arranca si
+   * el valor calculado cambia.
    */
   const escribirMazo = useCallback(
     (
       p: number,
-      f: number,
       opts?: {
         transicion?: number;
-        apilado?: boolean;
-        /** Tirón de goma del mazo entero, en px a lo largo de la escalera. */
-        goma?: number;
-        /** Reparte la llegada: cuanto más lejos de la seleccionada, más tarde. */
-        escalonado?: boolean;
+        /** Apartado de la carta visible mientras el dedo la lleva, en px. */
+        arrastre?: number;
         curva?: string;
       },
     ) => {
       // Sin guarda de W a propósito: si midiera 0 (layout aún sin resolver),
-      // x e y salen 0 pero las opacidades NO dependen de W, así que el mazo
+      // las x salen 0 pero las opacidades NO dependen de W, así que el mazo
       // degrada a una pila perfecta con la carta buena delante — nunca a diez
       // cartas superpuestas con la última encima.
       const W = anchoRef.current || medir();
-      const apilado = opts?.apilado ?? (desplegadoPrevRef.current || efectosApagados);
       const ms = efectosApagados ? 0 : (opts?.transicion ?? 0);
       const curva = opts?.curva ?? CURVA_MUELLE;
-      const escalonado = ms > 0 && !!opts?.escalonado;
-      // El tirón llega en píxeles pero se aplica como un corrimiento de p sobre
-      // la ESCALERA: mover el mazo entero PASO_PX es, por construcción, lo mismo
-      // que correrlo una carta, así que la goma viaja por la diagonal 10/7 del
-      // mazo sin una sola línea de trigonometría. Va dentro del término de
-      // escalera, así que se desvanece con el abanico y vuelve solo al soltar.
-      const gp = (opts?.goma ?? 0) / PASO_PX;
-      // smoothstep: el abanico arranca y frena suave aunque el dedo vaya lineal.
-      const v = f * f * (3 - 2 * f);
+      const arrastre = opts?.arrastre ?? 0;
       const foco = Math.round(p);
       if (foco !== focoRef.current) {
         focoRef.current = foco;
         escribirZ(foco);
       }
+      // El fundido va aparte del viaje y más corto: la que sale se apaga antes
+      // de terminar de irse y la que entra ya está entera mientras se cuadra.
+      const trans = ms
+        ? `transform ${ms}ms ${curva}, opacity ${Math.round(ms * F_FUNDIDO)}ms linear`
+        : "none";
       for (let j = 0; j < n; j++) {
         const el = ranurasRef.current[j];
         if (!el) continue;
-        const r = reposo(j, p, W, apilado);
-        let { x, y, g, s, o } = r;
-        if (v > 0) {
-          const a = escalera(j, p + gp);
-          x = r.x + (a.x - r.x) * v;
-          y = r.y + (a.y - r.y) * v;
-          g = r.g + (a.g - r.g) * v;
-          s = r.s + (a.s - r.s) * v;
-          // La opacidad sólo sube: la escalera enseña TODAS las ranuras.
-          o = r.o + (1 - r.o) * v;
-        }
-        // ESCALONADO. El retardo se mide contra la carta enfocada, no contra el
-        // índice: lo que tiene que llegar primero es la que sueltas.
-        const retardo = escalonado
-          ? Math.min(RETARDO_TOPE_MS, RETARDO_CARTA_MS * Math.abs(j - foco))
-          : 0;
-        const trans = ms
-          ? `transform ${ms}ms ${curva} ${retardo}ms, opacity ${ms}ms linear ${retardo}ms`
-          : "none";
+        const { x, g, o } = pose(j, foco, W);
         if (trans !== transRef.current[j]) {
           transRef.current[j] = trans;
           el.style.transition = trans;
         }
-        // Sin recorte: en escalera el solape ya deja a la vista exactamente el
-        // escalón (PASO_PX) de cada carta, y sólo la seleccionada —la que estás
-        // mirando— se ve entera. El clip-path que hacía falta con el abanico
-        // sobra aquí, y de paso se ahorra un contexto de apilado por ranura.
-        //
-        // La frontal en reposo se queda SIN transform: sin capa, sin escala y
-        // sin contexto de apilado propio, que es la condición exacta que
-        // PokemonCard necesita para pintarse a la densidad de la pantalla.
-        el.style.transform =
-          j === foco && v === 0 && x === 0 && y === 0 && g === 0 && s === 1
-            ? ""
-            : `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0) rotate(${g.toFixed(2)}deg) scale(${s.toFixed(4)})`;
+        escribirTransform(el, j === foco ? x + arrastre : x, g);
         el.style.opacity = String(o);
       }
     },
@@ -513,52 +388,57 @@ export default function MazoCartas({
   );
 
   /**
-   * Reposición: cambio de carta (toque, teclado, botón), despliegue de la pila
-   * y llegada de cartas nuevas (sube maxRevealed y con él el fondo del mazo).
+   * ARRASTRE, fotograma a fotograma. La única ranura que se mueve es la que se
+   * ve, así que se escribe UNA declaración por pointermove y no diez: las otras
+   * nueve ya están fuera y ahí se quedan.
+   */
+  const escribirArrastre = useCallback((px: number) => {
+    const el = ranurasRef.current[focoRef.current];
+    if (el) escribirTransform(el, px, 0);
+  }, []);
+
+  /**
+   * Reposición: cambio de carta por toque, teclado o botón, y primer pintado.
    * Va en layout effect para que el destino esté escrito antes de pintar.
    */
   useLayoutEffect(() => {
     medir();
-    const abriendo = desplegado && !desplegadoPrevRef.current;
-    desplegadoPrevRef.current = desplegado;
     const salto = Math.abs(indice - indicePrevRef.current);
     indicePrevRef.current = indice;
     pRef.current = indice;
     flingRef.current = 0;
     const primera = !montadoRef.current;
     montadoRef.current = true;
-    // El gesto ya escribió EXACTAMENTE este cierre, con su duración y sus
-    // retardos: repisarlo aquí lo aplanaría a mitad de vuelo.
+    // El gesto ya escribió EXACTAMENTE esta llegada, con su duración: repisarla
+    // aquí la aplanaría a mitad de vuelo.
     if (cierreRef.current === indice) return;
     if (primera) {
-      // Primer pintado: nada que animar, el mazo nace donde le toca.
-      escribirMazo(indice, 0, { transicion: 0 });
+      // Primer pintado: nada que animar, el mazo nace donde le toca. Durante la
+      // emergencia del sobre esto deja a la carta 0 centrada y a las otras nueve
+      // fuera y a opacidad 0, que es justo lo que la coreografía necesita.
+      escribirMazo(indice, { transicion: 0 });
       return;
     }
-    if (abriendo) {
-      // Despliegue de la pila: la coreografía de la apertura del sobre no se
-      // toca — misma duración, misma curva sin muelle y las diez a la vez.
-      escribirMazo(indice, 0, { transicion: T_DESPLIEGUE, curva: CURVA_SALIDA });
-      return;
-    }
-    // Sólo ha subido maxRevealed (el fondo del mazo): las poses no dependen de
-    // él, así que no hay nada que reescribir y sí un cierre en curso que
-    // molestar.
     if (salto === 0) return;
     // Relevo por toque, tecla o botón: la misma ley que el gesto. Con salto = 1
     // devuelve los 260ms de siempre.
-    escribirMazo(indice, 0, { transicion: duracionCierre(salto), escalonado: true });
-  }, [indice, maxRevealed, desplegado, escribirMazo, medir]);
+    escribirMazo(indice, { transicion: duracionCierre(salto) });
+    // maxRevealed no entra aquí: las poses no dependen de él (sólo del índice),
+    // y reescribir el mazo cuando sube el fondo molestaría a una llegada en
+    // curso.
+  }, [indice, escribirMazo, medir]);
 
   /**
    * La barra dinámica de Safari mueve --app-height y con ella CARD_WIDTH: sin
-   * releer W el mazo se queda descuadrado hasta el siguiente gesto.
+   * releer W las cartas apartadas se quedan mal apartadas hasta el siguiente
+   * gesto (y en el caso peor asomaría un canto, que es justo lo que no puede
+   * pasar).
    */
   useEffect(() => {
     const recolocar = () => {
       anchoRef.current = 0;
       medir();
-      escribirMazo(pRef.current, 0, { transicion: 0 });
+      escribirMazo(pRef.current, { transicion: 0 });
     };
     window.addEventListener("resize", recolocar);
     window.addEventListener("orientationchange", recolocar);
@@ -569,9 +449,21 @@ export default function MazoCartas({
     };
   }, [escribirMazo, medir]);
 
-  const promocionar = (activo: boolean) => {
-    for (const el of ranurasRef.current) {
-      if (el) el.style.willChange = activo ? "transform" : "";
+  /**
+   * will-change SÓLO en las ranuras que se van a mover y SÓLO mientras se
+   * mueven. Aquí ninguna pose lleva escala, así que promocionar no puede
+   * emborronar nada: la capa se rasteriza al tamaño con el que se va a pintar.
+   */
+  const promocionar = (js: number[]) => {
+    for (const j of js) {
+      const el = ranurasRef.current[j];
+      if (el) el.style.willChange = "transform, opacity";
+    }
+  };
+  const despromocionar = () => {
+    for (let j = 0; j < ranurasRef.current.length; j++) {
+      const el = ranurasRef.current[j];
+      if (el) el.style.willChange = "";
     }
   };
 
@@ -611,6 +503,26 @@ export default function MazoCartas({
     return -Math.sign(vpx) * cartas;
   };
 
+  /**
+   * Recorrido de la llegada, en cartas: el trecho que de verdad va a viajar el
+   * mazo MÁS lo que la carta visible tiene que volver del arrastre.
+   *
+   * `desde` es la carta PINTADA, no la seleccionada. Con el abanico el mazo se
+   * movía bajo el dedo y las dos coincidían; ahora el arrastre no mueve la
+   * selección a la vista —sólo aparta la carta de delante— así que el mazo
+   * sigue pintado en `indice` hasta que se suelta. Medir desde la selección
+   * daba 0 cuando el dedo ya había cruzado a la siguiente y la llegada de una
+   * carta entera se despachaba en 189ms en vez de los 260 de siempre.
+   *
+   * El segundo término está en anchos de salida (F_SALIDA·W) porque ésa es la
+   * distancia que recorre una carta al cambiar: así las dos partes se suman en
+   * la misma unidad. Sin él, soltar tras un arrastre largo sin cambiar de carta
+   * cerraría en el mínimo seco.
+   */
+  const recorridoCierre = (desde: number, hasta: number, W: number) =>
+    Math.abs(desde - hasta) +
+    (W ? Math.abs(arrastreRef.current) / (F_SALIDA * W) : 0);
+
   const didSwipe = useSwipe(zonaRef, {
     axis: "both",
     follow: false,
@@ -622,20 +534,20 @@ export default function MazoCartas({
       gestoVivoRef.current = true;
       flingRef.current = 0;
       pRef.current = indice;
+      detenteRef.current = indice;
       muestrasRef.current.length = 0;
       dxRef.current = 0;
-      fRef.current = 0;
+      arrastreRef.current = 0;
+      arrastrandoRef.current = false;
       cierreRef.current = -1;
       window.clearTimeout(limpiezaRef.current);
       // useSwipe promociona la ZONA aunque follow sea false, y la zona es
-      // ancestro de las diez ranuras: dejarlo rasterizaría el subárbol entero
-      // a una escala y saldrían borrosas las diez a la vez.
+      // ancestro de las diez ranuras: dejarlo rasterizaría el subárbol entero.
       if (zonaRef.current) zonaRef.current.style.willChange = "";
-      // Las ranuras sí se promocionan, y justo ahora: la frontal está a escala
-      // 1 y durante todo el arrastre las escalas sólo bajan.
-      if (W) promocionar(true);
+      // Se promociona sólo la que se va a mover, que es la que se ve.
+      if (W) promocionar([indice]);
     },
-    // Nada de setState aquí: el arrastre se pinta escribiendo transforms desde
+    // Nada de setState aquí: el arrastre se pinta escribiendo el transform desde
     // el propio pointermove. Ni React, ni rAF, ni un fotograma de retraso.
     onMove: (dx) => {
       const W = anchoRef.current;
@@ -648,33 +560,35 @@ export default function MazoCartas({
       m.push({ t: ahora, dx });
       dxRef.current = dx;
 
+      // SELECCIÓN: se lleva la cuenta completa (zona muerta, paso de carta y
+      // recorte al rango) pero no se pinta. Nadie ve las otras cartas mientras
+      // el dedo está abajo; lo único que hace esta cuenta es decidir dónde se
+      // aterriza y marcar los detentes.
       const adx = Math.abs(dx);
-      const f = Math.min(1, adx / (F_ABRE * W));
-      fRef.current = f;
       const avance = Math.max(0, adx - F_ZONA_MUERTA * W) / (F_PASO * W);
-      let p = indice - Math.sign(dx) * avance;
-      // GOMA en los dos topes, y sólo aquí: la resistencia interna del hook no
-      // entra nunca porque siempre le damos manejador en ambas direcciones.
-      //
-      // El exceso ya NO se cuela dentro de p. p se recorta al rango exacto —así
-      // round(p) es siempre una ranura seleccionable, que es lo que impide
-      // realzar, dar z-index y vibrar en una carta donde luego no se aterriza—
-      // y la resistencia se pinta aparte, como un tirón del mazo ENTERO por su
-      // diagonal, que además es lo único que se ve.
-      let gomaPx = 0;
-      if (p > tope) {
-        gomaPx = goma((p - tope) * F_PASO * W);
-        p = tope;
-      } else if (p < 0) {
-        gomaPx = -goma(-p * F_PASO * W);
-        p = 0;
-      }
+      const p = Math.max(0, Math.min(tope, indice - Math.sign(dx) * avance));
       pRef.current = p;
-      const foco = Math.round(p);
-      const cambio = foco !== focoRef.current;
-      escribirMazo(p, f, { goma: gomaPx });
-      // Detente: el mismo idioma que las muescas del rasgado.
-      if (cambio && !efectosApagados) haptic("tap");
+
+      // MOVIMIENTO: sólo la carta que se ve, y con resistencia creciente.
+      const px = seguir(dx, W);
+      arrastreRef.current = px;
+      if (!arrastrandoRef.current) {
+        // Primer movimiento del gesto: coloca el mazo y apaga las transiciones
+        // de las diez de una vez. A partir de aquí ya sólo se toca una.
+        arrastrandoRef.current = true;
+        escribirMazo(indice, { transicion: 0, arrastre: px });
+      } else {
+        escribirArrastre(px);
+      }
+
+      // DETENTE: el mismo idioma que las muescas del rasgado. Con una sola
+      // carta a la vista es el único aviso de que se ha cruzado a la siguiente,
+      // así que aquí importa más que cuando se veía el mazo abierto.
+      const cruce = Math.round(p);
+      if (cruce !== detenteRef.current) {
+        detenteRef.current = cruce;
+        if (!efectosApagados) haptic("tap");
+      }
     },
     // Sólo anotan el deslizamiento: la navegación la decide dónde SUELTAS.
     onSwipeLeft: () => {
@@ -687,7 +601,7 @@ export default function MazoCartas({
       gestoVivoRef.current = false;
       const W = anchoRef.current || medir();
       const pSoltado = pRef.current;
-      // INERCIA: dónde habría acabado el mazo si siguiera rodando y frenando.
+      // INERCIA: dónde habría acabado la selección si siguiera rodando y frenando.
       let destino = Math.round(pSoltado + proyectarInercia(medirVelocidad(), W));
       // Deslizamiento corto y decidido que no llegó a cruzar medio paso ni a
       // marcar velocidad de lanzamiento: manda el fling (izquierda avanza,
@@ -698,35 +612,35 @@ export default function MazoCartas({
       }
       destino = Math.max(0, Math.min(destino, tope));
       flingRef.current = 0;
+      arrastrandoRef.current = false;
       pRef.current = destino;
-      // Lo que de verdad recorre el mazo: el trecho hasta la ranura destino más
-      // el abanico cerrándose. Un ajuste de nada sale en ~190ms; un lanzamiento
-      // de tres cartas, en 420.
-      const ms = duracionCierre(
-        Math.abs(pSoltado - destino) + F_PESO_ABANICO * fRef.current,
-      );
-      // La ranura destino es la única que puede CRECER: se despromociona antes
-      // de que le corra la transición encima, para que repinte a tamaño real.
-      const elDestino = ranurasRef.current[destino];
-      if (elDestino) elDestino.style.willChange = "";
+      // Lo que de verdad recorre el mazo: el trecho desde la carta que está
+      // PINTADA (indice, porque el arrastre no mueve la selección a la vista)
+      // hasta la destino, más lo que la que estás viendo tiene que volver del
+      // arrastre. Con un cambio de una carta da los 260ms de siempre, exactamente
+      // los mismos que el relevo por toque, tecla o botón.
+      const ms = duracionCierre(recorridoCierre(indice, destino, W));
+      // La que entra se mueve tanto como la que sale: se promociona ahora, que
+      // es justo cuando empieza a hacerlo. Ninguna de las dos crece, así que no
+      // hay que despromocionar a nadie antes de escribirle la transición.
+      promocionar([indice, destino]);
       cierreRef.current = destino;
-      escribirMazo(destino, 0, { transicion: ms, escalonado: true });
+      escribirMazo(destino, { transicion: ms });
       if (destino !== indice) onSeleccionar(destino);
-      fRef.current = 0;
+      arrastreRef.current = 0;
       muestrasRef.current.length = 0;
-      // Las otras nueve sólo encogen: conservan la capa hasta que acaba el
-      // cierre, retardos incluidos. Un will-change que sobreviva al gesto deja
-      // la textura rasterizada a una escala fija y desenfoca las diez cartas.
-      // NUNCA se cierra el sobre desde aquí (ver §3 del plan): el arrastre es el
-      // gesto exploratorio y el cierre vive en el toque, el botón "Guardar
-      // sobre", Enter y Espacio.
+      // Las capas viven exactamente lo que dura la llegada. Un will-change que
+      // sobreviva al gesto deja la textura rasterizada y desenfoca la carta.
+      // NUNCA se cierra el sobre desde aquí: el arrastre es el gesto de pasar
+      // cartas y el cierre vive en el toque, el botón "Guardar sobre", Enter y
+      // Espacio.
       window.clearTimeout(limpiezaRef.current);
       limpiezaRef.current = window.setTimeout(
         () => {
-          promocionar(false);
+          despromocionar();
           cierreRef.current = -1;
         },
-        efectosApagados ? 0 : ms + RETARDO_TOPE_MS + T_LIMPIEZA_MS,
+        efectosApagados ? 0 : ms + T_LIMPIEZA_MS,
       );
     },
   });
@@ -734,11 +648,11 @@ export default function MazoCartas({
   /**
    * CIERRE DE SEGURIDAD. useSwipe abandona el gesto EN SECO cuando baja un
    * segundo dedo (lo trata como pellizco, hooks/useSwipe.ts:145-149) y por ese
-   * camino NO llama a onEnd: el mazo se quedaría congelado a medio abanico, con
-   * las diez ranuras promocionadas, hasta el siguiente toque. Se comprueba en
-   * un temporizador a 0 para que el onEnd normal —que es síncrono— gane
-   * siempre, sea cual sea el orden en que se registraron los escuchas (useSwipe
-   * vuelve a suscribirse cada vez que cambia `enabled`).
+   * camino NO llama a onEnd: la carta se quedaría congelada a medio arrastre y
+   * promocionada hasta el siguiente toque. Se comprueba en un temporizador a 0
+   * para que el onEnd normal —que es síncrono— gane siempre, sea cual sea el
+   * orden en que se registraron los escuchas (useSwipe vuelve a suscribirse
+   * cada vez que cambia `enabled`).
    */
   useEffect(() => {
     const revisar = () => {
@@ -746,26 +660,34 @@ export default function MazoCartas({
         if (!gestoVivoRef.current) return;
         gestoVivoRef.current = false;
         flingRef.current = 0;
+        arrastrandoRef.current = false;
         // Sin velocidad que valga: esto no es soltar, es un gesto abortado. Se
-        // vuelve a donde se estaba, con la ley de siempre para que el mazo no
+        // vuelve a donde se estaba, con la ley de siempre para que la carta no
         // dé un tirón raro.
+        // El mazo sigue pintado en `indice`: lo único que tiene que deshacerse
+        // es el apartado del arrastre. Medir desde pRef daría el recorrido de
+        // una carta que nunca llegó a moverse, y la carta volvería a cámara
+        // lenta desde 40px.
         const ms = duracionCierre(
-          Math.abs(pRef.current - indice) + F_PESO_ABANICO * fRef.current,
+          recorridoCierre(indice, indice, anchoRef.current),
         );
         pRef.current = indice;
-        fRef.current = 0;
+        arrastreRef.current = 0;
         muestrasRef.current.length = 0;
         cierreRef.current = indice;
-        escribirMazo(indice, 0, { transicion: ms, escalonado: true });
+        escribirMazo(indice, { transicion: ms });
         window.clearTimeout(limpiezaRef.current);
         limpiezaRef.current = window.setTimeout(
           () => {
+            // Mismo bucle que despromocionar(), pero escrito aquí: el efecto no
+            // puede depender de una función recreada en cada render sin
+            // resuscribir los dos escuchas en cada uno.
             for (const el of ranurasRef.current) {
               if (el) el.style.willChange = "";
             }
             cierreRef.current = -1;
           },
-          efectosApagados ? 0 : ms + RETARDO_TOPE_MS + T_LIMPIEZA_MS,
+          efectosApagados ? 0 : ms + T_LIMPIEZA_MS,
         );
       }, 0);
     };
@@ -823,24 +745,28 @@ export default function MazoCartas({
           aria-hidden={j === indice ? undefined : "true"}
           className="absolute inset-0"
           style={{
-            // Grosor del taco. box-shadow y NUNCA drop-shadow: un filter aquí
-            // rasteriza el subárbol y las diez cartas salen blandas.
+            // Las ranuras son decoración: quien escucha toques y arrastres es la
+            // ZONA, que es su padre y cubre exactamente la carta. Sin esto, las
+            // nueve apartadas —que ahora se van más de un ancho de carta hacia
+            // los lados y siguen siendo elementos vivos aunque estén a opacidad
+            // 0— se comerían los toques de lo que haya a ambos lados en las
+            // pantallas donde sobra sitio.
+            pointerEvents: "none",
+            // Sombra de la carta. box-shadow y NUNCA drop-shadow: un filter aquí
+            // rasteriza el subárbol y la carta sale blanda.
             boxShadow:
               "6px 0 10px -6px rgba(0,0,0,.45), 0 6px 14px -10px rgba(0,0,0,.5)",
             borderRadius: "4.5%",
           }}
         >
-          {/* TODAS las cartas van de cara, también las que aún no has pasado:
-              es lo que se pidió — abrir el abanico y ver el canto de todas
-              "para ver si me ha tocado algo bueno". Con dorsos, el abanico sólo
-              servía al final del sobre, cuando ya no hace falta.
-              No destripa nada de más: en reposo las de detrás asoman ~10px y en
-              abanico ~18px, una tira de arte que deja intuir un foil o un dorado
-              pero no identificar la carta. Y durante la emergencia el mazo va
-              apilado con las nueve a opacidad 0, así que la sorpresa de la
-              primera carta sigue intacta.
-              Grande sólo la frontal y sus dos vecinas: al resto la variante
-              pequeña le sobra por 4,5x para la tira que se ve. */}
+          {/* Todas van de cara, también las que aún no has pasado: la que está
+              fuera de pantalla es la siguiente en entrar y un dorso que se
+              voltea a mitad de viaje se ve como un parpadeo. No destripa nada:
+              fuera del viewport y a opacidad 0 no se ve absolutamente nada de
+              ellas hasta que les toca.
+              Grande sólo la frontal y sus dos vecinas: tener ya decodificada la
+              imagen de la que entra es la mitad de la fluidez del relevo; al
+              resto la variante pequeña le sobra. */}
           <PokemonCard
             card={carta}
             reveal

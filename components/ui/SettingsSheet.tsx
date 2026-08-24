@@ -2,15 +2,18 @@
 
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useUser } from "@clerk/nextjs";
-import { setUserTheme } from "../../app/action";
+import { getUserLang, getUserTheme, setUserLang, setUserTheme } from "../../app/action";
 import { useCurrency } from "../../hooks/useGameCurrency";
 import { useHaptics } from "../../hooks/useHaptics";
 import { STARTING_COINS } from "../../utils/constanst";
 import {
+  aplicarIdioma,
   guardarAjustes,
   leerAjustes,
+  leerIdioma,
   suscribirseAjustes,
   type Ajustes,
+  type Idioma,
 } from "../../utils/settings";
 import { clearCollection } from "../../utils/storage";
 import ConfirmSheet from "./ConfirmSheet";
@@ -19,9 +22,59 @@ import { useToast } from "./Toast";
 
 type Tema = "light" | "dark";
 
-// Misma pareja de colores que ThemeToggle y el script de arranque: al cambiar
-// el tema desde aquí, la barra del navegador debe acompañar al fondo igual.
+// El tema lo elige el usuario con data-theme, no prefers-color-scheme, así que
+// la etiqueta theme-color no puede declararse por media query: se reescribe a
+// mano para que la barra del navegador acompañe al fondo (--bg de globals.css).
+// Aquí es donde vive ya el único selector de tema; el otro sitio con estos dos
+// valores es el script antiparpadeo de app/layout.tsx, que corre sin bundle.
 const COLOR_BARRA: Record<Tema, string> = { light: "#f4efe4", dark: "#14120c" };
+
+/**
+ * Escribe el tema en las tres fuentes que lo leen: el atributo que pinta el
+ * CSS, la meta que colorea la barra del navegador y localStorage, de donde lo
+ * recupera el script de arranque en la siguiente carga.
+ */
+const aplicarTema = (t: Tema) => {
+  document.documentElement.setAttribute("data-theme", t);
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", COLOR_BARRA[t]);
+  try {
+    localStorage.setItem("theme", t);
+  } catch {}
+};
+
+// Hay dos hojas montadas a la vez (la de la cabecera y la del menú lateral):
+// sin este cerrojo de módulo, compartido por ambas, la preferencia de la cuenta
+// se consultaría por duplicado en cada carga.
+let temaDeLaNubeConsultado = false;
+// El idioma tiene el suyo por lo mismo, y aquí duele más: consultarlo dos veces
+// podría disparar dos recargas.
+let idiomaDeLaNubeConsultado = false;
+
+/**
+ * Cambia el idioma de las cartas y RECARGA.
+ *
+ * POR QUÉ RECARGA: el tema es CSS y reacciona solo, pero los nombres y las
+ * ilustraciones los traduce el servidor (la cookie que escribe `aplicarIdioma`
+ * es lo que lee). Las cartas que ya están en pantalla —colección, álbum, sobre
+ * a medio abrir, tablón del mercado— vinieron con el idioma anterior y no hay
+ * forma de refrescarlas sin que cada pantalla se suscriba a un evento y vuelva
+ * a pedir sus datos: doce sitios donde olvidarse de uno. Una recarga las deja
+ * todas coherentes de una vez, y como la cookie ya está escrita, la página
+ * vuelve directamente en el idioma nuevo. Cambiar de idioma es raro; una
+ * pantalla a medias en dos idiomas, imperdonable.
+ */
+const cambiarIdiomaYRecargar = (idioma: Idioma, conSesion: boolean) => {
+  aplicarIdioma(idioma);
+  const recargar = () => window.location.reload();
+  if (!conSesion) {
+    recargar();
+    return;
+  }
+  // Con sesión se guarda antes en la nube, para que el resto de dispositivos lo
+  // hereden. Si la red falla, se recarga igual: la preferencia del dispositivo
+  // ya está escrita y es la que manda en éste.
+  setUserLang(idioma).catch(() => {}).then(recargar);
+};
 
 interface SettingsSheetProps {
   open: boolean;
@@ -92,7 +145,8 @@ function FilaInterruptor({ titulo, descripcion, activo, onToggle }: FilaInterrup
   );
 }
 
-const estiloOpcionTema = (activo: boolean): CSSProperties =>
+/** Estilo de una opción de segmento (tema, idioma): activa o apagada. */
+const estiloOpcion = (activo: boolean): CSSProperties =>
   activo
     ? {
         background: "color-mix(in srgb, var(--accent) 14%, transparent)",
@@ -116,31 +170,82 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
   const [ajustes, setAjustes] = useState<Ajustes>(() => leerAjustes());
   useEffect(() => suscribirseAjustes(setAjustes), []);
 
-  // El tema se refleja observando el <html>: así el selector también se
-  // actualiza si se cambia con el conmutador de la cabecera estando abierta.
+  // El tema se refleja observando el <html>: así el selector se actualiza sea
+  // quien sea el que cambie el atributo (la otra hoja montada, la preferencia
+  // que llega de la cuenta o el script de arranque), sin estado paralelo.
   const [tema, setTema] = useState<Tema>("light");
+  // El idioma se refleja igual y por el mismo motivo: la otra hoja montada, o
+  // la preferencia que llega de la cuenta, pueden cambiarlo por debajo.
+  const [idioma, setIdioma] = useState<Idioma>("en");
   useEffect(() => {
-    const leer = () =>
+    const leer = () => {
       setTema((document.documentElement.getAttribute("data-theme") as Tema) || "light");
+      setIdioma(leerIdioma());
+    };
     leer();
     const observador = new MutationObserver(leer);
     observador.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["data-theme"],
+      attributeFilter: ["data-theme", "data-idioma"],
     });
     return () => observador.disconnect();
   }, []);
 
+  // Con sesión, la preferencia de la cuenta manda sobre la del dispositivo: el
+  // script de arranque sólo conoce localStorage, así que al entrar desde otro
+  // navegador el tema se corrige aquí en cuanto Clerk confirma la identidad.
+  useEffect(() => {
+    if (!isLoaded) return;
+    if (!isSignedIn) {
+      // Al cerrar sesión se rearma: si luego entra otra cuenta, se vuelve a leer.
+      temaDeLaNubeConsultado = false;
+      return;
+    }
+    if (temaDeLaNubeConsultado) return;
+    temaDeLaNubeConsultado = true;
+    getUserTheme()
+      // Sin catch, un fallo de red dejaba una promesa rechazada sin gestionar.
+      .catch(() => null)
+      .then((t) => {
+        if (t && t !== document.documentElement.getAttribute("data-theme")) aplicarTema(t);
+      });
+  }, [isLoaded, isSignedIn]);
+
+  // Mismo trato que el tema: el script de arranque sólo conoce este navegador,
+  // así que al entrar desde otro dispositivo la preferencia de la cuenta se
+  // impone aquí en cuanto Clerk confirma la identidad. Si difiere hay recarga
+  // (las cartas ya pintadas vinieron en el idioma equivocado); si coincide no
+  // pasa nada, así que no hay bucle posible.
+  useEffect(() => {
+    if (!isLoaded) return;
+    if (!isSignedIn) {
+      idiomaDeLaNubeConsultado = false;
+      return;
+    }
+    if (idiomaDeLaNubeConsultado) return;
+    idiomaDeLaNubeConsultado = true;
+    getUserLang()
+      .catch(() => null)
+      .then((l) => {
+        if (l && l !== leerIdioma()) {
+          aplicarIdioma(l);
+          window.location.reload();
+        }
+      });
+  }, [isLoaded, isSignedIn]);
+
   const cambiarTema = (t: Tema) => {
     if (t === tema) return;
     haptic("select");
-    document.documentElement.setAttribute("data-theme", t);
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", COLOR_BARRA[t]);
-    try {
-      localStorage.setItem("theme", t);
-    } catch {}
-    // La preferencia en la nube viaja por el mismo canal que usa ThemeToggle.
+    aplicarTema(t);
+    // Y en la nube, para que el resto de dispositivos de la cuenta lo hereden.
     if (isSignedIn) setUserTheme(t).catch(() => {});
+  };
+
+  const cambiarIdioma = (i: Idioma) => {
+    if (i === idioma) return;
+    haptic("select");
+    cambiarIdiomaYRecargar(i, Boolean(isSignedIn));
   };
 
   const alternar = (clave: "sonido" | "hapticos" | "reducirEfectos") => {
@@ -187,7 +292,7 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                   aria-pressed={tema === "light"}
                   onClick={() => cambiarTema("light")}
                   className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-medium transition-colors"
-                  style={estiloOpcionTema(tema === "light")}
+                  style={estiloOpcion(tema === "light")}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-4 w-4" aria-hidden="true">
                     <circle cx="12" cy="12" r="4" />
@@ -200,7 +305,7 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                   aria-pressed={tema === "dark"}
                   onClick={() => cambiarTema("dark")}
                   className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-medium transition-colors"
-                  style={estiloOpcionTema(tema === "dark")}
+                  style={estiloOpcion(tema === "dark")}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-4 w-4" aria-hidden="true">
                     <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z" />
@@ -208,6 +313,50 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                   Oscuro
                 </button>
               </div>
+            </div>
+          </Seccion>
+
+          <Seccion titulo="Idioma de las cartas">
+            <div className="surface overflow-hidden rounded-2xl">
+              <div className="p-1.5" role="group" aria-label="Idioma de las cartas">
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    aria-pressed={idioma === "en"}
+                    onClick={() => cambiarIdioma("en")}
+                    className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-medium transition-colors"
+                    style={estiloOpcion(idioma === "en")}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" className="h-4 w-4" aria-hidden="true">
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
+                    </svg>
+                    Inglés
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={idioma === "es"}
+                    onClick={() => cambiarIdioma("es")}
+                    className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-medium transition-colors"
+                    style={estiloOpcion(idioma === "es")}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" className="h-4 w-4" aria-hidden="true">
+                      <circle cx="12" cy="12" r="9" />
+                      <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
+                    </svg>
+                    Español
+                  </button>
+                </div>
+              </div>
+              {/* Sin promesas de más: hay expansiones enteras sin ilustración
+                  española y detalles que sólo existen en inglés. */}
+              <p className="ink-faint border-t border-[var(--border)] px-4 py-3 text-[12px] leading-relaxed">
+                En español verás el nombre y, donde exista, la ilustración
+                española de la carta. Algunas expansiones (promos, Galerías de
+                Entrenadores, Shiny Vault) sólo tienen ilustración en inglés, y
+                el texto de ambientación, el ilustrador y la rareza se quedan
+                siempre en inglés. Al cambiarlo se recarga la página.
+              </p>
             </div>
           </Seccion>
 

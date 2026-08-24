@@ -1,0 +1,268 @@
+{
+ "sv1": {
+  "idEs": "sv01",
+  "nombre": "Escarlata y Púrpura",
+  "logo": "https://assets.tcgdex.net/es/sv/sv01/logo",
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 258
+ },
+ "sv10": {
+  "idEs": "sv10",
+  "nombre": "Rivales Predestinados",
+  "logo": "https://assets.tcgdex.net/es/sv/sv10/logo",
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 244
+ },
+ "sv2": {
+  "idEs": "sv02",
+  "nombre": "Evoluciones en Paldea",
+  "logo": "https://assets.tcgdex.net/es/sv/sv02/logo",
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 279
+ },
+ "sv3": {
+  "idEs": "sv03",
+  "nombre": "Llamas Obsidianas",
+  "logo": "https://assets.tcgdex.net/es/sv/sv03/logo",
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 230
+ },
+ "sv3pt5": {
+  "idEs": "sv03.5",
+  "nombre": "151",
+  "logo": "https://assets.tcgdex.net/es/sv/sv03.5/logo",
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 207
+ },
+ "sv4": {
+  "idEs": "sv04",
+  "nombre": "Brecha Paradójica",
+  "logo": "https://assets.tcgdex.net/es/sv/sv04/logo",
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 266
+ },
+ "sv4pt5": {
+  "idEs": "sv04.5",
+  "nombre": "Destinos de Paldea",
+  "logo": "https://assets.tcgdex.net/es/sv/sv04.5/logo",
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 245
+ },
+ "sv5": {
+  "idEs": "sv05",
+  "nombre": "Fuerzas Temporales",
+  "logo": "https://assets.tcgdex.net/es/sv/sv05/logo",
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 218
+ },
+ "sv6": {
+  "idEs": "sv06",
+  "nombre": "Mascarada Crepuscular",
+  "logo": "https://assets.tcgdex.net/es/sv/sv06/logo",
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 226
+ },
+ "sv6pt5": {
+  "idEs": "sv06.5",
+  "nombre": "Fabula Sombría",
+  "logo": "https://assets.tcgdex.net/es/sv/sv06.5/logo",
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 99
+ },
+ "sv7": {
+  "idEs": "sv07",
+  "nombre": "Corona Astral",
+  "logo": "https://assets.tcgdex.net/es/sv/sv07/logo",
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 175
+ },
+ "sv8": {
+  "idEs": "sv08",
+  "nombre": "Chispas Fulgurantes",
+  "logo": "https://assets.tcgdex.net/es/sv/sv08/logo",
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 252
+ },
+ "sv8pt5": {
+  "idEs": "sv08.5",
+  "nombre": "Evoluciones Prismáticas",
+  "logo": "https://assets.tcgdex.net/es/sv/sv08.5/logo",
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 180
+ },
+ "sv9": {
+  "idEs": "sv09",
+  "nombre": "Juntos de Aventuras",
+  "logo": "https://assets.tcgdex.net/es/sv/sv09/logo",
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 190
+ },
+ "sve": {
+  "idEs": "sve",
+  "nombre": "Escarlata y Púrpura Energía",
+  "logo": null,
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 16
+ },
+ "svp": {
+  "idEs": "svp",
+  "nombre": "SVP Black Star Promos",
+  "logo": null,
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 163
+ },
+ "swsh1": {
+  "idEs": "swsh1",
+  "nombre": "Espada y Escudo",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh1/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 216
+ },
+ "swsh10": {
+  "idEs": "swsh10",
+  "nombre": "Resplandor Astral",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh10/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 216
+ },
+ "swsh10tg": {
+  "idEs": "swsh10.5tg",
+  "nombre": "Resplandor Astral Galería de Entrenador",
+  "logo": null,
+  "serie": "Espada y Escudo",
+  "traducidas": 15
+ },
+ "swsh11": {
+  "idEs": "swsh11",
+  "nombre": "Origen Perdido",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh11/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 217
+ },
+ "swsh11tg": {
+  "idEs": "swsh11.5tg",
+  "nombre": "Origen Perdido Galería de Entrenador",
+  "logo": null,
+  "serie": "Espada y Escudo",
+  "traducidas": 7
+ },
+ "swsh12": {
+  "idEs": "swsh12",
+  "nombre": "Tempestad Plateada",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh12/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 215
+ },
+ "swsh12pt5": {
+  "idEs": "swsh12.5",
+  "nombre": "Cenit Supremo",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh12.5/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 160
+ },
+ "swsh12pt5gg": {
+  "idEs": "swsh12.5gg",
+  "nombre": "Cenit Supremo Galería de Galar",
+  "logo": null,
+  "serie": "Espada y Escudo",
+  "traducidas": 27
+ },
+ "swsh12tg": {
+  "idEs": "swsh12.5tg",
+  "nombre": "Tempestad Plateada Galería de Entrenador",
+  "logo": null,
+  "serie": "Espada y Escudo",
+  "traducidas": 6
+ },
+ "swsh2": {
+  "idEs": "swsh2",
+  "nombre": "Choque Rebelde",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh2/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 209
+ },
+ "swsh3": {
+  "idEs": "swsh3",
+  "nombre": "Oscuridad Incandescente",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh3/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 201
+ },
+ "swsh35": {
+  "idEs": "swsh3.5",
+  "nombre": "Camino de Campeones",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh3.5/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 80
+ },
+ "swsh4": {
+  "idEs": "swsh4",
+  "nombre": "Voltaje Vívido",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh4/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 203
+ },
+ "swsh45": {
+  "idEs": "swsh4.5",
+  "nombre": "Destinos Brillantes",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh4.5/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 73
+ },
+ "swsh45sv": {
+  "idEs": "swsh4.5sv",
+  "nombre": "Destinos Brillantes Tesoro Brillante",
+  "logo": null,
+  "serie": "Espada y Escudo",
+  "traducidas": 19
+ },
+ "swsh5": {
+  "idEs": "swsh5",
+  "nombre": "Estilos de Combate",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh5/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 183
+ },
+ "swsh6": {
+  "idEs": "swsh6",
+  "nombre": "Reinado Escalofriante",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh6/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 233
+ },
+ "swsh7": {
+  "idEs": "swsh7",
+  "nombre": "Cielos Evolutivos",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh7/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 237
+ },
+ "swsh8": {
+  "idEs": "swsh8",
+  "nombre": "Golpe Fusión",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh8/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 284
+ },
+ "swsh9": {
+  "idEs": "swsh9",
+  "nombre": "Astros Brillantes",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh9/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 186
+ },
+ "swsh9tg": {
+  "idEs": "swsh9.5tg",
+  "nombre": "Astros Brillantes Galería de Entrenador",
+  "logo": null,
+  "serie": "Espada y Escudo",
+  "traducidas": 10
+ },
+ "swshp": {
+  "idEs": "swshp",
+  "nombre": "Cartas de promoción ESES",
+  "logo": "https://assets.tcgdex.net/es/swsh/swshp/logo",
+  "serie": "Espada y Escudo",
+  "traducidas": 223
+ }
+}

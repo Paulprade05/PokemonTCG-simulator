@@ -7,7 +7,7 @@
 // Súbelo en cada cambio de este fichero: el byte distinto es lo que hace que
 // el navegador instale el service worker nuevo y dispare la recarga única de
 // ServiceWorkerRegister en las PWA instaladas.
-const VERSION = "v6"; // v6: cachea imágenes opacas, precache tolerante y tope de páginas
+const VERSION = "v7"; // v7: cachea también las ilustraciones españolas (assets.tcgdex.net)
 const SHELL_CACHE = `shell-${VERSION}`;
 const STATIC_CACHE = `static-${VERSION}`;
 const IMAGE_CACHE = `cards-${VERSION}`;
@@ -25,9 +25,19 @@ const OPTIONAL_ASSETS = [
   "/icons/apple-touch-icon.png",
 ];
 
-const IMAGE_HOSTS = ["images.pokemontcg.io", "tcg.pokemon.com"];
+// assets.tcgdex.net sirve las ilustraciones ESPAÑOLAS y los logos españoles de
+// las expansiones. Sin él, un usuario con la app en español se quedaba sin
+// cartas al perder cobertura: la caché guardaba las inglesas, que ya no pide
+// nadie. Es cross-origin sin CORS, así que entra por la misma vía opaca.
+const IMAGE_HOSTS = [
+  "images.pokemontcg.io",
+  "tcg.pokemon.com",
+  "assets.tcgdex.net",
+];
 // Dos variantes por carta (small 245w + large 734w) desde que el <img> usa
 // srcSet: con 700 entradas se expulsaban cartas ya vistas a mitad de álbum.
+// El idioma NO duplica la cuenta: sólo se piden las del idioma activo, y quien
+// lo cambia hace una recarga completa que vuelve a llenar la caché.
 const MAX_IMAGE_ENTRIES = 1400;
 // Cada navegación cachea su HTML: sin tope, pages-vN crece hasta que el
 // navegador purga el origen entero (y con él la caché de cartas).

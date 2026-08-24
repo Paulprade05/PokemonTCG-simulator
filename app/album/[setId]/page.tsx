@@ -89,9 +89,21 @@ export default function SetAlbumPage() {
       if (isSignedIn) userCards = await getFullCollection();
       else userCards = getCollection();
 
+      // Rótulo e ilustración salen SIEMPRE del blueprint, que ya viene en el
+      // idioma elegido. Importa para el invitado: su colección vive en
+      // localStorage y guardó el nombre con el que se abrió el sobre, así que
+      // tras cambiar de idioma sus cartas se verían en el idioma viejo. El
+      // almacenamiento no se toca —es su partida—; sólo se repinta. Cantidad,
+      // favorito y lo demás siguen siendo suyos.
+      const porId = new Map(blueprintCards.map((c: any) => [c.id, c]));
       const ownedMap = new Map();
       userCards.forEach((card: any) => {
-        if (card.id.startsWith(setId + "-")) ownedMap.set(card.id, card);
+        if (!card.id.startsWith(setId + "-")) return;
+        const bp: any = porId.get(card.id);
+        ownedMap.set(
+          card.id,
+          bp ? { ...card, name: bp.name ?? card.name, images: bp.images ?? card.images } : card,
+        );
       });
       setOwnedCards(ownedMap);
     } catch (error) {

@@ -12,6 +12,21 @@ import ServiceWorkerRegister from "../components/pwa/ServiceWorkerRegister";
 // con la barra de Safari en negro.
 const themeInit = `(function(){var t;try{t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}}catch(e){t='dark';}document.documentElement.setAttribute('data-theme',t);var m=document.querySelector('meta[name="theme-color"]');if(!m){m=document.createElement('meta');m.setAttribute('name','theme-color');document.head.appendChild(m);}m.setAttribute('content',t==='dark'?'#14120c':'#f4efe4');})();`;
 
+// Idioma de las cartas, misma idea que el tema y por el mismo motivo: que no
+// cambie a la vista. La diferencia es QUIÉN traduce: no es el CSS, es el
+// servidor (services/idiomaServidor.ts), y decide leyendo la cookie. Este
+// script la reescribe desde localStorage ANTES de la hidratación, así que la
+// primera server action que sale del navegador ya pide las cartas en el idioma
+// bueno y no hay un fogonazo de nombres en inglés. `data-idioma` es el espejo
+// que observan las dos hojas de ajustes montadas a la vez.
+// El `lang` del <html> NO se toca: la interfaz está en español siempre; esto
+// sólo decide en qué idioma se leen los nombres de las cartas.
+// Si localStorage no está disponible (modo privado agotado, ITP) la COOKIE es
+// el respaldo, no el inglés: sin eso, la corrección que aplica la cuenta al
+// iniciar sesión escribiría la cookie, esta línea la pisaría en la recarga y
+// se entraría en un bucle de recargas.
+const idiomaInit = `(function(){var l;try{l=localStorage.getItem('lang');}catch(e){}if(l!=='es'&&l!=='en'){var m=document.cookie.match(/(?:^|; )tcg-idioma=(en|es)/);l=m?m[1]:'en';}document.documentElement.setAttribute('data-idioma',l);try{document.cookie='tcg-idioma='+l+';path=/;max-age=31536000;samesite=lax';}catch(e){}})();`;
+
 // Se carga como variable CSS (además de la clase) para que la utilidad
 // font-sans resuelva a la webfont real y no a la familia literal "Inter", que
 // en iOS/Android no existe como fuente del sistema.
@@ -94,6 +109,7 @@ export default function RootLayout({
       <html lang="es" className={inter.variable} suppressHydrationWarning>
         <head>
           <script dangerouslySetInnerHTML={{ __html: themeInit }} />
+          <script dangerouslySetInnerHTML={{ __html: idiomaInit }} />
         </head>
         <body className={inter.className}>
           <ServiceWorkerRegister />

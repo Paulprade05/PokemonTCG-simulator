@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import TypeBadge, { EnergyCost } from "./TypeBadge";
-import { SELL_PRICES } from "../utils/constanst";
+import { SELL_PRICES, valorDeVenta } from "../utils/constanst";
 import { getCardFromDB, toggleWishlist, getWishlistIds } from "../app/action";
 import { useHaptics } from "../hooks/useHaptics";
 import { useSwipe, touchActionFor } from "../hooks/useSwipe";
@@ -594,12 +594,15 @@ export default function CardDetailModal({
                 </div>
 
                 {/* SELL CTA */}
+                {/* El importe sale de valorDeVenta, la misma función que cobra el
+                    servidor: el precio por copia baja con las copias que tienes, así
+                    que "repetidas × tarifa" prometía más de lo que se acaba pagando. */}
                 {!readOnly && c.quantity > 1 && onSellAll && (
                   <button
                     onClick={onSellAll}
                     className="btn-accent press w-full py-3 rounded-2xl font-semibold text-sm"
                   >
-                    Vender {c.quantity - 1} repetida{c.quantity - 1 > 1 ? "s" : ""} · +{(c.quantity - 1) * getMarketPrice()} 💰
+                    Vender {c.quantity - 1} repetida{c.quantity - 1 > 1 ? "s" : ""} · +{valorDeVenta(c.rarity, c.quantity)} 💰
                   </button>
                 )}
                 {readOnly && c.quantity != null && (

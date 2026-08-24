@@ -4,6 +4,11 @@ import { auth } from "@clerk/nextjs/server";
 import { sql } from "@vercel/postgres";
 import { revalidatePath } from "next/cache";
 import { SELL_PRICES } from "../utils/constanst";
+// Los intercambios se emparejan SIEMPRE por id (ver createTradeOffer y
+// acceptTradeOffer): aquí el idioma sólo cambia el rótulo y la ilustración de
+// las cartas que se enseñan al elegir y al revisar una oferta.
+import { traducirCartas } from "../services/idioma";
+import { idiomaActual } from "../services/idiomaServidor";
 
 // ============================================================
 // SOCIAL v2 — amigos + intercambios multi-carta
@@ -27,16 +32,18 @@ async function hydrateCardsByIds(ids: string[]) {
     `SELECT id, name, rarity, images, set_id FROM cards WHERE id = ANY($1::text[])`,
     [unique],
   );
-  const map: Record<string, any> = {};
-  rows.forEach((r: any) => {
-    map[r.id] = {
+  const cartas = await traducirCartas(
+    rows.map((r: any) => ({
       id: r.id,
       name: r.name,
       rarity: r.rarity,
       images: typeof r.images === "string" ? JSON.parse(r.images) : r.images,
       set_id: r.set_id,
-    };
-  });
+    })),
+    await idiomaActual(),
+  );
+  const map: Record<string, any> = {};
+  cartas.forEach((c) => { map[c.id] = c; });
   return map;
 }
 
@@ -275,45 +282,210 @@ export async function getTradeHistory() {
   }
 }
 
+/**
+ * Acepta una oferta y mueve las cartas. TODO el trasiego va en UNA sentencia,
+ * porque las tres maneras de romper la versión anterior nacían de repartirlo
+ * en muchas:
+ *
+ *  1) DUPLICABA CARTAS. El `status` pasaba a 'accepted' al FINAL y sin bloquear
+ *     la fila, así que dos aceptaciones simultáneas del mismo id pasaban las
+ *     dos el filtro 'pending' y transferían las dos. El receptor cobraba doble
+ *     y el emisor quedaba en negativo: cartas de la nada, y monedas al
+ *     venderlas. Ahora la oferta se bloquea (`FOR UPDATE`) al principio de la
+ *     misma sentencia que mueve las cartas; la segunda espera al candado y,
+ *     cuando se suelta, reevalúa `status = 'pending'` sobre la fila ya cerrada,
+ *     se va de vacío y no mueve nada.
+ *
+ *  2) BORRABA FILAS DE OTRAS CUENTAS. El `DELETE FROM user_collection WHERE
+ *     quantity <= 0` no llevaba filtro de usuario ni de carta: barría la tabla
+ *     entera en cada intercambio. Ahora no se borra NADA: aceptar ya no ejecuta
+ *     ningún DELETE. Las filas que quedan a cero se quedan, que para quien las
+ *     lee es lo mismo que no estar (la nota de más abajo lo detalla, y mide por
+ *     qué barrerlas costaba intercambios legítimos).
+ *
+ *  3) COMPROBABA Y DESCONTABA POR SEPARADO. Entre el SELECT que verificaba la
+ *     posesión y el UPDATE que restaba cabía una venta del emisor: la fila
+ *     acababa en negativo y el receptor cobraba igual. Ahora las filas
+ *     implicadas se bloquean ANTES de mirarlas (`saldo`) y siguen bloqueadas
+ *     hasta el final de la sentencia, así que lo que se comprueba es
+ *     exactamente lo que se resta.
+ *
+ * Del cliente sólo llega `tradeId`: el receptor sale de `auth()` y las cartas
+ * de cada lado salen de la propia fila de la oferta, nunca del payload.
+ */
 export async function acceptTradeOffer(tradeId: number) {
   const { userId } = await auth();
   if (!userId) return { error: "No autorizado" };
+  // `tradeId` viaja desde el cliente: se normaliza antes de tocar la BD para
+  // que un valor raro no llegue como texto a una columna entera.
+  const id = Number(tradeId);
+  if (!Number.isInteger(id)) return { error: "Oferta no válida" };
+
   try {
-    const { rows } = await sql`SELECT * FROM trade_offers WHERE id = ${tradeId} AND receiver_id = ${userId} AND status = 'pending'`;
-    if (rows.length === 0) return { error: "La oferta ya no está disponible" };
-    const t = rows[0];
-    const offered = parseIds(t.offered_ids);
-    const requested = parseIds(t.requested_ids);
-    const offCount = countById(offered);
-    const reqCount = countById(requested);
+    const { rows } = await sql.query(
+      `WITH oferta AS MATERIALIZED (
+         -- El cerrojo del intercambio: el candado de fila se toma AQUÍ, en la
+         -- misma sentencia que mueve las cartas, y no se suelta hasta el final.
+         SELECT id, sender_id, receiver_id, offered_ids, requested_ids
+         FROM trade_offers
+         WHERE id = $1::int AND receiver_id = $2 AND status = 'pending'
+         FOR UPDATE
+       ),
+       mov AS MATERIALIZED (
+         -- Saldo NETO por (usuario, carta), no cuatro listas sueltas: una carta
+         -- que aparezca en los dos lados tocaría la misma fila dos veces dentro
+         -- de la misma sentencia (resultado indefinido en Postgres) y haría
+         -- reventar el ON CONFLICT de abajo por repetir destino. Neteando, cada
+         -- par sale una sola vez y con un único signo. Y como cada carta entra
+         -- en las cuatro ramas con signos opuestos, la suma de deltas de una
+         -- carta es SIEMPRE cero: la sentencia mueve cartas, no las crea.
+         SELECT t.user_id, t.card_id, SUM(t.delta)::int AS delta
+         FROM (
+           SELECT o.sender_id AS user_id, e.card_id, -1 AS delta
+             FROM oferta o, jsonb_array_elements_text(o.offered_ids::jsonb) AS e(card_id)
+           UNION ALL
+           SELECT o.receiver_id, e.card_id, 1
+             FROM oferta o, jsonb_array_elements_text(o.offered_ids::jsonb) AS e(card_id)
+           UNION ALL
+           SELECT o.receiver_id, e.card_id, -1
+             FROM oferta o, jsonb_array_elements_text(o.requested_ids::jsonb) AS e(card_id)
+           UNION ALL
+           SELECT o.sender_id, e.card_id, 1
+             FROM oferta o, jsonb_array_elements_text(o.requested_ids::jsonb) AS e(card_id)
+         ) t
+         GROUP BY t.user_id, t.card_id
+       ),
+       saldo AS MATERIALIZED (
+         -- Se bloquean TODAS las filas implicadas (no sólo las que se restan) y
+         -- por orden de clave: dos intercambios que se crucen piden los candados
+         -- en la misma secuencia y no se abrazan. Con FOR UPDATE, «quantity» es
+         -- el valor ACTUAL —Postgres reevalúa la fila si otra transacción la
+         -- tocó—, no el de la instantánea: por eso comprobar aquí ya es
+         -- comprobar de verdad.
+         SELECT uc.user_id, uc.card_id, uc.quantity
+         FROM user_collection uc
+         WHERE (uc.user_id, uc.card_id) IN (SELECT m.user_id, m.card_id FROM mov m)
+         ORDER BY uc.user_id, uc.card_id
+         FOR UPDATE OF uc
+       ),
+       deuda AS MATERIALIZED (
+         -- Quién no puede pagar lo que le toca poner. Sin fila en «saldo» la
+         -- carta no existe para ese usuario, que es lo mismo que no tenerla.
+         SELECT m.user_id
+         FROM mov m
+         LEFT JOIN saldo s ON s.user_id = m.user_id AND s.card_id = m.card_id
+         WHERE m.delta < 0 AND COALESCE(s.quantity, 0) < -m.delta
+       ),
+       via AS MATERIALIZED (
+         -- Puerta única: o la oferta sigue viva y nadie queda en negativo, o no
+         -- se toca nada. Las tres escrituras cuelgan de este EXISTS, así que el
+         -- intercambio es entero o no es.
+         SELECT 1
+         WHERE EXISTS (SELECT 1 FROM oferta) AND NOT EXISTS (SELECT 1 FROM deuda)
+       ),
+       resta AS (
+         UPDATE user_collection uc
+         SET quantity = uc.quantity + m.delta
+         FROM mov m
+         WHERE uc.user_id = m.user_id AND uc.card_id = m.card_id
+           AND m.delta < 0
+           AND EXISTS (SELECT 1 FROM via)
+         RETURNING uc.user_id AS user_id, uc.card_id AS card_id
+       ),
+       suma AS (
+         INSERT INTO user_collection (user_id, card_id, quantity)
+         SELECT m.user_id, m.card_id, m.delta
+         FROM mov m
+         WHERE m.delta > 0 AND EXISTS (SELECT 1 FROM via)
+         ON CONFLICT (user_id, card_id)
+         DO UPDATE SET quantity = user_collection.quantity + EXCLUDED.quantity
+         RETURNING user_id
+       ),
+       cierre AS (
+         UPDATE trade_offers t
+         SET status = 'accepted', updated_at = NOW()
+         WHERE t.id = $1::int AND t.receiver_id = $2 AND t.status = 'pending'
+           AND EXISTS (SELECT 1 FROM via)
+         RETURNING t.id
+       )
+       -- Sin FROM: la sentencia devuelve siempre exactamente una fila, con el
+       -- diagnóstico de por qué no se cerró cuando no se cerró.
+       SELECT (SELECT count(*)::int FROM cierre)                  AS cerrada,
+              (SELECT count(*)::int FROM resta)                   AS restadas,
+              (SELECT count(*)::int FROM suma)                    AS sumadas,
+              (SELECT count(*)::int FROM mov WHERE delta < 0)     AS esperadas,
+              EXISTS (SELECT 1 FROM oferta)                       AS viva,
+              EXISTS (SELECT 1 FROM deuda d
+                        JOIN oferta o ON o.sender_id = d.user_id) AS falta_emisor,
+              EXISTS (SELECT 1 FROM deuda WHERE user_id = $2)     AS falta_receptor`,
+      [id, userId],
+    );
 
-    for (const [cid, qty] of Object.entries(offCount)) {
-      const { rows: r } = await sql`SELECT quantity FROM user_collection WHERE user_id = ${t.sender_id} AND card_id = ${cid}`;
-      if ((r[0]?.quantity || 0) < qty) {
-        await sql`UPDATE trade_offers SET status = 'cancelled', updated_at = NOW() WHERE id = ${tradeId}`;
-        return { error: "El emisor ya no tiene esas cartas. Oferta cancelada." };
+    const r = (rows[0] || {}) as Partial<{
+      cerrada: number;
+      restadas: number;
+      sumadas: number;
+      esperadas: number;
+      viva: boolean;
+      falta_emisor: boolean;
+      falta_receptor: boolean;
+    }>;
+
+    if (Number(r.cerrada) === 1) {
+      const restadas = Number(r.restadas ?? 0);
+      const esperadas = Number(r.esperadas ?? 0);
+      if (restadas !== esperadas) {
+        // No debería pasar: el guard `via` se evalúa sobre filas ya bloqueadas.
+        // Si pasa, queda anotado para poder cuadrar la colección a mano.
+        console.error(
+          `acceptTradeOffer: descuento parcial trade=${id} ${restadas}/${esperadas}`,
+        );
       }
-    }
-    for (const [cid, qty] of Object.entries(reqCount)) {
-      const { rows: r } = await sql`SELECT quantity FROM user_collection WHERE user_id = ${userId} AND card_id = ${cid}`;
-      if ((r[0]?.quantity || 0) < qty) return { error: "No tienes todas las cartas pedidas" };
+
+      // NO se barren las filas que quedan a cero. Medido con Postgres real (320
+      // aceptaciones concurrentes): el DELETE de limpieza que había aquí hacía
+      // fallar el 11% de los intercambios legítimos con un interbloqueo.
+      //
+      // POR QUÉ: la sentencia de arriba pide los candados ORDENADOS (el ORDER BY
+      // de `saldo`; el plan confirma que LockRows va encima del Sort), pero la
+      // limpieza es OTRA sentencia y los pedía en el orden en que el planificador
+      // le devolvía las filas. Se abrazaban: la limpieza de un trueque retenía una
+      // fila que la aceptación de otro esperaba, y al revés. Ordenar el array de
+      // pares NO lo arregla —probado: 36 interbloqueos frente a 35—, porque el
+      // orden de los candados lo decide el plan del DELETE, no el de los
+      // parámetros. Y la víctima que Postgres mataba era la mitad de las veces la
+      // sentencia grande: un intercambio legítimo perdido.
+      //
+      // Y POR QUÉ SE PUEDE NO BARRER: una fila a 0 es indistinguible de una fila
+      // ausente. Todas las lecturas de `user_collection` filtran `quantity > 0`, y
+      // las escrituras que no lo hacen van guardadas por `quantity > 1` (venta) o
+      // `>= cantidad + 1` (mercado), así que una fila a 0 no se vende ni se
+      // entrega; el INSERT ... ON CONFLICT de `suma` la reutiliza sumando sobre 0,
+      // igual que si la insertara. Encima conservarla conserva su `is_favorite`
+      // para cuando la carta vuelva. Sin esta sentencia, aceptar un intercambio
+      // deja de ejecutar ningún DELETE: el movimiento de bienes es UN solo comando
+      // y nada más toca filas de `user_collection`.
+      revalidatePath("/friends");
+      revalidatePath("/collection");
+      return { success: true };
     }
 
-    for (const [cid, qty] of Object.entries(offCount)) {
-      await sql`UPDATE user_collection SET quantity = quantity - ${qty} WHERE user_id = ${t.sender_id} AND card_id = ${cid}`;
-      await sql`INSERT INTO user_collection (user_id, card_id, quantity) VALUES (${userId}, ${cid}, ${qty}) ON CONFLICT (user_id, card_id) DO UPDATE SET quantity = user_collection.quantity + ${qty}`;
+    // No se cerró: la propia sentencia dice por qué, sin volver a leer nada.
+    if (!r.viva) return { error: "La oferta ya no está disponible" };
+    if (r.falta_emisor) {
+      await sql.query(
+        `UPDATE trade_offers SET status = 'cancelled', updated_at = NOW()
+         WHERE id = $1::int AND receiver_id = $2 AND status = 'pending'`,
+        [id, userId],
+      );
+      revalidatePath("/friends");
+      return { error: "El emisor ya no tiene esas cartas. Oferta cancelada." };
     }
-    for (const [cid, qty] of Object.entries(reqCount)) {
-      await sql`UPDATE user_collection SET quantity = quantity - ${qty} WHERE user_id = ${userId} AND card_id = ${cid}`;
-      await sql`INSERT INTO user_collection (user_id, card_id, quantity) VALUES (${t.sender_id}, ${cid}, ${qty}) ON CONFLICT (user_id, card_id) DO UPDATE SET quantity = user_collection.quantity + ${qty}`;
-    }
-    await sql`DELETE FROM user_collection WHERE quantity <= 0`;
-
-    await sql`UPDATE trade_offers SET status = 'accepted', updated_at = NOW() WHERE id = ${tradeId}`;
-    revalidatePath("/friends");
-    revalidatePath("/collection");
-    return { success: true };
+    if (r.falta_receptor) return { error: "No tienes todas las cartas pedidas" };
+    return { error: "Error al procesar el intercambio" };
   } catch (e) {
+    // Aquí caen también los interbloqueos que Postgres corta: no se ha movido
+    // nada (la sentencia es una), así que reintentar es seguro.
     console.error("acceptTradeOffer error:", e);
     return { error: "Error al procesar el intercambio" };
   }
@@ -352,10 +524,13 @@ export async function getTradableCollection(targetId: string) {
       WHERE uc.user_id = ${targetId} AND uc.quantity > 0
       ORDER BY c.rarity DESC, c.name ASC
     `;
-    return rows.map((r: any) => ({
-      id: r.id, name: r.name, rarity: r.rarity, quantity: r.quantity, set_id: r.set_id,
-      images: typeof r.images === "string" ? JSON.parse(r.images) : r.images,
-    }));
+    return [...(await traducirCartas(
+      rows.map((r: any) => ({
+        id: r.id, name: r.name, rarity: r.rarity, quantity: r.quantity, set_id: r.set_id,
+        images: typeof r.images === "string" ? JSON.parse(r.images) : r.images,
+      })),
+      await idiomaActual(),
+    ))];
   } catch (e) {
     console.error("getTradableCollection error:", e);
     return [];

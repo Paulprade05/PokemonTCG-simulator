@@ -3,8 +3,30 @@
 
 import { sql } from '@vercel/postgres';
 import { loadLocalCards } from './localData';
+import { traducirCartas } from './idioma';
+import { idiomaActual } from './idiomaServidor';
 
+/**
+ * Cartas de una expansión, YA EN EL IDIOMA DEL USUARIO.
+ *
+ * DÓNDE ENTRA LA CAPA Y POR QUÉ AQUÍ: ésta es la frontera por la que las cartas
+ * de un set salen hacia la interfaz (la tienda de la portada y el álbum), así
+ * que traducir en este `return` cubre las dos pantallas de una vez y el
+ * diccionario no sale del servidor. NO se traduce en `loadLocalCards`, que es
+ * la fuente cruda: de ella beben también comprobaciones internas (el respaldo
+ * del mercado en app/action.ts) que emparejan por nombre INGLÉS —`evolvesFrom`,
+ * la inicial del nombre— y que se romperían con nombres traducidos.
+ *
+ * `traducirCartas` sólo cambia `name` e `images`: id, rareza y expansión —de
+ * donde cuelga toda la economía— se copian tal cual.
+ */
 export async function getCardsFromSet(setId: string) {
+  const idioma = await idiomaActual();
+  // Array MUTABLE: `traducirCartas` devuelve readonly para que React no repinte
+  // de balde, pero el álbum y la tienda ordenan y filtran la lista en sitio.
+  const enIdioma = async (cartas: any[]): Promise<any[]> =>
+    idioma === "es" ? [...(await traducirCartas(cartas, idioma))] : cartas;
+
   try {
     console.log(`🗄️ Consultando base de datos para set: ${setId}`);
 
@@ -21,7 +43,7 @@ export async function getCardsFromSet(setId: string) {
 
     if (rows.length === 0) {
       console.warn(`⚠️ No encontré cartas para ${setId} en la BD. Uso el JSON local.`);
-      return loadLocalCards(setId);
+      return enIdioma((await loadLocalCards(setId)) as any[]);
     }
     
     // 2. MAPEO DE DATOS (Transformación)
@@ -35,7 +57,7 @@ export async function getCardsFromSet(setId: string) {
       const parsed = parseJson(v);
       return Array.isArray(parsed) ? parsed : [];
     };
-    return rows.map((row: any) => ({
+    return enIdioma(rows.map((row: any) => ({
       id: row.id,
       name: row.name,
       rarity: row.rarity,
@@ -58,11 +80,11 @@ export async function getCardsFromSet(setId: string) {
       subtypes: parseArray(row.subtypes),
       evolvesFrom: row.evolves_from ?? undefined,
       nationalPokedexNumbers: parseArray(row.national_pokedex_numbers),
-    }));
+    })));
 
   } catch (error) {
     // Sin Postgres configurado seguimos sirviendo las cartas del repositorio.
     console.error("❌ Error leyendo base de datos, uso el JSON local:", error);
-    return loadLocalCards(setId);
+    return enIdioma((await loadLocalCards(setId)) as any[]);
   }
 }

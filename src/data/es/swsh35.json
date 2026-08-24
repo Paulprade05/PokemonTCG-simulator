@@ -1,0 +1,341 @@
+{
+ "set": {
+  "id": "swsh35",
+  "idEs": "swsh3.5",
+  "nombre": "Camino de Campeones",
+  "nombreEn": "Champion's Path",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh3.5/logo",
+  "serie": "Espada y Escudo"
+ },
+ "sinPareja": [],
+ "resumen": {
+  "locales": 80,
+  "traducidas": 80,
+  "sinPareja": 0,
+  "sinImagenEs": 0,
+  "nombresCambiados": 26,
+  "identicasOmitidas": 0
+ },
+ "cartas": {
+  "swsh35-1": {
+   "n": "Venusaur V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/1"
+  },
+  "swsh35-10": {
+   "n": "Centiskorch",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/10"
+  },
+  "swsh35-11": {
+   "n": "Carvanha",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/11"
+  },
+  "swsh35-12": {
+   "n": "Sharpedo",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/12"
+  },
+  "swsh35-13": {
+   "n": "Wailord V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/13"
+  },
+  "swsh35-14": {
+   "n": "Drednaw V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/14"
+  },
+  "swsh35-15": {
+   "n": "Drednaw VMAX",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/15"
+  },
+  "swsh35-16": {
+   "n": "Gardevoir V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/16"
+  },
+  "swsh35-17": {
+   "n": "Gardevoir VMAX",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/17"
+  },
+  "swsh35-18": {
+   "n": "Hatenna",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/18"
+  },
+  "swsh35-19": {
+   "n": "Hattrem",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/19"
+  },
+  "swsh35-2": {
+   "n": "Weedle",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/2"
+  },
+  "swsh35-20": {
+   "n": "Hatterene",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/20"
+  },
+  "swsh35-21": {
+   "n": "Cursola de Galar V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/21"
+  },
+  "swsh35-22": {
+   "n": "Alcremie V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/22"
+  },
+  "swsh35-23": {
+   "n": "Alcremie VMAX",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/23"
+  },
+  "swsh35-24": {
+   "n": "Machop",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/24"
+  },
+  "swsh35-25": {
+   "n": "Machoke",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/25"
+  },
+  "swsh35-26": {
+   "n": "Machamp",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/26"
+  },
+  "swsh35-27": {
+   "n": "Lucario V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/27"
+  },
+  "swsh35-28": {
+   "n": "Zygarde",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/28"
+  },
+  "swsh35-29": {
+   "n": "Rockruff",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/29"
+  },
+  "swsh35-3": {
+   "n": "Kakuna",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/3"
+  },
+  "swsh35-30": {
+   "n": "Lycanroc",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/30"
+  },
+  "swsh35-31": {
+   "n": "Rolycoly",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/31"
+  },
+  "swsh35-32": {
+   "n": "Grapploct V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/32"
+  },
+  "swsh35-33": {
+   "n": "Ekans",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/33"
+  },
+  "swsh35-34": {
+   "n": "Arbok",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/34"
+  },
+  "swsh35-35": {
+   "n": "Zigzagoon de Galar",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/35"
+  },
+  "swsh35-36": {
+   "n": "Linoone de Galar",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/36"
+  },
+  "swsh35-37": {
+   "n": "Obstagoon de Galar",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/37"
+  },
+  "swsh35-38": {
+   "n": "Absol",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/38"
+  },
+  "swsh35-39": {
+   "n": "Purrloin",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/39"
+  },
+  "swsh35-4": {
+   "n": "Beedrill",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/4"
+  },
+  "swsh35-40": {
+   "n": "Liepard",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/40"
+  },
+  "swsh35-41": {
+   "n": "Scraggy",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/41"
+  },
+  "swsh35-42": {
+   "n": "Scrafty",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/42"
+  },
+  "swsh35-43": {
+   "n": "Trubbish",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/43"
+  },
+  "swsh35-44": {
+   "n": "Inkay",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/44"
+  },
+  "swsh35-45": {
+   "n": "Malamar",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/45"
+  },
+  "swsh35-46": {
+   "n": "Nickit",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/46"
+  },
+  "swsh35-47": {
+   "n": "Duraludon V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/47"
+  },
+  "swsh35-48": {
+   "n": "Swablu",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/48"
+  },
+  "swsh35-49": {
+   "n": "Altaria",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/49"
+  },
+  "swsh35-5": {
+   "n": "Eldegoss V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/5"
+  },
+  "swsh35-50": {
+   "n": "Berto",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/50"
+  },
+  "swsh35-51": {
+   "n": "Curación total",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/51"
+  },
+  "swsh35-52": {
+   "n": "Super Ball",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/52"
+  },
+  "swsh35-53": {
+   "n": "Paul",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/53"
+  },
+  "swsh35-54": {
+   "n": "Hiperpoción",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/54"
+  },
+  "swsh35-55": {
+   "n": "Naboru",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/55"
+  },
+  "swsh35-56": {
+   "n": "Roxy",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/56"
+  },
+  "swsh35-57": {
+   "n": "Percy",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/57"
+  },
+  "swsh35-58": {
+   "n": "Nerio",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/58"
+  },
+  "swsh35-59": {
+   "n": "Poké Ball",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/59"
+  },
+  "swsh35-6": {
+   "n": "Vulpix",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/6"
+  },
+  "swsh35-60": {
+   "n": "Chica del Centro Pokémon",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/60"
+  },
+  "swsh35-61": {
+   "n": "Poción",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/61"
+  },
+  "swsh35-62": {
+   "n": "Investigación de Profesores",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/62"
+  },
+  "swsh35-63": {
+   "n": "Bici Rotom",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/63"
+  },
+  "swsh35-64": {
+   "n": "SmartRotom",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/64"
+  },
+  "swsh35-65": {
+   "n": "Sonia",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/65"
+  },
+  "swsh35-66": {
+   "n": "Lata Sospechosa",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/66"
+  },
+  "swsh35-67": {
+   "n": "Recluta del Team Yell",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/67"
+  },
+  "swsh35-68": {
+   "n": "Estadio de Hoyuelo",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/68"
+  },
+  "swsh35-69": {
+   "n": "Drednaw V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/69"
+  },
+  "swsh35-7": {
+   "n": "Victini",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/7"
+  },
+  "swsh35-70": {
+   "n": "Gardevoir V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/70"
+  },
+  "swsh35-71": {
+   "n": "Cursola de Galar V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/71"
+  },
+  "swsh35-72": {
+   "n": "Grapploct V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/72"
+  },
+  "swsh35-73": {
+   "n": "Paul",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/73"
+  },
+  "swsh35-74": {
+   "n": "Charizard VMAX",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/74"
+  },
+  "swsh35-75": {
+   "n": "Drednaw VMAX",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/75"
+  },
+  "swsh35-76": {
+   "n": "Gardevoir VMAX",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/76"
+  },
+  "swsh35-77": {
+   "n": "Naboru",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/77"
+  },
+  "swsh35-78": {
+   "n": "Nerio",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/78"
+  },
+  "swsh35-79": {
+   "n": "Charizard V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/79"
+  },
+  "swsh35-8": {
+   "n": "Incineroar V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/8"
+  },
+  "swsh35-80": {
+   "n": "Lata Sospechosa",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/80"
+  },
+  "swsh35-9": {
+   "n": "Sizzlipede",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh3.5/9"
+  }
+ }
+}

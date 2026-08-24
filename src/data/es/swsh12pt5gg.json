@@ -1,0 +1,102 @@
+{
+ "set": {
+  "id": "swsh12pt5gg",
+  "idEs": "swsh12.5gg",
+  "nombre": "Cenit Supremo Galería de Galar",
+  "nombreEn": "Crown Zenith Galarian Gallery",
+  "logo": null,
+  "serie": "Espada y Escudo"
+ },
+ "sinPareja": [],
+ "resumen": {
+  "locales": 70,
+  "traducidas": 27,
+  "sinPareja": 0,
+  "sinImagenEs": 70,
+  "nombresCambiados": 27,
+  "identicasOmitidas": 43
+ },
+ "cartas": {
+  "swsh12pt5gg-GG01": {
+   "n": "Voltorb de Hisui"
+  },
+  "swsh12pt5gg-GG21": {
+   "n": "Goodra de Hisui"
+  },
+  "swsh12pt5gg-GG35": {
+   "n": "Leafeon V-ASTRO"
+  },
+  "swsh12pt5gg-GG37": {
+   "n": "Simisear V-ASTRO"
+  },
+  "swsh12pt5gg-GG40": {
+   "n": "Glaceon V-ASTRO"
+  },
+  "swsh12pt5gg-GG43": {
+   "n": "Zeraora V-ASTRO"
+  },
+  "swsh12pt5gg-GG44": {
+   "n": "Mewtwo V-ASTRO"
+  },
+  "swsh12pt5gg-GG46": {
+   "n": "Deoxys V-ASTRO"
+  },
+  "swsh12pt5gg-GG50": {
+   "n": "Darkrai V-ASTRO"
+  },
+  "swsh12pt5gg-GG51": {
+   "n": "Samurott de Hisui V"
+  },
+  "swsh12pt5gg-GG52": {
+   "n": "Samurott de Hisui V-ASTRO"
+  },
+  "swsh12pt5gg-GG55": {
+   "n": "Regigigas V-ASTRO"
+  },
+  "swsh12pt5gg-GG56": {
+   "n": "Zoroark de Hisui V-ASTRO"
+  },
+  "swsh12pt5gg-GG57": {
+   "n": "Adamas"
+  },
+  "swsh12pt5gg-GG58": {
+   "n": "Cuidados de Cheren"
+  },
+  "swsh12pt5gg-GG59": {
+   "n": "Experimento de Acromo"
+  },
+  "swsh12pt5gg-GG60": {
+   "n": "Ambición de Cintia"
+  },
+  "swsh12pt5gg-GG61": {
+   "n": "Vigor de Gardenia"
+  },
+  "swsh12pt5gg-GG62": {
+   "n": "Lino"
+  },
+  "swsh12pt5gg-GG63": {
+   "n": "Nákara"
+  },
+  "swsh12pt5gg-GG64": {
+   "n": "Mel"
+  },
+  "swsh12pt5gg-GG65": {
+   "n": "Roy"
+  },
+  "swsh12pt5gg-GG66": {
+   "n": "Petra"
+  },
+  "swsh12pt5gg-GG67": {
+   "n": "Palkia Origen V-ASTRO"
+  },
+  "swsh12pt5gg-GG68": {
+   "n": "Dialga Origen V-ASTRO"
+  },
+  "swsh12pt5gg-GG69": {
+   "n": "Giratina V-ASTRO"
+  },
+  "swsh12pt5gg-GG70": {
+   "n": "Arceus V-ASTRO"
+  }
+ }
+}

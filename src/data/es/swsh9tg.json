@@ -1,0 +1,51 @@
+{
+ "set": {
+  "id": "swsh9tg",
+  "idEs": "swsh9.5tg",
+  "nombre": "Astros Brillantes Galería de Entrenador",
+  "nombreEn": "Brilliant Stars Trainer Gallery",
+  "logo": null,
+  "serie": "Espada y Escudo"
+ },
+ "sinPareja": [],
+ "resumen": {
+  "locales": 30,
+  "traducidas": 10,
+  "sinPareja": 0,
+  "sinImagenEs": 30,
+  "nombresCambiados": 10,
+  "identicasOmitidas": 20
+ },
+ "cartas": {
+  "swsh9tg-TG18": {
+   "n": "Urshifu Golpe Brusco V"
+  },
+  "swsh9tg-TG19": {
+   "n": "Urshifu Golpe Brusco VMAX"
+  },
+  "swsh9tg-TG20": {
+   "n": "Urshifu Golpe Fluido V"
+  },
+  "swsh9tg-TG21": {
+   "n": "Urshifu Golpe Fluido VMAX"
+  },
+  "swsh9tg-TG24": {
+   "n": "Presentimiento de Zarala"
+  },
+  "swsh9tg-TG25": {
+   "n": "Barista"
+  },
+  "swsh9tg-TG27": {
+   "n": "Mostaz Estilo Fluido"
+  },
+  "swsh9tg-TG28": {
+   "n": "Mostaz Estilo Brusco"
+  },
+  "swsh9tg-TG29": {
+   "n": "Urshifu Golpe Brusco VMAX"
+  },
+  "swsh9tg-TG30": {
+   "n": "Urshifu Golpe Fluido VMAX"
+  }
+ }
+}

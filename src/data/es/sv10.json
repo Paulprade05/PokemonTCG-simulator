@@ -1,0 +1,997 @@
+{
+ "set": {
+  "id": "sv10",
+  "idEs": "sv10",
+  "nombre": "Rivales Predestinados",
+  "nombreEn": "Destined Rivals",
+  "logo": "https://assets.tcgdex.net/es/sv/sv10/logo",
+  "serie": "Escarlata y Púrpura"
+ },
+ "sinPareja": [],
+ "resumen": {
+  "locales": 244,
+  "traducidas": 244,
+  "sinPareja": 0,
+  "sinImagenEs": 0,
+  "nombresCambiados": 163,
+  "identicasOmitidas": 0
+ },
+ "cartas": {
+  "sv10-1": {
+   "n": "Pinsir de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/001"
+  },
+  "sv10-10": {
+   "n": "Shaymin",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/010"
+  },
+  "sv10-100": {
+   "n": "Medicham",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/100"
+  },
+  "sv10-101": {
+   "n": "Regirock ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/101"
+  },
+  "sv10-102": {
+   "n": "Gible de Cintia",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/102"
+  },
+  "sv10-103": {
+   "n": "Gabite de Cintia",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/103"
+  },
+  "sv10-104": {
+   "n": "Garchomp ex de Cintia",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/104"
+  },
+  "sv10-105": {
+   "n": "Hippopotas",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/105"
+  },
+  "sv10-106": {
+   "n": "Hippowdon",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/106"
+  },
+  "sv10-107": {
+   "n": "Mudbray",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/107"
+  },
+  "sv10-108": {
+   "n": "Mudsdale",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/108"
+  },
+  "sv10-109": {
+   "n": "Toedscool de Damián",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/109"
+  },
+  "sv10-11": {
+   "n": "Dwebble",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/011"
+  },
+  "sv10-110": {
+   "n": "Toedscruel de Damián",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/110"
+  },
+  "sv10-111": {
+   "n": "Ogerpon Máscara Cimiento",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/111"
+  },
+  "sv10-112": {
+   "n": "Ekans del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/112"
+  },
+  "sv10-113": {
+   "n": "Arbok del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/113"
+  },
+  "sv10-114": {
+   "n": "Nidoran♀ del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/114"
+  },
+  "sv10-115": {
+   "n": "Nidorina del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/115"
+  },
+  "sv10-116": {
+   "n": "Nidoqueen del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/116"
+  },
+  "sv10-117": {
+   "n": "Nidoran♂ del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/117"
+  },
+  "sv10-118": {
+   "n": "Nidorino del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/118"
+  },
+  "sv10-119": {
+   "n": "Nidoking ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/119"
+  },
+  "sv10-12": {
+   "n": "Crustle",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/012"
+  },
+  "sv10-120": {
+   "n": "Zubat del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/120"
+  },
+  "sv10-121": {
+   "n": "Golbat del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/121"
+  },
+  "sv10-122": {
+   "n": "Crobat ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/122"
+  },
+  "sv10-123": {
+   "n": "Grimer del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/123"
+  },
+  "sv10-124": {
+   "n": "Muk del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/124"
+  },
+  "sv10-125": {
+   "n": "Koffing del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/125"
+  },
+  "sv10-126": {
+   "n": "Weezing del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/126"
+  },
+  "sv10-127": {
+   "n": "Murkrow del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/127"
+  },
+  "sv10-128": {
+   "n": "Sneasel del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/128"
+  },
+  "sv10-129": {
+   "n": "Spiritomb de Cintia",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/129"
+  },
+  "sv10-13": {
+   "n": "Fomantis",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/013"
+  },
+  "sv10-130": {
+   "n": "Purrloin de Roxy",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/130"
+  },
+  "sv10-131": {
+   "n": "Liepard de Roxy",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/131"
+  },
+  "sv10-132": {
+   "n": "Scraggy de Roxy",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/132"
+  },
+  "sv10-133": {
+   "n": "Scrafty de Roxy",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/133"
+  },
+  "sv10-134": {
+   "n": "Impidimp de Roxy",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/134"
+  },
+  "sv10-135": {
+   "n": "Morgrem de Roxy",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/135"
+  },
+  "sv10-136": {
+   "n": "Grimmsnarl ex de Roxy",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/136"
+  },
+  "sv10-137": {
+   "n": "Morpeko de Roxy",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/137"
+  },
+  "sv10-138": {
+   "n": "Maschiff de Damián",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/138"
+  },
+  "sv10-139": {
+   "n": "Mabosstiff ex de Damián",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/139"
+  },
+  "sv10-14": {
+   "n": "Lurantis",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/014"
+  },
+  "sv10-140": {
+   "n": "Forretress",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/140"
+  },
+  "sv10-141": {
+   "n": "Skarmory",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/141"
+  },
+  "sv10-142": {
+   "n": "Skarmory de Máximo",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/142"
+  },
+  "sv10-143": {
+   "n": "Beldum de Máximo",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/143"
+  },
+  "sv10-144": {
+   "n": "Metang de Máximo",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/144"
+  },
+  "sv10-145": {
+   "n": "Metagross ex de Máximo",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/145"
+  },
+  "sv10-146": {
+   "n": "Zamazenta",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/146"
+  },
+  "sv10-147": {
+   "n": "Rattata del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/147"
+  },
+  "sv10-148": {
+   "n": "Raticate del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/148"
+  },
+  "sv10-149": {
+   "n": "Meowth del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/149"
+  },
+  "sv10-15": {
+   "n": "Blipbug del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/015"
+  },
+  "sv10-150": {
+   "n": "Persian ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/150"
+  },
+  "sv10-151": {
+   "n": "Kangaskhan",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/151"
+  },
+  "sv10-152": {
+   "n": "Tauros",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/152"
+  },
+  "sv10-153": {
+   "n": "Porygon del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/153"
+  },
+  "sv10-154": {
+   "n": "Porygon2 del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/154"
+  },
+  "sv10-155": {
+   "n": "Porygon-Z del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/155"
+  },
+  "sv10-156": {
+   "n": "Taillow",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/156"
+  },
+  "sv10-157": {
+   "n": "Swellow",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/157"
+  },
+  "sv10-158": {
+   "n": "Skwovet de Damián",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/158"
+  },
+  "sv10-159": {
+   "n": "Greedent de Damián",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/159"
+  },
+  "sv10-16": {
+   "n": "Applin",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/016"
+  },
+  "sv10-160": {
+   "n": "Squawkabilly",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/160"
+  },
+  "sv10-161": {
+   "n": "Bocadillo de Damián",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/161"
+  },
+  "sv10-162": {
+   "n": "Pesa Recia de Cintia",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/162"
+  },
+  "sv10-163": {
+   "n": "Entusiasmo de Emcee",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/163"
+  },
+  "sv10-164": {
+   "n": "Reciclaje de Energía",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/164"
+  },
+  "sv10-165": {
+   "n": "Aventura de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/165"
+  },
+  "sv10-166": {
+   "n": "Cueva Granito",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/166"
+  },
+  "sv10-167": {
+   "n": "Juez",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/167"
+  },
+  "sv10-168": {
+   "n": "Ceniza Sagrada",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/168"
+  },
+  "sv10-169": {
+   "n": "Gimnasio de Pueblo Crampón",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/169"
+  },
+  "sv10-17": {
+   "n": "Dipplin",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/017"
+  },
+  "sv10-170": {
+   "n": "Atlas del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/170"
+  },
+  "sv10-171": {
+   "n": "Atenea del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/171"
+  },
+  "sv10-172": {
+   "n": "Robot Incordio del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/172"
+  },
+  "sv10-173": {
+   "n": "Fábrica del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/173"
+  },
+  "sv10-174": {
+   "n": "Giovanni del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/174"
+  },
+  "sv10-175": {
+   "n": "Super Ball del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/175"
+  },
+  "sv10-176": {
+   "n": "Petrel del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/176"
+  },
+  "sv10-177": {
+   "n": "Protón del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/177"
+  },
+  "sv10-178": {
+   "n": "Walkie-talkie del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/178"
+  },
+  "sv10-179": {
+   "n": "Bomba Arriesgada del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/179"
+  },
+  "sv10-18": {
+   "n": "Hydrapple",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/018"
+  },
+  "sv10-180": {
+   "n": "Torre de Defensa del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/180"
+  },
+  "sv10-181": {
+   "n": "Máquina de MT",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/181"
+  },
+  "sv10-182": {
+   "n": "Energía del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/182"
+  },
+  "sv10-183": {
+   "n": "Yanma",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/183"
+  },
+  "sv10-184": {
+   "n": "Roserade de Cintia",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/184"
+  },
+  "sv10-185": {
+   "n": "Shaymin",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/185"
+  },
+  "sv10-186": {
+   "n": "Crustle",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/186"
+  },
+  "sv10-187": {
+   "n": "Spidops del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/187"
+  },
+  "sv10-188": {
+   "n": "Hydrapple",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/188"
+  },
+  "sv10-189": {
+   "n": "Rapidash",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/189"
+  },
+  "sv10-19": {
+   "n": "Tarountula del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/019"
+  },
+  "sv10-190": {
+   "n": "Typhlosion de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/190"
+  },
+  "sv10-191": {
+   "n": "Houndoom del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/191"
+  },
+  "sv10-192": {
+   "n": "Blaziken",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/192"
+  },
+  "sv10-193": {
+   "n": "Psyduck de Misty",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/193"
+  },
+  "sv10-194": {
+   "n": "Lapras de Misty",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/194"
+  },
+  "sv10-195": {
+   "n": "Clamperl",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/195"
+  },
+  "sv10-196": {
+   "n": "Electrike",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/196"
+  },
+  "sv10-197": {
+   "n": "Rotom",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/197"
+  },
+  "sv10-198": {
+   "n": "Orbeetle del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/198"
+  },
+  "sv10-199": {
+   "n": "Weezing del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/199"
+  },
+  "sv10-2": {
+   "n": "Yanma",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/002"
+  },
+  "sv10-20": {
+   "n": "Spidops del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/020"
+  },
+  "sv10-200": {
+   "n": "Murkrow del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/200"
+  },
+  "sv10-201": {
+   "n": "Zamazenta",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/201"
+  },
+  "sv10-202": {
+   "n": "Raticate del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/202"
+  },
+  "sv10-203": {
+   "n": "Meowth del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/203"
+  },
+  "sv10-204": {
+   "n": "Kangaskhan",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/204"
+  },
+  "sv10-205": {
+   "n": "Greedent de Damián",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/205"
+  },
+  "sv10-206": {
+   "n": "Yanmega ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/206"
+  },
+  "sv10-207": {
+   "n": "Arboliva ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/207"
+  },
+  "sv10-208": {
+   "n": "Moltres ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/208"
+  },
+  "sv10-209": {
+   "n": "Ho-Oh ex de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/209"
+  },
+  "sv10-21": {
+   "n": "Smoliv",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/021"
+  },
+  "sv10-210": {
+   "n": "Cetitan ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/210"
+  },
+  "sv10-211": {
+   "n": "Dondozo ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/211"
+  },
+  "sv10-212": {
+   "n": "Electivire ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/212"
+  },
+  "sv10-213": {
+   "n": "Mewtwo ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/213"
+  },
+  "sv10-214": {
+   "n": "Regirock ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/214"
+  },
+  "sv10-215": {
+   "n": "Garchomp ex de Cintia",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/215"
+  },
+  "sv10-216": {
+   "n": "Nidoking ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/216"
+  },
+  "sv10-217": {
+   "n": "Crobat ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/217"
+  },
+  "sv10-218": {
+   "n": "Mabosstiff ex de Damián",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/218"
+  },
+  "sv10-219": {
+   "n": "Persian ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/219"
+  },
+  "sv10-22": {
+   "n": "Dolliv",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/022"
+  },
+  "sv10-220": {
+   "n": "Entusiasmo de Emcee",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/220"
+  },
+  "sv10-221": {
+   "n": "Aventura de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/221"
+  },
+  "sv10-222": {
+   "n": "Juez",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/222"
+  },
+  "sv10-223": {
+   "n": "Atlas del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/223"
+  },
+  "sv10-224": {
+   "n": "Atenea del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/224"
+  },
+  "sv10-225": {
+   "n": "Giovanni del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/225"
+  },
+  "sv10-226": {
+   "n": "Petrel del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/226"
+  },
+  "sv10-227": {
+   "n": "Protón del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/227"
+  },
+  "sv10-228": {
+   "n": "Yanmega ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/228"
+  },
+  "sv10-229": {
+   "n": "Moltres ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/229"
+  },
+  "sv10-23": {
+   "n": "Arboliva ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/023"
+  },
+  "sv10-230": {
+   "n": "Ho-Oh ex de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/230"
+  },
+  "sv10-231": {
+   "n": "Mewtwo ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/231"
+  },
+  "sv10-232": {
+   "n": "Garchomp ex de Cintia",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/232"
+  },
+  "sv10-233": {
+   "n": "Nidoking ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/233"
+  },
+  "sv10-234": {
+   "n": "Crobat ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/234"
+  },
+  "sv10-235": {
+   "n": "Mabosstiff ex de Damián",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/235"
+  },
+  "sv10-236": {
+   "n": "Aventura de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/236"
+  },
+  "sv10-237": {
+   "n": "Atenea del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/237"
+  },
+  "sv10-238": {
+   "n": "Giovanni del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/238"
+  },
+  "sv10-239": {
+   "n": "Ho-Oh ex de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/239"
+  },
+  "sv10-24": {
+   "n": "Rellor",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/024"
+  },
+  "sv10-240": {
+   "n": "Mewtwo ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/240"
+  },
+  "sv10-241": {
+   "n": "Garchomp ex de Cintia",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/241"
+  },
+  "sv10-242": {
+   "n": "Crobat ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/242"
+  },
+  "sv10-243": {
+   "n": "Torre de Interferencia",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/243"
+  },
+  "sv10-244": {
+   "n": "Ciudad Leudal",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/244"
+  },
+  "sv10-25": {
+   "n": "Rabsca ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/025"
+  },
+  "sv10-26": {
+   "n": "Ogerpon Máscara Turquesa",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/026"
+  },
+  "sv10-27": {
+   "n": "Growlithe",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/027"
+  },
+  "sv10-28": {
+   "n": "Arcanine",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/028"
+  },
+  "sv10-29": {
+   "n": "Ponyta",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/029"
+  },
+  "sv10-3": {
+   "n": "Yanmega ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/003"
+  },
+  "sv10-30": {
+   "n": "Rapidash",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/030"
+  },
+  "sv10-31": {
+   "n": "Moltres ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/031"
+  },
+  "sv10-32": {
+   "n": "Cyndaquil de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/032"
+  },
+  "sv10-33": {
+   "n": "Quilava de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/033"
+  },
+  "sv10-34": {
+   "n": "Typhlosion de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/034"
+  },
+  "sv10-35": {
+   "n": "Slugma de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/035"
+  },
+  "sv10-36": {
+   "n": "Magcargo de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/036"
+  },
+  "sv10-37": {
+   "n": "Houndour del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/037"
+  },
+  "sv10-38": {
+   "n": "Houndoom del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/038"
+  },
+  "sv10-39": {
+   "n": "Ho-Oh ex de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/039"
+  },
+  "sv10-4": {
+   "n": "Pineco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/004"
+  },
+  "sv10-40": {
+   "n": "Torchic",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/040"
+  },
+  "sv10-41": {
+   "n": "Combusken",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/041"
+  },
+  "sv10-42": {
+   "n": "Blaziken",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/042"
+  },
+  "sv10-43": {
+   "n": "Rotom Calor",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/043"
+  },
+  "sv10-44": {
+   "n": "Ogerpon Máscara Horno",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/044"
+  },
+  "sv10-45": {
+   "n": "Psyduck de Misty",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/045"
+  },
+  "sv10-46": {
+   "n": "Staryu de Misty",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/046"
+  },
+  "sv10-47": {
+   "n": "Starmie de Misty",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/047"
+  },
+  "sv10-48": {
+   "n": "Magikarp de Misty",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/048"
+  },
+  "sv10-49": {
+   "n": "Gyarados de Misty",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/049"
+  },
+  "sv10-5": {
+   "n": "Shroomish",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/005"
+  },
+  "sv10-50": {
+   "n": "Lapras de Misty",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/050"
+  },
+  "sv10-51": {
+   "n": "Articuno del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/051"
+  },
+  "sv10-52": {
+   "n": "Feebas de Cintia",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/052"
+  },
+  "sv10-53": {
+   "n": "Milotic de Cintia",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/053"
+  },
+  "sv10-54": {
+   "n": "Clamperl",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/054"
+  },
+  "sv10-55": {
+   "n": "Huntail",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/055"
+  },
+  "sv10-56": {
+   "n": "Gorebyss",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/056"
+  },
+  "sv10-57": {
+   "n": "Buizel",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/057"
+  },
+  "sv10-58": {
+   "n": "Floatzel",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/058"
+  },
+  "sv10-59": {
+   "n": "Snover",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/059"
+  },
+  "sv10-6": {
+   "n": "Breloom",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/006"
+  },
+  "sv10-60": {
+   "n": "Abomasnow",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/060"
+  },
+  "sv10-61": {
+   "n": "Rotom Lavado",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/061"
+  },
+  "sv10-62": {
+   "n": "Arrokuda",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/062"
+  },
+  "sv10-63": {
+   "n": "Barraskewda",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/063"
+  },
+  "sv10-64": {
+   "n": "Cetoddle",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/064"
+  },
+  "sv10-65": {
+   "n": "Cetitan ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/065"
+  },
+  "sv10-66": {
+   "n": "Dondozo ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/066"
+  },
+  "sv10-67": {
+   "n": "Ogerpon Máscara Fuente",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/067"
+  },
+  "sv10-68": {
+   "n": "Electabuzz",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/068"
+  },
+  "sv10-69": {
+   "n": "Electivire ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/069"
+  },
+  "sv10-7": {
+   "n": "Roselia de Cintia",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/007"
+  },
+  "sv10-70": {
+   "n": "Zapdos del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/070"
+  },
+  "sv10-71": {
+   "n": "Pichu de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/071"
+  },
+  "sv10-72": {
+   "n": "Mareep del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/072"
+  },
+  "sv10-73": {
+   "n": "Flaaffy del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/073"
+  },
+  "sv10-74": {
+   "n": "Ampharos del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/074"
+  },
+  "sv10-75": {
+   "n": "Electrike",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/075"
+  },
+  "sv10-76": {
+   "n": "Manectric",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/076"
+  },
+  "sv10-77": {
+   "n": "Rotom",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/077"
+  },
+  "sv10-78": {
+   "n": "Zeraora",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/078"
+  },
+  "sv10-79": {
+   "n": "Drowzee del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/079"
+  },
+  "sv10-8": {
+   "n": "Roserade de Cintia",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/008"
+  },
+  "sv10-80": {
+   "n": "Hypno del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/080"
+  },
+  "sv10-81": {
+   "n": "Mewtwo ex del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/081"
+  },
+  "sv10-82": {
+   "n": "Wobbuffet del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/082"
+  },
+  "sv10-83": {
+   "n": "Baltoy de Máximo",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/083"
+  },
+  "sv10-84": {
+   "n": "Claydol de Máximo",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/084"
+  },
+  "sv10-85": {
+   "n": "Chingling del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/085"
+  },
+  "sv10-86": {
+   "n": "Carbink de Máximo",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/086"
+  },
+  "sv10-87": {
+   "n": "Mimikyu del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/087"
+  },
+  "sv10-88": {
+   "n": "Dottler del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/088"
+  },
+  "sv10-89": {
+   "n": "Orbeetle del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/089"
+  },
+  "sv10-9": {
+   "n": "Rotom Corte",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/009"
+  },
+  "sv10-90": {
+   "n": "Mankey",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/090"
+  },
+  "sv10-91": {
+   "n": "Primeape",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/091"
+  },
+  "sv10-92": {
+   "n": "Annihilape",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/092"
+  },
+  "sv10-93": {
+   "n": "Sudowoodo de Eco",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/093"
+  },
+  "sv10-94": {
+   "n": "Larvitar del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/094"
+  },
+  "sv10-95": {
+   "n": "Pupitar del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/095"
+  },
+  "sv10-96": {
+   "n": "Tyranitar del Team Rocket",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/096"
+  },
+  "sv10-97": {
+   "n": "Nosepass",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/097"
+  },
+  "sv10-98": {
+   "n": "Probopass",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/098"
+  },
+  "sv10-99": {
+   "n": "Meditite",
+   "i": "https://assets.tcgdex.net/es/sv/sv10/099"
+  }
+ }
+}

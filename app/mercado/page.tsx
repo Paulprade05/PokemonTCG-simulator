@@ -36,6 +36,8 @@ interface CartaMercado extends CartaMinima {
   cantidad: number;
   /** SELL_PRICES de su rareza (lo calcula el servidor). */
   precio: number;
+  /** Rótulo español, sólo para pintar. El emparejamiento usa `name` (inglés). */
+  nombreEs?: string;
 }
 
 interface ParteReparto {
@@ -76,8 +78,15 @@ const PRIORIDAD: Record<Categoria, number> = {
   set: 5,
 };
 
-const nombreDeSet = (setId: string | null): string =>
-  setId ? AVAILABLE_SETS.find((s) => s.id === setId)?.name ?? setId.toUpperCase() : "Cualquier expansión";
+/**
+ * Rótulo de la expansión que exige un requisito. El nombre español lo manda
+ * `getMercado` en un mapa de una docena de entradas: el índice de idioma vive
+ * en el servidor y traerlo al navegador para dos rótulos no sale a cuenta.
+ */
+const nombreDeSet = (setId: string | null, nombresEs: Record<string, string>): string =>
+  setId
+    ? nombresEs[setId] ?? AVAILABLE_SETS.find((s) => s.id === setId)?.name ?? setId.toUpperCase()
+    : "Cualquier expansión";
 
 const clave = (v: unknown) => String(v ?? "").trim().toLowerCase();
 
@@ -290,6 +299,7 @@ export default function MercadoPage() {
   const [ofertas, setOfertas] = useState<Oferta[]>([]);
   const [cartas, setCartas] = useState<CartaMercado[]>([]);
   const [cumplidas, setCumplidas] = useState<string[]>([]);
+  const [nombresSet, setNombresSet] = useState<Record<string, string>>({});
   const [caduca, setCaduca] = useState(0);
   const [ahora, setAhora] = useState(0);
   const [enCurso, setEnCurso] = useState<string | null>(null);
@@ -323,6 +333,7 @@ export default function MercadoPage() {
         }
 
         setOfertas(tablon.ofertas);
+        setNombresSet(tablon.nombresSet ?? {});
         setCumplidas(tablon.cumplidas);
         setCaduca(tablon.caduca);
         setCartas(lista);
@@ -469,6 +480,7 @@ export default function MercadoPage() {
               enCurso={enCurso === oferta.id}
               bloqueada={enCurso !== null && enCurso !== oferta.id}
               retardo={i * 0.04}
+              nombresSet={nombresSet}
               onCumplir={() => onCumplir(oferta)}
             />
           ))}
@@ -508,6 +520,7 @@ function TarjetaOferta({
   enCurso,
   bloqueada,
   retardo,
+  nombresSet,
   onCumplir,
 }: {
   oferta: Oferta;
@@ -517,6 +530,7 @@ function TarjetaOferta({
   enCurso: boolean;
   bloqueada: boolean;
   retardo: number;
+  nombresSet: Record<string, string>;
   onCumplir: () => void;
 }) {
   const color = COLOR_DIFICULTAD[oferta.dificultad];
@@ -545,7 +559,7 @@ function TarjetaOferta({
               {ETIQUETA_DIFICULTAD[oferta.dificultad]}
             </span>
             <span className="chip text-[10px] px-2 py-0.5 ink-soft truncate max-w-[60%]">
-              {nombreDeSet(oferta.setId)}
+              {nombreDeSet(oferta.setId, nombresSet)}
             </span>
             {cumplida && (
               <span className="chip text-[10px] px-2 py-0.5 accent font-semibold">Cumplida</span>
@@ -679,7 +693,9 @@ function resumirCartas(elegidas: CartaMercado[]): string {
   for (const c of elegidas) {
     const actual = cuenta.get(c.id);
     if (actual) actual.copias += 1;
-    else cuenta.set(c.id, { nombre: String(c.name ?? ""), copias: 1, total: c.cantidad });
+    // `nombreEs` es el rótulo; `name` sigue en inglés porque con él empareja el
+    // servidor (ver la nota de CartaMercado en app/action.ts).
+    else cuenta.set(c.id, { nombre: String(c.nombreEs ?? c.name ?? ""), copias: 1, total: c.cantidad });
   }
   return Array.from(cuenta.values())
     .map(({ nombre, copias, total }) =>

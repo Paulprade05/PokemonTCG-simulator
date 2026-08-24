@@ -1,0 +1,313 @@
+{
+ "set": {
+  "id": "swsh45",
+  "idEs": "swsh4.5",
+  "nombre": "Destinos Brillantes",
+  "nombreEn": "Shining Fates",
+  "logo": "https://assets.tcgdex.net/es/swsh/swsh4.5/logo",
+  "serie": "Espada y Escudo"
+ },
+ "sinPareja": [],
+ "resumen": {
+  "locales": 73,
+  "traducidas": 73,
+  "sinPareja": 0,
+  "sinImagenEs": 0,
+  "nombresCambiados": 15,
+  "identicasOmitidas": 0
+ },
+ "cartas": {
+  "swsh45-1": {
+   "n": "Yanma",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/1"
+  },
+  "swsh45-10": {
+   "n": "Dhelmise VMAX",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/10"
+  },
+  "swsh45-11": {
+   "n": "Grookey",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/11"
+  },
+  "swsh45-12": {
+   "n": "Thwackey",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/12"
+  },
+  "swsh45-13": {
+   "n": "Rillaboom",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/13"
+  },
+  "swsh45-14": {
+   "n": "Gossifleur",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/14"
+  },
+  "swsh45-15": {
+   "n": "Eldegoss",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/15"
+  },
+  "swsh45-16": {
+   "n": "Zarude",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/16"
+  },
+  "swsh45-17": {
+   "n": "Reshiram",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/17"
+  },
+  "swsh45-18": {
+   "n": "Cinderace V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/18"
+  },
+  "swsh45-19": {
+   "n": "Cinderace VMAX",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/19"
+  },
+  "swsh45-2": {
+   "n": "Yanmega",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/2"
+  },
+  "swsh45-20": {
+   "n": "Horsea",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/20"
+  },
+  "swsh45-21": {
+   "n": "Kyogre",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/21"
+  },
+  "swsh45-22": {
+   "n": "Buizel",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/22"
+  },
+  "swsh45-23": {
+   "n": "Floatzel",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/23"
+  },
+  "swsh45-24": {
+   "n": "Manaphy",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/24"
+  },
+  "swsh45-25": {
+   "n": "Volcanion",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/25"
+  },
+  "swsh45-26": {
+   "n": "Chewtle",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/26"
+  },
+  "swsh45-27": {
+   "n": "Drednaw",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/27"
+  },
+  "swsh45-28": {
+   "n": "Cramorant",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/28"
+  },
+  "swsh45-29": {
+   "n": "Snom",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/29"
+  },
+  "swsh45-3": {
+   "n": "Celebi",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/3"
+  },
+  "swsh45-30": {
+   "n": "Frosmoth",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/30"
+  },
+  "swsh45-31": {
+   "n": "Shinx",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/31"
+  },
+  "swsh45-32": {
+   "n": "Luxio",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/32"
+  },
+  "swsh45-33": {
+   "n": "Luxray",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/33"
+  },
+  "swsh45-34": {
+   "n": "Rotom",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/34"
+  },
+  "swsh45-35": {
+   "n": "Morpeko",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/35"
+  },
+  "swsh45-36": {
+   "n": "Morpeko",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/36"
+  },
+  "swsh45-37": {
+   "n": "Morpeko V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/37"
+  },
+  "swsh45-38": {
+   "n": "Morpeko VMAX",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/38"
+  },
+  "swsh45-39": {
+   "n": "Indeedee V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/39"
+  },
+  "swsh45-4": {
+   "n": "Cacnea",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/4"
+  },
+  "swsh45-40": {
+   "n": "Trapinch",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/40"
+  },
+  "swsh45-41": {
+   "n": "Koffing",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/41"
+  },
+  "swsh45-42": {
+   "n": "Weezing de Galar",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/42"
+  },
+  "swsh45-43": {
+   "n": "Spinarak",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/43"
+  },
+  "swsh45-44": {
+   "n": "Crobat V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/44"
+  },
+  "swsh45-45": {
+   "n": "Crobat VMAX",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/45"
+  },
+  "swsh45-46": {
+   "n": "Yveltal",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/46"
+  },
+  "swsh45-47": {
+   "n": "Nickit",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/47"
+  },
+  "swsh45-48": {
+   "n": "Thievul",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/48"
+  },
+  "swsh45-49": {
+   "n": "Cufant",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/49"
+  },
+  "swsh45-5": {
+   "n": "Tropius",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/5"
+  },
+  "swsh45-50": {
+   "n": "Ditto V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/50"
+  },
+  "swsh45-51": {
+   "n": "Ditto VMAX",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/51"
+  },
+  "swsh45-52": {
+   "n": "Eevee",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/52"
+  },
+  "swsh45-53": {
+   "n": "Greedent V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/53"
+  },
+  "swsh45-54": {
+   "n": "Cramorant V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/54"
+  },
+  "swsh45-55": {
+   "n": "Cramorant VMAX",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/55"
+  },
+  "swsh45-56": {
+   "n": "Indeedee",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/56"
+  },
+  "swsh45-57": {
+   "n": "Bolifacio",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/57"
+  },
+  "swsh45-58": {
+   "n": "Órdenes de Jefes",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/58"
+  },
+  "swsh45-59": {
+   "n": "Entrenador de Gimnasio",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/59"
+  },
+  "swsh45-6": {
+   "n": "Rowlet",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/6"
+  },
+  "swsh45-60": {
+   "n": "Investigación de Profesores",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/60"
+  },
+  "swsh45-61": {
+   "n": "Escudo Oxidado",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/61"
+  },
+  "swsh45-62": {
+   "n": "Espada Oxidada",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/62"
+  },
+  "swsh45-63": {
+   "n": "Toalla del Team Yell",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/63"
+  },
+  "swsh45-64": {
+   "n": "Alcremie V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/64"
+  },
+  "swsh45-65": {
+   "n": "Bolifacio",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/65"
+  },
+  "swsh45-66": {
+   "n": "Ornitólogo",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/66"
+  },
+  "swsh45-67": {
+   "n": "Carmen Babia",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/67"
+  },
+  "swsh45-68": {
+   "n": "Entrenador de Gimnasio",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/68"
+  },
+  "swsh45-69": {
+   "n": "Nerio",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/69"
+  },
+  "swsh45-7": {
+   "n": "Dartrix",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/7"
+  },
+  "swsh45-70": {
+   "n": "Pokéchica",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/70"
+  },
+  "swsh45-71": {
+   "n": "Rose",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/71"
+  },
+  "swsh45-72": {
+   "n": "Gerania",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/72"
+  },
+  "swsh45-73": {
+   "n": "Alcremie VMAX",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/73"
+  },
+  "swsh45-8": {
+   "n": "Decidueye",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/8"
+  },
+  "swsh45-9": {
+   "n": "Dhelmise V",
+   "i": "https://assets.tcgdex.net/es/swsh/swsh4.5/9"
+  }
+ }
+}

@@ -1,0 +1,66 @@
+{
+ "set": {
+  "id": "swsh10tg",
+  "idEs": "swsh10.5tg",
+  "nombre": "Resplandor Astral Galería de Entrenador",
+  "nombreEn": "Astral Radiance Trainer Gallery",
+  "logo": null,
+  "serie": "Espada y Escudo"
+ },
+ "sinPareja": [],
+ "resumen": {
+  "locales": 30,
+  "traducidas": 15,
+  "sinPareja": 0,
+  "sinImagenEs": 30,
+  "nombresCambiados": 15,
+  "identicasOmitidas": 15
+ },
+ "cartas": {
+  "swsh10tg-TG10": {
+   "n": "Obstagoon de Galar"
+  },
+  "swsh10tg-TG14": {
+   "n": "Calyrex Jinete Glacial V"
+  },
+  "swsh10tg-TG15": {
+   "n": "Calyrex Jinete Glacial VMAX"
+  },
+  "swsh10tg-TG16": {
+   "n": "Articuno de Galar V"
+  },
+  "swsh10tg-TG17": {
+   "n": "Calyrex Jinete Espectral V"
+  },
+  "swsh10tg-TG18": {
+   "n": "Calyrex Jinete Espectral VMAX"
+  },
+  "swsh10tg-TG19": {
+   "n": "Zapdos de Galar V"
+  },
+  "swsh10tg-TG20": {
+   "n": "Moltres de Galar V"
+  },
+  "swsh10tg-TG24": {
+   "n": "Alistair"
+  },
+  "swsh10tg-TG25": {
+   "n": "Judith"
+  },
+  "swsh10tg-TG26": {
+   "n": "Mel"
+  },
+  "swsh10tg-TG27": {
+   "n": "Percy"
+  },
+  "swsh10tg-TG28": {
+   "n": "Nerio"
+  },
+  "swsh10tg-TG29": {
+   "n": "Calyrex Jinete Glacial VMAX"
+  },
+  "swsh10tg-TG30": {
+   "n": "Calyrex Jinete Espectral VMAX"
+  }
+ }
+}

@@ -1,0 +1,39 @@
+{
+ "set": {
+  "id": "swsh12tg",
+  "idEs": "swsh12.5tg",
+  "nombre": "Tempestad Plateada Galería de Entrenador",
+  "nombreEn": "Silver Tempest Trainer Gallery",
+  "logo": null,
+  "serie": "Espada y Escudo"
+ },
+ "sinPareja": [],
+ "resumen": {
+  "locales": 30,
+  "traducidas": 6,
+  "sinPareja": 0,
+  "sinImagenEs": 30,
+  "nombresCambiados": 6,
+  "identicasOmitidas": 24
+ },
+ "cartas": {
+  "swsh12tg-TG23": {
+   "n": "Amigos de Galar"
+  },
+  "swsh12tg-TG24": {
+   "n": "Morris"
+  },
+  "swsh12tg-TG25": {
+   "n": "Juez"
+  },
+  "swsh12tg-TG26": {
+   "n": "Profesora Pimpinela"
+  },
+  "swsh12tg-TG27": {
+   "n": "Roy"
+  },
+  "swsh12tg-TG28": {
+   "n": "Tizonio y Dargo"
+  }
+ }
+}

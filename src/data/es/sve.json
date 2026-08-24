@@ -1,0 +1,69 @@
+{
+ "set": {
+  "id": "sve",
+  "idEs": "sve",
+  "nombre": "Escarlata y Púrpura Energía",
+  "nombreEn": "Scarlet & Violet Energies",
+  "logo": null,
+  "serie": "Escarlata y Púrpura"
+ },
+ "sinPareja": [],
+ "resumen": {
+  "locales": 16,
+  "traducidas": 16,
+  "sinPareja": 0,
+  "sinImagenEs": 16,
+  "nombresCambiados": 16,
+  "identicasOmitidas": 0
+ },
+ "cartas": {
+  "sve-1": {
+   "n": "Energía Planta"
+  },
+  "sve-10": {
+   "n": "Energía Fuego"
+  },
+  "sve-11": {
+   "n": "Energía Agua"
+  },
+  "sve-12": {
+   "n": "Energía Rayo"
+  },
+  "sve-13": {
+   "n": "Energía Psíquica"
+  },
+  "sve-14": {
+   "n": "Energía Lucha"
+  },
+  "sve-15": {
+   "n": "Energía Oscura"
+  },
+  "sve-16": {
+   "n": "Energía Metálica"
+  },
+  "sve-2": {
+   "n": "Energía Fuego"
+  },
+  "sve-3": {
+   "n": "Energía Agua"
+  },
+  "sve-4": {
+   "n": "Energía Rayo"
+  },
+  "sve-5": {
+   "n": "Energía Psíquica"
+  },
+  "sve-6": {
+   "n": "Energía Lucha"
+  },
+  "sve-7": {
+   "n": "Energía Oscura"
+  },
+  "sve-8": {
+   "n": "Energía Metálica"
+  },
+  "sve-9": {
+   "n": "Energía Planta"
+  }
+ }
+}

@@ -1,0 +1,417 @@
+{
+ "set": {
+  "id": "sv6pt5",
+  "idEs": "sv06.5",
+  "nombre": "Fabula Sombría",
+  "nombreEn": "Shrouded Fable",
+  "logo": "https://assets.tcgdex.net/es/sv/sv06.5/logo",
+  "serie": "Escarlata y Púrpura"
+ },
+ "sinPareja": [],
+ "resumen": {
+  "locales": 99,
+  "traducidas": 99,
+  "sinPareja": 0,
+  "sinImagenEs": 0,
+  "nombresCambiados": 22,
+  "identicasOmitidas": 0
+ },
+ "cartas": {
+  "sv6pt5-1": {
+   "n": "Joltik",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/001"
+  },
+  "sv6pt5-10": {
+   "n": "Horsea",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/010"
+  },
+  "sv6pt5-11": {
+   "n": "Seadra",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/011"
+  },
+  "sv6pt5-12": {
+   "n": "Kingdra ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/012"
+  },
+  "sv6pt5-13": {
+   "n": "Sneasel",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/013"
+  },
+  "sv6pt5-14": {
+   "n": "Weavile",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/014"
+  },
+  "sv6pt5-15": {
+   "n": "Revavroom ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/015"
+  },
+  "sv6pt5-16": {
+   "n": "Drowzee",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/016"
+  },
+  "sv6pt5-17": {
+   "n": "Hypno",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/017"
+  },
+  "sv6pt5-18": {
+   "n": "Duskull",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/018"
+  },
+  "sv6pt5-19": {
+   "n": "Dusclops",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/019"
+  },
+  "sv6pt5-2": {
+   "n": "Galvantula",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/002"
+  },
+  "sv6pt5-20": {
+   "n": "Dusknoir",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/020"
+  },
+  "sv6pt5-21": {
+   "n": "Cresselia",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/021"
+  },
+  "sv6pt5-22": {
+   "n": "Sylveon",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/022"
+  },
+  "sv6pt5-23": {
+   "n": "Croagunk",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/023"
+  },
+  "sv6pt5-24": {
+   "n": "Toxicroak",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/024"
+  },
+  "sv6pt5-25": {
+   "n": "Ursaluna Luna Carmesí",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/025"
+  },
+  "sv6pt5-26": {
+   "n": "Reptalada",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/026"
+  },
+  "sv6pt5-27": {
+   "n": "Zubat",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/027"
+  },
+  "sv6pt5-28": {
+   "n": "Golbat",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/028"
+  },
+  "sv6pt5-29": {
+   "n": "Crobat",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/029"
+  },
+  "sv6pt5-3": {
+   "n": "Rowlet",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/003"
+  },
+  "sv6pt5-30": {
+   "n": "Absol",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/030"
+  },
+  "sv6pt5-31": {
+   "n": "Zorua",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/031"
+  },
+  "sv6pt5-32": {
+   "n": "Zoroark",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/032"
+  },
+  "sv6pt5-33": {
+   "n": "Inkay",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/033"
+  },
+  "sv6pt5-34": {
+   "n": "Malamar",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/034"
+  },
+  "sv6pt5-35": {
+   "n": "Yveltal",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/035"
+  },
+  "sv6pt5-36": {
+   "n": "Okidogi ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/036"
+  },
+  "sv6pt5-37": {
+   "n": "Munkidori ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/037"
+  },
+  "sv6pt5-38": {
+   "n": "Fezandipiti ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/038"
+  },
+  "sv6pt5-39": {
+   "n": "Pecharunt ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/039"
+  },
+  "sv6pt5-4": {
+   "n": "Dartrix",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/004"
+  },
+  "sv6pt5-40": {
+   "n": "Genesect",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/040"
+  },
+  "sv6pt5-41": {
+   "n": "Cufant",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/041"
+  },
+  "sv6pt5-42": {
+   "n": "Copperajah",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/042"
+  },
+  "sv6pt5-43": {
+   "n": "Varoom",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/043"
+  },
+  "sv6pt5-44": {
+   "n": "Axew",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/044"
+  },
+  "sv6pt5-45": {
+   "n": "Fraxure",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/045"
+  },
+  "sv6pt5-46": {
+   "n": "Haxorus",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/046"
+  },
+  "sv6pt5-47": {
+   "n": "Kyurem",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/047"
+  },
+  "sv6pt5-48": {
+   "n": "Meowth",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/048"
+  },
+  "sv6pt5-49": {
+   "n": "Persian",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/049"
+  },
+  "sv6pt5-5": {
+   "n": "Decidueye",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/005"
+  },
+  "sv6pt5-50": {
+   "n": "Eevee",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/050"
+  },
+  "sv6pt5-51": {
+   "n": "Furfrou",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/051"
+  },
+  "sv6pt5-52": {
+   "n": "Stufful",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/052"
+  },
+  "sv6pt5-53": {
+   "n": "Bewear",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/053"
+  },
+  "sv6pt5-54": {
+   "n": "Academia de Noche",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/054"
+  },
+  "sv6pt5-55": {
+   "n": "Mochi Cadena",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/055"
+  },
+  "sv6pt5-56": {
+   "n": "Casiopea",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/056"
+  },
+  "sv6pt5-57": {
+   "n": "Tenacidad de Acromo",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/057"
+  },
+  "sv6pt5-58": {
+   "n": "Láser Peligroso",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/058"
+  },
+  "sv6pt5-59": {
+   "n": "Artes Secretas de Sachiko",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/059"
+  },
+  "sv6pt5-6": {
+   "n": "Tapu Bulu",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/006"
+  },
+  "sv6pt5-60": {
+   "n": "Zona de Neutralización",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/060"
+  },
+  "sv6pt5-61": {
+   "n": "Camilla Nocturna",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/061"
+  },
+  "sv6pt5-62": {
+   "n": "Poké Vital A",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/062"
+  },
+  "sv6pt5-63": {
+   "n": "Reloj de Arena Potenciador",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/063"
+  },
+  "sv6pt5-64": {
+   "n": "Maquinaciones de Xero",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/064"
+  },
+  "sv6pt5-65": {
+   "n": "Tapu Bulu",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/065"
+  },
+  "sv6pt5-66": {
+   "n": "Houndoom",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/066"
+  },
+  "sv6pt5-67": {
+   "n": "Horsea",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/067"
+  },
+  "sv6pt5-68": {
+   "n": "Duskull",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/068"
+  },
+  "sv6pt5-69": {
+   "n": "Dusclops",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/069"
+  },
+  "sv6pt5-7": {
+   "n": "Houndour",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/007"
+  },
+  "sv6pt5-70": {
+   "n": "Dusknoir",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/070"
+  },
+  "sv6pt5-71": {
+   "n": "Cresselia",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/071"
+  },
+  "sv6pt5-72": {
+   "n": "Munkidori",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/072"
+  },
+  "sv6pt5-73": {
+   "n": "Fezandipiti",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/073"
+  },
+  "sv6pt5-74": {
+   "n": "Okidogi",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/074"
+  },
+  "sv6pt5-75": {
+   "n": "Zorua",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/075"
+  },
+  "sv6pt5-76": {
+   "n": "Cufant",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/076"
+  },
+  "sv6pt5-77": {
+   "n": "Fraxure",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/077"
+  },
+  "sv6pt5-78": {
+   "n": "Persian",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/078"
+  },
+  "sv6pt5-79": {
+   "n": "Bewear",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/079"
+  },
+  "sv6pt5-8": {
+   "n": "Houndoom",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/008"
+  },
+  "sv6pt5-80": {
+   "n": "Kingdra ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/080"
+  },
+  "sv6pt5-81": {
+   "n": "Revavroom ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/081"
+  },
+  "sv6pt5-82": {
+   "n": "Okidogi ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/082"
+  },
+  "sv6pt5-83": {
+   "n": "Munkidori ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/083"
+  },
+  "sv6pt5-84": {
+   "n": "Fezandipiti ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/084"
+  },
+  "sv6pt5-85": {
+   "n": "Pecharunt ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/085"
+  },
+  "sv6pt5-86": {
+   "n": "Casiopea",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/086"
+  },
+  "sv6pt5-87": {
+   "n": "Tenacidad de Acromo",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/087"
+  },
+  "sv6pt5-88": {
+   "n": "Artes Secretas de Sachiko",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/088"
+  },
+  "sv6pt5-89": {
+   "n": "Maquinaciones de Xero",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/089"
+  },
+  "sv6pt5-9": {
+   "n": "Ferropolilla",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/009"
+  },
+  "sv6pt5-90": {
+   "n": "Okidogi ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/090"
+  },
+  "sv6pt5-91": {
+   "n": "Munkidori ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/091"
+  },
+  "sv6pt5-92": {
+   "n": "Fezandipiti ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/092"
+  },
+  "sv6pt5-93": {
+   "n": "Pecharunt ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/093"
+  },
+  "sv6pt5-94": {
+   "n": "Casiopea",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/094"
+  },
+  "sv6pt5-95": {
+   "n": "Pecharunt ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/095"
+  },
+  "sv6pt5-96": {
+   "n": "Vasija Terrestre",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/096"
+  },
+  "sv6pt5-97": {
+   "n": "Reloj de Arena Potenciador",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/097"
+  },
+  "sv6pt5-98": {
+   "n": "Energía Darkness Básica",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/098"
+  },
+  "sv6pt5-99": {
+   "n": "Energía Metal Básica",
+   "i": "https://assets.tcgdex.net/es/sv/sv06.5/099"
+  }
+ }
+}

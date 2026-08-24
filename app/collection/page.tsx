@@ -8,7 +8,9 @@ import {
   sellCardAction,
   toggleFavorite,
   sellAllDuplicatesAction,
+  sellAllDuplicatesBulkAction,
   getSetsFromDB,
+  nombresDeCartas,
 } from "../action";
 import { getCollection, saveCollectionRaw } from "../../utils/storage";
 import { useCurrency } from "../../hooks/useGameCurrency";
@@ -16,13 +18,42 @@ import { useHaptics } from "../../hooks/useHaptics";
 import { useToast } from "../../components/ui/Toast";
 import ConfirmSheet from "../../components/ui/ConfirmSheet";
 import Sheet from "../../components/ui/Sheet";
-import { RARITY_RANK, SELL_PRICES } from "../../utils/constanst";
+import { RARITY_RANK, valorDeVenta } from "../../utils/constanst";
 import { formatNumber } from "../../utils/format";
 import PokemonCard from "../../components/PokemonCard";
 import PageHeader from "../../components/PageHeader";
 import Loader from "../../components/Loader";
 import CardDetailModal from "../../components/CardDetailModal";
 import Link from "next/link";
+
+/**
+ * Cartas del invitado con el rótulo y la ilustración del idioma ACTUAL.
+ *
+ * Su colección vive en localStorage y guarda el nombre y la imagen con los que
+ * se abrió el sobre; ese almacén es su partida y no se reescribe. Al cambiar de
+ * idioma, entonces, las cartas viejas seguirían con el nombre viejo: aquí se
+ * repinta lo guardado pidiendo al servidor sólo el rótulo por id (unos pocos KB
+ * y una única petición), sin tocar ni una clave del almacenamiento.
+ *
+ * Funciona en los dos sentidos: en español el rótulo sale del diccionario (sin
+ * consultas), y en inglés del catálogo, que es el único sitio donde está el
+ * nombre inglés de una carta que se guardó traducida.
+ */
+async function enIdiomaLocal(cartas: any[]): Promise<any[]> {
+  if (cartas.length === 0) return cartas;
+  try {
+    const traducidas = await nombresDeCartas(cartas.map((c) => c.id));
+    if (Object.keys(traducidas).length === 0) return cartas;
+    return cartas.map((c) => {
+      const t = traducidas[c.id];
+      // Sin ilustración española (promos, Galerías...) se conserva la guardada.
+      return t ? { ...c, name: t.name, images: t.images ?? c.images } : c;
+    });
+  } catch {
+    // Sin cobertura la colección local se pinta igual, con lo que hay guardado.
+    return cartas;
+  }
+}
 
 export default function CollectionPage() {
   const { isSignedIn, isLoaded } = useUser();
@@ -102,9 +133,10 @@ export default function CollectionPage() {
       const sets = await getSetsFromDB();
       setDbSets(sets);
       if (isSignedIn) {
+        // Ya viene traducida: la capa de idioma se aplica en el servidor.
         setCards(await getFullCollection());
       } else {
-        setCards(getCollection());
+        setCards(await enIdiomaLocal(getCollection()));
       }
     } catch (error) {
       console.error("Error cargando colección:", error);
@@ -163,7 +195,14 @@ export default function CollectionPage() {
   // Reset page on filter/search change
   useEffect(() => { setPage(1); }, [searchTerm, filterSet, filterRarity, sortBy]);
 
-  const getPrice = (rarity: string) => SELL_PRICES[rarity] || 10;
+  /**
+   * Precio de vender UNA copia de una carta de la que se tienen `quantity`.
+   *
+   * Es la misma función que usa el servidor (utils/constanst.ts), y por eso el
+   * número que se pinta en el botón es exactamente el que se acaba cobrando:
+   * el precio ya no es una constante por rareza, baja con las copias que tienes.
+   */
+  const precioDeUna = (rarity: string, quantity: number) => valorDeVenta(rarity, quantity, 1);
 
   /** Duplicados vendibles (las favoritas quedan protegidas) y su valor. */
   const duplicateInfo = useMemo(() => {
@@ -171,7 +210,8 @@ export default function CollectionPage() {
     let total = 0;
     let units = 0;
     list.forEach((card) => {
-      total += (card.quantity - 1) * getPrice(card.rarity);
+      // No es (copias − 1) × precio: cada copia vale menos que la anterior.
+      total += valorDeVenta(card.rarity, card.quantity);
       units += card.quantity - 1;
     });
     return { list, total, units };
@@ -181,14 +221,17 @@ export default function CollectionPage() {
    * Vende una copia suelta. La comparte el botón de la rejilla y la hoja de
    * acciones. La actualización es optimista pero con red: si el servidor
    * rechaza o revienta se devuelven la carta y las monedas.
-   * Devuelve true sólo si la venta se consolidó.
+   * Devuelve las monedas cobradas, o 0 si la venta no se consolidó (quien
+   * avisa al jugador necesita el importe, y tras vender ya no se puede
+   * recalcular: la carta tiene una copia menos y la tarifa ha cambiado).
    */
   const sellOneCopy = async (cardId: string, rarity: string) => {
     const card = cards.find((c) => c.id === cardId);
-    if (!card || card.quantity <= 1) return false;
-    if (!beginSale(cardId)) return false;
+    if (!card || card.quantity <= 1) return 0;
+    if (!beginSale(cardId)) return 0;
 
-    const price = getPrice(rarity);
+    // Con las copias que tiene AHORA: se va la más profunda, la más barata.
+    const price = precioDeUna(rarity, card.quantity);
     const prevCards = cards; // instantánea para el modo invitado
     haptic("success");
     const updatedCards = cards.map((c) => (c.id === cardId ? { ...c, quantity: c.quantity - 1 } : c));
@@ -208,7 +251,7 @@ export default function CollectionPage() {
       } else {
         saveCollectionRaw(updatedCards);
       }
-      return true;
+      return price;
     } catch {
       // Revertimos por id (no restaurando la instantánea) para no pisar otros
       // cambios que hayan ocurrido mientras tanto, como marcar una favorita.
@@ -219,7 +262,7 @@ export default function CollectionPage() {
       addCoins(-price);
       if (!isSignedIn) saveCollectionRaw(prevCards);
       toast("No se pudo vender la carta. Nada ha cambiado.", "error");
-      return false;
+      return 0;
     } finally {
       endSale();
     }
@@ -240,78 +283,72 @@ export default function CollectionPage() {
     setConfirmDuplicates(true);
   };
 
+  /**
+   * Vacía TODOS los duplicados con UNA sola petición.
+   *
+   * ANTES: `Promise.all(duplicates.map((c) => sellAllDuplicatesAction(c.id)))`,
+   * una server action por carta lanzadas a la vez. Con una expansión completa
+   * son cientos de POST simultáneos; el navegador sólo abre seis conexiones por
+   * origen y encola el resto, así que la pantalla se quedaba colgada minutos
+   * enteros y el saldo iba llegando a trompicones. Ahora es un único `await`
+   * contra `sellAllDuplicatesBulkAction`, que vende todo en una sentencia
+   * atómica y devuelve cuánto, cuáles y el saldo final.
+   *
+   * La lista NO se toca hasta que contesta el servidor: sin actualización
+   * optimista no hay nada que deshacer si falla, y como el servidor dice
+   * EXACTAMENTE qué ids vendió, lo que queda pintado es la verdad (si alguna
+   * carta cambió entretanto, sigue con sus copias en vez de aparecer vaciada).
+   */
   const handleSellAllDuplicates = async () => {
     const duplicates = duplicateInfo.list;
     if (duplicates.length === 0) return;
     if (!beginSale("duplicates")) return;
 
-    const totalGanancias = duplicateInfo.total;
+    const estimado = duplicateInfo.total;
     const units = duplicateInfo.units;
-    const prevCards = cards;
-    const newCollection = cards.map((card) =>
-      card.quantity > 1 && !card.is_favorite ? { ...card, quantity: 1 } : card,
-    );
-    setCards(newCollection);
-    addCoins(totalGanancias);
 
     try {
       if (!isSignedIn) {
+        // Invitado: la colección vive en localStorage y el importe se calcula
+        // con la misma función que usaría el servidor.
+        const newCollection = cards.map((card) =>
+          card.quantity > 1 && !card.is_favorite ? { ...card, quantity: 1 } : card,
+        );
+        setCards(newCollection);
         saveCollectionRaw(newCollection);
-        toast(`+${formatNumber(totalGanancias)} monedas por ${formatNumber(units)} cartas`, "success");
+        addCoins(estimado);
+        toast(`+${formatNumber(estimado)} monedas por ${formatNumber(units)} cartas`, "success");
         return;
       }
 
-      // Cada carta es una petición independiente: con allSettled sabemos
-      // exactamente cuáles fallaron y devolvemos sólo esas, en vez de
-      // deshacer un lote que en su mayoría sí se vendió.
-      const results = await Promise.allSettled(
-        duplicates.map((c) => sellAllDuplicatesAction(c.id)),
-      );
-      const failed = new Map<string, number>(); // id -> cantidad previa
-      const serverBalances: number[] = []; // saldos reales devueltos por el servidor
-      let refund = 0;
-      let failedUnits = 0;
-      results.forEach((res, i) => {
-        const card = duplicates[i];
-        const value: any = res.status === "fulfilled" ? res.value : null;
-        if (!value?.success) {
-          failed.set(card.id, card.quantity);
-          refund += (card.quantity - 1) * getPrice(card.rarity);
-          failedUnits += card.quantity - 1;
-        } else if (typeof value.coins === "number") {
-          serverBalances.push(value.coins);
-        }
-      });
-
-      if (failed.size > 0) {
-        setCards((prev) =>
-          prev.map((c) => (failed.has(c.id) ? { ...c, quantity: failed.get(c.id)! } : c)),
-        );
-        setSelectedCard((prev: any) =>
-          prev && failed.has(prev.id) ? { ...prev, quantity: failed.get(prev.id)! } : prev,
-        );
-        addCoins(-refund);
+      const res = await sellAllDuplicatesBulkAction();
+      if (!res.success) {
+        toast("No se pudo completar la venta. Nada ha cambiado.", "error");
+        return;
+      }
+      if (res.sold === 0) {
+        toast("No había duplicados que vender.", "info");
+        return;
       }
 
-      // El saldo real se adopta al final, después del ajuste optimista: el mayor
-      // de los devueltos es el de la última venta consolidada y ya descuenta lo
-      // que no se pudo vender, así que aplicarlo antes lo pisaría el refund.
-      if (serverBalances.length > 0) setCoins(Math.max(...serverBalances));
+      // El saldo es el que devuelve el servidor, no una suma optimista.
+      setCoins(res.coins);
+      const vendidas = new Set(res.ids);
+      setCards((prev) => prev.map((c) => (vendidas.has(c.id) ? { ...c, quantity: 1 } : c)));
+      setSelectedCard((prev: any) =>
+        prev && vendidas.has(prev.id) ? { ...prev, quantity: 1 } : prev,
+      );
+      haptic("success");
 
-      if (failed.size === duplicates.length) {
-        toast("No se pudo completar la venta. Nada ha cambiado.", "error");
-      } else if (failed.size > 0) {
+      if (res.sold < units) {
         toast(
-          `Vendidas ${formatNumber(units - failedUnits)} cartas · ${formatNumber(failedUnits)} no se pudieron vender`,
-          "error",
+          `Vendidas ${formatNumber(res.sold)} cartas por ${formatNumber(res.earned)} monedas · ${formatNumber(units - res.sold)} cambiaron y siguen en el álbum`,
+          "info",
         );
       } else {
-        toast(`+${formatNumber(totalGanancias)} monedas por ${formatNumber(units)} cartas`, "success");
+        toast(`+${formatNumber(res.earned)} monedas por ${formatNumber(res.sold)} cartas`, "success");
       }
     } catch {
-      setCards(prevCards);
-      addCoins(-totalGanancias);
-      if (!isSignedIn) saveCollectionRaw(prevCards);
       toast("No se pudo completar la venta. Nada ha cambiado.", "error");
     } finally {
       endSale();
@@ -324,9 +361,9 @@ export default function CollectionPage() {
     const prevQuantity = selectedCard.quantity;
     if (!beginSale(id)) return;
 
-    const unitPrice = getPrice(rarity);
     const duplicates = prevQuantity - 1;
-    const totalValue = duplicates * unitPrice;
+    // Precio decreciente: la suma de las copias, no copias × tarifa.
+    const totalValue = valorDeVenta(rarity, prevQuantity);
     const prevCards = cards;
     const updatedCards = cards.map((c) => (c.id === id ? { ...c, quantity: 1 } : c));
     addCoins(totalValue);
@@ -509,13 +546,22 @@ export default function CollectionPage() {
             // En móvil el texto va oculto con `hidden` (display:none), que lo
             // saca del árbol de accesibilidad: sin esta etiqueta el botón
             // quedaría sin nombre para un lector de pantalla.
-            aria-label="Limpiar duplicados"
+            aria-label={pendingSale === "duplicates" ? "Vendiendo duplicados" : "Limpiar duplicados"}
             className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press touch-target justify-center disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-              <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-            </svg>
-            <span className="hidden sm:inline">Limpiar duplicados</span>
+            {/* El vaciado es una sola petición, pero puede tardar un segundo
+                largo con una colección enorme: sin un "Vendiendo…" visible el
+                jugador vuelve a pulsar creyendo que no ha pasado nada. */}
+            {pendingSale === "duplicates" ? (
+              <span className="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+              </svg>
+            )}
+            <span className="hidden sm:inline">
+              {pendingSale === "duplicates" ? "Vendiendo…" : "Limpiar duplicados"}
+            </span>
           </button>
         }
       />
@@ -755,7 +801,7 @@ export default function CollectionPage() {
                       aria-busy={pendingSale === card.id}
                       className="chip ink text-[11px] min-h-11 px-4 rounded-full press hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:brightness-100"
                     >
-                      {pendingSale === card.id ? "Vendiendo…" : `Vender +${getPrice(card.rarity)}`}
+                      {pendingSale === card.id ? "Vendiendo…" : `Vender +${precioDeUna(card.rarity, card.quantity)}`}
                     </button>
                   ) : (
                     <span className="chip ink-soft text-[10px] px-2 py-1 rounded-full">Única</span>
@@ -800,7 +846,10 @@ export default function CollectionPage() {
       <ConfirmSheet
         open={confirmDuplicates}
         title="Vender duplicados"
-        description={`Se venderán ${formatNumber(duplicateInfo.units)} cartas repetidas por ${formatNumber(duplicateInfo.total)} monedas. Las favoritas no se tocan.`}
+        // El importe se calcula con la misma función que cobra el servidor, y
+        // se dice en voz alta por qué no es "repetidas × tarifa": si no, quien
+        // haga la multiplicación de cabeza creerá que le han pagado de menos.
+        description={`Se venderán ${formatNumber(duplicateInfo.units)} cartas repetidas por ${formatNumber(duplicateInfo.total)} monedas. Cada copia extra de una misma carta vale menos que la anterior. Las favoritas no se tocan.`}
         confirmLabel={`Vender por ${formatNumber(duplicateInfo.total)}`}
         destructive
         onConfirm={handleSellAllDuplicates}
@@ -854,8 +903,8 @@ export default function CollectionPage() {
                     const { id, rarity, name } = actionCardLive;
                     setActionCard(null);
                     // Sólo celebramos si el servidor aceptó la venta.
-                    const sold = await sellOneCopy(id, rarity);
-                    if (sold) toast(`+${getPrice(rarity)} monedas por ${name}`, "success");
+                    const cobrado = await sellOneCopy(id, rarity);
+                    if (cobrado > 0) toast(`+${formatNumber(cobrado)} monedas por ${name}`, "success");
                   }}
                   disabled={isSelling}
                   className="btn-ghost press rounded-2xl py-3.5 text-sm font-medium flex items-center justify-center gap-2 touch-target disabled:opacity-40 disabled:cursor-not-allowed"
@@ -863,7 +912,7 @@ export default function CollectionPage() {
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
                     <circle cx="12" cy="12" r="9" /><path d="M12 7v10M9.5 9.5h4a1.8 1.8 0 0 1 0 3.5h-3a1.8 1.8 0 0 0 0 3.5h4" />
                   </svg>
-                  Vender una copia · +{getPrice(actionCardLive.rarity)}
+                  Vender una copia · +{precioDeUna(actionCardLive.rarity, actionCardLive.quantity)}
                 </button>
               )}
 

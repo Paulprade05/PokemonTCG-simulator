@@ -4,8 +4,31 @@
   import { auth, currentUser } from "@clerk/nextjs/server";
   import { sql } from '@vercel/postgres';
   import { revalidatePath } from 'next/cache';
-  import { AVAILABLE_SETS, SELL_PRICES, RARITY_RANK, STARTING_COINS, DAILY_BASE, DAILY_STREAK_STEP, DAILY_STREAK_CAP, SET_COMPLETION_BONUS } from "../utils/constanst";
+  import { AVAILABLE_SETS, SELL_PRICES, RARITY_RANK, STARTING_COINS, DAILY_BASE, DAILY_STREAK_STEP, DAILY_STREAK_CAP, SET_COMPLETION_BONUS, PACK_PRICES, valorDeVenta } from "../utils/constanst";
   import { loadLocalSets, loadLocalCards } from "../services/localData";
+  // Capa de presentación en español. Se aplica AQUÍ, en el servidor y en el
+  // punto en el que las cartas salen hacia la interfaz, por dos razones: el
+  // diccionario (724 KB en 39 ficheros) no baja al navegador, y las doce
+  // pantallas que pintan cartas no tienen que saber que existe un idioma.
+  // Nunca se aplica a las lecturas con las que el servidor DECIDE algo (sorteo
+  // del sobre, validación del mercado): ésas siguen viendo el dato inglés.
+  import {
+    nombreSetEs,
+    traducirCartas,
+    traducirSet,
+    traducirSets,
+    type Idioma,
+  } from "../services/idioma";
+  import { idiomaActual, idsPorNombreEspanol } from "../services/idiomaServidor";
+  // El sorteo del sobre vive aquí desde que el cliente dejó de generarlo: es la
+  // misma economía calibrada que consume scripts/sim-economia.mjs.
+  import {
+    admiteSobreEstandar,
+    admiteSobrePremium,
+    openGoldenPack,
+    openPremiumPack,
+    openStandardPack,
+  } from "../utils/packLogic";
   import {
     COPIAS_RESERVADAS,
     OFERTAS_ACTIVAS,
@@ -21,6 +44,20 @@
     type Requisito,
   } from "../utils/mercado";
 
+  /**
+   * Traduce al idioma de ESTA petición la lista de cartas que va a salir hacia
+   * la interfaz. Único punto donde se resuelve el idioma en este fichero.
+   *
+   * Devuelve un array MUTABLE: `traducirCartas` devuelve `readonly` para que
+   * React no repinte de balde, pero las pantallas ordenan y filtran en sitio.
+   * Con idioma inglés devuelve la misma lista sin cargar ningún diccionario.
+   */
+  async function enIdiomaUsuario(cartas: any[]): Promise<any[]> {
+    const idioma = await idiomaActual();
+    if (idioma !== "es") return cartas;
+    return [...(await traducirCartas(cartas, idioma))];
+  }
+
   // Las columnas y tablas auxiliares (recompensa diaria, tema, lista de deseos y
   // premios de set) se crean una sola vez por instancia, no en cada invocación.
   // Un ALTER TABLE ... ADD COLUMN IF NOT EXISTS toma un candado ACCESS EXCLUSIVE
@@ -34,6 +71,9 @@
         await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily_claim TIMESTAMP`;
         await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS streak INT DEFAULT 0`;
         await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT`;
+        // Idioma de las cartas ("en" | "es"). Igual que `theme`: preferencia de
+        // la CUENTA, que pisa a la del dispositivo cuando hay sesión.
+        await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS lang TEXT`;
         await sql`
           CREATE TABLE IF NOT EXISTS wishlist (
             user_id TEXT NOT NULL,
@@ -63,6 +103,23 @@
             pago INT NOT NULL DEFAULT 0,
             claimed_at TIMESTAMP DEFAULT NOW(),
             PRIMARY KEY (user_id, ciclo, oferta_id)
+          )
+        `;
+        // Recibos de compra de sobres. La PK (usuario, clave) es lo que hace
+        // idempotente la compra: la clave la genera el cliente por intento, así
+        // que un reenvío choca aquí y no vuelve a cobrar. `cartas` guarda los
+        // ids EN ORDEN para poder devolver el mismo sobre en el reenvío.
+        await sql`
+          CREATE TABLE IF NOT EXISTS pack_purchases (
+            user_id TEXT NOT NULL,
+            clave TEXT NOT NULL,
+            set_id TEXT NOT NULL,
+            tipo TEXT NOT NULL,
+            cantidad INT NOT NULL DEFAULT 1,
+            precio INT NOT NULL DEFAULT 0,
+            cartas JSONB NOT NULL DEFAULT '[]'::jsonb,
+            bought_at TIMESTAMP DEFAULT NOW(),
+            PRIMARY KEY (user_id, clave)
           )
         `;
       })().catch((e) => {
@@ -99,122 +156,488 @@
     }
   }
 
-  /**
-   * Cobro atómico. Es la única forma correcta de gastar monedas.
-   *
-   * La alternativa que había (escribir un total absoluto calculado en el
-   * cliente) tenía dos agujeros: se fiaba del saldo que dijera el navegador, y
-   * pisaba cualquier ingreso que hubiera ocurrido entretanto —reclamas la
-   * recompensa diaria (+100) y al comprar un sobre acto seguido el total viejo
-   * borraba esos 100—. Aquí la resta la hace la base de datos, la condición
-   * `coins >= price` impide saldos negativos y dobles cobros, y se devuelve el
-   * saldo resultante para que el cliente adopte el del servidor.
-   *
-   * Devuelve el saldo tras el cobro, o null si no hay sesión, fondos o falla.
-   */
-  export async function spendCoinsAction(price: number): Promise<number | null> {
-    const { userId } = await auth();
-    if (!userId) return null;
-    if (!Number.isFinite(price) || price <= 0) return null;
-
-    try {
-      const { rows } = await sql`
-        UPDATE users
-        SET coins = coins - ${price}
-        WHERE id = ${userId} AND coins >= ${price}
-        RETURNING coins
-      `;
-      if (rows.length === 0) return null; // fondos insuficientes
-      revalidatePath('/');
-      return Number(rows[0].coins);
-    } catch (error) {
-      console.error("❌ Error spendCoinsAction:", error);
-      return null;
-    }
-  }
-
   // `updateCoins` se eliminó: escribía un total absoluto que llegaba del cliente
   // sin validar, así que cualquiera con sesión podía fijarse el saldo a voluntad
   // (era un endpoint POST vivo por estar exportada en un fichero 'use server').
-  // No tenía consumidores. Para gastar monedas se usa `spendCoinsAction`, que
-  // resta de forma atómica en la base de datos.
+  //
+  // `spendCoinsAction(price)` se eliminó también, y por la misma razón de fondo:
+  // era la ÚLTIMA acción que aceptaba un importe de dinero venido del navegador.
+  // Restaba de forma atómica, así que lo peor que permitía era que alguien se
+  // vaciara su propio saldo —no un robo—, pero desde que la compra del sobre la
+  // cobra `comprarSobreAction` ya no tenía ni un consumidor, y un endpoint POST
+  // vivo que se fía de una cifra del cliente es exactamente lo que este fichero
+  // no puede volver a tener. El dinero sale de aquí sólo por el `coins - $3` de
+  // la compra, con el precio calculado en el servidor.
 
-  // --- 2. GESTIÓN DE LA COLECCIÓN ---
+  // --- 2. COMPRA DE SOBRES ---
 
- // --- 2. GESTIÓN DE LA COLECCIÓN ---
+  /* ==================================================================== *
+   * UNA SOLA ACCIÓN PARA COMPRAR UN SOBRE
+   * ====================================================================
+   *
+   * EL AGUJERO QUE CIERRA: antes el navegador sorteaba el sobre con
+   * utils/packLogic y llamaba a DOS acciones independientes,
+   * `spendCoinsAction(precio)` y `savePackToCollection(cartas)`. Como una
+   * server action es un endpoint POST invocable a mano, bastaba con no llamar
+   * a la primera. Y la segunda validaba la forma del array y que los ids
+   * existieran en `cards`, pero NO que se hubiera pagado, ni que las cartas
+   * fueran del set comprado, ni que la composición correspondiera al precio.
+   * El retorno del abuso no era un porcentaje: era infinito, y en cualquier
+   * expansión. Los filtros que impedían comprar sobres baratos de las
+   * colecciones sin morralla (`composicionEspecial` e `isSpecialSet` en
+   * app/page.tsx) eran, además, un cinturón de navegador.
+   *
+   * LO QUE HACE AHORA: el cliente sólo dice QUÉ quiere comprar (set, tipo,
+   * cuántos). El precio, el sorteo, el filtro de qué sobres admite el set y el
+   * abono los hace el servidor. El dinero y las cartas se mueven en UNA sola
+   * sentencia SQL: o se cobra y se entrega, o no pasa nada.
+   *
+   * IDEMPOTENCIA: cada compra viaja con una clave del cliente y queda anotada
+   * en `pack_purchases`, cuya clave primaria (usuario, clave) arbitra la
+   * carrera. Un reenvío —doble toque, reintento de red, un POST repetido a
+   * mano— no vuelve a cobrar ni a acreditar: devuelve el MISMO sobre.
+   */
 
-// Contrato compatible con el cliente (app/page.tsx): sigue recibiendo el array
-// de cartas del sobre, pero de cada carta SÓLO se usa el `id`. El resto de los
-// campos (nombre, rareza, imágenes...) se ignoran a propósito.
-//
-// Antes se insertaban esas cartas tal cual en la tabla maestra `cards` y se
-// acreditaban en la colección. Como una server action es un endpoint POST
-// invocable directamente, un cliente podía inventarse cartas Hyper Rare, meterlas
-// en el catálogo de TODOS y luego revenderlas: monedas infinitas y catálogo
-// contaminado. Ahora sólo se acreditan ids que YA existan en `cards`, y esta
-// acción no escribe nunca en `cards`.
-export async function savePackToCollection(cards: any[], packPrice: number = 100, packCount: number = 1) {
-  const { userId } = await auth();
-  if (!userId) return { success: false, error: "No logueado" };
+  /** Los cuatro sobres de la tienda. El cliente sólo puede pedir uno de éstos. */
+  const TIPOS_DE_SOBRE = ["STANDARD", "PREMIUM", "GOLDEN", "SPECIAL"] as const;
+  type TipoSobre = (typeof TIPOS_DE_SOBRE)[number];
 
-  // Validación de las estadísticas que alimentan el ranking de amigos: sin
-  // esto se podía pasar packCount = 1e9 o packPrice negativo y encabezar el
-  // ranking de sobres abiertos sin abrir uno.
-  if (!Number.isInteger(packCount) || packCount < 1 || packCount > 10) {
-    return { success: false, error: "packCount inválido" };
+  /** Tope de sobres por compra: la tienda ofrece x1, x5 y x10. */
+  const MAX_SOBRES_POR_COMPRA = 10;
+
+  /** Lo mínimo que necesita packLogic para sortear y el cliente para pintar. */
+  interface CartaDeSobre {
+    id: string;
+    name: string;
+    rarity: string;
+    images: { small: string; large: string };
   }
-  if (!Number.isFinite(packPrice) || packPrice <= 0 || packPrice > 10000) {
-    return { success: false, error: "packPrice inválido" };
-  }
-  // Tope de tamaño: un sobre legítimo trae ~10 cartas; con packCount<=10 eso son
-  // ~100. Un array mucho mayor sólo puede ser un payload de abuso.
-  if (!Array.isArray(cards) || cards.length > packCount * 20) {
-    return { success: false, error: "Sobre inválido" };
-  }
 
-  try {
-    // Contamos repeticiones por id: un sobre puede traer la misma carta varias
-    // veces y así se acredita la cantidad correcta en un solo upsert.
-    const porCarta = new Map<string, number>();
-    for (const card of cards) {
-      const id = card?.id;
-      if (typeof id !== "string" || id.length === 0) continue;
-      porCarta.set(id, (porCarta.get(id) || 0) + 1);
+  /** La columna `images` es JSONB, pero la ingesta antigua guardó cadenas. */
+  const aImagenes = (valor: unknown): { small: string; large: string } => {
+    let o: any = valor;
+    if (typeof o === "string") {
+      try {
+        o = JSON.parse(o);
+      } catch {
+        o = null;
+      }
     }
-    const ids = Array.from(porCarta.keys());
-    const counts = ids.map((id) => porCarta.get(id)!);
+    return { small: String(o?.small ?? ""), large: String(o?.large ?? "") };
+  };
 
-    if (ids.length > 0) {
-      // El JOIN contra `cards` es la validación: sólo se acreditan cartas que
-      // existan de verdad en el catálogo maestro. Las cartas inventadas por el
-      // cliente no casan y se descartan silenciosamente. Parametrizado con
-      // unnest, sin concatenar datos en la cadena.
-      await sql.query(
-        `INSERT INTO user_collection (user_id, card_id, quantity)
-         SELECT $1, x.id, x.cnt
-         FROM unnest($2::text[], $3::int[]) AS x(id, cnt)
-         JOIN cards c ON c.id = x.id
-         ON CONFLICT (user_id, card_id)
-         DO UPDATE SET quantity = user_collection.quantity + EXCLUDED.quantity`,
-        [userId, ids, counts],
-      );
+  const aCartaDeSobre = (fila: any): CartaDeSobre => ({
+    id: String(fila.id),
+    name: String(fila.name ?? ""),
+    // packLogic clasifica por rareza exacta: una rareza nula la dejaría fuera
+    // de todos los cubos y la carta sólo saldría por la rama de respaldo.
+    rarity: String(fila.rarity ?? "Common"),
+    images: aImagenes(fila.images),
+  });
+
+  /**
+   * Catálogo del set con el que se sortea, cacheado por instancia.
+   *
+   * Sin caché, cada compra leería las ~250 filas del set, y esa consulta va por
+   * delante de la animación de apertura. Las cartas de un set no cambian salvo
+   * resiembra, así que un TTL corto basta y de paso recoge solo una resiembra.
+   */
+  const CATALOGO_TTL_MS = 10 * 60 * 1000;
+  const catalogoDeSet = new Map<string, { cartas: CartaDeSobre[]; expira: number }>();
+
+  async function cartasDelSet(setId: string): Promise<CartaDeSobre[]> {
+    const guardado = catalogoDeSet.get(setId);
+    if (guardado && guardado.expira > Date.now()) return guardado.cartas;
+
+    const leer = async (): Promise<CartaDeSobre[]> => {
+      const { rows } = await sql`
+        SELECT id, name, rarity, images FROM cards WHERE set_id = ${setId}
+      `;
+      return rows.map(aCartaDeSobre);
+    };
+
+    let cartas = await leer();
+    if (cartas.length === 0) {
+      // Set todavía sin sembrar. Se siembra AQUÍ y no se sortea contra el JSON
+      // local: el abono hace JOIN contra `cards`, así que un sobre generado con
+      // ids que aún no están en la tabla se cobraría y no acreditaría nada.
+      await syncSetToDatabase(setId);
+      cartas = await leer();
     }
+    // SÓLO SE CACHEA UN CATÁLOGO COMPLETO. `syncSetToDatabase` inserta las
+    // cartas de una en una y ordenadas por número, así que una compra que caiga
+    // en mitad de la siembra lee un set a medias y sesgado hacia las comunes.
+    // Sortear con eso es un mal sobre; cachearlo son diez minutos de malos
+    // sobres para todo el que abra esa expansión en esta instancia.
+    const locales = (await loadLocalCards(setId)) as any[];
+    if (cartas.length > 0 && cartas.length >= locales.length) {
+      catalogoDeSet.set(setId, { cartas, expira: Date.now() + CATALOGO_TTL_MS });
+    }
+    return cartas;
+  }
 
-    // Estadísticas del jugador (ya validadas arriba).
-    await sql`
-      UPDATE users
-      SET packs_opened = COALESCE(packs_opened, 0) + ${packCount},
-          money_spent = COALESCE(money_spent, 0) + ${packPrice}
-      WHERE id = ${userId}
+  /** Nombre, serie y total del set: los tres datos del filtro de la tienda. */
+  async function fichaDelSet(
+    setId: string,
+  ): Promise<{ name: string; series: string | null; total: number } | null> {
+    try {
+      const { rows } = await sql`SELECT name, series, total FROM sets WHERE id = ${setId}`;
+      if (rows.length > 0) {
+        return {
+          name: String(rows[0].name ?? ""),
+          series: rows[0].series ?? null,
+          total: Number(rows[0].total),
+        };
+      }
+    } catch (error) {
+      console.error("Error leyendo la ficha del set:", error);
+    }
+    // Mismo respaldo que getSetsFromDB: sin Postgres sembrado, el catálogo del
+    // repositorio.
+    const locales = (await loadLocalSets()) as any[];
+    const local = locales.find((s: any) => s?.id === setId);
+    return local
+      ? { name: String(local.name ?? ""), series: local.series ?? null, total: Number(local.total) }
+      : null;
+  }
+
+  /**
+   * Colección "sin morralla". Es `composicionEspecial` de app/page.tsx palabra
+   * por palabra, pero medida contra las cartas de la BASE DE DATOS, que es lo
+   * único que el usuario no puede tocar.
+   */
+  const composicionEspecial = (cartas: CartaDeSobre[]): boolean => {
+    if (cartas.length === 0) return false;
+    const comunes = cartas.filter((c) => c.rarity === "Common").length;
+    const relleno = cartas.filter(
+      (c) => c.rarity === "Common" || c.rarity === "Uncommon",
+    ).length;
+    return comunes < 8 || relleno / cartas.length < 0.2;
+  };
+
+  /**
+   * Qué sobres se pueden vender de este set. Es el `isSpecialSet` de la tienda
+   * (nombre, serie, total y composición) MÁS la comprobación medida de
+   * packLogic, que calibra el sobre contra su propio precio.
+   *
+   * POR QUÉ LOS DOS Y NO SÓLO UNO: `isSpecialSet` es el que decide qué pinta la
+   * tienda, y si el servidor fuera más estricto habría botones que fallan al
+   * pulsarlos; `admiteSobreEstandar`/`admiteSobrePremium` son una MEDIDA y no
+   * dependen de que el nombre lleve la palabra "gallery". Comprobado sobre los
+   * 39 sets del repositorio: no hay ni un desacuerdo en la dirección peligrosa
+   * (ningún set que la tienda ofrezca a 50 lo rechaza packLogic), así que
+   * sumarlos no rompe ninguna compra legítima y cada uno tapa el hueco del otro.
+   */
+  function sobresPermitidos(
+    ficha: { name: string; series: string | null; total: number },
+    cartas: CartaDeSobre[],
+  ): Set<TipoSobre> {
+    const nombre = ficha.name.toLowerCase();
+    // OJO al total: en el cliente `undefined < 69` es false, pero aquí una
+    // columna vacía llega como null y `null < 69` sí es true. Sin el
+    // Number.isFinite, un set sin `total` quedaría marcado de especial y en él
+    // no se podría comprar nada más que el Promo Pack.
+    const especial =
+      nombre.includes("promos") ||
+      nombre.includes("gallery") ||
+      ficha.series === "POP" ||
+      ficha.series === "Other" ||
+      (Number.isFinite(ficha.total) && ficha.total < 69) ||
+      composicionEspecial(cartas);
+
+    if (especial) return new Set<TipoSobre>(["SPECIAL"]);
+
+    const permitidos = new Set<TipoSobre>(["GOLDEN"]);
+    if (admiteSobreEstandar(cartas)) permitidos.add("STANDARD");
+    if (admiteSobrePremium(cartas)) permitidos.add("PREMIUM");
+    return permitidos;
+  }
+
+  /** Ids del set que el usuario YA tiene: la garantía del Leyenda sale de aquí. */
+  async function idsPoseidosDelSet(userId: string, setId: string): Promise<string[]> {
+    const { rows } = await sql`
+      SELECT uc.card_id
+      FROM user_collection uc
+      JOIN cards c ON c.id = uc.card_id
+      WHERE uc.user_id = ${userId} AND uc.quantity > 0 AND c.set_id = ${setId}
     `;
-
-    revalidatePath('/collection');
-    return { success: true };
-  } catch (error) {
-    console.error("❌ Error guardando pack:", error);
-    return { success: false, error: String(error) };
+    return rows.map((r: any) => String(r.card_id));
   }
-}
+
+  /**
+   * Sortea `cantidad` sobres seguidos. El acumulador de poseídas es el mismo
+   * truco del x10 del cliente: sin él, diez sobres Leyenda garantizarían diez
+   * veces la MISMA carta nueva.
+   */
+  function sortearSobres(
+    tipo: TipoSobre,
+    cantidad: number,
+    cartas: CartaDeSobre[],
+    poseidas: string[],
+  ): CartaDeSobre[] {
+    const combinado: CartaDeSobre[] = [];
+    const mias = new Set(poseidas);
+    for (let i = 0; i < cantidad; i++) {
+      let sobre: CartaDeSobre[];
+      if (tipo === "STANDARD") sobre = openStandardPack(cartas);
+      else if (tipo === "PREMIUM") sobre = openPremiumPack(cartas);
+      // El Promo Pack (SPECIAL) es el mismo sorteo que el Leyenda a otro precio.
+      else sobre = openGoldenPack(cartas, Array.from(mias));
+      combinado.push(...sobre);
+      sobre.forEach((c) => mias.add(c.id));
+    }
+    return combinado;
+  }
+
+  /** Rehidrata por id un sobre ya servido (reenvío) desde el catálogo maestro. */
+  async function cartasPorId(ids: string[]): Promise<CartaDeSobre[]> {
+    if (ids.length === 0) return [];
+    const unicos = Array.from(new Set(ids));
+    const { rows } = await sql.query(
+      `SELECT id, name, rarity, images FROM cards WHERE id = ANY($1::text[])`,
+      [unicos],
+    );
+    const porId = new Map<string, CartaDeSobre>();
+    rows.forEach((r: any) => porId.set(String(r.id), aCartaDeSobre(r)));
+    // Se respeta el ORDEN guardado: la carta garantizada del Leyenda va al
+    // final y la vista la anuncia por su posición.
+    return ids
+      .map((id) => porId.get(id))
+      .filter((c): c is CartaDeSobre => c !== undefined);
+  }
+
+  /**
+   * Compra un sobre (o `cantidad` de golpe): cobra, sortea, guarda y devuelve
+   * las cartas y el saldo resultante. Es la ÚNICA forma de conseguir cartas con
+   * sesión iniciada.
+   *
+   * @param clave identificador de ESTE intento de compra, generado por el
+   *              cliente. Dos envíos con la misma clave cobran una sola vez.
+   */
+  export async function comprarSobreAction(
+    setId: string,
+    tipo: string,
+    cantidad: number,
+    clave: string,
+  ) {
+    const { userId } = await auth();
+    if (!userId) return { ok: false as const, motivo: "sin-sesion" as const };
+
+    // Todo lo que llega del cliente es un deseo, no un dato: se valida la forma
+    // antes de tocar nada.
+    if (typeof setId !== "string" || !/^[a-z0-9._-]{1,40}$/i.test(setId)) {
+      return { ok: false as const, motivo: "set-invalido" as const };
+    }
+    if (!TIPOS_DE_SOBRE.includes(tipo as TipoSobre)) {
+      return { ok: false as const, motivo: "tipo-invalido" as const };
+    }
+    if (!Number.isInteger(cantidad) || cantidad < 1 || cantidad > MAX_SOBRES_POR_COMPRA) {
+      return { ok: false as const, motivo: "cantidad-invalida" as const };
+    }
+    if (typeof clave !== "string" || !/^[A-Za-z0-9._:-]{8,64}$/.test(clave)) {
+      return { ok: false as const, motivo: "clave-invalida" as const };
+    }
+
+    const tipoSobre = tipo as TipoSobre;
+    // EL PRECIO SE CALCULA AQUÍ. El cliente no lo manda ni lo puede sugerir.
+    const precio = PACK_PRICES[tipoSobre] * cantidad;
+
+    try {
+      await ensureSchema();
+
+      const cartas = await cartasDelSet(setId);
+      if (cartas.length === 0) return { ok: false as const, motivo: "set-invalido" as const };
+
+      const ficha = await fichaDelSet(setId);
+      if (!ficha) return { ok: false as const, motivo: "set-invalido" as const };
+      if (!sobresPermitidos(ficha, cartas).has(tipoSobre)) {
+        return { ok: false as const, motivo: "sobre-no-disponible" as const };
+      }
+
+      // La lista de "las que ya tengo" sale de la BD, no del navegador: si la
+      // pusiera el cliente, mandar una lista vacía convertiría cada Leyenda en
+      // una carta nueva garantizada aunque tuviera la colección completa.
+      const poseidas =
+        tipoSobre === "GOLDEN" || tipoSobre === "SPECIAL"
+          ? await idsPoseidosDelSet(userId, setId)
+          : [];
+
+      const sobre = sortearSobres(tipoSobre, cantidad, cartas, poseidas);
+      // draw() devuelve un centinela 'MissingNo' si se quedara sin cartas. No
+      // debería pasar con el catálogo cargado, pero si pasara el JOIN del abono
+      // lo descartaría y el usuario pagaría por menos cartas de las que ve.
+      if (sobre.length === 0 || sobre.some((c) => c.id === "error")) {
+        console.error("Sorteo inválido para", setId, tipoSobre);
+        return { ok: false as const, motivo: "error" as const };
+      }
+
+      // Repeticiones por id: un sobre puede traer la misma carta dos veces.
+      const porCarta = new Map<string, number>();
+      for (const c of sobre) porCarta.set(c.id, (porCarta.get(c.id) ?? 0) + 1);
+      const ids = Array.from(porCarta.keys());
+      const cuentas = ids.map((id) => porCarta.get(id)!);
+      const orden = sobre.map((c) => c.id);
+
+      /* ---------------------------------------------------------------- *
+       * EL COBRO, EL RECIBO Y EL ABONO, EN UNA SOLA SENTENCIA
+       * ----------------------------------------------------------------
+       * Las tres partes son CTE de la misma sentencia, así que comparten
+       * transacción implícita: o cuajan las tres o no cuaja ninguna. Si el
+       * proceso muere a mitad (timeout, deploy, corte) no queda ni un cobro sin
+       * cartas ni unas cartas sin cobro.
+       *
+       * `cobro` es el árbitro y lleva las tres condiciones:
+       *   - `coins >= precio` impide saldos negativos y compras sin fondos;
+       *   - `NOT EXISTS ... pack_purchases` impide cobrar dos veces la misma
+       *     clave. Los CTE ven la instantánea PREVIA a la sentencia, así que
+       *     esta comprobación no ve el INSERT de `recibo`, que es justo lo que
+       *     hace falta;
+       *   - el propio UPDATE relee la fila ya bloqueada, así que dos compras
+       *     simultáneas no pueden leer las dos el mismo saldo.
+       *
+       * `recibo` y `abono` cuelgan de `cobro` con un EXISTS: sin cobro no se
+       * anota el sobre ni se acredita nada. Y como `recibo` no lleva ON
+       * CONFLICT, dos peticiones IDÉNTICAS a la vez (que ambas pasan el NOT
+       * EXISTS por ver la misma instantánea) chocan en la clave primaria: la
+       * perdedora aborta la sentencia ENTERA y su cobro se deshace. Ese choque
+       * se recoge abajo y se responde como reenvío.
+       *
+       * El JOIN contra `cards` del abono sigue siendo la validación de que la
+       * carta existe de verdad; aquí no puede fallar porque el sobre se sorteó
+       * con filas de esa misma tabla, pero se comprueba el recuento por si acaso.
+       * ---------------------------------------------------------------- */
+      const { rows } = await sql.query(
+        `WITH cobro AS (
+           UPDATE users
+              SET coins        = coins - $3,
+                  packs_opened = COALESCE(packs_opened, 0) + $4,
+                  money_spent  = COALESCE(money_spent, 0) + $3
+            WHERE id = $1
+              AND coins >= $3
+              AND NOT EXISTS (
+                    SELECT 1 FROM pack_purchases WHERE user_id = $1 AND clave = $2
+                  )
+           RETURNING coins
+         ),
+         recibo AS (
+           INSERT INTO pack_purchases (user_id, clave, set_id, tipo, cantidad, precio, cartas)
+           SELECT $1::text, $2::text, $5::text, $6::text, $4::int, $3::int, $7::jsonb
+            WHERE EXISTS (SELECT 1 FROM cobro)
+           RETURNING 1
+         ),
+         abono AS (
+           INSERT INTO user_collection (user_id, card_id, quantity)
+           SELECT $1::text, x.id, x.cnt
+             FROM unnest($8::text[], $9::int[]) AS x(id, cnt)
+             JOIN cards c ON c.id = x.id
+            WHERE EXISTS (SELECT 1 FROM cobro)
+           ON CONFLICT (user_id, card_id)
+           DO UPDATE SET quantity = user_collection.quantity + EXCLUDED.quantity
+           RETURNING 1
+         )
+         -- Sin FROM: la sentencia devuelve siempre exactamente una fila, con
+         -- coins a NULL si no hubo cobro. Y cobro toca como mucho una fila
+         -- (filtra por la clave primaria de users), asi que la subconsulta
+         -- escalar no puede reventar por devolver de mas.
+         SELECT (SELECT coins FROM cobro)         AS coins,
+                (SELECT count(*)::int FROM abono) AS abonadas`,
+        [userId, clave, precio, cantidad, setId, tipoSobre, JSON.stringify(orden), ids, cuentas],
+      );
+
+      const saldo = rows[0]?.coins;
+      if (saldo === null || saldo === undefined) {
+        // No hubo cobro: o la clave ya se sirvió (reenvío) o no había saldo.
+        const servido = await sobreYaServido(userId, clave);
+        return servido ?? { ok: false as const, motivo: "sin-saldo" as const };
+      }
+
+      if (Number(rows[0]?.abonadas ?? 0) !== ids.length) {
+        // Sólo puede pasar si alguien borra cartas del catálogo entre el sorteo
+        // y el abono. No se deshace nada (el usuario tiene el resto), pero deja
+        // rastro: significa que el catálogo se está moviendo bajo los pies.
+        console.error(
+          "Abono incompleto del sobre",
+          setId,
+          tipoSobre,
+          ids.length,
+          rows[0]?.abonadas,
+        );
+      }
+
+      podarRecibosViejos(userId);
+      revalidatePath('/');
+      revalidatePath('/collection');
+      return {
+        ok: true as const,
+        cartas: sobre,
+        coins: Number(saldo),
+        precio,
+        reenvio: false,
+      };
+    } catch (error: any) {
+      // 23505 = clave duplicada en pack_purchases: dos envíos idénticos a la
+      // vez. La sentencia entera se deshizo, así que el cobro de ESTA petición
+      // no ocurrió; el sobre bueno es el que anotó la que ganó. Se mira también
+      // el texto porque no todos los controladores propagan el `code`, y mirar
+      // de más no hace daño: si no hay recibo, se cae al error genérico.
+      const duplicada =
+        error?.code === "23505" || /duplicate key|pack_purchases/i.test(String(error?.message ?? ""));
+      if (duplicada) {
+        try {
+          const servido = await sobreYaServido(userId, clave);
+          if (servido) return servido;
+        } catch (e) {
+          console.error("Error recuperando el sobre ya servido:", e);
+        }
+      }
+      console.error("Error comprando el sobre:", error);
+      return { ok: false as const, motivo: "error" as const };
+    }
+  }
+
+  /** El sobre de esta clave ya se cobró: se devuelve tal cual, sin cobrar más. */
+  async function sobreYaServido(userId: string, clave: string) {
+    const { rows } = await sql`
+      SELECT p.cartas, p.precio, u.coins
+      FROM pack_purchases p
+      JOIN users u ON u.id = p.user_id
+      WHERE p.user_id = ${userId} AND p.clave = ${clave}
+    `;
+    if (rows.length === 0) return null;
+    const guardadas = rows[0].cartas;
+    const ids: string[] = Array.isArray(guardadas)
+      ? guardadas.map((x: unknown) => String(x))
+      : (JSON.parse(String(guardadas ?? "[]")) as string[]);
+    return {
+      ok: true as const,
+      cartas: await cartasPorId(ids),
+      coins: Number(rows[0].coins ?? 0),
+      precio: Number(rows[0].precio ?? 0),
+      reenvio: true,
+    };
+  }
+
+  /**
+   * Los recibos sólo hacen falta mientras un reenvío sea plausible (segundos).
+   * Se podan de vez en cuando, y sólo los del propio usuario, para que la tabla
+   * no crezca sin fin. Va sin await: no es parte de la compra.
+   */
+  function podarRecibosViejos(userId: string) {
+    if (Math.random() > 0.02) return;
+    sql`
+      DELETE FROM pack_purchases
+      WHERE user_id = ${userId} AND bought_at < NOW() - INTERVAL '2 days'
+    `.catch((e) => console.error("poda de recibos:", e));
+  }
+
+  // `savePackToCollection` se eliminó: acreditaba en la colección cualquier
+  // lista de ids que existiera en `cards` SIN comprobar que se hubiera pagado
+  // por ellos, y como toda función exportada de un fichero 'use server' es un
+  // endpoint POST vivo, eso eran cartas gratis e ilimitadas para cualquiera con
+  // sesión. Las cartas se consiguen ahora por `comprarSobreAction`, que cobra y
+  // acredita en la misma sentencia.
+
+  // --- 3. GESTIÓN DE LA COLECCIÓN ---
 
   export async function getFullCollection() {
     const { userId } = await auth();
@@ -239,16 +662,22 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
         if (v == null) return fb;
         return typeof v === 'string' ? JSON.parse(v) : v;
       };
-      return rows.map((row: any) => ({
-        ...row,
-        images: parse(row.images),
-        tcgplayer: parse(row.tcgplayer),
-        types: parse(row.types, []),
-        attacks: parse(row.attacks, []),
-        weaknesses: parse(row.weaknesses, []),
-        retreatCost: parse(row.retreat_cost, []),
-        flavorText: row.flavor_text,
-      }));
+      // El álbum, la colección y el buscador local de la colección leen `name`
+      // e `images` de aquí: traducir en este `return` los pone en español de
+      // una vez. `id`, `rarity` y `quantity` salen intactos, que es lo que
+      // miran la venta y los bonos de expansión.
+      return enIdiomaUsuario(
+        rows.map((row: any) => ({
+          ...row,
+          images: parse(row.images),
+          tcgplayer: parse(row.tcgplayer),
+          types: parse(row.types, []),
+          attacks: parse(row.attacks, []),
+          weaknesses: parse(row.weaknesses, []),
+          retreatCost: parse(row.retreat_cost, []),
+          flavorText: row.flavor_text,
+        })),
+      );
     } catch (error) {
       console.error("❌ Error cargando colección:", error);
       return [];
@@ -266,6 +695,10 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
    * pedir `coins + 999999999` (o negativo, y dejar el saldo bajo cero). El
    * cliente ya no decide cuánto vale una carta.
    *
+   * El precio depende ahora de CUÁNTAS copias hay (valorDeVenta), así que la
+   * cantidad se lee de la colección y no basta con la rareza. Se vende siempre
+   * la copia de índice más alto, la más barata.
+   *
    * Devuelve lo ganado y el saldo resultante, o null si no había copia sobrante.
    */
   export async function sellCardAction(cardId: string) {
@@ -273,20 +706,31 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
     if (!userId) return null;
 
     try {
-      const { rows: cardRows } = await sql`SELECT rarity FROM cards WHERE id = ${cardId}`;
-      if (cardRows.length === 0) return null;
-      const price = SELL_PRICES[cardRows[0].rarity as keyof typeof SELL_PRICES] ?? 10;
+      const { rows: info } = await sql`
+        SELECT uc.quantity, c.rarity
+        FROM user_collection uc JOIN cards c ON c.id = uc.card_id
+        WHERE uc.user_id = ${userId} AND uc.card_id = ${cardId}
+      `;
+      if (info.length === 0) return null;
+      const cantidad = Number(info[0].quantity);
+      const price = valorDeVenta(info[0].rarity, cantidad, 1);
+      if (price <= 0) return null; // copia única: no hay nada que vender
 
       // Descuento y abono en UNA sola sentencia (CTE): o pasan los dos o ninguno.
       // En dos sentencias separadas, si el proceso moría entre medias (timeout,
       // deploy, corte) la copia desaparecía sin abono. El abono sólo ocurre si la
       // venta tocó una fila (EXISTS), y la condición `quantity > 1` protege la
       // última copia sin ventana entre lectura y escritura.
+      //
+      // El guard es `quantity = ${cantidad}` y no `> 1` porque el precio se
+      // calculó CON esa cantidad: si otra pestaña vendió entretanto, la copia
+      // que queda vale otra cosa y pagar la tarifa vieja sería pagar de más.
       const { rows } = await sql`
         WITH venta AS (
           UPDATE user_collection
           SET quantity = quantity - 1
-          WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity > 1
+          WHERE user_id = ${userId} AND card_id = ${cardId}
+            AND quantity = ${cantidad} AND quantity > 1
           RETURNING 1
         )
         UPDATE users SET coins = coins + ${price}
@@ -398,8 +842,12 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
     }
   }
   /**
-   * Vende TODAS las copias sobrantes de una carta, dejando una. El precio
-   * unitario sale de la rareza en la base de datos, no del cliente.
+   * Vende TODAS las copias sobrantes de UNA carta, dejando una. El importe sale
+   * de la rareza y la cantidad guardadas en la base de datos, no del cliente.
+   *
+   * Para vaciar los duplicados de la colección entera está
+   * `sellAllDuplicatesBulkAction`: llamar a ésta en bucle son cientos de
+   * peticiones simultáneas y cuelga el navegador.
    */
   export async function sellAllDuplicatesAction(cardId: string) {
     const { userId } = await auth();
@@ -416,8 +864,8 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
       const duplicates = Number(info[0].quantity) - 1;
       if (duplicates <= 0) return { success: false, error: "No tienes duplicados" };
 
-      const unitPrice = SELL_PRICES[info[0].rarity as keyof typeof SELL_PRICES] ?? 10;
-      const totalEarned = duplicates * unitPrice;
+      // No es duplicados × precio: cada copia vale menos que la anterior.
+      const totalEarned = valorDeVenta(info[0].rarity, Number(info[0].quantity));
 
       // Descuento y abono en una sola sentencia (CTE): la venta se condiciona a
       // la cantidad leída (si otra pestaña vendió entretanto, no toca fila) y el
@@ -443,6 +891,145 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
       return { success: false, error: "Error en servidor" };
     }
   }
+
+  /**
+   * VACÍA LOS DUPLICADOS DE TODA LA COLECCIÓN de una vez.
+   *
+   * POR QUÉ EXISTE: la pantalla de colección hacía
+   * `Promise.all(duplicados.map((c) => sellAllDuplicatesAction(c.id)))`, o sea
+   * UNA server action por carta lanzadas todas a la vez. Con una expansión
+   * completa son cientos de POST simultáneos: el navegador los encola de seis
+   * en seis, el pool de Postgres se satura y la interfaz se queda congelada
+   * varios minutos. Ahora es una sola petición y UNA sola sentencia.
+   *
+   * QUÉ SE PROTEGE (y se protege AQUÍ, no en el cliente, que es quien no manda):
+   *  - favoritas: no se tocan (`is_favorite`), igual que antes;
+   *  - la última copia: `quantity = 1` deja siempre una en el álbum;
+   *  - el importe: lo calcula valorDeVenta contra la rareza y la cantidad de la
+   *    BD. El cliente no manda ni ids ni precios, así que no hay nada que
+   *    falsificar: la lista de cartas a vender sale del propio SELECT.
+   *
+   * POR QUÉ NO PUEDE COBRAR DOS VECES: el descuento y el abono van en la misma
+   * sentencia, y cada fila sólo se vende si su `quantity` sigue siendo la que
+   * se leyó (`uc.quantity = e.cantidad`). Dos toques seguidos: el segundo llega
+   * cuando las filas ya valen 1, no casa ninguna, la suma es 0 y se abona 0. Si
+   * los dos entran a la vez, el segundo se bloquea en el candado de fila del
+   * primero y al despertar reevalúa la condición contra la fila YA actualizada
+   * (READ COMMITTED), así que tampoco casa. El abono es exactamente la suma de
+   * los valores de las filas que DE VERDAD se descontaron, ni una moneda más.
+   */
+  export async function sellAllDuplicatesBulkAction() {
+    const { userId } = await auth();
+    if (!userId) return { success: false as const, error: "No autorizado" };
+
+    try {
+      // Sólo lo que sobra y no está protegido. El ORDER BY es para que la
+      // lista (y por tanto el `ids` que se devuelve) salga siempre igual, no
+      // para ordenar candados: dos vaciados simultáneos del mismo usuario los
+      // impide el cerrojo del cliente, y si aun así se cruzaran, el guard de
+      // cantidad deja al segundo sin vender nada en vez de cobrar dos veces.
+      const { rows } = await sql`
+        SELECT uc.card_id, uc.quantity, c.rarity
+        FROM user_collection uc
+        JOIN cards c ON c.id = uc.card_id
+        WHERE uc.user_id = ${userId}
+          AND uc.quantity > 1
+          AND COALESCE(uc.is_favorite, false) = false
+        ORDER BY uc.card_id
+      `;
+      if (rows.length === 0) {
+        const { rows: saldo } = await sql`SELECT coins FROM users WHERE id = ${userId}`;
+        return {
+          success: true as const,
+          sold: 0,
+          earned: 0,
+          ids: [] as string[],
+          coins: Number(saldo[0]?.coins ?? 0),
+        };
+      }
+
+      const ids: string[] = [];
+      const cantidades: number[] = [];
+      const valores: number[] = [];
+      for (const row of rows) {
+        const cantidad = Number(row.quantity);
+        const valor = valorDeVenta(row.rarity, cantidad);
+        if (valor <= 0) continue;
+        ids.push(row.card_id);
+        cantidades.push(cantidad);
+        valores.push(valor);
+      }
+      if (ids.length === 0) {
+        const { rows: saldo } = await sql`SELECT coins FROM users WHERE id = ${userId}`;
+        return {
+          success: true as const,
+          sold: 0,
+          earned: 0,
+          ids: [] as string[],
+          coins: Number(saldo[0]?.coins ?? 0),
+        };
+      }
+
+      // UNA sentencia: venta, suma y abono. `esperado` viaja parametrizado con
+      // unnest (nada concatenado en la cadena). `venta` devuelve el valor de
+      // cada fila que realmente se descontó —de `esperado`, porque en un
+      // UPDATE ... FROM el RETURNING de la tabla actualizada ya trae los
+      // valores NUEVOS y `uc.quantity` valdría 1— y `total` los suma. El abono
+      // va después y no puede desviarse de esa suma.
+      const { rows: resultado } = await sql.query(
+        `WITH esperado AS (
+           SELECT * FROM unnest($2::text[], $3::int[], $4::int[]) AS t(card_id, cantidad, valor)
+         ),
+         venta AS (
+           UPDATE user_collection uc
+           SET quantity = 1
+           FROM esperado e
+           WHERE uc.user_id = $1
+             AND uc.card_id = e.card_id
+             AND uc.quantity = e.cantidad
+             AND uc.quantity > 1
+             AND COALESCE(uc.is_favorite, false) = false
+             -- Sin fila en users el abono no tocaría nada y las cartas
+             -- desaparecerían gratis.
+             AND EXISTS (SELECT 1 FROM users WHERE id = $1)
+           RETURNING e.card_id AS card_id, e.valor AS valor, e.cantidad - 1 AS copias
+         ),
+         total AS (
+           SELECT
+             COALESCE(SUM(valor), 0)::int AS ganado,
+             COALESCE(SUM(copias), 0)::int AS copias,
+             COALESCE(array_agg(card_id), ARRAY[]::text[]) AS ids
+           FROM venta
+         )
+         UPDATE users
+         SET coins = COALESCE(coins, 0) + (SELECT ganado FROM total)
+         WHERE id = $1
+         RETURNING
+           coins,
+           (SELECT ganado FROM total) AS ganado,
+           (SELECT copias FROM total) AS copias,
+           (SELECT ids FROM total) AS ids`,
+        [userId, ids, cantidades, valores],
+      );
+      if (resultado.length === 0) return { success: false as const, error: "Error en servidor" };
+
+      const vendidas = Number(resultado[0].copias ?? 0);
+      if (vendidas > 0) {
+        revalidatePath('/');
+        revalidatePath('/collection');
+      }
+      return {
+        success: true as const,
+        sold: vendidas,
+        earned: Number(resultado[0].ganado ?? 0),
+        ids: (resultado[0].ids ?? []) as string[],
+        coins: Number(resultado[0].coins ?? 0),
+      };
+    } catch (error) {
+      console.error("Error vendiendo duplicados en lote:", error);
+      return { success: false as const, error: "Error en servidor" };
+    }
+  }
   // src/app/action.ts
   // src/app/action.ts
 
@@ -455,18 +1042,33 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
       `;
       
       // Si la tabla está vacía todavía no se ha ejecutado el seed.
-      if (rows.length === 0) return loadLocalSets();
+      if (rows.length === 0) return setsEnIdioma(await loadLocalSets());
 
-      return rows.map(set => ({
+      return setsEnIdioma(rows.map(set => ({
         ...set,
         releaseDate: set.release_date,
         images: typeof set.images === 'string' ? JSON.parse(set.images) : set.images
-      }));
+      })));
     } catch (error) {
       // Sin Postgres configurado servimos el catálogo del repositorio.
       console.error("Error al obtener sets, uso el JSON local:", error);
-      return loadLocalSets();
+      return setsEnIdioma(await loadLocalSets());
     }
+  }
+
+  /**
+   * Nombre y logo españoles de una lista de expansiones. `traducirSets` es
+   * SÍNCRONA (el nombre y el logo viven en el índice estático, no en el
+   * diccionario de cartas), así que traducir las 39 no descarga nada.
+   *
+   * Conserva `nameEn`: la tienda de la portada decide con el NOMBRE INGLÉS qué
+   * sobres ofrece ("promos", "gallery"), y ese filtro no puede depender del
+   * idioma en el que el usuario esté mirando la app.
+   */
+  async function setsEnIdioma(sets: any[]): Promise<any[]> {
+    const idioma = await idiomaActual();
+    if (idioma !== "es") return sets;
+    return [...traducirSets(sets, idioma)];
   }
   // Añade esto al final de tu src/app/action.ts
 
@@ -500,17 +1102,25 @@ export async function savePackToCollection(cards: any[], packPrice: number = 100
         if (v == null) return fb;
         return typeof v === 'string' ? JSON.parse(v) : v;
       };
-      return rows.map((row: any) => ({
-        ...row,
-        images: parse(row.images),
-        tcgplayer: parse(row.tcgplayer),
-        types: parse(row.types, []),
-        attacks: parse(row.attacks, []),
-        weaknesses: parse(row.weaknesses, []),
-        retreatCost: parse(row.retreat_cost, []),
-        flavorText: row.flavor_text,
-        set: { id: row.set_id, name: row.set_name },
-      }));
+      // El nombre de la expansión también se traduce: el perfil del entrenador
+      // lo pinta junto al logo y quedaría a medias en inglés.
+      const idioma = await idiomaActual();
+      return enIdiomaUsuario(
+        rows.map((row: any) => ({
+          ...row,
+          images: parse(row.images),
+          tcgplayer: parse(row.tcgplayer),
+          types: parse(row.types, []),
+          attacks: parse(row.attacks, []),
+          weaknesses: parse(row.weaknesses, []),
+          retreatCost: parse(row.retreat_cost, []),
+          flavorText: row.flavor_text,
+          set: {
+            id: row.set_id,
+            name: nombreSetEs(row.set_id, idioma) ?? row.set_name,
+          },
+        })),
+      );
       
     } catch (error) {
       console.error("❌ Error leyendo colección del entrenador:", error);
@@ -860,19 +1470,23 @@ export async function getCardFromDB(cardId: string) {
       return typeof v === 'string' ? JSON.parse(v) : v;
     };
     // Get set info too
+    const idioma = await idiomaActual();
     let setObj: any = { id: row.set_id };
     const { rows: setRows } = await sql`SELECT * FROM sets WHERE id = ${row.set_id} LIMIT 1`;
     if (setRows.length > 0) {
       const s: any = setRows[0];
-      setObj = {
+      setObj = traducirSet({
         id: s.id, name: s.name, series: s.series,
         printedTotal: s.printed_total, total: s.total,
         ptcgoCode: s.ptcgo_code, releaseDate: s.release_date,
         legalities: parse(s.legalities, {}),
         images: parse(s.images, {}),
-      };
+      }, idioma);
     }
-    return {
+    // El detalle es la única pantalla que enseña el texto de ambientación, y
+    // las cartas españolas de TCGdex no lo traen: se queda en inglés (igual que
+    // el ilustrador y las rarezas, que son datos, no interfaz).
+    const [carta] = await enIdiomaUsuario([{
       id: row.id,
       name: row.name,
       supertype: row.supertype,
@@ -901,7 +1515,8 @@ export async function getCardFromDB(cardId: string) {
       images: parse(row.images, {}),
       tcgplayer: parse(row.tcgplayer, null),
       cardmarket: parse(row.cardmarket, null),
-    };
+    }]);
+    return carta;
   } catch (e) {
     console.error("getCardFromDB error:", e);
     return null;
@@ -909,6 +1524,23 @@ export async function getCardFromDB(cardId: string) {
 }
 
 // --- SEARCH CARDS IN DB (replaces live API in GlobalSearch) ---
+/**
+ * Buscador global. BILINGÜE cuando el idioma es español.
+ *
+ * EL PROBLEMA: en `cards` los nombres están en inglés ("Erika's Invitation").
+ * Un usuario que ve la app en español teclea "Invitación de Erika" y el
+ * `LIKE` sobre `c.name` no encuentra nada: el buscador parecería roto.
+ *
+ * CÓMO SE RESUELVE Y QUÉ CUESTA: `idsPorNombreEspanol` (services/idiomaServidor)
+ * mantiene en memoria del servidor un índice inverso nombre español -> id,
+ * construido una sola vez por instancia a partir de los diccionarios y sólo si
+ * alguien busca en español (~6.700 entradas, sin tildes y en minúsculas). Los
+ * ids que casan entran en la consulta junto al LIKE inglés de siempre, así que
+ * se puede buscar en los dos idiomas a la vez. Coste: nada de esquema (ni una
+ * columna `name_es` en `cards` que hubiera que resembrar y mantener), un
+ * recorrido lineal en JS por búsqueda y un array de ids —acotado a 1.500— que
+ * viaja a Postgres. En español el recorrido añade ~1 ms; en inglés no se toca.
+ */
 export async function searchCardsInDB(query: string, page = 1, pageSize = 10) {
   try {
     const { userId } = await auth();
@@ -920,39 +1552,54 @@ export async function searchCardsInDB(query: string, page = 1, pageSize = 10) {
     const p = Math.max(1, Math.trunc(Number(page) || 1));
     const offset = (p - 1) * size;
 
+    const crudo = String(query ?? "");
     // Escapamos los comodines de LIKE (%, _ y la propia barra de escape): sin
     // esto, buscar "%" o "_" devolvía el catálogo completo. Backslash es el
     // carácter de escape por defecto de LIKE en Postgres.
-    const safeTerm = String(query ?? "").toLowerCase().replace(/[\\%_]/g, (m) => `\\${m}`);
+    const safeTerm = crudo.toLowerCase().replace(/[\\%_]/g, (m) => `\\${m}`);
     const term = `%${safeTerm}%`;
 
-    // Total
-    const { rows: countRows } = await sql`
-      SELECT count(*)::int AS total FROM cards WHERE LOWER(name) LIKE ${term}
-    `;
+    const idioma = await idiomaActual();
+    // Al índice se le pasa el término SIN escapar: sus comodines son de LIKE,
+    // no de una comparación de cadenas.
+    const { ids, nombres } =
+      idioma === "es" ? await idsPorNombreEspanol(crudo) : { ids: [], nombres: [] };
+
+    // El LEFT JOIN contra el unnest hace dos cosas de una vez: mete en el
+    // resultado las cartas que sólo casan por su nombre español, y da el nombre
+    // español al ORDER BY. Ordenar por el inglés dejaría una lista que al
+    // usuario le parecería desordenada.
+    const desde = `
+      FROM cards c
+      LEFT JOIN unnest($2::text[], $3::text[]) AS t(id, nombre) ON t.id = c.id
+      WHERE (LOWER(c.name) LIKE $1 OR t.id IS NOT NULL)`;
+
+    const params: any[] = [term, ids, nombres];
+
+    const { rows: countRows } = await sql.query(
+      `SELECT count(*)::int AS total ${desde}`,
+      params,
+    );
     const total = countRows[0]?.total || 0;
 
-    let rows: any[];
+    let owned = "false";
     if (userId) {
-      const res = await sql`
-        SELECT c.id, c.name, c.rarity, c.images, c.set_id,
-               EXISTS(SELECT 1 FROM user_collection uc WHERE uc.user_id = ${userId} AND uc.card_id = c.id AND uc.quantity > 0) AS owned
-        FROM cards c
-        WHERE LOWER(c.name) LIKE ${term}
-        ORDER BY c.name ASC
-        LIMIT ${size} OFFSET ${offset}
-      `;
-      rows = res.rows;
-    } else {
-      const res = await sql`
-        SELECT id, name, rarity, images, set_id, false AS owned
-        FROM cards
-        WHERE LOWER(name) LIKE ${term}
-        ORDER BY name ASC
-        LIMIT ${size} OFFSET ${offset}
-      `;
-      rows = res.rows;
+      params.push(userId);
+      owned = `EXISTS(SELECT 1 FROM user_collection uc
+                       WHERE uc.user_id = $${params.length}
+                         AND uc.card_id = c.id AND uc.quantity > 0)`;
     }
+    const pLimit = params.push(size);
+    const pOffset = params.push(offset);
+
+    const { rows } = await sql.query(
+      `SELECT c.id, c.name, c.rarity, c.images, c.set_id, ${owned} AS owned
+       ${desde}
+       ORDER BY COALESCE(t.nombre, c.name) ASC
+       LIMIT $${pLimit} OFFSET $${pOffset}`,
+      params,
+    );
+
     const setIds = Array.from(new Set(rows.map((r: any) => r.set_id)));
     const setMap: Record<string, any> = {};
     if (setIds.length > 0) {
@@ -960,16 +1607,20 @@ export async function searchCardsInDB(query: string, page = 1, pageSize = 10) {
         `SELECT id, name FROM sets WHERE id = ANY($1::text[])`,
         [setIds],
       );
-      setRows.forEach((s: any) => { setMap[s.id] = s; });
+      setRows.forEach((s: any) => {
+        setMap[s.id] = { ...s, name: nombreSetEs(s.id, idioma) ?? s.name };
+      });
     }
-    const data = rows.map((r: any) => ({
-      id: r.id,
-      name: r.name,
-      rarity: r.rarity,
-      images: typeof r.images === 'string' ? JSON.parse(r.images) : r.images,
-      set: setMap[r.set_id] || { id: r.set_id },
-      owned: r.owned,
-    }));
+    const data = await enIdiomaUsuario(
+      rows.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        rarity: r.rarity,
+        images: typeof r.images === 'string' ? JSON.parse(r.images) : r.images,
+        set: setMap[r.set_id] || { id: r.set_id },
+        owned: r.owned,
+      })),
+    );
     return { data, total, page: p, pageSize: size };
   } catch (e) {
     console.error("searchCardsInDB error:", e);
@@ -1000,6 +1651,9 @@ export async function claimSetCompletionBonuses() {
     const rewarded = new Set(already.map((r: any) => r.set_id));
 
     const BONUS = SET_COMPLETION_BONUS;
+    // El aviso de "¡has completado X!" nombra la expansión: en español también.
+    // La fila de set_rewards se sigue escribiendo con el id canónico.
+    const idioma = await idiomaActual();
     let granted = 0;
     const completedSets: string[] = [];
 
@@ -1017,7 +1671,7 @@ export async function claimSetCompletionBonuses() {
         `;
         if ((ins.rowCount ?? 0) > 0) {
           granted += BONUS;
-          completedSets.push(meta.name);
+          completedSets.push(nombreSetEs(row.set_id, idioma) ?? meta.name);
         }
       }
     }
@@ -1056,31 +1710,39 @@ export async function sellPackDuplicates(cardIds: string[]) {
         WHERE uc.user_id = ${userId} AND uc.card_id = ${cardId} AND uc.quantity > 0
       `;
       if (rows.length === 0) continue;
-      const have = rows[0].quantity;
+      const have = Number(rows[0].quantity);
       const rarity = rows[0].rarity;
       // No bajar de 1 copia
       const sellable = Math.min(qtyToSell, Math.max(0, have - 1));
       if (sellable <= 0) continue;
-      const price = SELL_PRICES[rarity as keyof typeof SELL_PRICES] || 10;
+      // Precio decreciente: se van las copias de índice más alto. Con una copia
+      // repetida es la tarifa de siempre; con cincuenta, la del suelo.
+      const importe = valorDeVenta(rarity, have, sellable);
 
       // Descuento y abono de esta carta en UNA sentencia (CTE) con la condición
-      // de cantidad repetida DENTRO del UPDATE (quantity >= sellable + 1). Antes,
+      // de cantidad repetida DENTRO del UPDATE. Antes,
       // entre el SELECT y este UPDATE no se re-verificaba nada: dos pestañas
       // (o dos taps en "vender duplicados") leían ambas la misma cantidad y
       // restaban dos veces, dejando la fila negativa y pagando doble. El guard y
       // el EXISTS cierran la ventana y sólo abonan si de verdad se restó.
+      //
+      // El guard es `quantity = have` (antes bastaba `>= sellable + 1`) porque
+      // ahora el importe depende de la cantidad: si entretanto entrara otro
+      // sobre con la misma carta, las copias que se van serían más profundas y
+      // más baratas, y se estaría pagando la tarifa de una cantidad que ya no
+      // existe.
       const upd = await sql`
         WITH venta AS (
           UPDATE user_collection SET quantity = quantity - ${sellable}
-          WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity >= ${sellable + 1}
+          WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity = ${have}
           RETURNING 1
         )
-        UPDATE users SET coins = coins + ${price * sellable}
+        UPDATE users SET coins = coins + ${importe}
         WHERE id = ${userId} AND EXISTS (SELECT 1 FROM venta)
         RETURNING coins
       `;
       if (upd.rows.length === 0) continue; // otra pestaña se adelantó: no se cobra
-      earned += price * sellable;
+      earned += importe;
       sold += sellable;
     }
     if (sold > 0) {
@@ -1138,10 +1800,12 @@ export async function getWishlistCards() {
       WHERE w.user_id = ${userId}
       ORDER BY w.added_at DESC
     `;
-    return rows.map((r: any) => ({
-      ...r,
-      images: typeof r.images === 'string' ? JSON.parse(r.images) : r.images,
-    }));
+    return enIdiomaUsuario(
+      rows.map((r: any) => ({
+        ...r,
+        images: typeof r.images === 'string' ? JSON.parse(r.images) : r.images,
+      })),
+    );
   } catch (e) {
     return [];
   }
@@ -1184,6 +1848,113 @@ export async function setUserTheme(theme: "light" | "dark") {
   }
 }
 
+// --- USER LANGUAGE PREFERENCE (calcado de getUserTheme/setUserTheme) ---
+/**
+ * Idioma de la CUENTA. Es la preferencia que viaja con el usuario: la del
+ * dispositivo vive en localStorage + cookie (ver services/idiomaServidor.ts) y
+ * SettingsSheet deja que ésta la pise cuando Clerk confirma la sesión.
+ *
+ * El userId sale de auth(), nunca del cliente, y el valor se valida aquí: como
+ * toda función exportada de un fichero 'use server' es un endpoint POST vivo,
+ * un "idioma" arbitrario acabaría escrito en la columna.
+ */
+export async function getUserLang(): Promise<Idioma | null> {
+  const { userId } = await auth();
+  if (!userId) return null;
+  try {
+    await ensureSchema();
+    const { rows } = await sql`SELECT lang FROM users WHERE id = ${userId}`;
+    const l = rows[0]?.lang;
+    if (l === "en" || l === "es") return l;
+    return null;
+  } catch (e) {
+    console.error("getUserLang error:", e);
+    return null;
+  }
+}
+
+export async function setUserLang(lang: "en" | "es") {
+  const { userId } = await auth();
+  if (!userId) return { error: "No logueado" };
+  if (lang !== "en" && lang !== "es") return { error: "Idioma inválido" };
+  try {
+    await ensureSchema();
+    // Mismo COALESCE que setUserTheme: si este upsert llegara a crear la fila,
+    // que nazca con su saldo inicial y no con coins NULL.
+    await sql`
+      INSERT INTO users (id, lang, coins) VALUES (${userId}, ${lang}, ${STARTING_COINS})
+      ON CONFLICT (id) DO UPDATE SET lang = ${lang},
+                                     coins = COALESCE(users.coins, ${STARTING_COINS})
+    `;
+    return { success: true };
+  } catch (e) {
+    console.error("setUserLang error:", e);
+    return { error: "Error servidor" };
+  }
+}
+
+/**
+ * Nombre e ilustración españoles de una lista de ids. Es la única pieza de la
+ * capa de idioma que el INVITADO necesita pedir aparte.
+ *
+ * POR QUÉ: su colección vive en localStorage y guarda el nombre y la imagen con
+ * los que se abrió el sobre. Ese almacén no se toca (es su partida), así que al
+ * cambiar de idioma sus cartas seguirían con el nombre viejo. Con esto la
+ * pantalla de colección repinta lo guardado sin reescribirlo: puro aspecto.
+ *
+ * Sólo devuelve datos del catálogo público (nombre e imagen de cartas), así que
+ * exponerlo como endpoint no filtra nada de nadie.
+ */
+export async function nombresDeCartas(ids: string[]) {
+  if (!Array.isArray(ids) || ids.length === 0) return {};
+
+  // Tope: un localStorage manipulado no puede convertir esto en un volcado.
+  const limpios = Array.from(
+    new Set(ids.filter((id) => typeof id === "string" && ID_CARTA.test(id))),
+  ).slice(0, 1500);
+  if (limpios.length === 0) return {};
+
+  const salida: Record<string, { name?: string; images?: any }> = {};
+  const idioma = await idiomaActual();
+
+  if (idioma === "es") {
+    // En español basta el diccionario: ni una consulta.
+    const traducidas = await traducirCartas(
+      limpios.map(
+        (id) => ({ id }) as { id: string; name?: string; images?: { small?: string; large?: string } | null },
+      ),
+      idioma,
+    );
+    for (const c of traducidas) {
+      // `traducirCartas` devuelve la misma referencia cuando no hay traducción
+      // (311 cartas sin pareja): sin `name` no hay nada que decirle al cliente,
+      // y lo que el invitado tenga guardado ya está en inglés.
+      if (c.name) salida[c.id] = { name: c.name, images: c.images ?? undefined };
+    }
+    return salida;
+  }
+
+  // En inglés hay que DESHACER lo que se guardó en español, y el nombre inglés
+  // sólo está en el catálogo. Una consulta por carga de la colección de
+  // invitado, con los ids que ya tiene en la mano.
+  try {
+    const { rows } = await sql.query(
+      `SELECT id, name, images FROM cards WHERE id = ANY($1::text[])`,
+      [limpios],
+    );
+    for (const r of rows) {
+      salida[String(r.id)] = {
+        name: r.name,
+        images: typeof r.images === "string" ? JSON.parse(r.images) : r.images,
+      };
+    }
+  } catch (e) {
+    // Sin Postgres, el invitado se queda con lo guardado: es sólo el rótulo.
+    console.error("nombresDeCartas error:", e);
+  }
+  return salida;
+}
+
 /* ==================================================================== *
  * MERCADO DE LOTES
  * ====================================================================
@@ -1214,6 +1985,33 @@ interface CartaMercado extends CartaMinima {
   cantidad: number;
   /** SELL_PRICES de su rareza, calculado en el servidor. */
   precio: number;
+  /**
+   * Nombre español, SÓLO para pintarlo. `name` se queda en inglés a propósito.
+   *
+   * POR QUÉ AQUÍ NO SE TRADUCE `name` COMO EN EL RESTO: el mercado empareja por
+   * nombre. `cumpleFiltro` resuelve el requisito "empieza por E" con la inicial
+   * del nombre, y `entregaValida` encadena evoluciones comparando `evolvesFrom`
+   * (inglés, columna de `cards`) con el `name` del eslabón anterior. Si el
+   * cliente repartiera con nombres españoles y `cumplirOferta` validara con los
+   * ingleses, la pantalla pondría el botón en verde y el cobro lo rechazaría:
+   * el peor fallo posible de esa pantalla. El idioma no puede mover ni una
+   * moneda, así que sólo viaja el rótulo.
+   */
+  nombreEs?: string;
+}
+
+/** Añade el rótulo español a las cartas del mercado sin tocar `name`. */
+async function conNombreEs(cartas: CartaMercado[]): Promise<CartaMercado[]> {
+  const idioma = await idiomaActual();
+  if (idioma !== "es" || cartas.length === 0) return cartas;
+  const traducidas = await traducirCartas(
+    cartas.map((c) => ({ id: c.id, name: c.name })),
+    idioma,
+  );
+  return cartas.map((c, i) => {
+    const nombre = traducidas[i]?.name;
+    return nombre && nombre !== c.name ? { ...c, nombreEs: nombre } : c;
+  });
 }
 
 /**
@@ -1521,8 +2319,49 @@ export async function getMercado() {
   const { ciclo, ofertas } = await tablonVigente();
   const caduca = caducidadDelCiclo(ciclo);
 
+  // Rótulos de expansión del tablón, ya en español. Viajan como mapa (una
+  // docena de entradas) en vez de importar el índice de idioma en el cliente:
+  // la pantalla del mercado no necesita el diccionario para nada más.
+  const idioma = await idiomaActual();
+  const nombresSet: Record<string, string> = {};
+  if (idioma === "es") {
+    for (const o of ofertas) {
+      for (const id of [o.setId, ...o.requisitos.map((r) => r.setId)]) {
+        if (!id || nombresSet[id]) continue;
+        const nombre = nombreSetEs(id, idioma);
+        if (nombre) nombresSet[id] = nombre;
+      }
+    }
+  }
+
+  // Y el mismo rótulo DENTRO de la prosa. utils/mercado.ts compone el gancho y
+  // el requisito atado con el nombre inglés de AVAILABLE_SETS ("... de Shrouded
+  // Fable"), así que sin esto la misma tarjeta decía "Fabula Sombría" en el chip
+  // y "Shrouded Fable" tres líneas más abajo, y el jugador no sabe si son la
+  // misma expansión. Se cambia SÓLO texto y sobre copias: `id`, `filtro` y
+  // `setId` —lo único que compara cumplirOferta— salen intactos, y el tablón
+  // cacheado de tablonVigente() no se toca.
+  const visibles =
+    idioma !== "es"
+      ? ofertas
+      : ofertas.map((o) => {
+          const es = o.setId ? nombresSet[o.setId] : null;
+          const en = o.setId ? AVAILABLE_SETS.find((s) => s.id === o.setId)?.name : null;
+          if (!es || !en || es === en) return o;
+          const cambia = (t: string) => t.split(en).join(es);
+          return {
+            ...o,
+            descripcion: cambia(o.descripcion),
+            requisitos: o.requisitos.map((r) =>
+              r.setId === o.setId ? { ...r, descripcion: cambia(r.descripcion) } : r,
+            ),
+          };
+        });
+
   const { userId } = await auth();
-  if (!userId) return { ciclo, caduca, ofertas, cumplidas: [] as string[], conSesion: false };
+  if (!userId) {
+    return { ciclo, caduca, ofertas: visibles, nombresSet, cumplidas: [] as string[], conSesion: false };
+  }
 
   try {
     await ensureSchema();
@@ -1533,14 +2372,15 @@ export async function getMercado() {
     return {
       ciclo,
       caduca,
-      ofertas,
+      ofertas: visibles,
+      nombresSet,
       cumplidas: rows.map((r: any) => String(r.oferta_id)),
       conSesion: true,
     };
   } catch (e) {
     console.error("getMercado error:", e);
     // El tablón se puede pintar igual; lo que no se sabe es qué está cobrado.
-    return { ciclo, caduca, ofertas, cumplidas: [] as string[], conSesion: true };
+    return { ciclo, caduca, ofertas: visibles, nombresSet, cumplidas: [] as string[], conSesion: true };
   }
 }
 
@@ -1587,7 +2427,7 @@ export async function getCartasMercado(idsInvitado?: string[]) {
         // función que usa el cobro, así que lo que la pantalla ve entregable y
         // lo que el servidor acepta no pueden discrepar.
         .filter((c) => copiasEntregables(c.cantidad) > 0 && relevante(c));
-      return { ciclo, cartas, conSesion: true };
+      return { ciclo, cartas: await conNombreEs(cartas), conSesion: true };
     }
 
     // --- invitado ---
@@ -1638,7 +2478,7 @@ export async function getCartasMercado(idsInvitado?: string[]) {
 
     return {
       ciclo,
-      cartas: Array.from(encontradas.values()).filter(relevante),
+      cartas: await conNombreEs(Array.from(encontradas.values()).filter(relevante)),
       conSesion: false,
     };
   } catch (e) {

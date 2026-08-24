@@ -1,0 +1,893 @@
+{
+ "set": {
+  "id": "sv5",
+  "idEs": "sv05",
+  "nombre": "Fuerzas Temporales",
+  "nombreEn": "Temporal Forces",
+  "logo": "https://assets.tcgdex.net/es/sv/sv05/logo",
+  "serie": "Escarlata y Púrpura"
+ },
+ "sinPareja": [],
+ "resumen": {
+  "locales": 218,
+  "traducidas": 218,
+  "sinPareja": 0,
+  "sinImagenEs": 0,
+  "nombresCambiados": 68,
+  "identicasOmitidas": 0
+ },
+ "cartas": {
+  "sv5-1": {
+   "n": "Scyther",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/001"
+  },
+  "sv5-10": {
+   "n": "Turtwig",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/010"
+  },
+  "sv5-100": {
+   "n": "Ekans",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/100"
+  },
+  "sv5-101": {
+   "n": "Arbok",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/101"
+  },
+  "sv5-102": {
+   "n": "Gastly",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/102"
+  },
+  "sv5-103": {
+   "n": "Haunter",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/103"
+  },
+  "sv5-104": {
+   "n": "Gengar ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/104"
+  },
+  "sv5-105": {
+   "n": "Poochyena",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/105"
+  },
+  "sv5-106": {
+   "n": "Mightyena",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/106"
+  },
+  "sv5-107": {
+   "n": "Sableye",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/107"
+  },
+  "sv5-108": {
+   "n": "Farigiraf ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/108"
+  },
+  "sv5-109": {
+   "n": "Bramaluna",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/109"
+  },
+  "sv5-11": {
+   "n": "Grotle",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/011"
+  },
+  "sv5-110": {
+   "n": "Forretress",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/110"
+  },
+  "sv5-111": {
+   "n": "Scizor ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/111"
+  },
+  "sv5-112": {
+   "n": "Mawile",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/112"
+  },
+  "sv5-113": {
+   "n": "Beldum",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/113"
+  },
+  "sv5-114": {
+   "n": "Metang",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/114"
+  },
+  "sv5-115": {
+   "n": "Metagross",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/115"
+  },
+  "sv5-116": {
+   "n": "Meltan",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/116"
+  },
+  "sv5-117": {
+   "n": "Melmetal",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/117"
+  },
+  "sv5-118": {
+   "n": "Ferrodada",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/118"
+  },
+  "sv5-119": {
+   "n": "Koraidon",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/119"
+  },
+  "sv5-12": {
+   "n": "Torterra ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/012"
+  },
+  "sv5-120": {
+   "n": "Koraidon ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/120"
+  },
+  "sv5-121": {
+   "n": "Miraidon",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/121"
+  },
+  "sv5-122": {
+   "n": "Miraidon ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/122"
+  },
+  "sv5-123": {
+   "n": "Electrofuria ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/123"
+  },
+  "sv5-124": {
+   "n": "Lickitung",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/124"
+  },
+  "sv5-125": {
+   "n": "Lickilicky",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/125"
+  },
+  "sv5-126": {
+   "n": "Hoothoot",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/126"
+  },
+  "sv5-127": {
+   "n": "Noctowl",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/127"
+  },
+  "sv5-128": {
+   "n": "Dunsparce",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/128"
+  },
+  "sv5-129": {
+   "n": "Dudunsparce",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/129"
+  },
+  "sv5-13": {
+   "n": "Shaymin",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/013"
+  },
+  "sv5-130": {
+   "n": "Skitty",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/130"
+  },
+  "sv5-131": {
+   "n": "Delcatty",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/131"
+  },
+  "sv5-132": {
+   "n": "Chatot",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/132"
+  },
+  "sv5-133": {
+   "n": "Pidove",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/133"
+  },
+  "sv5-134": {
+   "n": "Tranquill",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/134"
+  },
+  "sv5-135": {
+   "n": "Unfezant",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/135"
+  },
+  "sv5-136": {
+   "n": "Minccino",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/136"
+  },
+  "sv5-137": {
+   "n": "Cinccino",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/137"
+  },
+  "sv5-138": {
+   "n": "Drampa",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/138"
+  },
+  "sv5-139": {
+   "n": "Ferrocuello",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/139"
+  },
+  "sv5-14": {
+   "n": "Cottonee",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/014"
+  },
+  "sv5-140": {
+   "n": "Tanque de Energía Potenciadora del Pasado",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/140"
+  },
+  "sv5-141": {
+   "n": "Tambores del Despertar",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/141"
+  },
+  "sv5-142": {
+   "n": "Devoción de Bel",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/142"
+  },
+  "sv5-143": {
+   "n": "Caja de Envío",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/143"
+  },
+  "sv5-144": {
+   "n": "Pokochos Gemelos",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/144"
+  },
+  "sv5-145": {
+   "n": "Ciberentusiasta Descifracódigos",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/145"
+  },
+  "sv5-146": {
+   "n": "Erin",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/146"
+  },
+  "sv5-147": {
+   "n": "Guía de Exploración",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/147"
+  },
+  "sv5-148": {
+   "n": "Laboratorio Metálico Total",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/148"
+  },
+  "sv5-149": {
+   "n": "Tanque de Energía Potenciadora del Futuro",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/149"
+  },
+  "sv5-15": {
+   "n": "Whimsicott",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/015"
+  },
+  "sv5-150": {
+   "n": "Recortadora de Mano",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/150"
+  },
+  "sv5-151": {
+   "n": "Relevo Pesado",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/151"
+  },
+  "sv5-152": {
+   "n": "Capa de Héroes",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/152"
+  },
+  "sv5-153": {
+   "n": "Master Ball",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/153"
+  },
+  "sv5-154": {
+   "n": "Cinturón Colosal",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/154"
+  },
+  "sv5-155": {
+   "n": "Convicción de Morti",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/155"
+  },
+  "sv5-156": {
+   "n": "Selva Peligrosa",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/156"
+  },
+  "sv5-157": {
+   "n": "Capturador Supremo",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/157"
+  },
+  "sv5-158": {
+   "n": "Cápsula Reinicio",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/158"
+  },
+  "sv5-159": {
+   "n": "Monopatín de Rescate",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/159"
+  },
+  "sv5-16": {
+   "n": "Deerling",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/016"
+  },
+  "sv5-160": {
+   "n": "Silvio",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/160"
+  },
+  "sv5-161": {
+   "n": "Energía Neblina",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/161"
+  },
+  "sv5-162": {
+   "n": "Energía Neosuperior",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/162"
+  },
+  "sv5-163": {
+   "n": "Shiftry",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/163"
+  },
+  "sv5-164": {
+   "n": "Grotle",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/164"
+  },
+  "sv5-165": {
+   "n": "Deerling",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/165"
+  },
+  "sv5-166": {
+   "n": "Sawsbuck",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/166"
+  },
+  "sv5-167": {
+   "n": "Litten",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/167"
+  },
+  "sv5-168": {
+   "n": "Snom",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/168"
+  },
+  "sv5-169": {
+   "n": "Charjabug",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/169"
+  },
+  "sv5-17": {
+   "n": "Sawsbuck",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/017"
+  },
+  "sv5-170": {
+   "n": "Bronzor",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/170"
+  },
+  "sv5-171": {
+   "n": "Reuniclus",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/171"
+  },
+  "sv5-172": {
+   "n": "Cutiefly",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/172"
+  },
+  "sv5-173": {
+   "n": "Relicanth",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/173"
+  },
+  "sv5-174": {
+   "n": "Excadrill",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/174"
+  },
+  "sv5-175": {
+   "n": "Mudsdale",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/175"
+  },
+  "sv5-176": {
+   "n": "Arbok",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/176"
+  },
+  "sv5-177": {
+   "n": "Gastly",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/177"
+  },
+  "sv5-178": {
+   "n": "Metagross",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/178"
+  },
+  "sv5-179": {
+   "n": "Meltan",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/179"
+  },
+  "sv5-18": {
+   "n": "Grubbin",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/018"
+  },
+  "sv5-180": {
+   "n": "Lickitung",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/180"
+  },
+  "sv5-181": {
+   "n": "Chatot",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/181"
+  },
+  "sv5-182": {
+   "n": "Minccino",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/182"
+  },
+  "sv5-183": {
+   "n": "Cinccino",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/183"
+  },
+  "sv5-184": {
+   "n": "Drampa",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/184"
+  },
+  "sv5-185": {
+   "n": "Torterra ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/185"
+  },
+  "sv5-186": {
+   "n": "Ferroverdor ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/186"
+  },
+  "sv5-187": {
+   "n": "Incineroar ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/187"
+  },
+  "sv5-188": {
+   "n": "Flamariete ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/188"
+  },
+  "sv5-189": {
+   "n": "Ondulagua ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/189"
+  },
+  "sv5-19": {
+   "n": "Dhelmise",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/019"
+  },
+  "sv5-190": {
+   "n": "Wugtrio ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/190"
+  },
+  "sv5-191": {
+   "n": "Ferrotesta ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/191"
+  },
+  "sv5-192": {
+   "n": "Ferromole ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/192"
+  },
+  "sv5-193": {
+   "n": "Gengar ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/193"
+  },
+  "sv5-194": {
+   "n": "Farigiraf ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/194"
+  },
+  "sv5-195": {
+   "n": "Scizor ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/195"
+  },
+  "sv5-196": {
+   "n": "Electrofuria ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/196"
+  },
+  "sv5-197": {
+   "n": "Devoción de Bel",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/197"
+  },
+  "sv5-198": {
+   "n": "Ciberentusiasta Descifracódigos",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/198"
+  },
+  "sv5-199": {
+   "n": "Erin",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/199"
+  },
+  "sv5-2": {
+   "n": "Pineco",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/002"
+  },
+  "sv5-20": {
+   "n": "Bramblin",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/020"
+  },
+  "sv5-200": {
+   "n": "Guía de Exploración",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/200"
+  },
+  "sv5-201": {
+   "n": "Convicción de Morti",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/201"
+  },
+  "sv5-202": {
+   "n": "Silvio",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/202"
+  },
+  "sv5-203": {
+   "n": "Ferroverdor ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/203"
+  },
+  "sv5-204": {
+   "n": "Flamariete ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/204"
+  },
+  "sv5-205": {
+   "n": "Ondulagua ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/205"
+  },
+  "sv5-206": {
+   "n": "Ferrotesta ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/206"
+  },
+  "sv5-207": {
+   "n": "Ferromole ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/207"
+  },
+  "sv5-208": {
+   "n": "Electrofuria ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/208"
+  },
+  "sv5-209": {
+   "n": "Devoción de Bel",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/209"
+  },
+  "sv5-21": {
+   "n": "Brambleghast",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/021"
+  },
+  "sv5-210": {
+   "n": "Erin",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/210"
+  },
+  "sv5-211": {
+   "n": "Convicción de Morti",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/211"
+  },
+  "sv5-212": {
+   "n": "Silvio",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/212"
+  },
+  "sv5-213": {
+   "n": "Ferroverdor ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/213"
+  },
+  "sv5-214": {
+   "n": "Flamariete ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/214"
+  },
+  "sv5-215": {
+   "n": "Ondulagua ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/215"
+  },
+  "sv5-216": {
+   "n": "Ferrotesta ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/216"
+  },
+  "sv5-217": {
+   "n": "Ferromole ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/217"
+  },
+  "sv5-218": {
+   "n": "Electrofuria ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/218"
+  },
+  "sv5-22": {
+   "n": "Scovillain ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/022"
+  },
+  "sv5-23": {
+   "n": "Rellor",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/023"
+  },
+  "sv5-24": {
+   "n": "Rabsca",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/024"
+  },
+  "sv5-25": {
+   "n": "Ferroverdor ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/025"
+  },
+  "sv5-26": {
+   "n": "Ponyta",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/026"
+  },
+  "sv5-27": {
+   "n": "Rapidash",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/027"
+  },
+  "sv5-28": {
+   "n": "Slugma",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/028"
+  },
+  "sv5-29": {
+   "n": "Magcargo",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/029"
+  },
+  "sv5-3": {
+   "n": "Seedot",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/003"
+  },
+  "sv5-30": {
+   "n": "Victini",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/030"
+  },
+  "sv5-31": {
+   "n": "Heatmor",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/031"
+  },
+  "sv5-32": {
+   "n": "Litten",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/032"
+  },
+  "sv5-33": {
+   "n": "Torracat",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/033"
+  },
+  "sv5-34": {
+   "n": "Incineroar ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/034"
+  },
+  "sv5-35": {
+   "n": "Turtonator",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/035"
+  },
+  "sv5-36": {
+   "n": "Sizzlipede",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/036"
+  },
+  "sv5-37": {
+   "n": "Centiskorch",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/037"
+  },
+  "sv5-38": {
+   "n": "Flamariete ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/038"
+  },
+  "sv5-39": {
+   "n": "Totodile",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/039"
+  },
+  "sv5-4": {
+   "n": "Nuzleaf",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/004"
+  },
+  "sv5-40": {
+   "n": "Croconaw",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/040"
+  },
+  "sv5-41": {
+   "n": "Feraligatr",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/041"
+  },
+  "sv5-42": {
+   "n": "Carvanha",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/042"
+  },
+  "sv5-43": {
+   "n": "Sharpedo",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/043"
+  },
+  "sv5-44": {
+   "n": "Keldeo",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/044"
+  },
+  "sv5-45": {
+   "n": "Snom",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/045"
+  },
+  "sv5-46": {
+   "n": "Frosmoth",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/046"
+  },
+  "sv5-47": {
+   "n": "Wiglett",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/047"
+  },
+  "sv5-48": {
+   "n": "Finizen",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/048"
+  },
+  "sv5-49": {
+   "n": "Palafin",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/049"
+  },
+  "sv5-5": {
+   "n": "Shiftry",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/005"
+  },
+  "sv5-50": {
+   "n": "Ondulagua ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/050"
+  },
+  "sv5-51": {
+   "n": "Pikachu",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/051"
+  },
+  "sv5-52": {
+   "n": "Raichu",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/052"
+  },
+  "sv5-53": {
+   "n": "Electabuzz",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/053"
+  },
+  "sv5-54": {
+   "n": "Electivire",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/054"
+  },
+  "sv5-55": {
+   "n": "Charjabug",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/055"
+  },
+  "sv5-56": {
+   "n": "Vikavolt",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/056"
+  },
+  "sv5-57": {
+   "n": "Zeraora",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/057"
+  },
+  "sv5-58": {
+   "n": "Yamper",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/058"
+  },
+  "sv5-59": {
+   "n": "Boltund",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/059"
+  },
+  "sv5-6": {
+   "n": "Shroomish",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/006"
+  },
+  "sv5-60": {
+   "n": "Wugtrio ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/060"
+  },
+  "sv5-61": {
+   "n": "Ferropalmas",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/061"
+  },
+  "sv5-62": {
+   "n": "Ferropúas",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/062"
+  },
+  "sv5-63": {
+   "n": "Mr. Mime",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/063"
+  },
+  "sv5-64": {
+   "n": "Marill",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/064"
+  },
+  "sv5-65": {
+   "n": "Azumarill",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/065"
+  },
+  "sv5-66": {
+   "n": "Girafarig",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/066"
+  },
+  "sv5-67": {
+   "n": "Latias",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/067"
+  },
+  "sv5-68": {
+   "n": "Bronzor",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/068"
+  },
+  "sv5-69": {
+   "n": "Bronzong",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/069"
+  },
+  "sv5-7": {
+   "n": "Breloom",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/007"
+  },
+  "sv5-70": {
+   "n": "Solosis",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/070"
+  },
+  "sv5-71": {
+   "n": "Duosion",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/071"
+  },
+  "sv5-72": {
+   "n": "Reuniclus",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/072"
+  },
+  "sv5-73": {
+   "n": "Elgyem",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/073"
+  },
+  "sv5-74": {
+   "n": "Beheeyem",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/074"
+  },
+  "sv5-75": {
+   "n": "Cutiefly",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/075"
+  },
+  "sv5-76": {
+   "n": "Ribombee",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/076"
+  },
+  "sv5-77": {
+   "n": "Colagrito",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/077"
+  },
+  "sv5-78": {
+   "n": "Melenaleteo",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/078"
+  },
+  "sv5-79": {
+   "n": "Ferropaladín",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/079"
+  },
+  "sv5-8": {
+   "n": "Roselia",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/008"
+  },
+  "sv5-80": {
+   "n": "Ferropaladín",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/080"
+  },
+  "sv5-81": {
+   "n": "Ferrotesta ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/081"
+  },
+  "sv5-82": {
+   "n": "Meditite",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/082"
+  },
+  "sv5-83": {
+   "n": "Medicham",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/083"
+  },
+  "sv5-84": {
+   "n": "Relicanth",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/084"
+  },
+  "sv5-85": {
+   "n": "Drilbur",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/085"
+  },
+  "sv5-86": {
+   "n": "Excadrill",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/086"
+  },
+  "sv5-87": {
+   "n": "Golett",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/087"
+  },
+  "sv5-88": {
+   "n": "Golurk",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/088"
+  },
+  "sv5-89": {
+   "n": "Rockruff",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/089"
+  },
+  "sv5-9": {
+   "n": "Roserade",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/009"
+  },
+  "sv5-90": {
+   "n": "Lycanroc",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/090"
+  },
+  "sv5-91": {
+   "n": "Mudbray",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/091"
+  },
+  "sv5-92": {
+   "n": "Mudsdale",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/092"
+  },
+  "sv5-93": {
+   "n": "Rolycoly",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/093"
+  },
+  "sv5-94": {
+   "n": "Carkol",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/094"
+  },
+  "sv5-95": {
+   "n": "Coalossal",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/095"
+  },
+  "sv5-96": {
+   "n": "Colmilargo",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/096"
+  },
+  "sv5-97": {
+   "n": "Colmilargo",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/097"
+  },
+  "sv5-98": {
+   "n": "Pelarena",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/098"
+  },
+  "sv5-99": {
+   "n": "Ferromole ex",
+   "i": "https://assets.tcgdex.net/es/sv/sv05/099"
+  }
+ }
+}

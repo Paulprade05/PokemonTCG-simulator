@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { loadLocalSets } from "../../../services/localData";
+import { nombreSetEs } from "../../../services/idioma";
+import { idiomaActual } from "../../../services/idiomaServidor";
 
 /**
  * page.tsx es "use client" y los componentes de cliente no pueden exportar
@@ -21,8 +23,11 @@ export async function generateMetadata({
 
   let name: string | undefined;
   try {
+    // El título de la pestaña también sigue al idioma: el nombre español sale
+    // del índice estático, sin abrir el diccionario de cartas de la expansión.
+    const idioma = await idiomaActual();
     const sets = (await loadLocalSets()) as { id: string; name?: string }[];
-    name = sets.find((s) => s.id === setId)?.name;
+    name = nombreSetEs(setId, idioma) ?? sets.find((s) => s.id === setId)?.name;
   } catch {
     name = undefined;
   }

@@ -10,6 +10,22 @@ import path from "path";
  *
  * Todo ocurre en el servidor y queda cacheado en memoria, así que estos JSON
  * nunca llegan al bundle del cliente.
+ *
+ * IDIOMA — POR QUÉ AQUÍ NO SE TRADUCE NADA: este módulo es la FUENTE CRUDA, y
+ * de ella beben dos clases de consumidor. Los que pintan (getCardsFromSet,
+ * getSetsFromDB) aplican la capa española en su propio `return`; los que
+ * DECIDEN no pueden verla:
+ *   - `fichaDelSet` en app/action.ts mira si el nombre contiene "promos" o
+ *     "gallery" para saber qué sobres se pueden vender en esa expansión. Con el
+ *     nombre en español ("Promos Escarlata y Púrpura" no contiene "promos" en
+ *     minúsculas... y "Galería de Entrenadores" tampoco contiene "gallery") esa
+ *     comprobación dejaría de disparar y la tienda vendería sobres estándar en
+ *     subsets que sólo tienen cartas caras.
+ *   - el respaldo del mercado (`getCartasMercado` para invitados) empareja por
+ *     nombre inglés: `evolvesFrom` -> `name` y la inicial del nombre. En
+ *     español el cliente y el servidor dejarían de estar de acuerdo sobre qué
+ *     cartas valen para una oferta, y el cobro fallaría después de decir que sí.
+ * Traducir aquí sería tocar la economía; traducir en la frontera es aspecto.
  */
 
 const DATA_DIR = path.join(process.cwd(), "src", "data");
