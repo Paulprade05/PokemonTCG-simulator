@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node scripts/test-invariantes.mjs",
+    "sim:economia": "node scripts/sim-economia.mjs",
+    "sim:mercado": "node scripts/sim-mercado.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.37.3",

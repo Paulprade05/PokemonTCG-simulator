@@ -30,5 +30,12 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    // Instantáneas antiguas del proyecto (ramas feat-mobile-ux y feat-pwa-ios)
+    // descomprimidas dentro de la raíz. Son copias completas, así que sin esto
+    // el typecheck compila el proyecto tres veces.
+    "PokemonTCG-simulator-feat-mobile-ux",
+    "PokemonTCG-simulator-feat-pwa-ios"
+  ]
 }

@@ -7,7 +7,6 @@ import { createPortal } from "react-dom";
 import {
   getUserData,
   comprarSobreAction,
-  syncSetToDatabase,
   getSetsFromDB,
   getFullCollection,
   claimSetCompletionBonuses,
@@ -15,9 +14,22 @@ import {
   getWishlistIds,
 } from "./action";
 import { getCardsFromSet } from "../services/pokemon";
-import { openStandardPack, openPremiumPack, openGoldenPack } from "../utils/packLogic";
-import { saveToCollection, getCollection } from "../utils/storage";
-import { SELL_PRICES, PACK_PRICES, RARITY_RANK } from "../utils/constanst";
+import {
+  openStandardPack,
+  openPremiumPack,
+  openGoldenPack,
+  composicionDelSobre,
+  RELLENO_PREMIUM,
+} from "../utils/packLogic";
+import { saveToCollection, getCollection, saveCollectionRaw } from "../utils/storage";
+import {
+  SELL_PRICES,
+  PACK_PRICES,
+  RARITY_RANK,
+  precioDeCartaSuelta,
+  valorDeVenta,
+  COPIAS_PROTEGIDAS,
+} from "../utils/constanst";
 import { RARITY_GLOW } from "../utils/rarityGlow";
 import { useCurrency } from "../hooks/useGameCurrency";
 import { useHaptics } from "../hooks/useHaptics";
@@ -31,6 +43,7 @@ import MazoCartas from "../components/MazoCartas";
 import BoosterPack, { semillaDeSobre, type FaseSobre } from "../components/BoosterPack";
 import { formatNumber } from "../utils/format";
 import Portal from "../components/ui/Portal";
+import type { Carta, Expansion } from "../utils/tipos";
 
 type PackType = "STANDARD" | "PREMIUM" | "GOLDEN" | "SPECIAL";
 
@@ -48,13 +61,14 @@ const CARD_WIDTH =
 const AURA_RANK = 70;
 
 /**
- * Cartas que anuncia la banda del sobre mientras el contenido viaja.
+ * Tamaño nominal del sobre. Es sólo el ÚLTIMO respaldo: mientras no se sabe qué
+ * expansión se está abriendo (las cartas aún no han cargado), la banda tiene que
+ * decir algo y diez es lo que trae un sobre normal.
  *
- * Los tres sobres traen diez cartas; la única excepción es el Estándar de un
- * set que packLogic haya adelgazado para que no valga más de lo que cuesta
- * (hoy sólo swsh35, que se queda en nueve). Ahí la banda enseña 10 hasta que
- * llega el sobre y entonces dice 9: es preferible a no poner número, porque la
- * banda es parte del envoltorio y su hueco vacío se ve más que el ajuste.
+ * En cuanto hay catálogo manda `cartasPorTipo`, que sale de la calibración real
+ * (`composicionDelSobre`): las expansiones a las que se les retira un hueco para
+ * que el sobre no valga más de lo que cuesta —hoy swsh35, que se queda en nueve—
+ * ya anuncian nueve desde el principio en vez de desmentirse a mitad de apertura.
  */
 const CARTAS_POR_SOBRE = 10;
 
@@ -123,12 +137,16 @@ export default function Home() {
   const haptic = useHaptics();
   const toast = useToast();
 
-  const [dbSets, setDbSets] = useState<any[]>([]);
+  // Tipados y no `any[]`: son las tres listas de las que cuelga toda la
+  // pantalla, y `strict: true` no puede ayudar sobre un `any`. Fue justo un
+  // array vacío pasando por donde se esperaba una carta lo que dejó el sobre
+  // sellado sin montarse nunca (ver el guard de la VIEW 3).
+  const [dbSets, setDbSets] = useState<Expansion[]>([]);
   const [selectedSet, setSelectedSet] = useState<string | null>(null);
-  const [allCards, setAllCards] = useState<any[]>([]);
+  const [allCards, setAllCards] = useState<Carta[]>([]);
   const [userCollectionIds, setUserCollectionIds] = useState<string[]>([]);
   const [currentPackType, setCurrentPackType] = useState<PackType | null>(null);
-  const [currentPack, setCurrentPack] = useState<any[]>([]);
+  const [currentPack, setCurrentPack] = useState<Carta[]>([]);
   const [packIndex, setPackIndex] = useState(0);
   /** Cartas ya destapadas del sobre; no baja al volver a una carta anterior. */
   const [maxRevealed, setMaxRevealed] = useState(0);
@@ -215,7 +233,7 @@ export default function Home() {
    * ejecutarse con el sobre aún en vuelo (Escape con el sobre sellado) y ahí el
    * `currentPack` de su clausura todavía está vacío.
    */
-  const cartasRef = useRef<any[]>([]);
+  const cartasRef = useRef<Carta[]>([]);
   /** Momento de la última llegada de carta, para no encadenarle un toque con
    *  inercia que cerrara el sobre sin dejar ver lo que acaba de salir. */
   const ultimaLlegadaRef = useRef(0);
@@ -311,17 +329,18 @@ export default function Home() {
   }, [isPackOpen]);
 
   const lastIndex = Math.max(0, currentPack.length - 1);
-  /**
-   * Cuántas cartas anuncia el sobre. Con sesión el contenido llega del servidor
-   * con el sobre YA en pantalla y sellado; hasta que llega, la banda y el
-   * contador usan el tamaño nominal para no enseñar una banda vacía ni un
-   * "1 / 0" donde antes ponía "1 / 10".
-   */
-  const cartasDelSobre = currentPack.length || CARTAS_POR_SOBRE;
   const currentCard = currentPack[packIndex];
   // Ya no hay volteo: las cartas salen de cara. Lo único que decide si se ven
   // es que la coreografía del sobre haya llegado a su punto.
-  const cartasVisibles = fase === "abriendo" || fase === "cartas";
+  //
+  // Y que HAYA cartas. La comprobación de longitud parece redundante —el
+  // rasgado espera a que llegue el sobre antes de cambiar de fase— pero no lo
+  // es: `sobreYaServido` (el camino del reenvío) responde `ok: true` con la
+  // lista que devuelva `cartasPorId`, y ésa filtra los ids que ya no estén en
+  // `cards`. Si una resiembra se llevó por delante una carta de un sobre
+  // recién cobrado, la lista llega VACÍA, el rasgado sigue adelante y 420 ms
+  // después el pie se rompe leyendo `currentCard.name` sobre undefined.
+  const cartasVisibles = currentPack.length > 0 && (fase === "abriendo" || fase === "cartas");
   const currentRank = rankOf(currentCard?.rarity);
   /** 0 nada · 1 destello · 2 aura · 3 aura y escenario a oscuras.
    *  La guarda es cartasVisibles y no la rareza a secas: sin ella, una Hyper
@@ -357,14 +376,111 @@ export default function Home() {
    * precios, que ya están cargados aquí.
    */
   const catalogoPorId = useMemo(() => {
-    const m = new Map<string, any>();
+    const m = new Map<string, Carta>();
     allCards.forEach((c) => m.set(c.id, c));
     return m;
   }, [allCards]);
 
   /** Cambia las cartas mínimas del servidor por las completas del catálogo. */
-  const hidratarCartas = (cartas: any[]): any[] =>
+  const hidratarCartas = (cartas: Carta[]): Carta[] =>
     (cartas ?? []).map((c) => catalogoPorId.get(c.id) ?? c);
+
+  /** Deseados como Set: el resumen de un ×10 son 100 cartas y un `includes`
+   *  contra una lista de cientos es O(n·m) en pleno render. */
+  const wishlistSet = useMemo(() => new Set(wishlistIds), [wishlistIds]);
+
+  /* ==================================================================== *
+   * LO QUE LA TIENDA ANUNCIA SALE DEL REPARTO, NO DE UNA LISTA A MANO
+   * ====================================================================
+   *
+   * Las probabilidades, el número de cartas y las "raras aseguradas" estaban
+   * escritos en el JSX y las tres MENTÍAN:
+   *
+   *   · "2 Raras aseguradas" en el Premium, que reparte 4 (RELLENO_PREMIUM).
+   *   · "Illustration Rare 8%" y "Ultra Rare 4%" en el Estándar. En TODA la era
+   *     Espada y Escudo no existe ninguno de los dos escalones, así que
+   *     sacarPremio cae al respaldo y ese 12% de sobres da una rara más. El 8%
+   *     y el 4% no salían jamás ahí, y encima se rotulaba "oficiales".
+   *   · "10 cartas" fijo, cuando la calibración retira huecos en las expansiones
+   *     que valdrían más de lo que cuestan (swsh35 se queda en 9).
+   *
+   * Ahora los tres se derivan de `composicionDelSobre`, que resuelve la tabla
+   * de premio contra los pools REALES de esta expansión. Las ramas cuyo escalón
+   * no existe se marcan y se pintan diciendo a dónde caen de verdad.
+   */
+  const composiciones = useMemo(() => {
+    if (!allCards || allCards.length === 0) return null;
+    return {
+      STANDARD: composicionDelSobre(allCards, "STANDARD"),
+      PREMIUM: composicionDelSobre(allCards, "PREMIUM"),
+      GOLDEN: composicionDelSobre(allCards, "GOLDEN"),
+      SPECIAL: composicionDelSobre(allCards, "SPECIAL"),
+    };
+  }, [allCards]);
+
+  /** Cartas que trae de verdad cada sobre de esta expansión. */
+  const cartasPorTipo = useMemo(
+    () => ({
+      STANDARD: composiciones?.STANDARD.cartas ?? CARTAS_POR_SOBRE,
+      PREMIUM: composiciones?.PREMIUM.cartas ?? CARTAS_POR_SOBRE,
+      GOLDEN: composiciones?.GOLDEN.cartas ?? CARTAS_POR_SOBRE,
+      SPECIAL: composiciones?.SPECIAL.cartas ?? CARTAS_POR_SOBRE,
+    }),
+    [composiciones],
+  );
+
+  /**
+   * Cuántas cartas anuncia el sobre EN PANTALLA. Con sesión el contenido llega
+   * del servidor con el sobre ya sellado y a la vista, así que hasta que llega
+   * hay que decir un número: el de ESTA expansión y ESTE tipo de sobre, ya
+   * calibrado. Antes era 10 fijo y la banda se desmentía a mitad de apertura en
+   * los sets a los que la calibración les retira un hueco (swsh35 → 9).
+   */
+  const cartasDelSobre =
+    currentPack.length ||
+    (currentPackType ? cartasPorTipo[currentPackType] : CARTAS_POR_SOBRE);
+
+  /** Raras garantizadas del Premium, ya calibradas. */
+  const rarasPremium =
+    composiciones?.PREMIUM.huecos.find((h) => h.pool === "rare")?.cantidad ??
+    RELLENO_PREMIUM.raras;
+
+  /**
+   * Filas de la tabla desplegable de cada sobre. Un porcentaje sólo se anuncia
+   * si su escalón EXISTE en la expansión; si no, se dice a dónde cae, que es
+   * más honesto que enseñar una probabilidad inalcanzable.
+   */
+  const oddsPorTipo = useMemo(() => {
+    const filas = (tipo: "STANDARD" | "PREMIUM" | "GOLDEN" | "SPECIAL"): [string, string][] => {
+      const comp = composiciones?.[tipo];
+      if (!comp) return [];
+      const pct = (n: number) => `${Number(n.toFixed(2))}%`;
+      // El premio, de mejor a peor (la tabla ya viene en ese orden).
+      const premio: [string, string][] = comp.premio.map((r) =>
+        r.disponible
+          ? [r.etiqueta, pct(r.prob)]
+          : [`${r.etiqueta} (no hay)`, `→ ${r.etiquetaReal}`],
+      );
+      // Los huecos fijos: son la promesa del sobre, no una probabilidad.
+      const huecos: [string, string][] = comp.huecos
+        .filter((h) => h.pool !== "common" && h.pool !== "uncommon")
+        .map((h) =>
+          h.disponible
+            ? [h.etiqueta, `${h.cantidad}×`]
+            : [`${h.etiqueta} (no hay)`, `→ ${h.etiquetaReal}`],
+        );
+      if (tipo === "GOLDEN" || tipo === "SPECIAL") {
+        return [["Carta nueva", "1×"], ...huecos];
+      }
+      return [...premio, ...huecos];
+    };
+    return {
+      STANDARD: filas("STANDARD"),
+      PREMIUM: filas("PREMIUM"),
+      GOLDEN: filas("GOLDEN"),
+      SPECIAL: filas("SPECIAL"),
+    };
+  }, [composiciones]);
 
   /**
    * Un set "abrible" tiene la pirámide normal de rarezas. Los subsets
@@ -400,7 +516,17 @@ export default function Home() {
       nombreEnIngles.includes("gallery") ||
       currentSetObj.series === "POP" ||
       currentSetObj.series === "Other" ||
-      currentSetObj.total < 69 ||
+      // El total DECLARADO, no el conteo real: un set a medio sembrar tiene
+      // pocas cartas en `cards` y con `cardsCount` aquí se marcaría de especial
+      // por error, dejando la expansión sin sobres normales.
+      //
+      // `> 0 &&` es EXACTAMENTE la condición que aplica el servidor en
+      // `sobresPermitidos`. Tiene que ser la misma cadena de comparaciones o
+      // esta pantalla pinta botones que el servidor rechaza al pulsarlos: con un
+      // `total` nulo, aquí salía false (typeof null es "object") y allí true
+      // (Number(null) es 0), así que la tienda ofrecía tres sobres y los tres
+      // fallaban.
+      (Number(currentSetObj.total) > 0 && Number(currentSetObj.total) < 69) ||
       composicionEspecial
     : false;
 
@@ -461,7 +587,13 @@ export default function Home() {
       const cards = await getCardsFromSet(selectedSet);
       if (cards && cards.length > 0) {
         setAllCards(cards);
-        syncSetToDatabase(selectedSet, cards).catch((err) => console.error("sync:", err));
+        // AQUÍ YA NO SE SIEMBRA. La siembra la hace el servidor cuando la
+        // necesita de verdad (`cartasDelSet`, en app/action.ts, justo antes de
+        // sortear el sobre). Dispararla desde aquí costaba un SELECT count(*)
+        // por cada cambio de expansión aunque el set ya estuviera sembrado, y
+        // obligaba a exportar `syncSetToDatabase` —o sea, a dejar abierto un
+        // endpoint POST que inserta ~250 filas y que cualquiera con cuenta
+        // podía llamar a voluntad.
       } else {
         // Sin cartas no se puede abrir nada: mejor decirlo aquí que dejar la
         // tienda entera con aspecto de funcionar y fallar al pulsar comprar.
@@ -633,7 +765,7 @@ export default function Home() {
    * contenido llega después (lo pide el servidor) y la vista tiene que abrirse
    * en el mismo toque, no cuando conteste la red.
    */
-  const abrirSobreSellado = (type: PackType, cartas: any[]) => {
+  const abrirSobreSellado = (type: PackType, cartas: Carta[]) => {
     play("moneda");
     setPrePackIds([...userCollectionIds]); // snapshot ANTES del sobre
     setSoldInfo(null);
@@ -745,7 +877,7 @@ export default function Home() {
 
       /* MODO INVITADO: no hay cuenta que defraudar, así que el sobre se sortea
        * y se guarda aquí mismo, en local, exactamente igual que siempre. */
-      let newPack: any[] = [];
+      let newPack: Carta[] = [];
       if (type === "STANDARD") newPack = openStandardPack(allCards);
       else if (type === "PREMIUM") newPack = openPremiumPack(allCards);
       else newPack = openGoldenPack(allCards, userCollectionIds);
@@ -849,7 +981,7 @@ export default function Home() {
       }
 
       const ownedSnapshot = [...userCollectionIds];
-      let combined: any[] = [];
+      let combined: Carta[] = [];
       let saved = true;
 
       if (isSignedIn) {
@@ -876,7 +1008,7 @@ export default function Home() {
         /* INVITADO: sorteo y guardado en local, como siempre. */
         const owned = new Set(ownedSnapshot);
         for (let i = 0; i < count; i++) {
-          let p: any[] = [];
+          let p: Carta[] = [];
           if (type === "STANDARD") p = openStandardPack(allCards);
           else if (type === "PREMIUM") p = openPremiumPack(allCards);
           else p = openGoldenPack(allCards, Array.from(owned));
@@ -1193,7 +1325,7 @@ export default function Home() {
   const bestPull = useMemo(() => {
     if (!currentPack.length) return null;
     return [...currentPack].sort(
-      (a, b) => (SELL_PRICES[b.rarity] || 0) - (SELL_PRICES[a.rarity] || 0),
+      (a, b) => precioDeCartaSuelta(b.rarity) - precioDeCartaSuelta(a.rarity),
     )[0];
   }, [currentPack]);
 
@@ -1248,10 +1380,56 @@ export default function Home() {
     );
   }, [currentPack]);
 
+  /**
+   * Venta de repetidas del invitado, en local. Es la misma regla y la misma
+   * tarifa que aplica el servidor (valorDeVenta), sólo que contra la colección
+   * de localStorage: sin esto, el botón del resumen no existía sin cuenta
+   * aunque la pantalla de colección sí supiera vender.
+   *
+   * ORDEN: primero se persiste y luego se abonan las monedas. saveCollectionRaw
+   * no captura la excepción de cuota, así que si localStorage revienta el
+   * `catch` de quien llama recoge el fallo SIN haber pagado nada.
+   */
+  const venderRepetidasEnLocal = (ids: string[]): { earned: number; sold: number } => {
+    const coleccion = getCollection();
+    const porId = new Map(coleccion.map((c) => [c.id, c]));
+    const pedidas = new Map<string, number>();
+    for (const id of ids) pedidas.set(id, (pedidas.get(id) ?? 0) + 1);
+
+    let earned = 0;
+    let sold = 0;
+    for (const [id, cuantas] of pedidas) {
+      const carta = porId.get(id);
+      if (!carta) continue;
+      const tengo = Number(carta.quantity) || 0;
+      // Nunca por debajo de la copia protegida: el álbum no se vacía.
+      const vendibles = Math.min(cuantas, Math.max(0, tengo - COPIAS_PROTEGIDAS));
+      if (vendibles <= 0) continue;
+      earned += valorDeVenta(carta.rarity, tengo, vendibles);
+      carta.quantity = tengo - vendibles;
+      sold += vendibles;
+    }
+    if (sold === 0) return { earned: 0, sold: 0 };
+
+    saveCollectionRaw(coleccion);
+    return { earned, sold };
+  };
+
   const handleSellPackDupes = async () => {
-    if (!isSignedIn || dupeIdsInPack.length === 0 || sellingDupes) return;
+    if (dupeIdsInPack.length === 0 || sellingDupes) return;
     setSellingDupes(true);
     try {
+      if (!isSignedIn) {
+        const res = venderRepetidasEnLocal(dupeIdsInPack);
+        if (res.earned > 0) {
+          addCoins(res.earned);
+          setSoldInfo(res);
+          play("moneda");
+        } else {
+          toast("No había repetidas que vender", "error");
+        }
+        return;
+      }
       // El resumen puede pintarse con la compra AÚN en vuelo (se sale con
       // Escape antes de rasgar). Sin aguardarla, el servidor todavía tiene
       // quantity=1 para estas cartas y sellable=0: la venta saldría a 0 y el
@@ -1468,6 +1646,7 @@ export default function Home() {
                 title="Promo Pack"
                 description={<>Garantiza una carta<br />que aún no posees.</>}
                 price={PACK_PRICES.SPECIAL}
+                odds={oddsPorTipo.SPECIAL}
                 icon={
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
                     <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
@@ -1481,15 +1660,9 @@ export default function Home() {
                 <PackCard
                   accent="white"
                   title="Estándar"
-                  description={<>Probabilidades oficiales.<br />La opción clásica.</>}
+                  description={<>{cartasPorTipo.STANDARD} cartas.<br />La opción clásica.</>}
                   price={PACK_PRICES.STANDARD}
-                  odds={[
-                    ["Hyper Rare", "0.5%"],
-                    ["Special Illust.", "2%"],
-                    ["Ultra Rare", "4%"],
-                    ["Illustration Rare", "8%"],
-                    ["Double Rare", "15.5%"],
-                  ]}
+                  odds={oddsPorTipo.STANDARD}
                   icon={
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
                       <rect width="12" height="16" x="2" y="6" rx="2" />
@@ -1504,14 +1677,9 @@ export default function Home() {
                   accent="purple"
                   badge="Élite"
                   title="Premium"
-                  description={<>Sin cartas comunes.<br />2 Raras aseguradas.</>}
+                  description={<>Sin cartas comunes.<br />{rarasPremium} Raras aseguradas.</>}
                   price={PACK_PRICES.PREMIUM}
-                  odds={[
-                    ["Hyper Rare", "5%"],
-                    ["Special Illust.", "10%"],
-                    ["Ultra Rare", "25%"],
-                    ["Double Rare", "60%"],
-                  ]}
+                  odds={oddsPorTipo.PREMIUM}
                   icon={
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
                       <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
@@ -1527,11 +1695,7 @@ export default function Home() {
                   title="Leyenda"
                   description={<>1 carta nueva<br />garantizada.</>}
                   price={PACK_PRICES.GOLDEN}
-                  odds={[
-                    ["Carta nueva", "100%"],
-                    ["Slot Ultra Rare", "1×"],
-                    ["Slot Double Rare", "3×"],
-                  ]}
+                  odds={oddsPorTipo.GOLDEN}
                   icon={
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
                       <path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14" />
@@ -1574,9 +1738,21 @@ export default function Home() {
           ruta en un motion.div con transform, y un ancestro transformado crea
           bloque contenedor para los position:fixed, que dejarían de cubrir la
           pantalla. El portal la saca de ese árbol. */}
+      {/* SIN `currentCard &&` EN EL GUARD, Y ES LO QUE HACE QUE SE VEA EL SOBRE.
+          Con sesión, handleBuyPack abre la vista con el mazo VACÍO a propósito
+          (`abrirSobreSellado(type, [])`) y el contenido llega después: ése es
+          justo el truco que esconde la latencia de red, porque el usuario tarda
+          más en agarrar la tira que el servidor en contestar.
+          Exigir `currentCard` lo anulaba entero: currentPack[0] es undefined
+          hasta que llega la respuesta, así que el portal NO se montaba y durante
+          todo ese rato isPackOpen ya era true —barra de pestañas escondida por
+          useImmersive y body sin scroll— sobre la tienda. Pantalla congelada, y
+          el aviso "Preparando el sobre..." era inalcanzable.
+          Montar con el mazo vacío es seguro: los seis usos de currentCard de
+          aquí dentro cuelgan de `cartasVisibles`, que exige fase "abriendo" o
+          "cartas", y el sobre entra en "sellado". */}
       {mounted &&
         isPackOpen &&
-        currentCard &&
         createPortal(
         <motion.div
           initial={{ opacity: 0 }}
@@ -2002,9 +2178,14 @@ export default function Home() {
                           style={{ background: RARITY_GLOW[currentCard.rarity] }}
                         />
                       )}
+                      {/* "hasta" y no el precio a secas: lo que se cobra al
+                          vender NO es SELL_PRICES, es valorDeVenta, que baja con
+                          cada copia que ya tengas (la séptima repetida paga la
+                          mitad). El pie prometía la tarifa de la primera y la
+                          tienda pagaba otra cosa. */}
                       <span className="truncate">
-                        {currentCard.rarity || "Sin rareza"} ·{" "}
-                        {formatNumber(SELL_PRICES[currentCard.rarity] || 10)} monedas
+                        {currentCard.rarity || "Sin rareza"} · hasta{" "}
+                        {formatNumber(precioDeCartaSuelta(currentCard.rarity))} monedas
                       </span>
                     </p>
                   </motion.div>
@@ -2094,17 +2275,25 @@ export default function Home() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2 md:gap-3 w-full md:w-auto">
-              {isSignedIn && dupeIdsInPack.length > 0 && !soldInfo && !packSaveFailed && (
+              {/* El invitado también vende: su colección vive en localStorage y
+                  la pantalla de colección ya sabe venderla (saveCollectionRaw +
+                  valorDeVenta). Dejarlo fuera era un hueco, no una decisión. */}
+              {dupeIdsInPack.length > 0 && !soldInfo && !packSaveFailed && (
                 <button
                   onClick={handleSellPackDupes}
                   disabled={sellingDupes}
-                  className="bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 px-5 py-2.5 rounded-xl text-sm font-medium transition disabled:opacity-50"
+                  className="press touch-target px-5 py-2.5 rounded-xl text-sm font-medium transition disabled:opacity-50"
+                  style={{
+                    background: "var(--ok-weak)",
+                    border: "1px solid color-mix(in srgb, var(--ok) 35%, transparent)",
+                    color: "var(--ok)",
+                  }}
                 >
                   {sellingDupes ? "Vendiendo..." : `Vender ${dupeIdsInPack.length} repetidas`}
                 </button>
               )}
               {soldInfo && (
-                <span className="text-emerald-300 text-sm font-medium px-3 py-2.5">
+                <span className="text-sm font-medium px-3 py-2.5" style={{ color: "var(--ok)" }}>
                   +{formatNumber(soldInfo.earned)} por {soldInfo.sold} repetidas
                 </span>
               )}
@@ -2144,21 +2333,30 @@ export default function Home() {
             ))}
           </div>
 
-          {bestPull && (SELL_PRICES[bestPull.rarity] || 0) >= 50 && (
+          {/* El corte usa precioDeCartaSuelta y no `SELL_PRICES[r] || 0`: con el
+              respaldo a 0, una rareza fuera de la tabla quedaba fuera de "mejor
+              carta del sobre" aunque tres líneas más abajo se le pintaran 10
+              monedas. Un solo respaldo para las dos cosas. */}
+          {bestPull && precioDeCartaSuelta(bestPull.rarity) >= 50 && (
             <motion.div
               initial={{ opacity: 0, scale: 0.97 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="w-full mb-8 surface rounded-2xl p-4 flex items-center gap-4 border border-yellow-500/20"
+              className="w-full mb-8 surface rounded-2xl p-4 flex items-center gap-4"
+              style={{ border: "1px solid color-mix(in srgb, var(--warn) 30%, transparent)" }}
             >
               <img src={bestPull.images?.small} alt={bestPull.name} className="h-16 md:h-24 rounded-lg shrink-0" />
               <div className="flex-1 min-w-0">
-                <p className="text-yellow-400 text-[9px] md:text-[10px] font-medium uppercase tracking-[0.2em]">Mejor carta del sobre</p>
+                {/* Tokens y no text-yellow-400/text-emerald-400: sobre el papel
+                    crema del tema claro esos dos dan ~2:1 de contraste, y aquí
+                    se lee lo que vale la carta. --warn-ink y --ok son su
+                    versión legible (ver app/globals.css). */}
+                <p className="text-[9px] md:text-[10px] font-medium uppercase tracking-[0.2em]" style={{ color: "var(--warn-ink)" }}>Mejor carta del sobre</p>
                 <h3 className="text-base md:text-lg font-semibold ink truncate">{bestPull.name}</h3>
                 <p className="text-[11px] md:text-xs ink-faint">{bestPull.rarity}</p>
               </div>
               <div className="text-right shrink-0">
-                <p className="ink-faint text-[9px] md:text-[10px] uppercase tracking-wider">Valor</p>
-                <p className="text-xl md:text-2xl font-semibold text-emerald-400 tabular-nums">{SELL_PRICES[bestPull.rarity] || 10}</p>
+                <p className="ink-faint text-[9px] md:text-[10px] uppercase tracking-wider">Valor base</p>
+                <p className="text-xl md:text-2xl font-semibold tabular-nums" style={{ color: "var(--ok)" }}>{formatNumber(precioDeCartaSuelta(bestPull.rarity))}</p>
               </div>
             </motion.div>
           )}
@@ -2184,7 +2382,7 @@ export default function Home() {
                       Nueva
                     </div>
                   )}
-                  {wishlistIds.includes(card.id) && (
+                  {wishlistSet.has(card.id) && (
                     <div className="absolute -top-2 -right-2 z-30 bg-pink-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shadow-lg">
                       Deseada
                     </div>

@@ -91,7 +91,7 @@ export const viewport: Viewport = {
   userScalable: false,
   // Un único valor, sin variantes por prefers-color-scheme: el tema depende de
   // data-theme (lo elige el usuario), así que la etiqueta la reescriben el
-  // script de arranque y ThemeToggle. Con dos metas media-gated ese reemplazo
+  // script de arranque y SettingsSheet. Con dos metas media-gated ese reemplazo
   // no funcionaría. Éste es sólo el valor de partida sin JS.
   themeColor: "#14120c",
   // Imprescindible para que env(safe-area-inset-*) devuelva valores reales en

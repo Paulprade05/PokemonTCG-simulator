@@ -17,7 +17,7 @@
 //      caros que admite cada oferta?
 //
 // Uso: node scripts/sim-mercado.mjs
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { transform, loadBindings } from "next/dist/build/swc/index.js";
 
@@ -75,12 +75,35 @@ const titulo = (t) => console.log("\n" + "=".repeat(78) + "\n " + t + "\n" + "="
 const mediana = (a) => { const b = [...a].sort((x, y) => x - y); return b[Math.floor(b.length / 2)] ?? 0; };
 const pct = (a, q) => { const b = [...a].sort((x, y) => x - y); return b[Math.floor(b.length * q)] ?? 0; };
 
-// EXPANSIONES DEL MERCADO: exactamente las que puede exigir el servidor, que es
-// AVAILABLE_SETS filtrado por las que tienen datos (ver setsDelMercado en
-// app/action.ts). Medir sobre los JSON sueltos falsearía todo: svp, swshp y las
-// Trainer Gallery son colecciones sin una sola carta común y con ellas dentro el
-// rendimiento medio de cualquier banda alta se multiplica por diez.
-const SETS = AVAILABLE_SETS.map((s) => s.id).filter((id) => existsSync(join(DATA, id + ".json")));
+// EXPANSIONES DEL MERCADO: exactamente las que puede exigir el servidor.
+//
+// Es el mismo criterio de `catalogoDelMercado` + `admiteOfertaAtada`
+// (app/action.ts): todas las que tienen fichero de cartas Y pirámide de rarezas.
+// Medir sobre los JSON sueltos falsearía todo —svp, swshp y las Trainer Gallery
+// son colecciones sin una sola carta común, y con ellas dentro el rendimiento
+// medio de cualquier banda alta se multiplica por diez— pero medir contra
+// AVAILABLE_SETS, como se hacía antes, falsea en la otra dirección: esa lista se
+// escribía a mano y el servidor ya no la usa, así que el simulador dejaba de
+// mirar justo el universo que se despliega.
+//
+// LA CONDICIÓN TIENE QUE SER LA MISMA QUE LA DEL SERVIDOR. Si se separan, este
+// fichero mide un tablón que nadie ve. Lo vigila scripts/test-invariantes.mjs.
+const RANGO = constantes.RARITY_RANK;
+const admiteOfertaAtada = (cartas) => {
+  let morralla = false, raras = false;
+  for (const c of cartas) {
+    const r = RANGO[c.rarity ?? ""] ?? 1;
+    if (r >= 1 && r <= 5) morralla = true;
+    else if (r >= 10 && r <= 20) raras = true;
+    if (morralla && raras) return true;
+  }
+  return false;
+};
+const SETS = readdirSync(DATA)
+  .filter((f) => f.endsWith(".json") && f !== "all-sets.json")
+  .map((f) => f.replace(/\.json$/, ""))
+  .filter((id) => admiteOfertaAtada(JSON.parse(readFileSync(join(DATA, id + ".json"), "utf8"))))
+  .sort((a, b) => a.localeCompare(b));
 const CARTAS = new Map(
   SETS.map((s) => [s, JSON.parse(readFileSync(join(DATA, s + ".json"), "utf8"))]),
 );

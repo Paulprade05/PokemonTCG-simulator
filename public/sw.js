@@ -7,7 +7,7 @@
 // Súbelo en cada cambio de este fichero: el byte distinto es lo que hace que
 // el navegador instale el service worker nuevo y dispare la recarga única de
 // ServiceWorkerRegister en las PWA instaladas.
-const VERSION = "v7"; // v7: cachea también las ilustraciones españolas (assets.tcgdex.net)
+const VERSION = "v8"; // v8: sólo comentarios, pero el byte distinto fuerza la reinstalación
 const SHELL_CACHE = `shell-${VERSION}`;
 const STATIC_CACHE = `static-${VERSION}`;
 const IMAGE_CACHE = `cards-${VERSION}`;
@@ -34,8 +34,14 @@ const IMAGE_HOSTS = [
   "tcg.pokemon.com",
   "assets.tcgdex.net",
 ];
-// Dos variantes por carta (small 245w + large 734w) desde que el <img> usa
-// srcSet: con 700 entradas se expulsaban cartas ya vistas a mitad de álbum.
+// Dos variantes por carta (small 245w + large 734w), y por eso 1400 y no 700:
+// con la mitad se expulsaban cartas ya vistas a mitad de álbum.
+//
+// OJO, NO ES POR srcSet: PokemonCard elige UNA de las dos a mano y explica por
+// qué no usa srcSet (con dos variantes tan separadas, el navegador pediría
+// siempre la grande y un álbum de 258 cartas pasaría de 45 MB a 151). Las dos
+// acaban en caché porque las piden pantallas distintas: la pequeña la rejilla,
+// la grande la apertura y el visor.
 // El idioma NO duplica la cuenta: sólo se piden las del idioma activo, y quien
 // lo cambia hace una recarga completa que vuelve a llenar la caché.
 const MAX_IMAGE_ENTRIES = 1400;

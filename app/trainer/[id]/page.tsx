@@ -72,8 +72,12 @@ export default function TrainerProfilePage() {
   }, [trainerId]);
 
   const setStats = useMemo(() => dbSets.map((set) => {
-    const owned = cards.filter((c) => c.id.startsWith(set.id + "-")).length;
-    const total = set.total || 1;
+    // Mismo criterio que /collection y /album: el progreso se mide contra las
+    // cartas que EXISTEN (`cardsCount`), no contra el total que declara el set,
+    // que viene inflado de la API. Sin esto la misma expansión daba dos
+    // porcentajes distintos según por qué pantalla se mirara.
+    const total = Number(set.cardsCount) || Number(set.total) || 1;
+    const owned = Math.min(cards.filter((c) => c.id.startsWith(set.id + "-")).length, total);
     const percentage = Math.min(100, Math.round((owned / total) * 100));
     return { ...set, logo: set.images?.logo || "", owned, percentage };
   }), [cards, dbSets]);

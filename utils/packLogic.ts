@@ -207,9 +207,15 @@ const valorDelPremio = (pools: Pools, ramas: readonly RamaDePremio[], allCards: 
  */
 
 /** Huecos de relleno del sobre estándar antes de calibrar. */
-const RELLENO_ESTANDAR = { comunes: 6, infrecuentes: 3 };
-/** Huecos de relleno del sobre premium antes de calibrar. */
-const RELLENO_PREMIUM = { infrecuentes: 4, raras: 4 };
+export const RELLENO_ESTANDAR = { comunes: 6, infrecuentes: 3 };
+/**
+ * Huecos de relleno del sobre premium antes de calibrar.
+ *
+ * SE EXPORTA porque la tienda ANUNCIA este número ("N Raras aseguradas"): con
+ * el texto escrito a mano en app/page.tsx ya se había separado del dato y
+ * prometía 2 donde aquí pone 4.
+ */
+export const RELLENO_PREMIUM = { infrecuentes: 4, raras: 4 };
 
 /**
  * Cuántos huecos de relleno se puede permitir perder un sobre y seguir siendo
@@ -310,6 +316,194 @@ export const admiteSobreEstandar = (allCards: Card[]): boolean =>
 /** Lo mismo para el sobre premium. */
 export const admiteSobrePremium = (allCards: Card[]): boolean =>
   calibrarPremium(categorizeCards(allCards), allCards).cabe;
+
+/* ==================================================================== *
+ * QUÉ REPARTE DE VERDAD EL SOBRE DE ESTA EXPANSIÓN
+ * ====================================================================
+ *
+ * EL PROBLEMA QUE CIERRA: la tienda (app/page.tsx) llevaba las probabilidades
+ * y el número de cartas ESCRITOS A MANO en el JSX. Tres mentiras, todas
+ * medibles:
+ *
+ *   1. "2 Raras aseguradas" en el Premium, que reparte 4 (RELLENO_PREMIUM).
+ *   2. "Probabilidades oficiales: Illustration Rare 8%, Ultra Rare 4%" en el
+ *      Estándar. En TODA la era Espada y Escudo no existe ninguno de esos dos
+ *      escalones, así que `sacarPremio` cae por respaldo y ese 12% de sobres
+ *      reparte una rara o una doble rara. El 8% y el 4% no salen JAMÁS ahí.
+ *   3. "10 cartas" fijo, cuando `calibrar` puede retirar huecos de relleno para
+ *      que el sobre no valga más de lo que cuesta (swsh35 se queda en 9).
+ *
+ * POR QUÉ AQUÍ Y NO EN LA INTERFAZ: las tres cifras son consecuencia del
+ * reparto, y el reparto vive en este fichero. Calcularlas en el JSX es
+ * exactamente lo que ya se hizo una vez y se separó del código en cuanto
+ * PREMIO_ESTANDAR o RELLENO_PREMIUM cambiaron. Derivándolas de las mismas
+ * constantes que reparten, no se pueden volver a separar.
+ *
+ * Es un cálculo puro sobre los pools: mismo set, mismo resultado, sin sorteo.
+ */
+
+/** Rótulo de cada escalón. Va con la tabla que reparte, no en la pantalla, para
+ *  que renombrar un pool no deje el rótulo mintiendo. */
+const ETIQUETA_POOL: Record<NombreDePool, string> = {
+  common: "Común",
+  uncommon: "Infrecuente",
+  rare: "Rara",
+  doubleRare: "Double Rare",
+  illustrationRare: "Illustration Rare",
+  ultraRare: "Ultra Rare",
+  specialIllustrationRare: "Special Illustration Rare",
+  hyperRare: "Hyper Rare",
+};
+
+/** Un hueco fijo del sobre (relleno o slot garantizado). */
+export interface HuecoDelSobre {
+  /** Escalón nominal, el que promete el sobre. */
+  pool: NombreDePool;
+  etiqueta: string;
+  cantidad: number;
+  /** Escalón del que sale DE VERDAD en esta expansión (puede ser el respaldo). */
+  real: NombreDePool | "todas";
+  etiquetaReal: string;
+  /** false = esta expansión no tiene ese escalón y el hueco cae al respaldo. */
+  disponible: boolean;
+}
+
+/** Una rama del hueco de premio, con su probabilidad. */
+export interface RamaEfectiva extends HuecoDelSobre {
+  /** % de sobres que caen en esta rama. */
+  prob: number;
+}
+
+/** Composición completa de un sobre de esta expansión, ya calibrada. */
+export interface ComposicionDelSobre {
+  /** Cartas que trae de verdad (10 salvo que la calibración retire huecos). */
+  cartas: number;
+  /** Huecos fijos, en el orden en que se reparten. */
+  huecos: HuecoDelSobre[];
+  /** Reparto del hueco de premio. Vacío en el Leyenda, que no tiene. */
+  premio: RamaEfectiva[];
+  /** Huecos de relleno que la calibración retiró para no pasarse del precio. */
+  retirados: number;
+}
+
+export type TipoDeSobre = "STANDARD" | "PREMIUM" | "GOLDEN" | "SPECIAL";
+
+/**
+ * A qué pool cae de verdad un hueco, siguiendo la MISMA cadena que `draw`:
+ * el pool nominal, si no el respaldo, y si no el set entero.
+ */
+const poolReal = (
+  pools: Pools,
+  pool: NombreDePool,
+  respaldo: NombreDePool,
+): NombreDePool | "todas" => {
+  if (pools[pool].length > 0) return pool;
+  if (pools[respaldo].length > 0) return respaldo;
+  return "todas";
+};
+
+const rotuloReal = (real: NombreDePool | "todas"): string =>
+  real === "todas" ? "cualquier carta del set" : ETIQUETA_POOL[real];
+
+const hueco = (
+  pools: Pools,
+  pool: NombreDePool,
+  respaldo: NombreDePool,
+  cantidad: number,
+): HuecoDelSobre => {
+  const real = poolReal(pools, pool, respaldo);
+  return {
+    pool,
+    etiqueta: ETIQUETA_POOL[pool],
+    cantidad,
+    real,
+    etiquetaReal: rotuloReal(real),
+    disponible: real === pool,
+  };
+};
+
+const ramasEfectivas = (pools: Pools, ramas: readonly RamaDePremio[]): RamaEfectiva[] =>
+  ramas.map((r) => ({ ...hueco(pools, r.pool, r.respaldo, 1), prob: r.prob }));
+
+/**
+ * Qué reparte de verdad un sobre de este tipo en esta expansión.
+ *
+ * Lo consume la tienda para pintar la tarjeta: número de cartas, descripción y
+ * probabilidades salen todos de aquí, así que no pueden desmentir al reparto.
+ */
+export const composicionDelSobre = (
+  allCards: Card[],
+  tipo: TipoDeSobre,
+): ComposicionDelSobre => {
+  const pools = categorizeCards(allCards);
+
+  if (tipo === "STANDARD") {
+    const { huecos: [comunes, infrecuentes], retirados } = calibrarEstandar(pools, allCards);
+    const huecos = [
+      hueco(pools, "common", "uncommon", comunes),
+      hueco(pools, "uncommon", "common", infrecuentes),
+    ].filter((h) => h.cantidad > 0);
+    return {
+      cartas: comunes + infrecuentes + 1,
+      huecos,
+      premio: ramasEfectivas(pools, PREMIO_ESTANDAR),
+      retirados,
+    };
+  }
+
+  if (tipo === "PREMIUM") {
+    const { huecos: [infrecuentes, raras], retirados } = calibrarPremium(pools, allCards);
+    // El hueco de gama media del premium mezcla dos pools, así que no encaja en
+    // `hueco()`: se describe por el que de verdad tenga cartas.
+    const mediaDisponible =
+      pools.illustrationRare.length > 0 || pools.doubleRare.length > 0;
+    const media: HuecoDelSobre = {
+      pool: "illustrationRare",
+      etiqueta: "Illustration Rare o Double Rare",
+      cantidad: 1,
+      real: mediaDisponible
+        ? pools.illustrationRare.length > 0
+          ? "illustrationRare"
+          : "doubleRare"
+        : poolReal(pools, "rare", "uncommon"),
+      etiquetaReal: mediaDisponible
+        ? pools.illustrationRare.length > 0
+          ? ETIQUETA_POOL.illustrationRare
+          : ETIQUETA_POOL.doubleRare
+        : rotuloReal(poolReal(pools, "rare", "uncommon")),
+      disponible: mediaDisponible,
+    };
+    const huecos = [
+      hueco(pools, "uncommon", "common", infrecuentes),
+      hueco(pools, "rare", "uncommon", raras),
+      media,
+    ].filter((h) => h.cantidad > 0);
+    return {
+      cartas: infrecuentes + raras + 2,
+      huecos,
+      premio: ramasEfectivas(pools, PREMIO_PREMIUM),
+      retirados,
+    };
+  }
+
+  /* LEYENDA Y PROMO PACK: el mismo reparto a dos precios, sin calibrar y sin
+   * hueco de premio (ver openGoldenPack). Su carta garantizada no es una
+   * probabilidad, es una promesa, así que se describe como hueco de 1. */
+  return {
+    cartas: 10,
+    huecos: [
+      hueco(pools, "rare", "uncommon", 5),
+      hueco(pools, "doubleRare", "rare", 3),
+      hueco(pools, "ultraRare", "illustrationRare", 1),
+    ],
+    premio: [],
+    retirados: 0,
+  };
+};
+
+/** Cuántas cartas trae de verdad un sobre de esta expansión. */
+export const cartasDelSobre = (allCards: Card[], tipo: TipoDeSobre): number =>
+  composicionDelSobre(allCards, tipo).cartas;
 
 // --- NIVEL 1: SOBRE ESTÁNDAR ---
 export const openStandardPack = (allCards: Card[]): Card[] => {

@@ -1402,8 +1402,22 @@ function elegir<T>(rng: Rng, xs: readonly T[]): T {
   return xs[Math.floor(rng() * xs.length)];
 }
 
-function nombreDeSet(setId: string): string {
-  return AVAILABLE_SETS.find((s) => s.id === setId)?.name ?? setId.toUpperCase();
+/**
+ * Rótulo de una expansión dentro de la prosa de la oferta.
+ *
+ * `nombres` es opcional y llega desde el servidor con el catálogo REAL (ver
+ * `catalogoDelMercado` en app/action.ts). Sin él quedaba sólo AVAILABLE_SETS,
+ * una lista escrita a mano que no incluye las expansiones que trae el cron: sus
+ * ofertas decían "de SV10" en mayúsculas. La cadena de respaldo se conserva
+ * entera para que las dos simulaciones —que llaman a generarOfertas con tres
+ * argumentos— sigan dando exactamente lo mismo.
+ */
+function nombreDeSet(setId: string, nombres?: Record<string, string>): string {
+  return (
+    nombres?.[setId] ??
+    AVAILABLE_SETS.find((s) => s.id === setId)?.name ??
+    setId.toUpperCase()
+  );
 }
 
 function dificultadDe(esfuerzo: number): Oferta["dificultad"] {
@@ -1457,7 +1471,11 @@ interface Candidata extends Oferta {
   valorTecho: number;
 }
 
-function montarOferta(rng: Rng, setId: string | null): Candidata | null {
+function montarOferta(
+  rng: Rng,
+  setId: string | null,
+  nombres?: Record<string, string>,
+): Candidata | null {
   const partes: Variante[] = [];
 
   if (setId === null) {
@@ -1498,7 +1516,7 @@ function montarOferta(rng: Rng, setId: string | null): Candidata | null {
     const filtro: Filtro = { ...p.filtro };
     if (filtro.categoria === "set" && setId !== null) filtro.valor = setId;
     requisitos.push({
-      descripcion: p.texto + (atado ? ` de ${nombreDeSet(setId)}` : " (cualquier expansión)"),
+      descripcion: p.texto + (atado ? ` de ${nombreDeSet(setId, nombres)}` : " (cualquier expansión)"),
       cantidad: p.cantidad,
       filtro,
       setId: atado ? setId : null,
@@ -1520,7 +1538,7 @@ function montarOferta(rng: Rng, setId: string | null): Candidata | null {
   const gancho =
     setId === null
       ? `Alguien busca ${unicas.map((p) => p.mote).join(" y ")} de cualquier expansión: ${elegir(rng, REMATES)}.`
-      : `El comprador quiere ${principal.mote} de ${nombreDeSet(setId)}: ${elegir(rng, REMATES)}.`;
+      : `El comprador quiere ${principal.mote} de ${nombreDeSet(setId, nombres)}: ${elegir(rng, REMATES)}.`;
   // La regla de los duplicados va en la descripción a propósito: es la primera
   // pregunta que se hace el jugador al ver el lote ("¿me quedo sin la carta?").
   const descripcion = `${gancho} Sólo duplicados: de cada carta que entregues te quedará una copia en el álbum.`;
@@ -1554,6 +1572,13 @@ export function generarOfertas(
   semilla: number,
   setIds: string[],
   cuantas: number,
+  /**
+   * Rótulos de expansión, opcionales. Sólo cambian TEXTO: el sorteo depende de
+   * `semilla`, `setIds` y `cuantas`, así que pasarlos o no da exactamente las
+   * mismas ofertas con los mismos ids. Va al final y opcional porque las dos
+   * simulaciones (scripts/sim-*.mjs) llaman con tres argumentos.
+   */
+  nombres?: Record<string, string>,
 ): Oferta[] {
   if (cuantas <= 0) return [];
   const sets = setIds.filter(Boolean);
@@ -1590,7 +1615,7 @@ export function generarOfertas(
     // para abrir una expansión concreta.
     const libre = primera || rng() < 0.35 || sets.length === 0;
     const setId = libre ? null : elegir(rng, sets);
-    const cand = montarOferta(rng, setId);
+    const cand = montarOferta(rng, setId, nombres);
     if (!cand || ids.has(cand.id)) continue;
 
     if (primera || cupo[cand.dificultad] > 0) {

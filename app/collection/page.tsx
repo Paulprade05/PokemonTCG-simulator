@@ -25,6 +25,7 @@ import PageHeader from "../../components/PageHeader";
 import Loader from "../../components/Loader";
 import CardDetailModal from "../../components/CardDetailModal";
 import Link from "next/link";
+import type { CartaEnColeccion, Expansion } from "../../utils/tipos";
 
 /**
  * Cartas del invitado con el rótulo y la ilustración del idioma ACTUAL.
@@ -39,7 +40,7 @@ import Link from "next/link";
  * consultas), y en inglés del catálogo, que es el único sitio donde está el
  * nombre inglés de una carta que se guardó traducida.
  */
-async function enIdiomaLocal(cartas: any[]): Promise<any[]> {
+async function enIdiomaLocal(cartas: CartaEnColeccion[]): Promise<CartaEnColeccion[]> {
   if (cartas.length === 0) return cartas;
   try {
     const traducidas = await nombresDeCartas(cartas.map((c) => c.id));
@@ -47,7 +48,7 @@ async function enIdiomaLocal(cartas: any[]): Promise<any[]> {
     return cartas.map((c) => {
       const t = traducidas[c.id];
       // Sin ilustración española (promos, Galerías...) se conserva la guardada.
-      return t ? { ...c, name: t.name, images: t.images ?? c.images } : c;
+      return t?.name ? { ...c, name: t.name, images: t.images ?? c.images } : c;
     });
   } catch {
     // Sin cobertura la colección local se pinta igual, con lo que hay guardado.
@@ -57,8 +58,9 @@ async function enIdiomaLocal(cartas: any[]): Promise<any[]> {
 
 export default function CollectionPage() {
   const { isSignedIn, isLoaded } = useUser();
-  const [cards, setCards] = useState<any[]>([]);
-  const [dbSets, setDbSets] = useState<any[]>([]);
+  // Tipadas: son las dos listas de las que cuelga la pantalla entera.
+  const [cards, setCards] = useState<CartaEnColeccion[]>([]);
+  const [dbSets, setDbSets] = useState<Expansion[]>([]);
   const { coins, addCoins, setCoins } = useCurrency();
   const [showStats, setShowStats] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -67,8 +69,8 @@ export default function CollectionPage() {
   const [sortBy, setSortBy] = useState("rarity_desc");
   const [filterSet, setFilterSet] = useState("all");
   const [filterRarity, setFilterRarity] = useState("all");
-  const [selectedCard, setSelectedCard] = useState<any | null>(null);
-  const [actionCard, setActionCard] = useState<any | null>(null);
+  const [selectedCard, setSelectedCard] = useState<CartaEnColeccion | null>(null);
+  const [actionCard, setActionCard] = useState<CartaEnColeccion | null>(null);
   const [confirmDuplicates, setConfirmDuplicates] = useState(false);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 24;
@@ -150,16 +152,66 @@ export default function CollectionPage() {
     loadCollection();
   }, [loadCollection]);
 
+  /**
+   * Progreso por expansión.
+   *
+   * DOS ARREGLOS AQUÍ:
+   *
+   * 1. EL DENOMINADOR. Era `set.total`, el que declara el set, que viene de la
+   *    API y no coincide con las cartas que existen (la ingesta lo documenta y
+   *    además es reanudable: un set a medio descargar declara de más). En esas
+   *    expansiones el 100% era inalcanzable. Ahora manda `cardsCount`, el
+   *    conteo real que devuelve getSetsFromDB; `total` queda de respaldo para
+   *    el modo local, donde loadLocalSets no lo trae.
+   *
+   * 2. LA LISTA. Se mapeaba `dbSets` ENTERO. Con la base sincronizada por el
+   *    cron son 171 tarjetas con 171 logos remotos, casi todas a 0%: la sección
+   *    que debería decir "cómo voy" se convertía en un catálogo. Ahora sólo
+   *    salen las expansiones en las que hay algo, ordenadas por progreso, y el
+   *    resto queda tras el botón de "ver todas".
+   *
+   * `totalInSet` se calcula una vez y lo usan el porcentaje, el "n/N" y las que
+   * faltan: antes el rótulo pintaba `set.total` crudo mientras el porcentaje
+   * usaba el respaldo `|| 1`, así que un set sin total decía "5/" y un 100%.
+   */
   const setStats = useMemo(() => {
-    return dbSets.map((set) => {
-      const uniqueCardsOwned = cards.filter((c) => c.id.startsWith(set.id + "-")).length;
-      const totalInSet = set.total || 1;
-      const percentage = Math.min(100, Math.round((uniqueCardsOwned / totalInSet) * 100));
-      const missing = Math.max(0, totalInSet - uniqueCardsOwned);
-      const logoUrl = set.images?.logo || "";
-      return { ...set, logo: logoUrl, owned: uniqueCardsOwned, percentage, missing };
-    });
+    const conteoPorSet = new Map<string, number>();
+    for (const c of cards) {
+      const guion = String(c.id).lastIndexOf("-");
+      if (guion <= 0) continue;
+      const sid = String(c.id).slice(0, guion);
+      conteoPorSet.set(sid, (conteoPorSet.get(sid) ?? 0) + 1);
+    }
+    return dbSets
+      .map((set) => {
+        const totalInSet = Number(set.cardsCount) || Number(set.total) || 1;
+        // Acotado al catálogo, por lo mismo que en el álbum: el numerador cuenta
+        // lo que hay en la colección y el denominador lo que existe hoy, y
+        // pueden no cuadrar tras una resiembra.
+        const uniqueCardsOwned = Math.min(conteoPorSet.get(set.id) ?? 0, totalInSet);
+        const percentage = Math.min(100, Math.round((uniqueCardsOwned / totalInSet) * 100));
+        const missing = Math.max(0, totalInSet - uniqueCardsOwned);
+        const logoUrl = set.images?.logo || "";
+        return {
+          ...set,
+          logo: logoUrl,
+          owned: uniqueCardsOwned,
+          totalInSet,
+          percentage,
+          missing,
+        };
+      })
+      .sort((a, b) => b.percentage - a.percentage || b.owned - a.owned);
   }, [cards, dbSets]);
+
+  /** Sólo las expansiones en las que el jugador tiene algo. */
+  const setStatsEmpezados = useMemo(
+    () => setStats.filter((s) => s.owned > 0),
+    [setStats],
+  );
+  /** El resto sólo se monta si se piden expresamente. */
+  const [verTodasLasExpansiones, setVerTodasLasExpansiones] = useState(false);
+  const setStatsVisibles = verTodasLasExpansiones ? setStats : setStatsEmpezados;
 
   const processedCards = useMemo(() => {
     let result = [...cards];
@@ -421,7 +473,9 @@ export default function CollectionPage() {
 
   const handleToggleFavInModal = async () => {
     if (!selectedCard) return;
-    await applyToggleFavorite(selectedCard.id, selectedCard.is_favorite);
+    // !! porque la columna is_favorite admite NULL: el resto del código ya la
+    // lee con COALESCE(..., false) y aquí tiene que valer lo mismo.
+    await applyToggleFavorite(selectedCard.id, !!selectedCard.is_favorite);
   };
 
   // ── Pulsación larga en la rejilla ───────────────────────────────────────
@@ -433,7 +487,7 @@ export default function CollectionPage() {
     }
   };
 
-  const startLongPress = (e: React.PointerEvent, card: any) => {
+  const startLongPress = (e: React.PointerEvent, card: CartaEnColeccion) => {
     if (e.button !== 0) return;
     const lp = longPressRef.current;
     cancelLongPress();
@@ -457,7 +511,7 @@ export default function CollectionPage() {
     }
   };
 
-  const openDetail = (card: any) => {
+  const openDetail = (card: CartaEnColeccion) => {
     // Tras una pulsación larga el navegador emite un click: lo ignoramos para
     // no abrir el detalle por debajo de la hoja de acciones.
     if (longPressRef.current.fired) {
@@ -478,7 +532,7 @@ export default function CollectionPage() {
    */
   const [navIds, setNavIds] = useState<string[]>([]);
 
-  const openCardDetail = (card: any) => {
+  const openCardDetail = (card: CartaEnColeccion) => {
     setNavIds(processedCards.map((c) => c.id));
     setSelectedCard(card);
   };
@@ -604,20 +658,27 @@ export default function CollectionPage() {
                 transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                 className="overflow-hidden"
               >
+                {setStatsVisibles.length === 0 ? (
+                  <p className="text-xs ink-faint text-center py-8">
+                    Aún no tienes cartas de ninguna expansión. Abre un sobre para empezar.
+                  </p>
+                ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
-                  {setStats.map((stat, idx) => (
+                  {setStatsVisibles.map((stat, idx) => (
                     <motion.div
                       key={stat.id}
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: idx * 0.03 }}
+                      // Con tope, como en el resumen del sobre: sin él, la
+                      // expansión número 60 no aparecía hasta los dos segundos.
+                      transition={{ delay: Math.min(idx, 12) * 0.03 }}
                     >
                       <Link href={`/album/${stat.id}`} className="block surface surface-hover rounded-2xl p-4 h-full">
                         <div className="flex items-center gap-3 mb-3">
-                          {stat.logo && <img src={stat.logo} alt={stat.name} className="h-7 object-contain opacity-90" />}
+                          {stat.logo && <img src={stat.logo} alt={stat.name} loading="lazy" decoding="async" className="h-7 object-contain opacity-90" />}
                           <div className="flex-1 min-w-0">
                             <h3 className="font-medium text-sm truncate">{stat.name}</h3>
-                            <p className="text-[10px] ink-faint font-mono tnum">{stat.owned}/{stat.total}</p>
+                            <p className="text-[10px] ink-faint font-mono tnum">{stat.owned}/{stat.totalInSet}</p>
                           </div>
                           <span className="text-xs font-semibold ink-soft tnum">{stat.percentage}%</span>
                         </div>
@@ -631,6 +692,23 @@ export default function CollectionPage() {
                     </motion.div>
                   ))}
                 </div>
+                )}
+
+                {/* Las expansiones a cero no entran salvo que se pidan: con la
+                    base sincronizada por el cron son más de ciento cincuenta
+                    tarjetas con su logo remoto, y la sección dejaba de responder
+                    a "cómo voy" para convertirse en un catálogo. */}
+                {setStats.length > setStatsEmpezados.length && (
+                  <button
+                    type="button"
+                    onClick={() => setVerTodasLasExpansiones((v) => !v)}
+                    className="btn-ghost press touch-target mt-3 w-full rounded-xl text-xs font-medium"
+                  >
+                    {verTodasLasExpansiones
+                      ? "Ver sólo las empezadas"
+                      : `Ver las ${formatNumber(setStats.length - setStatsEmpezados.length)} expansiones sin empezar`}
+                  </button>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
@@ -923,7 +1001,7 @@ export default function CollectionPage() {
                   onClick={() => {
                     const { id, is_favorite } = actionCardLive;
                     setActionCard(null);
-                    applyToggleFavorite(id, is_favorite);
+                    applyToggleFavorite(id, !!is_favorite);
                   }}
                   className="btn-ghost press rounded-2xl py-3.5 text-sm font-medium flex items-center justify-center gap-2 touch-target"
                 >

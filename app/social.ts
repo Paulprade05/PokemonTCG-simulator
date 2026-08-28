@@ -3,7 +3,10 @@
 import { auth } from "@clerk/nextjs/server";
 import { sql } from "@vercel/postgres";
 import { revalidatePath } from "next/cache";
-import { SELL_PRICES } from "../utils/constanst";
+// `precioDeCartaSuelta` + `valorDeVenta` en vez de SELL_PRICES a pelo: el valor
+// de una colección tiene que ser el dinero que de verdad daría venderla, y el
+// precio por copia baja con cada repetida.
+import { RARITY_RANK, precioDeCartaSuelta, valorDeVenta } from "../utils/constanst";
 // Los intercambios se emparejan SIEMPRE por id (ver createTradeOffer y
 // acceptTradeOffer): aquí el idioma sólo cambia el rótulo y la ilustración de
 // las cartas que se enseñan al elegir y al revisar una oferta.
@@ -49,9 +52,16 @@ async function hydrateCardsByIds(ids: string[]) {
 
 export async function searchUsersByName(query: string) {
   const { userId } = await auth();
+  // Exige sesión: es un directorio de personas, no un dato público. Sin esta
+  // guarda el filtro efectivo era `id != ""`, o sea ninguno.
+  if (!userId) return [];
   if (!query || query.trim().length < 2) return [];
   try {
-    const term = `%${query.toLowerCase()}%`;
+    // Se escapan los comodines de LIKE (%, _ y la propia barra de escape), igual
+    // que hace searchCardsInDB en app/action.ts. Sin esto, buscar "%" devolvía
+    // ocho usuarios cualesquiera del sistema.
+    const safe = query.toLowerCase().replace(/[\\%_]/g, (m) => `\\${m}`);
+    const term = `%${safe}%`;
     const { rows } = await sql`
       SELECT id, COALESCE(username, 'Entrenador') AS username
       FROM users
@@ -94,6 +104,15 @@ export async function addFriend(identifier: string) {
   if (targetId === userId) return { error: "No puedes añadirte a ti mismo" };
 
   try {
+    // El destinatario tiene que EXISTIR. Por el camino del nombre ya está
+    // comprobado (sale de un SELECT), pero por el del id —cualquier cadena que
+    // empiece por "user_"— se insertaba a ciegas: quedaba una fila colgante que
+    // luego aparecía en la lista como un "Entrenador" fantasma imposible de
+    // quitar. Esta comprobación estaba en la versión duplicada de app/action.ts
+    // y no en ésta, que es la que usa la aplicación.
+    const { rows: destino } = await sql`SELECT 1 FROM users WHERE id = ${targetId}`;
+    if (destino.length === 0) return { error: "Ese entrenador no existe." };
+
     const { rows: existing } = await sql`
       SELECT status FROM friendships
       WHERE (user_id = ${userId} AND friend_id = ${targetId})
@@ -149,18 +168,51 @@ export async function getSocialOverview() {
 
     const me: any = { friendship_id: "me", friend_id: userId, friend_name: "Tú", isMe: true };
     const all: any[] = [me, ...accepted.map((a: any) => ({ ...a, isMe: false }))];
+
+    /* UNA CONSULTA PARA TODOS, NO UNA POR AMIGO.
+     *
+     * Esto era un `for` con un SELECT dentro: con veinte amigos, veintiún
+     * viajes en serie y veintiún volcados de `user_collection` a memoria para
+     * sumar tres números. Ahora se agrupa en SQL por (usuario, rareza), que es
+     * el grano mínimo que necesita la fórmula del patrimonio, y se termina en
+     * JS. El resultado son unas pocas decenas de filas por amigo en vez de una
+     * por carta.
+     */
+    const ids = all.map((f) => f.friend_id);
+    const { rows: agregados } = await sql.query(
+      `SELECT uc.user_id,
+              c.rarity,
+              COUNT(*)::int              AS unicas,
+              SUM(uc.quantity)::int      AS copias,
+              array_agg(uc.quantity)     AS cantidades
+         FROM user_collection uc
+         JOIN cards c ON c.id = uc.card_id
+        WHERE uc.user_id = ANY($1::text[]) AND uc.quantity > 0
+        GROUP BY uc.user_id, c.rarity`,
+      [ids],
+    );
+
+    const porUsuario = new Map<string, { value: number; cards: number; unique: number }>();
+    for (const fr of all) porUsuario.set(fr.friend_id, { value: 0, cards: 0, unique: 0 });
+
+    for (const row of agregados) {
+      const acc = porUsuario.get(String(row.user_id));
+      if (!acc) continue;
+      acc.unique += Number(row.unicas);
+      acc.cards += Number(row.copias);
+      // PATRIMONIO REAL. Antes era `SELL_PRICES × copias`, que ignora la curva
+      // decreciente por copias: el ranking premiaba acaparar repetidas que
+      // valen la octava parte de lo que puntuaban. Cada carta vale su copia
+      // protegida entera más lo que dé valorDeVenta por las repetidas.
+      const base = precioDeCartaSuelta(row.rarity);
+      for (const q of (row.cantidades ?? []) as number[]) {
+        acc.value += base + valorDeVenta(row.rarity, Number(q));
+      }
+    }
+
     for (const fr of all) {
-      const { rows: cards } = await sql`
-        SELECT uc.quantity, c.rarity
-        FROM user_collection uc JOIN cards c ON uc.card_id = c.id
-        WHERE uc.user_id = ${fr.friend_id} AND uc.quantity > 0
-      `;
-      let value = 0, total = 0, unique = 0;
-      cards.forEach((r: any) => {
-        unique += 1; total += r.quantity;
-        value += (SELL_PRICES[r.rarity as keyof typeof SELL_PRICES] || 10) * r.quantity;
-      });
-      fr.stats = { value, cards: total, unique };
+      const acc = porUsuario.get(fr.friend_id)!;
+      fr.stats = { value: acc.value, cards: acc.cards, unique: acc.unique };
     }
     all.sort((a, b) => b.stats.value - a.stats.value);
 
@@ -172,6 +224,30 @@ export async function getSocialOverview() {
   }
 }
 
+/* ==================================================================== *
+ * EL INTERCAMBIO ES LA EXCEPCIÓN A LA COPIA RESERVADA. A PROPÓSITO.
+ * ====================================================================
+ *
+ * El mercado (utils/mercado.ts) exige `copiasEntregables`: para entregar N
+ * copias hay que tener N + COPIAS_RESERVADAS, así que el álbum nunca se vacía.
+ * Aquí NO se aplica esa regla, y la diferencia es deliberada:
+ *
+ *  · El mercado SACA cartas del juego a cambio de monedas. Sin la reserva, un
+ *    jugador podía vaciarse el álbum sin darse cuenta y sin vuelta atrás.
+ *  · El intercambio MUEVE cartas entre dos álbumes y no crea ni destruye
+ *    ninguna: el CTE de `acceptTradeOffer` está construido para que la suma de
+ *    deltas de cada carta sea exactamente cero. Lo que sale de un lado entra en
+ *    el otro, y el que la entrega sabe perfectamente lo que está dando.
+ *  · Con la reserva, una carta de la que sólo hay UNA copia no se podría
+ *    intercambiar jamás — y ésas son justo las que se quieren intercambiar.
+ *
+ * SI ALGÚN DÍA SE CAMBIA DE CRITERIO, son tres sitios y van juntos o no van:
+ * el guard de aquí abajo, el CTE `deuda` de `acceptTradeOffer` (que es el que
+ * decide de verdad, sobre filas ya bloqueadas) y el tope del selector en
+ * components/social/TradeBuilder.tsx, en SUS DOS columnas. Cambiar sólo éste es
+ * puramente cosmético. Y hay que contar con que las ofertas ya creadas bajo la
+ * regla vieja pasarían a cancelarse solas al aceptarlas.
+ */
 export async function createTradeOffer(receiverId: string, offeredIds: string[], requestedIds: string[], message?: string) {
   const { userId } = await auth();
   if (!userId) return { error: "No autorizado" };
@@ -518,12 +594,20 @@ export async function getTradableCollection(targetId: string) {
     if (fr.length === 0) return [];
   }
   try {
+    // Ordenado por RANGO de rareza, no por la cadena. `ORDER BY c.rarity DESC`
+    // comparaba texto, así que "Uncommon" salía por delante de "Special
+    // Illustration Rare" y el selector de intercambio parecía desordenado.
+    // Aquí no hay una segunda ordenación en el cliente que lo disimule.
     const { rows } = await sql`
       SELECT c.id, c.name, c.rarity, c.images, c.set_id, uc.quantity
       FROM user_collection uc JOIN cards c ON uc.card_id = c.id
       WHERE uc.user_id = ${targetId} AND uc.quantity > 0
-      ORDER BY c.rarity DESC, c.name ASC
     `;
+    rows.sort((a: any, b: any) => {
+      const ra = RARITY_RANK[a.rarity] || 0;
+      const rb = RARITY_RANK[b.rarity] || 0;
+      return rb - ra || String(a.name).localeCompare(String(b.name));
+    });
     return [...(await traducirCartas(
       rows.map((r: any) => ({
         id: r.id, name: r.name, rarity: r.rarity, quantity: r.quantity, set_id: r.set_id,

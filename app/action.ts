@@ -4,7 +4,11 @@
   import { auth, currentUser } from "@clerk/nextjs/server";
   import { sql } from '@vercel/postgres';
   import { revalidatePath } from 'next/cache';
-  import { AVAILABLE_SETS, SELL_PRICES, RARITY_RANK, STARTING_COINS, DAILY_BASE, DAILY_STREAK_STEP, DAILY_STREAK_CAP, SET_COMPLETION_BONUS, PACK_PRICES, valorDeVenta } from "../utils/constanst";
+  // SELL_PRICES ya no se importa a propósito: el valor de una colección se
+  // calcula con `precioDeCartaSuelta` + `valorDeVenta`, que son la curva real
+  // que paga la tienda. Multiplicar SELL_PRICES por la cantidad inflaba el
+  // patrimonio y premiaba acaparar repetidas que valen la octava parte.
+  import { AVAILABLE_SETS, RARITY_RANK, STARTING_COINS, DAILY_BASE, DAILY_STREAK_STEP, DAILY_STREAK_CAP, SET_COMPLETION_BONUS, PACK_PRICES, valorDeVenta, precioDeCartaSuelta } from "../utils/constanst";
   import { loadLocalSets, loadLocalCards } from "../services/localData";
   // Capa de presentación en español. Se aplica AQUÍ, en el servidor y en el
   // punto en el que las cartas salen hacia la interfaz, por dos razones: el
@@ -333,16 +337,26 @@
     cartas: CartaDeSobre[],
   ): Set<TipoSobre> {
     const nombre = ficha.name.toLowerCase();
-    // OJO al total: en el cliente `undefined < 69` es false, pero aquí una
-    // columna vacía llega como null y `null < 69` sí es true. Sin el
-    // Number.isFinite, un set sin `total` quedaría marcado de especial y en él
-    // no se podría comprar nada más que el Promo Pack.
+    /* OJO AL TOTAL, que es un `> 0 &&` y no un `Number.isFinite`.
+     *
+     * `fichaDelSet` hace `Number(rows[0].total)`, y `Number(null)` es 0, no NaN:
+     * `Number.isFinite(0)` es true, así que el guard anterior NO protegía de lo
+     * que su propio comentario decía proteger. Una columna `total` vacía —que
+     * la ingesta puede dejar así, escribe `s.total ?? null`— caía en `0 < 69` y
+     * la expansión quedaba marcada de especial.
+     *
+     * Y eso rompía la tienda de la peor manera posible: en el cliente
+     * `typeof null === "object"`, así que allí NO se marcaba de especial y se
+     * pintaban los tres sobres normales... que aquí se rechazaban uno por uno
+     * con "ese sobre no está a la venta". Botones que fallan al pulsarlos.
+     * El cliente aplica ahora exactamente esta misma condición.
+     */
     const especial =
       nombre.includes("promos") ||
       nombre.includes("gallery") ||
       ficha.series === "POP" ||
       ficha.series === "Other" ||
-      (Number.isFinite(ficha.total) && ficha.total < 69) ||
+      (ficha.total > 0 && ficha.total < 69) ||
       composicionEspecial(cartas);
 
     if (especial) return new Set<TipoSobre>(["SPECIAL"]);
@@ -564,7 +578,7 @@
         );
       }
 
-      podarRecibosViejos(userId);
+      await podarRecibosViejos(userId);
       revalidatePath('/');
       revalidatePath('/collection');
       return {
@@ -620,14 +634,25 @@
   /**
    * Los recibos sólo hacen falta mientras un reenvío sea plausible (segundos).
    * Se podan de vez en cuando, y sólo los del propio usuario, para que la tabla
-   * no crezca sin fin. Va sin await: no es parte de la compra.
+   * no crezca sin fin.
+   *
+   * SE ESPERA, aunque no sea parte de la compra. Antes se lanzaba sin `await`
+   * confiando en que la consulta viajara sola, pero en serverless la función se
+   * congela en cuanto devuelve la respuesta: la promesa quedaba a medias y la
+   * poda no llegaba a ejecutarse casi nunca, así que `pack_purchases` —que
+   * guarda las cartas de cada sobre en JSONB— crecía sin límite. Cuesta un
+   * viaje el 2% de las compras, y el fallo no puede tumbarla.
    */
-  function podarRecibosViejos(userId: string) {
+  async function podarRecibosViejos(userId: string) {
     if (Math.random() > 0.02) return;
-    sql`
-      DELETE FROM pack_purchases
-      WHERE user_id = ${userId} AND bought_at < NOW() - INTERVAL '2 days'
-    `.catch((e) => console.error("poda de recibos:", e));
+    try {
+      await sql`
+        DELETE FROM pack_purchases
+        WHERE user_id = ${userId} AND bought_at < NOW() - INTERVAL '2 days'
+      `;
+    } catch (e) {
+      console.error("poda de recibos:", e);
+    }
   }
 
   // `savePackToCollection` se eliminó: acreditaba en la colección cualquier
@@ -644,19 +669,38 @@
     if (!userId) return [];
 
     try {
-      // ✅ CORRECCIÓN IMPORTANTE:
-      // 1. Pedimos la columna 'is_favorite'
-      // 2. Ordenamos primero por favoritos (DESC) y luego por cantidad
-      const { rows } = await sql`
-    SELECT c.*, uc.quantity, uc.is_favorite -- 👈 Asegúrate de pedir esta columna
-    FROM user_collection uc
-    JOIN cards c ON uc.card_id = c.id
-    WHERE uc.user_id = ${userId} AND uc.quantity > 0
-    ORDER BY
-      uc.is_favorite DESC,  -- 👈 PRIMERO LAS FAVORITAS (True va antes que False)
-      c.rarity DESC,        -- Luego por rareza
-      c.name ASC            -- Luego por nombre
-  `;
+      /* ORDEN: favoritas, luego rareza de mejor a peor, luego nombre.
+       *
+       * `ORDER BY c.rarity DESC` ordenaba CADENAS, no rarezas: "Uncommon"
+       * acababa por encima de "Special Illustration Rare" porque la U va
+       * después de la S. La pantalla de colección lo disimulaba reordenando en
+       * el cliente con RARITY_RANK, pero quien lee esto sin reordenar —y el
+       * selector de intercambio, que hace lo mismo en app/social.ts— se
+       * encontraba una lista aparentemente aleatoria.
+       *
+       * El rango viaja como tabla parametrizada (unnest) en vez de un CASE
+       * concatenado: RARITY_RANK es la única fuente del criterio y así no hay
+       * que reescribirlo en SQL cada vez que se toca.
+       *
+       * COALESCE en is_favorite: la columna admite NULL y `NULL DESC` va
+       * PRIMERO en Postgres, así que sin esto las cartas que nunca han pasado
+       * por el botón de favorito se colaban por delante de las favoritas.
+       */
+      const rarezas = Object.keys(RARITY_RANK);
+      const rangos = rarezas.map((r) => RARITY_RANK[r]);
+      const { rows } = await sql.query(
+        `SELECT c.*, uc.quantity, uc.is_favorite
+           FROM user_collection uc
+           JOIN cards c ON uc.card_id = c.id
+           LEFT JOIN unnest($2::text[], $3::int[]) AS rk(rareza, rango)
+             ON rk.rareza = c.rarity
+          WHERE uc.user_id = $1 AND uc.quantity > 0
+          ORDER BY
+            COALESCE(uc.is_favorite, false) DESC,
+            COALESCE(rk.rango, 0) DESC,
+            c.name ASC`,
+        [userId, rarezas, rangos],
+      );
       
       const parse = (v: any, fb: any = null) => {
         if (v == null) return fb;
@@ -802,26 +846,46 @@
 
   // --- 4. HERRAMIENTAS DE SINCRONIZACIÓN (Opcional si usas JSON local) ---
 
-  // El segundo parámetro se conserva sólo por compatibilidad con la llamada del
-  // cliente (app/page.tsx) y se IGNORA a propósito: no se puede fiar de las
-  // cartas que le manden. En vez de insertar ese payload en la tabla maestra
-  // `cards` (por donde se colaban cartas falsas visibles para todos), reconstruye
-  // las cartas en el servidor desde el catálogo local, que valida el setId contra
-  // el directorio de datos. Un setId inventado no casa con ningún fichero y no
-  // siembra nada. Además exige sesión: era la única escritura del fichero sin
-  // auth, invocable por cualquier anónimo. (requireAdmin no encaja aquí: espera
-  // un Request de route handler, no una server action; y la siembra la disparan
-  // usuarios normales al abrir un set, no sólo un administrador.)
-  export async function syncSetToDatabase(setId: string, _clientCards?: unknown) {
-    const { userId } = await auth();
-    if (!userId) return { status: 'unauthorized' };
+  /**
+   * Siembra las cartas de una expansión desde el catálogo del repositorio.
+   *
+   * YA NO SE EXPORTA, Y ESO ES EL ARREGLO. Toda función exportada de un fichero
+   * 'use server' es un endpoint POST vivo, así que mientras lo estuvo cualquiera
+   * con una cuenta podía pedir la siembra de un set a voluntad: ~250 INSERT de
+   * uno en uno por llamada. Su único llamador del navegador era `loadAndSync`
+   * en app/page.tsx, que la disparaba en CADA cambio de expansión aunque el set
+   * ya estuviera sembrado; se ha retirado de allí, y el único que la necesita de
+   * verdad es `cartasDelSet`, aquí mismo, justo antes de sortear un sobre.
+   *
+   * (Se llama desde arriba, en la línea ~264: las declaraciones de función se
+   * elevan, así que el orden en el fichero da igual.)
+   *
+   * Nunca se fía de lo que le manden: reconstruye las cartas desde el catálogo
+   * local, que valida el setId contra el directorio de datos. Un setId inventado
+   * no casa con ningún fichero y no siembra nada.
+   */
+  async function syncSetToDatabase(setId: string) {
     try {
-      const { count } = (await sql`SELECT count(*) FROM cards WHERE set_id = ${setId}`).rows[0];
-
-      if (parseInt(count) > 0) return { status: 'already_synced' };
-
       const cards = (await loadLocalCards(setId)) as any[];
       if (cards.length === 0) return { status: 'unknown_set' };
+
+      const { count } = (await sql`SELECT count(*) FROM cards WHERE set_id = ${setId}`).rows[0];
+
+      /* SE COMPARA CONTRA EL CATÁLOGO, NO CONTRA CERO.
+       *
+       * Antes bastaba `count > 0` para darlo por sembrado, y eso convertía
+       * cualquier siembra interrumpida en permanente: si los ~250 INSERT de
+       * abajo se cortan a mitad (esto corre DENTRO de la compra de un sobre, con
+       * su límite de tiempo), el set se queda con un catálogo parcial —y
+       * sesgado, porque loadLocalCards devuelve ordenado por número— contra el
+       * que se sortearían todos los sobres siguientes. Ningún reintento lo
+       * completaba: el primer `count > 0` lo daba por bueno.
+       *
+       * Con la comparación contra `cards.length` la siembra es reanudable: cada
+       * intento rellena lo que falte y el ON CONFLICT DO NOTHING hace que
+       * repetir no cueste nada.
+       */
+      if (parseInt(count) >= cards.length) return { status: 'already_synced' };
 
       for (const card of cards) {
         await sql`
@@ -1035,18 +1099,32 @@
 
   export async function getSetsFromDB() {
     try {
+      // `cardsCount` es el número de cartas que EXISTEN de la expansión, que es
+      // contra lo que se colecciona. `total` es lo que el set DICE tener y no
+      // coincide: viene inflado de la API y además la ingesta es reanudable, así
+      // que un set a medio descargar tiene menos filas que su total declarado.
+      // Midiendo el progreso contra el declarado, esas expansiones no llegaban
+      // al 100% ni consiguiéndolas todas.
+      //
+      // Se devuelven LOS DOS: `total` sigue haciendo falta tal cual en la tienda
+      // (`isSpecialSet` decide con él si la expansión sólo vende Promo Pack, y
+      // ahí un conteo a medias la marcaría de especial por error).
       const { rows } = await sql`
-        SELECT id, name, series, images, total, release_date
-        FROM sets
-        ORDER BY release_date DESC NULLS LAST
+        SELECT s.id, s.name, s.series, s.images, s.total, s.release_date,
+               COUNT(c.id)::int AS cards_count
+        FROM sets s
+        LEFT JOIN cards c ON c.set_id = s.id
+        GROUP BY s.id, s.name, s.series, s.images, s.total, s.release_date
+        ORDER BY s.release_date DESC NULLS LAST
       `;
-      
+
       // Si la tabla está vacía todavía no se ha ejecutado el seed.
       if (rows.length === 0) return setsEnIdioma(await loadLocalSets());
 
       return setsEnIdioma(rows.map(set => ({
         ...set,
         releaseDate: set.release_date,
+        cardsCount: Number(set.cards_count) || 0,
         images: typeof set.images === 'string' ? JSON.parse(set.images) : set.images
       })));
     } catch (error) {
@@ -1127,48 +1205,6 @@
       return [];
     }
   }
-  // --- SISTEMA DE AMIGOS ---
-
-  // 1. Enviar petición de amistad
-  export async function sendFriendRequest(friendId: string) {
-    const { userId } = await auth();
-    if (!userId) throw new Error("No autorizado");
-    if (userId === friendId) return { error: "No puedes añadirte a ti mismo" };
-
-    try {
-      // El destinatario debe existir: sin esta comprobación, cualquier cadena
-      // creaba una fila colgante que luego aparecía como "Entrenador" fantasma.
-      const { rows: target } = await sql`SELECT 1 FROM users WHERE id = ${friendId}`;
-      if (target.length === 0) {
-        return { error: "Ese entrenador no existe." };
-      }
-
-      // Comprobar si ya existe la amistad o la petición
-      const { rows: existing } = await sql`
-        SELECT 1 FROM friendships
-        WHERE (user_id = ${userId} AND friend_id = ${friendId})
-          OR (user_id = ${friendId} AND friend_id = ${userId})
-      `;
-
-      if (existing.length > 0) {
-        return { error: "Ya sois amigos o hay una petición pendiente." };
-      }
-
-      // ON CONFLICT DO NOTHING como red de seguridad: la dedupe real de peticiones
-      // cruzadas simultáneas necesita un índice único simétrico en `friendships`
-      // (LEAST/GREATEST de user_id y friend_id), que debe crear la migración —
-      // aquí no se puede añadir el DDL sin afectar al camino caliente.
-      await sql`
-        INSERT INTO friendships (user_id, friend_id, status)
-        VALUES (${userId}, ${friendId}, 'pending')
-        ON CONFLICT DO NOTHING
-      `;
-      return { success: true };
-    } catch (error) {
-      console.error("Error enviando petición:", error);
-      return { error: "Error de servidor al enviar petición." };
-    }
-  }
 
   // --- NUEVA FUNCIÓN: Guarda tu nombre de Clerk en la BD ---
   export async function syncUserName() {
@@ -1194,131 +1230,24 @@
     }
   }
 
-  // --- FUNCIÓN ACTUALIZADA: Obtener amigos + TÚ MISMO en el Ranking ---
-  export async function getFriendsList() {
-    const { userId } = await auth();
-    if (!userId) return { accepted: [], pendingRequests: [] };
 
-    try {
-      const { rows: accepted } = await sql`
-        SELECT 
-          f.id as friendship_id, 
-          CASE WHEN f.user_id = ${userId} THEN f.friend_id ELSE f.user_id END as friend_id,
-          COALESCE(u.username, 'Entrenador') as friend_name,
-          COALESCE(u.packs_opened, 0) as packs_opened,
-          COALESCE(u.money_spent, 0) as money_spent
-        FROM friendships f
-        LEFT JOIN users u ON u.id = (CASE WHEN f.user_id = ${userId} THEN f.friend_id ELSE f.user_id END)
-        WHERE (f.user_id = ${userId} OR f.friend_id = ${userId}) AND f.status = 'accepted'
-      `;
-
-      const { rows: pending } = await sql`
-        SELECT 
-          f.id, 
-          f.user_id as requester_id,
-          COALESCE(u.username, 'Entrenador') as requester_name
-        FROM friendships f
-        LEFT JOIN users u ON u.id = f.user_id
-        WHERE f.friend_id = ${userId} AND f.status = 'pending'
-      `;
-
-      // === 🚨 NUEVO: Te añadimos a ti mismo a la lista del ranking ===
-      const { rows: myData } = await sql`
-        SELECT 
-          id, 
-          COALESCE(username, 'Entrenador') as username, 
-          COALESCE(packs_opened, 0) as packs_opened, 
-          COALESCE(money_spent, 0) as money_spent
-        FROM users WHERE id = ${userId}
-      `;
-
-      if (myData.length > 0) {
-        accepted.push({
-          friendship_id: 'me', // Un ID ficticio para que React no se queje
-          friend_id: myData[0].id,
-          friend_name: myData[0].username + " (Tú)", // Destacamos que eres tú
-          packs_opened: myData[0].packs_opened,
-          money_spent: myData[0].money_spent
-        });
-      }
-      // ===============================================================
-
-      // Calcular estadísticas de todos (ahora te incluye a ti)
-      for (const friend of accepted) {
-        const { rows: friendCards } = await sql`
-          SELECT uc.quantity, uc.is_favorite, c.rarity
-          FROM user_collection uc
-          JOIN cards c ON uc.card_id = c.id
-          WHERE uc.user_id = ${friend.friend_id} AND uc.quantity > 0
-        `;
-
-        let totalValue = 0;
-        let totalCards = 0;
-        let totalUnique = 0;
-        let totalFavs = 0;
-
-        friendCards.forEach((row) => {
-          totalUnique += 1;
-          totalCards += row.quantity;
-          if (row.is_favorite) totalFavs += 1;
-          const price = SELL_PRICES[row.rarity as keyof typeof SELL_PRICES] || 10;
-          totalValue += (price * row.quantity);
-        });
-
-        friend.stats = {
-          value: totalValue,
-          cards: totalCards,
-          unique: totalUnique,
-          favs: totalFavs,
-          packs: friend.packs_opened,
-          spent: friend.money_spent
-        };
-      }
-
-      // Ordenamos de mayor a menor valor
-      accepted.sort((a, b) => b.stats.value - a.stats.value);
-
-      return { accepted, pendingRequests: pending };
-    } catch (error) {
-      console.error("Error obteniendo amigos:", error);
-      return { accepted: [], pendingRequests: [] };
-    }
-  }
-
-  // 3. Aceptar petición
-  export async function acceptFriendRequest(friendshipId: number) {
-    const { userId } = await auth();
-    if (!userId) return { error: "No autorizado" };
-
-    try {
-      await sql`
-        UPDATE friendships SET status = 'accepted'
-        WHERE id = ${friendshipId} AND friend_id = ${userId}
-      `;
-      return { success: true };
-    } catch (error) {
-      return { error: "Error al aceptar petición" };
-    }
-  }
-
-  // 4. Eliminar amigo o rechazar petición
-  export async function removeFriend(friendshipId: number) {
-    const { userId } = await auth();
-    if (!userId) return { error: "No autorizado" };
-
-    try {
-      await sql`
-        DELETE FROM friendships
-        WHERE id = ${friendshipId} AND (user_id = ${userId} OR friend_id = ${userId})
-      `;
-      return { success: true };
-    } catch (error) {
-      return { error: "Error al eliminar amigo" };
-    }
-  }
   // El sistema de intercambios antiguo (tabla `trades`) vivía aquí. Se retiró:
   // ninguna migración crea esa tabla y no quedaba ningún consumidor. El sistema
   // vigente es app/social.ts, sobre la tabla `trade_offers`.
+  //
+  // Y por la misma razón se ha retirado el SISTEMA DE AMIGOS que también vivía
+  // aquí: `sendFriendRequest`, `getFriendsList`, `acceptFriendRequest` y
+  // `removeFriend` duplicaban a `addFriend`, `getSocialOverview`,
+  // `acceptFriend` y `removeFriendship` de app/social.ts, que son las que usa
+  // app/friends/page.tsx. Ninguna de las cuatro tenía un solo consumidor.
+  //
+  // No era código muerto inocuo: toda función exportada de un fichero
+  // 'use server' es un endpoint POST vivo, así que eran cuatro endpoints
+  // mantenidos por nadie —y ya habían divergido, porque `sendFriendRequest`
+  // comprobaba que el destinatario existiera y `addFriend` no—. Cada arreglo
+  // había que hacerlo dos veces o quedaba a medias.
+  //
+  // `syncUserName` se queda: la llama app/friends/page.tsx y no está duplicada.
 
 // --- DAILY REWARD ---
 export async function claimDailyReward() {
@@ -1411,12 +1340,19 @@ export async function getProfileStats() {
       JOIN cards c ON uc.card_id = c.id
       WHERE uc.user_id = ${userId} AND uc.quantity > 0
     `;
-    const { rows: setsRows } = await sql`SELECT id, total FROM sets`;
+    // Mismo motivo que en claimSetCompletionBonuses: el total que cuenta es el
+    // de las cartas que EXISTEN, no el que declara el set.
+    const { rows: setsRows } = await sql`
+      SELECT s.id, COUNT(c.id)::int AS reales
+      FROM sets s
+      LEFT JOIN cards c ON c.set_id = s.id
+      GROUP BY s.id
+    `;
     const { rows: userRows } = await sql`SELECT packs_opened, money_spent FROM users WHERE id = ${userId}`;
     const packsOpened = userRows[0]?.packs_opened || 0;
     const moneySpent = userRows[0]?.money_spent || 0;
     const totalsBySet: Record<string, number> = {};
-    setsRows.forEach((s: any) => { totalsBySet[s.id] = s.total; });
+    setsRows.forEach((s: any) => { totalsBySet[s.id] = Number(s.reales); });
 
     let totalValue = 0;
     let totalCards = 0;
@@ -1426,8 +1362,12 @@ export async function getProfileStats() {
     cards.forEach((row: any) => {
       totalUnique += 1;
       totalCards += row.quantity;
-      const price = SELL_PRICES[row.rarity as keyof typeof SELL_PRICES] || 10;
-      totalValue += price * row.quantity;
+      // PATRIMONIO REAL, no `precio × copias`. El precio de una carta baja con
+      // cada copia repetida (valorDeVenta), así que multiplicar por la cantidad
+      // inflaba el valor y premiaba acaparar: 43 copias de una común puntuaban
+      // 86 y se venden por 43. Lo que vale la fila es la copia protegida, que se
+      // paga entera, más lo que dé la curva por las repetidas.
+      totalValue += precioDeCartaSuelta(row.rarity) + valorDeVenta(row.rarity, row.quantity);
       uniquePerSet[row.set_id] = (uniquePerSet[row.set_id] || 0) + 1;
     });
 
@@ -1643,9 +1583,29 @@ export async function claimSetCompletionBonuses() {
       WHERE uc.user_id = ${userId} AND uc.quantity > 0
       GROUP BY c.set_id
     `;
-    const { rows: setsRows } = await sql`SELECT id, total, name FROM sets`;
-    const totals: Record<string, { total: number; name: string }> = {};
-    setsRows.forEach((s: any) => { totals[s.id] = { total: s.total, name: s.name }; });
+    /* EL TOTAL SON LAS CARTAS QUE HAY, NO LAS QUE EL SET DICE TENER.
+     *
+     * `sets.total` viene de la API y NO coincide con las filas de `cards`. La
+     * propia ingesta lo documenta ("El `total` que declara un set no siempre
+     * coincide con las cartas que la API devuelve", services/ingest.ts) y
+     * además es REANUDABLE: un set a medio descargar tiene menos cartas que su
+     * total declarado. Midiendo contra el declarado, en esas expansiones el
+     * bono de 1.000 monedas no se podía cobrar NUNCA por muchas cartas que
+     * consiguiera el jugador.
+     *
+     * `reales` es el conteo de `cards`, que es contra lo que de verdad se
+     * colecciona. Se pide `total` igualmente para el guard de abajo.
+     */
+    const { rows: setsRows } = await sql`
+      SELECT s.id, s.total, s.name, COUNT(c.id)::int AS reales
+      FROM sets s
+      LEFT JOIN cards c ON c.set_id = s.id
+      GROUP BY s.id, s.total, s.name
+    `;
+    const totals: Record<string, { total: number; reales: number; name: string }> = {};
+    setsRows.forEach((s: any) => {
+      totals[s.id] = { total: Number(s.total), reales: Number(s.reales), name: s.name };
+    });
 
     const { rows: already } = await sql`SELECT set_id FROM set_rewards WHERE user_id = ${userId}`;
     const rewarded = new Set(already.map((r: any) => r.set_id));
@@ -1657,10 +1617,29 @@ export async function claimSetCompletionBonuses() {
     let granted = 0;
     const completedSets: string[] = [];
 
+    /* CUÁNDO SE PUEDE FIAR UNO DEL CONTEO.
+     *
+     * Medir contra las cartas reales arregla el total inflado, pero abre un
+     * riesgo nuevo: la ingesta es reanudable y `cartasDelSet` siembra DENTRO de
+     * la compra, así que hay ventanas en las que `cards` tiene una expansión a
+     * medias. Pagar el bono ahí sería pagarlo por un set incompleto, y como la
+     * clave primaria (user_id, set_id) de `set_rewards` sólo deja cobrarlo una
+     * vez, el jugador se quedaría SIN el bono de verdad para siempre.
+     *
+     * El guard: si el set declara un total y lo que hay en `cards` se queda muy
+     * por debajo, es que la siembra no ha terminado y este ciclo no se cobra
+     * nada; ya se cobrará cuando la base esté al día. El 90% deja pasar el
+     * desajuste normal de la API (declarar dos o tres cartas de más) y corta la
+     * descarga a medias, que siempre va mucho más lejos.
+     */
+    const CATALOGO_FIABLE = 0.9;
+
     for (const row of owned) {
       const meta = totals[row.set_id];
-      if (!meta || !meta.total) continue;
-      if (row.owned >= meta.total && !rewarded.has(row.set_id)) {
+      if (!meta || !meta.reales) continue;
+      // Siembra a medias: ni se paga ni se quema la fila de set_rewards.
+      if (meta.total > 0 && meta.reales < meta.total * CATALOGO_FIABLE) continue;
+      if (row.owned >= meta.reales && !rewarded.has(row.set_id)) {
         // El abono se condiciona a que el INSERT insertara DE VERDAD: la clave
         // primaria (user_id, set_id) arbitra la carrera. Antes se sumaba el bonus
         // aunque el ON CONFLICT DO NOTHING no tocara nada, así que dos pestañas
@@ -2024,26 +2003,118 @@ async function conNombreEs(cartas: CartaMercado[]): Promise<CartaMercado[]> {
  * la lista a mitad de ciclo: en ambos casos la oferta que el jugador ve dejaría
  * de existir al pulsar "cumplir". Derivada del código desplegado es estable.
  */
-let setsMercadoCache: string[] | null = null;
-async function setsDelMercado(): Promise<string[]> {
-  if (setsMercadoCache) return setsMercadoCache;
-  const abribles = AVAILABLE_SETS.map((s) => s.id);
+interface CatalogoMercado {
+  /** Ids que el tablón puede exigir, en orden ESTABLE. */
+  ids: string[];
+  /** Rótulo inglés de cada uno, para la prosa de las ofertas. */
+  nombres: Record<string, string>;
+}
+
+let catalogoMercadoCache: CatalogoMercado | null = null;
+
+/**
+ * ¿Puede el tablón ATAR una oferta a esta expansión?
+ *
+ * NO BASTA CON QUE LA EXPANSIÓN EXISTA, y por no comprobarlo se coló el peor
+ * efecto secundario de derivar la lista de los ficheros de datos: al pasar de
+ * las 27 entradas curadas a mano a las 38 que hay en `src/data`, entraron nueve
+ * subsets sin pirámide de rarezas —las Trainer Gallery, la Shiny Vault, las
+ * Galarian Gallery y los sets de promos— y el 11,5% de las ofertas del tablón
+ * pasó a ser IMPOSIBLE de cumplir: la barra clavada en 0 para siempre.
+ *
+ * POR QUÉ: `montarOferta` ata SIEMPRE el primer requisito a la expansión, y las
+ * dos únicas bandas que se pueden atar son B_MORRALLA (rango 1-5: comunes e
+ * infrecuentes) y B_RARA (rango 10-20: raras y raras holo). Un subset que no
+ * imprime ninguna de las dos no puede satisfacer un requisito atado, se pida lo
+ * que se pida.
+ *
+ * Se mide contra las cartas del repositorio, que es la misma fuente de la que
+ * sale la lista, y el resultado se cachea con ella.
+ */
+async function admiteOfertaAtada(setId: string): Promise<boolean> {
   try {
-    const locales = (await loadLocalSets()) as { id: string }[];
-    const conDatos = new Set(locales.map((s) => s.id));
-    const ids = abribles.filter((id) => conDatos.has(id));
-    // Sin respaldo legible preferimos el catálogo entero a un tablón vacío.
-    setsMercadoCache = ids.length > 0 ? ids : abribles;
+    const cartas = (await loadLocalCards(setId)) as { rarity?: string }[];
+    let morralla = false;
+    let raras = false;
+    for (const c of cartas) {
+      const r = RARITY_RANK[c.rarity ?? ""] ?? 1;
+      if (r >= 1 && r <= 5) morralla = true;
+      else if (r >= 10 && r <= 20) raras = true;
+      if (morralla && raras) return true;
+    }
+    return false;
   } catch {
-    setsMercadoCache = abribles;
+    // Sin datos legibles no se ata nada a esa expansión: una oferta de menos es
+    // mucho mejor que una oferta que no se puede cumplir.
+    return false;
   }
-  return setsMercadoCache;
+}
+
+/**
+ * El catálogo del mercado, derivado de los ficheros de datos y NO de la lista
+ * escrita a mano.
+ *
+ * QUÉ CAMBIA Y POR QUÉ: antes salía de `AVAILABLE_SETS` (utils/constanst.ts),
+ * 28 entradas mantenidas a dedo. Se había quedado atrás: incluía `cel25`, que
+ * no tiene fichero de cartas, y le faltaban sv9, sv10, sve, svp, swsh35,
+ * swsh45sv, swshp y todos los subsets `*tg`/`gg`. Consecuencia doble: había
+ * expansiones que el tablón no podía pedir JAMÁS, y las que sí entraban por
+ * otra vía salían rotuladas "SV10" en mayúsculas porque `nombreDeSet` no las
+ * encontraba.
+ *
+ * `loadLocalSets` ya filtra por "tiene fichero de cartas", que es exactamente
+ * la condición que el mercado necesita: no se puede exigir una carta de una
+ * expansión de la que no hay datos.
+ *
+ * EL ORDEN ES PARTE DEL CONTRATO. `generarOfertas` elige por índice, así que la
+ * lista tiene que ser IDÉNTICA al pintar el tablón y al cobrarlo. Por eso se
+ * ordena por id y no por fecha: el orden de `loadLocalSets` depende de
+ * `release_date`, y dos expansiones del mismo día podrían intercambiarse entre
+ * dos arranques del servidor y mover el tablón bajo los pies del jugador.
+ */
+async function catalogoDelMercado(): Promise<CatalogoMercado> {
+  if (catalogoMercadoCache) return catalogoMercadoCache;
+
+  const respaldo: CatalogoMercado = {
+    ids: AVAILABLE_SETS.map((s) => s.id),
+    nombres: Object.fromEntries(AVAILABLE_SETS.map((s) => [s.id, s.name])),
+  };
+
+  try {
+    const locales = (await loadLocalSets()) as { id: string; name?: string }[];
+    const candidatos = locales
+      .map((s) => String(s.id))
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+    const ids: string[] = [];
+    for (const id of candidatos) {
+      if (await admiteOfertaAtada(id)) ids.push(id);
+    }
+    // Sin respaldo legible preferimos la lista vieja a un tablón vacío.
+    catalogoMercadoCache =
+      ids.length > 0
+        ? {
+            ids,
+            nombres: Object.fromEntries(
+              locales
+                .filter((s) => s?.id && s?.name)
+                .map((s) => [String(s.id), String(s.name)]),
+            ),
+          }
+        : respaldo;
+  } catch {
+    catalogoMercadoCache = respaldo;
+  }
+  return catalogoMercadoCache;
 }
 
 /** El tablón vigente. Puro: misma semilla ⇒ mismas ofertas, aquí y en el cliente. */
 async function tablonVigente() {
   const ciclo = semillaDelCiclo(Date.now());
-  const ofertas = generarOfertas(ciclo, await setsDelMercado(), OFERTAS_ACTIVAS);
+  const { ids, nombres } = await catalogoDelMercado();
+  // `nombres` sólo cambia TEXTO: el sorteo depende de la semilla, de los ids y
+  // de cuántas ofertas se piden, así que el tablón es el mismo con y sin él.
+  const ofertas = generarOfertas(ciclo, ids, OFERTAS_ACTIVAS, nombres);
   return { ciclo, ofertas };
 }
 
@@ -2319,34 +2390,40 @@ export async function getMercado() {
   const { ciclo, ofertas } = await tablonVigente();
   const caduca = caducidadDelCiclo(ciclo);
 
-  // Rótulos de expansión del tablón, ya en español. Viajan como mapa (una
-  // docena de entradas) en vez de importar el índice de idioma en el cliente:
-  // la pantalla del mercado no necesita el diccionario para nada más.
+  // Rótulos de expansión del tablón. Viajan como mapa (una docena de entradas)
+  // en vez de importar el índice de idioma en el cliente: la pantalla del
+  // mercado no necesita el diccionario para nada más.
+  //
+  // SE RELLENA TAMBIÉN EN INGLÉS. Antes sólo se hacía con idioma español, así
+  // que en inglés la pantalla se quedaba con el respaldo de AVAILABLE_SETS y
+  // las expansiones que trae el cron salían como "SV10" en mayúsculas.
   const idioma = await idiomaActual();
+  const { nombres: nombresEn } = await catalogoDelMercado();
   const nombresSet: Record<string, string> = {};
-  if (idioma === "es") {
-    for (const o of ofertas) {
-      for (const id of [o.setId, ...o.requisitos.map((r) => r.setId)]) {
-        if (!id || nombresSet[id]) continue;
-        const nombre = nombreSetEs(id, idioma);
-        if (nombre) nombresSet[id] = nombre;
-      }
+  for (const o of ofertas) {
+    for (const id of [o.setId, ...o.requisitos.map((r) => r.setId)]) {
+      if (!id || nombresSet[id]) continue;
+      const nombre = (idioma === "es" ? nombreSetEs(id, idioma) : null) ?? nombresEn[id];
+      if (nombre) nombresSet[id] = nombre;
     }
   }
 
   // Y el mismo rótulo DENTRO de la prosa. utils/mercado.ts compone el gancho y
-  // el requisito atado con el nombre inglés de AVAILABLE_SETS ("... de Shrouded
-  // Fable"), así que sin esto la misma tarjeta decía "Fabula Sombría" en el chip
-  // y "Shrouded Fable" tres líneas más abajo, y el jugador no sabe si son la
-  // misma expansión. Se cambia SÓLO texto y sobre copias: `id`, `filtro` y
-  // `setId` —lo único que compara cumplirOferta— salen intactos, y el tablón
-  // cacheado de tablonVigente() no se toca.
+  // el requisito atado con el nombre inglés ("... de Shrouded Fable"), así que
+  // sin esto la misma tarjeta decía "Fabula Sombría" en el chip y "Shrouded
+  // Fable" tres líneas más abajo, y el jugador no sabe si son la misma
+  // expansión. Se cambia SÓLO texto y sobre copias: `id`, `filtro` y `setId`
+  // —lo único que compara cumplirOferta— salen intactos, y el tablón cacheado
+  // de tablonVigente() no se toca.
   const visibles =
     idioma !== "es"
       ? ofertas
       : ofertas.map((o) => {
           const es = o.setId ? nombresSet[o.setId] : null;
-          const en = o.setId ? AVAILABLE_SETS.find((s) => s.id === o.setId)?.name : null;
+          // El inglés sale del MISMO catálogo con el que se compuso la prosa,
+          // no de AVAILABLE_SETS: si no coincidieran, el reemplazo no encontraría
+          // la cadena y la tarjeta se quedaría a medio traducir.
+          const en = o.setId ? nombresEn[o.setId] : null;
           if (!es || !en || es === en) return o;
           const cambia = (t: string) => t.split(en).join(es);
           return {

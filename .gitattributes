@@ -1,0 +1,11 @@
+# Saltos de línea normalizados a LF en el repositorio, sea cual sea el sistema
+# desde el que se trabaje. Sin esto, un commit desde Windows y otro desde Mac
+# marcan el mismo fichero como cambiado entero.
+* text=auto eol=lf
+
+# Binarios: que Git no intente normalizar nada dentro.
+*.png  binary
+*.ico  binary
+*.jpg  binary
+*.webp binary
+*.zip  binary

@@ -750,9 +750,23 @@ console.log("\n\n== 7) MERCADO: paga con SELL_PRICES planos, NO con la curva =="
     return cand ? cand.precio : 2;
   };
 
-  const setsMercado = constantes.AVAILABLE_SETS
-    .map((s) => s.id)
-    .filter((id) => CARTAS.has(id));
+  // Mismo universo que el servidor (catalogoDelMercado + admiteOfertaAtada en
+  // app/action.ts): las expansiones con fichero de cartas Y pirámide de
+  // rarezas. Medir contra AVAILABLE_SETS, como se hacía antes, era medir una
+  // lista escrita a mano que el servidor ya no usa.
+  const atable = (cartas) => {
+    let morralla = false, raras = false;
+    for (const c of cartas) {
+      const r = RARITY_RANK[c.rarity ?? ""] ?? 1;
+      if (r >= 1 && r <= 5) morralla = true;
+      else if (r >= 10 && r <= 20) raras = true;
+      if (morralla && raras) return true;
+    }
+    return false;
+  };
+  const setsMercado = [...CARTAS.keys()]
+    .filter((id) => atable(CARTAS.get(id)))
+    .sort((a, b) => a.localeCompare(b));
 
   const CICLOS = 120;
   let cartasCiclo = 0, valorCiclo = 0, pagoCiclo = 0, primaCiclo = 0, maxPagoOferta = 0;

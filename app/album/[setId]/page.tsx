@@ -14,6 +14,7 @@ import Sheet from "../../../components/ui/Sheet";
 import CardZoom from "../../../components/ui/CardZoom";
 import { useHaptics } from "../../../hooks/useHaptics";
 import { useSwipe, touchActionFor } from "../../../hooks/useSwipe";
+import type { Carta, CartaEnColeccion, Expansion } from "../../../utils/tipos";
 
 type Filter = "all" | "owned" | "missing";
 
@@ -33,7 +34,7 @@ const BATCH = 60;
 const padNumber = (n: unknown) => String(n ?? "").padStart(3, "0");
 
 /** La ficha mezcla el blueprint del set con la copia del usuario. */
-const mergeDetail = (blueprintCard: any, ownedCard: any) => ({
+const mergeDetail = (blueprintCard: Carta, ownedCard?: CartaEnColeccion): Carta => ({
   ...blueprintCard,
   ...ownedCard,
   number: blueprintCard.number ?? ownedCard?.number,
@@ -46,14 +47,17 @@ export default function SetAlbumPage() {
   const { isSignedIn, isLoaded } = useUser();
   const haptic = useHaptics();
 
-  const [setInfo, setSetInfo] = useState<any>(null);
-  const [allSetCards, setAllSetCards] = useState<any[]>([]);
-  const [ownedCards, setOwnedCards] = useState<Map<string, any>>(new Map());
+  // Tipados: `allSetCards` es el catálogo real de la expansión y desde este
+  // arreglo es además el denominador del progreso, así que conviene que el
+  // compilador sepa qué lleva dentro.
+  const [setInfo, setSetInfo] = useState<Expansion | null>(null);
+  const [allSetCards, setAllSetCards] = useState<Carta[]>([]);
+  const [ownedCards, setOwnedCards] = useState<Map<string, CartaEnColeccion>>(new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
   const [filter, setFilter] = useState<Filter>("all");
-  const [detail, setDetail] = useState<any>(null);
+  const [detail, setDetail] = useState<Carta | null>(null);
   /** Visor a pantalla completa: el único sitio de la app con zoom (pellizco). */
   const [zoomOpen, setZoomOpen] = useState(false);
 
@@ -277,9 +281,28 @@ export default function SetAlbumPage() {
     );
   }
 
-  const total = setInfo?.total || allSetCards.length || 1;
-  const owned = ownedCards.size;
-  const percent = Math.round((owned / total) * 100);
+  /* EL DENOMINADOR SON LAS CARTAS QUE EXISTEN, NO EL TOTAL DECLARADO.
+   *
+   * Estaba al revés: `setInfo?.total || allSetCards.length` prefería el total
+   * que declara el set, que viene de la API y NO coincide con las cartas que
+   * hay (la ingesta lo documenta, y además es reanudable, así que un set a
+   * medio descargar declara más de lo que tiene). En esas expansiones el 100%
+   * era inalcanzable por muchas cartas que consiguiera el jugador.
+   *
+   * `allSetCards` ES el catálogo real de la expansión —es lo que pinta esta
+   * misma rejilla— así que es el denominador honesto: si una carta no está
+   * aquí, no se puede conseguir. `cardsCount` (el conteo del servidor) queda de
+   * respaldo, y el total declarado el último.
+   */
+  const total = allSetCards.length || setInfo?.cardsCount || setInfo?.total || 1;
+  // ACOTADO al catálogo: `ownedCards` cuenta toda carta de la colección con
+  // prefijo `setId-`, esté o no en el catálogo actual (una resiembra puede
+  // haber retirado variantes). Sin el tope salía "150 de 100" con la barra al
+  // 100% y el chip "Me faltan" en positivo en la misma pantalla.
+  const owned = Math.min(ownedCards.size, total);
+  // Con el tope: si la colección trae una carta que el catálogo ya no sirve
+  // (una resiembra que quitó variantes), el progreso no puede pasar del 100.
+  const percent = Math.min(100, Math.round((owned / total) * 100));
 
   // Contadores del selector: sobre el blueprint real, no sobre `total` del set.
   const ownedInBlueprint = sortedCards.filter((c) => ownedCards.has(c.id)).length;
@@ -295,7 +318,7 @@ export default function SetAlbumPage() {
     setFilter(next);
   };
 
-  const openDetail = (blueprintCard: any, ownedCard: any) => {
+  const openDetail = (blueprintCard: Carta, ownedCard?: CartaEnColeccion) => {
     haptic("tap");
     setDetail(mergeDetail(blueprintCard, ownedCard));
   };
@@ -632,7 +655,10 @@ export default function SetAlbumPage() {
                   <div className="min-w-0">
                     <p className="text-[11px] ink-faint font-mono tnum">
                       #{padNumber(detail.number)}
-                      {setInfo?.total ? ` / ${setInfo.total}` : ""}
+                      {/* El "n / N" de la ficha usa el MISMO total que la barra
+                          de progreso: enseñar aquí el declarado y allí el real
+                          era la contradicción que hacía dudar del porcentaje. */}
+                      {total > 1 ? ` / ${total}` : ""}
                     </p>
                     <h3 className="text-lg font-semibold ink truncate">{detail.name}</h3>
                   </div>

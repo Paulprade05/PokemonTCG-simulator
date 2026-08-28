@@ -94,7 +94,16 @@ function PokemonCardStatic({
       className="relative w-full aspect-[2.5/3.5] overflow-hidden rounded-[4.5%] border border-[var(--border)] bg-[var(--surface-2)]"
       style={{ boxShadow: "var(--shadow-md)" }}
     >
-      <CardFace card={card} useHighRes={useHighRes} loading="lazy" />
+      {/* `loading` sigue a useHighRes, igual que en la variante interactiva.
+          Estaba clavado en "lazy" y eso anulaba la precarga del mazo de la
+          apertura: MazoCartas pide la variante grande para las ranuras vecinas
+          justo para tenerla decodificada cuando entren, pero esas ranuras están
+          trasladadas FUERA del viewport, así que con lazy el navegador podía no
+          descargarlas hasta que ya estaban en pantalla.
+          Las rejillas (colección, álbum, entrenador, resumen) no se enteran:
+          pasan useHighRes = false y siguen siendo lazy, que es lo que mantiene
+          un álbum de 258 cartas en 45 MB y no en 151. */}
+      <CardFace card={card} useHighRes={useHighRes} loading={useHighRes ? "eager" : "lazy"} />
     </div>
   );
 }

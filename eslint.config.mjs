@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Instantáneas antiguas del proyecto (ramas feat-mobile-ux y feat-pwa-ios)
+    // descomprimidas dentro de la raíz: son copias completas y sin esto el
+    // lint recorre el proyecto tres veces. También están fuera de tsconfig y
+    // de git; su trabajo de PWA y móvil ya está en la raíz.
+    "PokemonTCG-simulator-feat-*/**",
   ]),
 ]);
 

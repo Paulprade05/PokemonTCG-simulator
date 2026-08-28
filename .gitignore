@@ -46,3 +46,9 @@ next-env.d.ts
 # claude local
 .claude/
 start.log
+
+# Instantáneas antiguas del proyecto descomprimidas en la raíz (ramas
+# feat-mobile-ux y feat-pwa-ios). Se conservan para consulta, pero no son
+# código del proyecto: su trabajo de PWA y móvil ya está en la raíz.
+/PokemonTCG-simulator-feat-*/
+/PokemonTCG-simulator-feat-*.zip

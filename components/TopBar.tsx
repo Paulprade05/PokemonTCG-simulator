@@ -21,7 +21,12 @@ export default function TopBar() {
       initial={{ y: -16, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-      className="sticky top-0 z-30 glass border-b border-[var(--border)] px-4 md:px-8"
+      // Los insets laterales van DENTRO del padding, igual que en BottomNav:
+      // con el móvil en apaisado el notch se va a un lado y con `px-4` fijo el
+      // saldo y el botón de ajustes quedaban debajo del recorte. El max()
+      // conserva los 16px (32 en escritorio) de siempre cuando no hay inset, y
+      // va en clases y no en `style` para no perder el salto de md.
+      className="sticky top-0 z-30 glass border-b border-[var(--border)] px-[max(var(--sal),1rem)] md:px-[max(var(--sal),2rem)]"
       // Con viewport-fit=cover el contenido pinta bajo la barra de estado:
       // desplazamos la cabecera para que no quede tapada por el notch. El alto
       // se declara sólo aquí (4rem + notch); una clase h-16 quedaría muerta.
