@@ -3,7 +3,9 @@
 // API de Pokémon TCG y los descarga a la base de datos.
 
 import { NextResponse } from "next/server";
+import { sql } from "@vercel/postgres";
 import { sincronizar } from "@/services/ingest";
+import { SETS_CON_ES } from "@/services/idioma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +18,41 @@ export const maxDuration = 60;
 
 // Por debajo del maxDuration, dejando margen para cerrar y responder.
 const PRESUPUESTO_MS = 45_000;
+
+/* ==================================================================== *
+ * AVISO DE COBERTURA DEL ESPAÑOL
+ * ====================================================================
+ *
+ * POR QUÉ EXISTE: esta ruta hace crecer el catálogo sola, pero el diccionario
+ * español (src/data/es) es un artefacto GENERADO A MANO con
+ * scripts/generar-diccionario-es.mjs. Nada conectaba las dos cosas, así que
+ * cada expansión que llegaba por aquí nacía en inglés y en silencio — y como la
+ * tienda ordena por fecha descendente, salía la PRIMERA. El resultado fue un
+ * usuario convencido de que el idioma estaba roto cuando funcionaba
+ * perfectamente, y una tarde de diagnóstico para descubrirlo.
+ *
+ * QUÉ SE AVISA Y QUÉ NO: sólo lo que se ha ingerido EN ESTA PASADA, por su
+ * nombre. El cron sincroniza las ~174 expansiones del catálogo y más de un
+ * centenar no tiene español (las anteriores a 2020 están fuera del alcance de
+ * la app), así que listarlas todas sería ruido que nadie leería. Del resto sólo
+ * va la cuenta, que es lo que deja ver la deriva sin ensuciar el registro.
+ */
+async function cobertura(setsNuevos: string[]) {
+  const nuevosSinEs = setsNuevos.filter((id) => !SETS_CON_ES.has(id));
+  let enBD: number | null = null;
+  let sinEsEnBD: number | null = null;
+  try {
+    const { rows } = await sql`SELECT id FROM sets`;
+    enBD = rows.length;
+    sinEsEnBD = rows
+      .map((r) => String(r.id))
+      .filter((id) => !SETS_CON_ES.has(id)).length;
+  } catch {
+    // La cuenta global es informativa: si la consulta falla, el aviso de las
+    // recién ingeridas —que es el accionable— sale igual.
+  }
+  return { nuevosSinEs, conEspanol: SETS_CON_ES.size, enBD, sinEsEnBD };
+}
 
 /**
  * Comparación en tiempo constante sin dependencias. Filtra por longitud (que no
@@ -68,7 +105,26 @@ export async function GET(request: Request) {
       console.log(`[sync-sets] quedan por completar: ${cola}`);
     }
 
-    return NextResponse.json(resumen);
+    const idioma = await cobertura(resumen.setsNuevos);
+    if (idioma.nuevosSinEs.length > 0) {
+      // console.warn y no console.log: en Vercel sale marcado como aviso, que es
+      // lo que hace que se vea entre las líneas normales del cron.
+      console.warn(
+        `[sync-sets] SIN ESPAÑOL: ${idioma.nuevosSinEs.join(", ")}` +
+          " · se verán en inglés (marcadas con «EN» en la tienda)." +
+          " Para traducirlas: añádelas al mapa SETS de" +
+          " scripts/generar-diccionario-es.mjs y ejecuta" +
+          ` node scripts/generar-diccionario-es.mjs --set ${idioma.nuevosSinEs[0]}`,
+      );
+    }
+    if (idioma.sinEsEnBD !== null) {
+      console.log(
+        `[sync-sets] idioma: ${idioma.conEspanol} expansiones con español` +
+          ` · ${idioma.sinEsEnBD} de las ${idioma.enBD} de la base sin él`,
+      );
+    }
+
+    return NextResponse.json({ ...resumen, idioma });
   } catch (e: any) {
     console.error("[sync-sets] error:", e);
     return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
