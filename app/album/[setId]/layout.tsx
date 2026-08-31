@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { loadLocalSets } from "../../../services/localData";
-import { nombreSetEs } from "../../../services/idioma";
+import { capaEs } from "../../../services/idiomaBD";
 import { idiomaActual } from "../../../services/idiomaServidor";
 
 /**
@@ -27,7 +27,7 @@ export async function generateMetadata({
     // del índice estático, sin abrir el diccionario de cartas de la expansión.
     const idioma = await idiomaActual();
     const sets = (await loadLocalSets()) as { id: string; name?: string }[];
-    name = nombreSetEs(setId, idioma) ?? sets.find((s) => s.id === setId)?.name;
+    name = (await capaEs(idioma)).nombreSet(setId) ?? sets.find((s) => s.id === setId)?.name;
   } catch {
     name = undefined;
   }

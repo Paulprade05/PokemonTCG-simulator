@@ -48,7 +48,7 @@ Las rutas van en este orden y **todas** piden `Authorization: Bearer $ADMIN_SECR
 
 | Orden | Ruta | Qué hace |
 |---|---|---|
-| 1 | `/migrate-core` | Crea las cinco tablas base: `users`, `sets`, `cards`, `user_collection` y `friendships`, con sus claves e índices. |
+| 1 | `/migrate-core` | Crea las cinco tablas base (`users`, `sets`, `cards`, `user_collection`, `friendships`) más `set_translations`, con sus claves e índices. |
 | 2 | `/migrate-schema` | Añade a `cards` las columnas ricas (ataques, legalidades, precios…) e índices. |
 | 3 | `/migrate-social` | Crea `trade_offers` y los índices de usuario. |
 | 4 | `/seed-database` | Siembra las expansiones de `src/data`. Con `?force=true` reescribe las que ya estén. |
@@ -68,6 +68,30 @@ que la ingesta va bien.
 > tocar ni una fila.
 
 ---
+
+## Traducciones automáticas
+
+`vercel.json` programa un segundo cron, `/api/cron/sync-es`, a las 07:00 UTC
+(dos horas después del de expansiones, que es de donde saca los nombres ingleses
+contra los que empareja).
+
+Comprueba si TCGdex ya tiene en español alguna de las expansiones que la app
+enseña en inglés y guarda su diccionario en la tabla `set_translations`. **No
+hace falta desplegar:** `services/idiomaBD.ts` lo aplica encima de los ficheros
+de `src/data/es`, que siguen siendo la base. Si Postgres falla o la tabla está
+vacía, el español sigue funcionando exactamente como antes.
+
+Hacía falta porque en Vercel el sistema de ficheros es de sólo lectura: el
+generador de `src/data/es` sólo se puede ejecutar en local, y hasta ahora cada
+expansión nueva se quedaba en inglés hasta que alguien se acordaba.
+
+**Cómo saber por qué una expansión sigue en inglés:** mira su `estado` en
+`set_translations`. `sin_fuente` o `404` significan que el id de TCGdex se
+adivinó mal y hay que ponerlo a mano en `src/data/es/mapa-sets.json`;
+`guardia` significa que el emparejamiento no superó las comprobaciones
+antimapeo y **no se ha escrito nada**, que es lo correcto: es lo que impide que
+una expansión salga traducida con los nombres de otra. Para reintentar una suelta
+sin esperar a mañana: `/api/cron/sync-es?setId=me6`.
 
 ## Sets nuevos automáticos
 

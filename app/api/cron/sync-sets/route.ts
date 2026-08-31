@@ -5,7 +5,7 @@
 import { NextResponse } from "next/server";
 import { sql } from "@vercel/postgres";
 import { sincronizar } from "@/services/ingest";
-import { SETS_CON_ES } from "@/services/idioma";
+import { setsConEspanol } from "@/services/idiomaBD";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,7 +38,10 @@ const PRESUPUESTO_MS = 45_000;
  * va la cuenta, que es lo que deja ver la deriva sin ensuciar el registro.
  */
 async function cobertura(setsNuevos: string[]) {
-  const nuevosSinEs = setsNuevos.filter((id) => !SETS_CON_ES.has(id));
+  // Las dos vías: los ficheros del despliegue y lo que haya traído el cron de
+  // traducciones. Sin esto, avisaría de expansiones que ya están traducidas.
+  const conEs = await setsConEspanol();
+  const nuevosSinEs = setsNuevos.filter((id) => !conEs.has(id));
   let enBD: number | null = null;
   let sinEsEnBD: number | null = null;
   try {
@@ -46,12 +49,12 @@ async function cobertura(setsNuevos: string[]) {
     enBD = rows.length;
     sinEsEnBD = rows
       .map((r) => String(r.id))
-      .filter((id) => !SETS_CON_ES.has(id)).length;
+      .filter((id) => !conEs.has(id)).length;
   } catch {
     // La cuenta global es informativa: si la consulta falla, el aviso de las
     // recién ingeridas —que es el accionable— sale igual.
   }
-  return { nuevosSinEs, conEspanol: SETS_CON_ES.size, enBD, sinEsEnBD };
+  return { nuevosSinEs, conEspanol: conEs.size, enBD, sinEsEnBD };
 }
 
 /**
@@ -111,10 +114,11 @@ export async function GET(request: Request) {
       // lo que hace que se vea entre las líneas normales del cron.
       console.warn(
         `[sync-sets] SIN ESPAÑOL: ${idioma.nuevosSinEs.join(", ")}` +
-          " · se verán en inglés (marcadas con «EN» en la tienda)." +
-          " Para traducirlas: añádelas al mapa SETS de" +
-          " scripts/generar-diccionario-es.mjs y ejecuta" +
-          ` node scripts/generar-diccionario-es.mjs --set ${idioma.nuevosSinEs[0]}`,
+          " · se verán en inglés (marcadas con «EN» en la tienda) hasta que" +
+          " /api/cron/sync-es las alcance. Si mañana siguen aquí, mira su" +
+          " `estado` en set_translations: 'sin_fuente' o '404' significan que" +
+          " el candidato de TCGdex no vale y hay que mapearlas a mano en" +
+          " src/data/es/mapa-sets.json.",
       );
     }
     if (idioma.sinEsEnBD !== null) {

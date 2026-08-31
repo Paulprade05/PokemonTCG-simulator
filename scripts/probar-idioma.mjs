@@ -77,7 +77,26 @@ async function cartasDeSet(idSet) {
   }));
 }
 
-const setsLocales = [...SETS_CON_ES].sort();
+/* SÓLO LAS QUE TIENEN FICHERO DE CARTAS.
+ *
+ * El índice ya no equivale al directorio: desde que el generador sabe bajar las
+ * cartas de pokemontcg.io, hay expansiones traducidas (me1, me2, las Fulgor
+ * Negro y Llama Blanca...) que sólo viven en Postgres y no tienen JSON local.
+ * Esta prueba compara traducción contra original, así que necesita el original;
+ * lo que no puede es reventar por su ausencia. */
+const conFicheroLocal = new Set(
+  (await fs.readdir(DIR_DATOS))
+    .filter((f) => f.endsWith(".json") && f !== "all-sets.json")
+    .map((f) => f.replace(/\.json$/, "")),
+);
+const setsLocales = [...SETS_CON_ES].filter((id) => conFicheroLocal.has(id)).sort();
+const sinFicheroLocal = [...SETS_CON_ES].filter((id) => !conFicheroLocal.has(id)).sort();
+if (sinFicheroLocal.length) {
+  console.log(
+    "\nNota: " + sinFicheroLocal.length + " expansiones traducidas no tienen JSON" +
+      " local y quedan fuera de esta comparación:\n      " + sinFicheroLocal.join(", "),
+  );
+}
 
 console.log("\n== 1. Cobertura por expansión (idioma \"es\") ==");
 console.log("set            cartas  traduc   %   img.ES  img.EN");
@@ -112,7 +131,11 @@ for (const idSet of setsLocales) {
     const esEs = typeof t.images?.small === "string" && t.images.small.includes("tcgdex");
     if (esEs) {
       nImgEs++;
-      if (!t.images.small.endsWith("/low.webp") || !t.images.large.endsWith("/high.png")) {
+      // Las DOS en webp. La comprobación pedía "/high.png" y llevaba fallando
+      // desde que services/idioma.ts pasó la grande a webp en el mismo commit
+      // que la introdujo: 24,7 MB de PNG frente a 1,75 MB de webp, medido allí.
+      // Como este script no está en `npm test`, el fallo no lo veía nadie.
+      if (!t.images.small.endsWith("/low.webp") || !t.images.large.endsWith("/high.webp")) {
         problemas.push(idSet + " " + o.id + ": URL de imagen mal compuesta");
       }
     } else {

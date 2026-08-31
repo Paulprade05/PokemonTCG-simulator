@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/sync-sets",
       "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/sync-es",
+      "schedule": "0 7 * * *"
     }
   ]
 }

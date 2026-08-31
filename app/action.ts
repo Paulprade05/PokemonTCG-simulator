@@ -16,14 +16,10 @@
   // pantallas que pintan cartas no tienen que saber que existe un idioma.
   // Nunca se aplica a las lecturas con las que el servidor DECIDE algo (sorteo
   // del sobre, validación del mercado): ésas siguen viendo el dato inglés.
-  import {
-    nombreSetEs,
-    tieneEspanol,
-    traducirCartas,
-    traducirSet,
-    traducirSets,
-    type Idioma,
-  } from "../services/idioma";
+  import { type Idioma } from "../services/idioma";
+  // La capa de traducciones: estáticos MÁS lo que el cron haya escrito en
+  // Postgres. Degrada exactamente a los ficheros estáticos si la base falla.
+  import { capaEs, traducirCartasEs } from "../services/idiomaBD";
   import { idiomaActual, idsPorNombreEspanol } from "../services/idiomaServidor";
   // El sorteo del sobre vive aquí desde que el cliente dejó de generarlo: es la
   // misma economía calibrada que consume scripts/sim-economia.mjs.
@@ -60,7 +56,7 @@
   async function enIdiomaUsuario(cartas: any[]): Promise<any[]> {
     const idioma = await idiomaActual();
     if (idioma !== "es") return cartas;
-    return [...(await traducirCartas(cartas, idioma))];
+    return [...(await traducirCartasEs(cartas, idioma))];
   }
 
   // Las columnas y tablas auxiliares (recompensa diaria, tema, lista de deseos y
@@ -1147,6 +1143,7 @@
   async function setsEnIdioma(sets: any[]): Promise<any[]> {
     const idioma = await idiomaActual();
     if (idioma !== "es") return sets;
+    const capa = await capaEs(idioma);
     /* `tieneEs` marca las expansiones SIN diccionario, que se ven en inglés.
      *
      * Hace falta porque el cron trae expansiones a `sets` mucho antes de que
@@ -1158,9 +1155,9 @@
      * una única cosa y la pantalla no tiene que consultar además el idioma. Es
      * un `Set.has` sobre el índice estático, no toca Postgres.
      */
-    return traducirSets(sets, idioma).map((s: any) => ({
+    return capa.traducirSets(sets).map((s: any) => ({
       ...s,
-      tieneEs: tieneEspanol(s.id),
+      tieneEs: capa.tieneEspanol(s.id),
     }));
   }
   // Añade esto al final de tu src/app/action.ts
@@ -1198,6 +1195,7 @@
       // El nombre de la expansión también se traduce: el perfil del entrenador
       // lo pinta junto al logo y quedaría a medias en inglés.
       const idioma = await idiomaActual();
+      const capa = await capaEs(idioma);
       return enIdiomaUsuario(
         rows.map((row: any) => ({
           ...row,
@@ -1210,7 +1208,7 @@
           flavorText: row.flavor_text,
           set: {
             id: row.set_id,
-            name: nombreSetEs(row.set_id, idioma) ?? row.set_name,
+            name: capa.nombreSet(row.set_id) ?? row.set_name,
           },
         })),
       );
@@ -1426,17 +1424,18 @@ export async function getCardFromDB(cardId: string) {
     };
     // Get set info too
     const idioma = await idiomaActual();
+    const capa = await capaEs(idioma);
     let setObj: any = { id: row.set_id };
     const { rows: setRows } = await sql`SELECT * FROM sets WHERE id = ${row.set_id} LIMIT 1`;
     if (setRows.length > 0) {
       const s: any = setRows[0];
-      setObj = traducirSet({
+      setObj = capa.traducirSet({
         id: s.id, name: s.name, series: s.series,
         printedTotal: s.printed_total, total: s.total,
         ptcgoCode: s.ptcgo_code, releaseDate: s.release_date,
         legalities: parse(s.legalities, {}),
         images: parse(s.images, {}),
-      }, idioma);
+      });
     }
     // El detalle es la única pantalla que enseña el texto de ambientación, y
     // las cartas españolas de TCGdex no lo traen: se queda en inglés (igual que
@@ -1562,8 +1561,9 @@ export async function searchCardsInDB(query: string, page = 1, pageSize = 10) {
         `SELECT id, name FROM sets WHERE id = ANY($1::text[])`,
         [setIds],
       );
+      const capa = await capaEs(idioma);
       setRows.forEach((s: any) => {
-        setMap[s.id] = { ...s, name: nombreSetEs(s.id, idioma) ?? s.name };
+        setMap[s.id] = { ...s, name: capa.nombreSet(s.id) ?? s.name };
       });
     }
     const data = await enIdiomaUsuario(
@@ -1629,6 +1629,7 @@ export async function claimSetCompletionBonuses() {
     // El aviso de "¡has completado X!" nombra la expansión: en español también.
     // La fila de set_rewards se sigue escribiendo con el id canónico.
     const idioma = await idiomaActual();
+    const capa = await capaEs(idioma);
     let granted = 0;
     const completedSets: string[] = [];
 
@@ -1665,7 +1666,7 @@ export async function claimSetCompletionBonuses() {
         `;
         if ((ins.rowCount ?? 0) > 0) {
           granted += BONUS;
-          completedSets.push(nombreSetEs(row.set_id, idioma) ?? meta.name);
+          completedSets.push(capa.nombreSet(row.set_id) ?? meta.name);
         }
       }
     }
@@ -1913,7 +1914,7 @@ export async function nombresDeCartas(ids: string[]) {
 
   if (idioma === "es") {
     // En español basta el diccionario: ni una consulta.
-    const traducidas = await traducirCartas(
+    const traducidas = await traducirCartasEs(
       limpios.map(
         (id) => ({ id }) as { id: string; name?: string; images?: { small?: string; large?: string } | null },
       ),
@@ -1998,7 +1999,7 @@ interface CartaMercado extends CartaMinima {
 async function conNombreEs(cartas: CartaMercado[]): Promise<CartaMercado[]> {
   const idioma = await idiomaActual();
   if (idioma !== "es" || cartas.length === 0) return cartas;
-  const traducidas = await traducirCartas(
+  const traducidas = await traducirCartasEs(
     cartas.map((c) => ({ id: c.id, name: c.name })),
     idioma,
   );
@@ -2413,12 +2414,13 @@ export async function getMercado() {
   // que en inglés la pantalla se quedaba con el respaldo de AVAILABLE_SETS y
   // las expansiones que trae el cron salían como "SV10" en mayúsculas.
   const idioma = await idiomaActual();
+  const capa = await capaEs(idioma);
   const { nombres: nombresEn } = await catalogoDelMercado();
   const nombresSet: Record<string, string> = {};
   for (const o of ofertas) {
     for (const id of [o.setId, ...o.requisitos.map((r) => r.setId)]) {
       if (!id || nombresSet[id]) continue;
-      const nombre = (idioma === "es" ? nombreSetEs(id, idioma) : null) ?? nombresEn[id];
+      const nombre = (idioma === "es" ? capa.nombreSet(id) : null) ?? nombresEn[id];
       if (nombre) nombresSet[id] = nombre;
     }
   }

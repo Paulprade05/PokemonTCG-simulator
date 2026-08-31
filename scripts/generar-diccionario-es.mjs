@@ -40,27 +40,14 @@ const API = "https://api.tcgdex.net/v2/es";
  * y, como el índice se armaba sólo con las que salían bien, cada pasada completa
  * las dejaba fuera y las devolvía al inglés en silencio.
  */
-const SETS = {
-  sv1: "sv01", sv2: "sv02", sv3: "sv03", sv3pt5: "sv03.5", sv4: "sv04",
-  sv4pt5: "sv04.5", sv5: "sv05", sv6: "sv06", sv6pt5: "sv06.5", sv7: "sv07",
-  sv8: "sv08", sv8pt5: "sv08.5", sv9: "sv09", sv10: "sv10",
-  swsh1: "swsh1", swsh2: "swsh2", swsh3: "swsh3", swsh4: "swsh4",
-  swsh5: "swsh5", swsh6: "swsh6", swsh7: "swsh7", swsh8: "swsh8",
-  swsh9: "swsh9", swsh10: "swsh10", swsh11: "swsh11", swsh12: "swsh12",
-  swsh12pt5: "swsh12.5", swsh12pt5gg: "swsh12.5gg",
-  swsh35: "swsh3.5", swsh45: "swsh4.5", swsh45sv: "swsh4.5sv",
-  swsh9tg: "swsh9tg", swsh10tg: "swsh10tg", swsh11tg: "swsh11tg",
-  swsh12tg: "swsh12tg",
-  sve: "sve", svp: "svp", swshp: "swshp",
-
-  // Expansiones que trae el CRON y que no tienen fichero en src/data: sus
-  // cartas se bajan de pokemontcg.io (ver `leerCartasLocales`). Son las que
-  // salían en inglés, y las primeras de la lista porque la tienda ordena por
-  // fecha descendente.
-  zsv10pt5: "sv10.5b", rsv10pt5: "sv10.5w",
-  me1: "me01", me2: "me02", me2pt5: "me02.5",
-  me3: "me03", me4: "me04", me5: "me05",
-};
+// La tabla vive en JSON y NO aquí porque la comparten dos consumidores que no
+// pueden importarse entre sí: este script es .mjs y no puede importar TypeScript,
+// y el cron de traducciones (services/idiomaIngest.ts) es TypeScript y no puede
+// importar este .mjs sin arrastrar fs al bundle. Ver services/mapaSetsEs.ts.
+// Dos copias que se desincronizan traducen una carta con el nombre de otra.
+const SETS = JSON.parse(
+  await fs.readFile(path.join(DIR_DATOS, "es", "mapa-sets.json"), "utf8"),
+);
 
 const CONCURRENCIA = 6;
 const REINTENTOS = 4;

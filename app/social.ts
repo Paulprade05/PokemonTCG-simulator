@@ -10,7 +10,7 @@ import { RARITY_RANK, precioDeCartaSuelta, valorDeVenta } from "../utils/constan
 // Los intercambios se emparejan SIEMPRE por id (ver createTradeOffer y
 // acceptTradeOffer): aquí el idioma sólo cambia el rótulo y la ilustración de
 // las cartas que se enseñan al elegir y al revisar una oferta.
-import { traducirCartas } from "../services/idioma";
+import { traducirCartasEs } from "../services/idiomaBD";
 import { idiomaActual } from "../services/idiomaServidor";
 
 // ============================================================
@@ -35,7 +35,7 @@ async function hydrateCardsByIds(ids: string[]) {
     `SELECT id, name, rarity, images, set_id FROM cards WHERE id = ANY($1::text[])`,
     [unique],
   );
-  const cartas = await traducirCartas(
+  const cartas = await traducirCartasEs(
     rows.map((r: any) => ({
       id: r.id,
       name: r.name,
@@ -608,7 +608,7 @@ export async function getTradableCollection(targetId: string) {
       const rb = RARITY_RANK[b.rarity] || 0;
       return rb - ra || String(a.name).localeCompare(String(b.name));
     });
-    return [...(await traducirCartas(
+    return [...(await traducirCartasEs(
       rows.map((r: any) => ({
         id: r.id, name: r.name, rarity: r.rarity, quantity: r.quantity, set_id: r.set_id,
         images: typeof r.images === "string" ? JSON.parse(r.images) : r.images,

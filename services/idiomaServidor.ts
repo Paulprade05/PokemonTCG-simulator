@@ -19,12 +19,8 @@
  */
 
 import { cookies } from "next/headers";
-import {
-  SETS_CON_ES,
-  cargarDiccionario,
-  normalizarIdioma,
-  type Idioma,
-} from "./idioma";
+import { normalizarIdioma, type Idioma } from "./idioma";
+import { diccionarioEs, setsConEspanol } from "./idiomaBD";
 
 /** Nombre de la cookie. Lo comparte el script de arranque de app/layout.tsx. */
 export const COOKIE_IDIOMA = "tcg-idioma";
@@ -69,30 +65,44 @@ interface EntradaBusqueda {
 // si alguien busca en español. Son ~6.700 entradas: cabe de sobra en memoria y
 // evita añadir una columna `name_es` a `cards` (que obligaría a resembrar la
 // tabla y a mantenerla sincronizada con el diccionario).
-let indiceEnCurso: Promise<EntradaBusqueda[]> | null = null;
+/* CON CADUCIDAD, y hace falta desde que hay cron de traducciones: el índice se
+ * construía UNA vez por instancia y para siempre, así que una instancia viva
+ * jamás habría visto lo que el cron escribiera esta noche. Quince minutos es el
+ * mismo compromiso que el resto de cachés del proyecto. */
+const INDICE_TTL_MS = 15 * 60 * 1000;
+let indiceEnCurso: { p: Promise<EntradaBusqueda[]>; expira: number } | null = null;
 
 function construirIndice(): Promise<EntradaBusqueda[]> {
-  if (indiceEnCurso) return indiceEnCurso;
+  const ahora = Date.now();
+  if (indiceEnCurso && indiceEnCurso.expira > ahora) return indiceEnCurso.p;
 
-  indiceEnCurso = (async () => {
+  const entrada = {
+    expira: ahora + INDICE_TTL_MS,
+    p: null as unknown as Promise<EntradaBusqueda[]>,
+  };
+  entrada.p = (async () => {
     const salida: EntradaBusqueda[] = [];
-    for (const setId of SETS_CON_ES) {
-      const dicc = await cargarDiccionario(setId, "es");
+    // La unión de las dos vías: los ficheros estáticos MÁS lo que haya escrito
+    // el cron. Si Postgres falla, `setsConEspanol` devuelve sólo los estáticos y
+    // el buscador funciona exactamente como el primer día.
+    for (const setId of await setsConEspanol()) {
+      const dicc = await diccionarioEs(setId);
       if (!dicc) continue;
-      for (const [id, entrada] of Object.entries(dicc.cartas)) {
-        if (!entrada) continue;
-        salida.push({ id, nombre: entrada.n, clave: sinTildes(entrada.n) });
+      for (const [id, e] of Object.entries(dicc.cartas)) {
+        if (!e) continue;
+        salida.push({ id, nombre: e.n, clave: sinTildes(e.n) });
       }
     }
     return salida;
   })().catch((e) => {
     // No cachear el fallo: la próxima búsqueda vuelve a intentarlo.
     console.error("índice de búsqueda en español:", e);
-    indiceEnCurso = null;
+    entrada.expira = 0;
     return [];
   });
 
-  return indiceEnCurso;
+  indiceEnCurso = entrada;
+  return entrada.p;
 }
 
 /**

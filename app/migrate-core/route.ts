@@ -1,6 +1,7 @@
 import { sql } from "@vercel/postgres";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "../_admin-auth";
+import { SENTENCIAS_IDIOMA } from "@/services/idiomaEsquema";
 
 /* ==================================================================== *
  * EL ESQUEMA BASE
@@ -217,6 +218,15 @@ const SENTENCIAS: readonly string[] = [
   // Las dos direcciones de la consulta de getSocialOverview.
   `CREATE INDEX IF NOT EXISTS idx_friendships_user   ON friendships (user_id, status)`,
   `CREATE INDEX IF NOT EXISTS idx_friendships_friend ON friendships (friend_id, status)`,
+
+  /* ---------------------------------------------------------------- *
+   * CAPA DE TRADUCCIONES
+   * ----------------------------------------------------------------
+   * Se importan en vez de copiarse: las mismas sentencias las usa el cron de
+   * traducciones para asegurarse de que la tabla existe antes de escribir, y
+   * dos declaraciones que divergen darían tablas distintas en dos despliegues.
+   * Van al final porque no dependen de nada de arriba. */
+  ...SENTENCIAS_IDIOMA,
 ];
 
 export async function GET(request: Request) {

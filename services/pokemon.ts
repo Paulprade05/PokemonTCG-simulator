@@ -3,7 +3,7 @@
 
 import { sql } from '@vercel/postgres';
 import { loadLocalCards } from './localData';
-import { traducirCartas } from './idioma';
+import { traducirCartasEs } from './idiomaBD';
 import { idiomaActual } from './idiomaServidor';
 
 /**
@@ -25,7 +25,7 @@ export async function getCardsFromSet(setId: string) {
   // Array MUTABLE: `traducirCartas` devuelve readonly para que React no repinte
   // de balde, pero el álbum y la tienda ordenan y filtran la lista en sitio.
   const enIdioma = async (cartas: any[]): Promise<any[]> =>
-    idioma === "es" ? [...(await traducirCartas(cartas, idioma))] : cartas;
+    idioma === "es" ? [...(await traducirCartasEs(cartas, idioma))] : cartas;
 
   try {
     console.log(`🗄️ Consultando base de datos para set: ${setId}`);
