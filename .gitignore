@@ -52,3 +52,12 @@ start.log
 # código del proyecto: su trabajo de PWA y móvil ya está en la raíz.
 /PokemonTCG-simulator-feat-*/
 /PokemonTCG-simulator-feat-*.zip
+
+# Ficheros de trabajo temporales de la sesión de mejoras (graduación, bazar,
+# eras y precios). NO SE BORRAN —regla del dueño del repositorio— pero tampoco
+# tienen por qué viajar a GitHub: son scripts de medición de usar y tirar.
+# Si algún día se decide que alguno merece quedarse, se le quita el prefijo
+# `_tmp-` y se le saca de aquí.
+scripts/_tmp-*
+/_depth.js
+/_parse_tmp.js

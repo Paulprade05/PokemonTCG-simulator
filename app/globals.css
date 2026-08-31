@@ -343,6 +343,33 @@ button, a, [role="button"] { touch-action: manipulation; }
   outline-offset: 2px;
 }
 
+/* La carta que se está abriendo NO lleva anillo de foco.
+ *
+ * POR QUÉ SE VEÍA: al pasar de carta con Espacio o con las flechas, page.tsx
+ * mueve el foco al div de gestos por programa. El navegador viene de una
+ * pulsación de teclado, así que da por buena la heurística de :focus-visible y
+ * pinta la regla de arriba. Como ese div es un rectángulo recto y la carta va
+ * con rounded-[4.5%], salía un marco verde de esquinas rectas alrededor —
+ * parecía un fallo de pintado, no un indicador.
+ *
+ * POR QUÉ QUITARLO NO ROMPE EL TECLADO: mientras el sobre está abierto,
+ * AppShell deja el resto de la aplicación con `inert` y dentro del diálogo la
+ * carta es lo ÚNICO que se puede enfocar. Un anillo que siempre está en el
+ * mismo y único sitio no informa de nada. El foco sigue estando ahí —hace
+ * falta para que Enter y el relevo del rasgado funcionen—, sólo deja de
+ * dibujarse. Fuera de la apertura no cambia nada: el resto de la web conserva
+ * su anillo.
+ *
+ * OJO A LA CASCADA — ESTO NO PUEDE IR EN UN @layer. Tailwind emite sus
+ * utilidades dentro de `@layer utilities` y una regla SIN capa gana a
+ * cualquier capa pase lo que pase con la especificidad. Por eso
+ * `focus-visible:outline-none` como clase de Tailwind NO funciona aquí, y por
+ * eso esta regla vive fuera del bloque `@layer utilities` de más abajo. Si
+ * alguien la mueve dentro, el borde verde vuelve en silencio. */
+[data-carta-abierta]:focus-visible {
+  outline: none;
+}
+
 /* framer-motion no lee la media query: se le indica en AppShell. Aquí
    cortamos también las animaciones infinitas, que la regla previa no cubría. */
 @media (prefers-reduced-motion: reduce) {

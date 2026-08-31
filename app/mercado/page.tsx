@@ -426,6 +426,24 @@ export default function MercadoPage() {
         title="Mercado"
         subtitle={restante(caduca - ahora)}
         actions={
+          <>
+          {/* LA PUERTA AL BAZAR ENTRE JUGADORES.
+              Cuelga del Mercado y no de una pestaña propia porque son las dos
+              mitades de lo mismo: aquí se le vende a la máquina, allí a otras
+              personas. La pestaña de Mercado cubre ya la ruta /bazar (ver
+              components/nav-items.tsx), así que la barra inferior no se apaga
+              al entrar. */}
+          <Link
+            href="/bazar"
+            aria-label="Ir al bazar entre jugadores"
+            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press touch-target justify-center"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+              <path d="M3 21h18M5 21V10l7-5 7 5v11" />
+              <path d="M9 21v-6h6v6" />
+            </svg>
+            <span className="hidden sm:inline">Bazar</span>
+          </Link>
           <button
             onClick={() => cargar(false)}
             aria-label="Actualizar el tablón"
@@ -436,6 +454,7 @@ export default function MercadoPage() {
               <path d="M21 3v6h-6" />
             </svg>
           </button>
+          </>
         }
       />
 

@@ -24,7 +24,15 @@ export const NAV_ITEMS: NavItem[] = [
   {
     href: "/collection",
     label: "Colección",
-    match: (p) => p.startsWith("/collection") || p.startsWith("/album"),
+    /* La pestaña cubre TODO lo que es "mis cartas": el álbum, la vitrina (el
+     * archivador 3x3) y la graduación, que es un servicio que se presta sobre
+     * la colección. Si alguna de esas rutas faltara aquí, la pestaña se apagaría
+     * al entrar en ella y la barra inferior parecería rota. */
+    match: (p) =>
+      p.startsWith("/collection") ||
+      p.startsWith("/album") ||
+      p.startsWith("/vitrina") ||
+      p.startsWith("/graduacion"),
     icon: I(<><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>),
   },
   {
@@ -32,7 +40,9 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Mercado",
     // Sin requireAuth a propósito: el invitado puede mirar el tablón (la propia
     // pantalla le explica que para cobrar necesita sesión).
-    match: (p) => p.startsWith("/mercado"),
+    // El bazar entre jugadores es la otra mitad del mercado: uno vende a la
+    // máquina y el otro a personas. Comparten pestaña a propósito.
+    match: (p) => p.startsWith("/mercado") || p.startsWith("/bazar"),
     icon: I(<><path d="M3 9h18l-1.5 10.5a2 2 0 0 1-2 1.5H6.5a2 2 0 0 1-2-1.5z" /><path d="M8 9V6a4 4 0 0 1 8 0v3" /></>),
   },
   {

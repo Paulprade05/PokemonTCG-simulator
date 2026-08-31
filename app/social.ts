@@ -438,8 +438,27 @@ export async function acceptTradeOffer(tradeId: number) {
          -- el valor ACTUAL —Postgres reevalúa la fila si otra transacción la
          -- tocó—, no el de la instantánea: por eso comprobar aquí ya es
          -- comprobar de verdad.
-         SELECT uc.user_id, uc.card_id, uc.quantity
+         --
+         -- LAS COPIAS GRADUADAS SE DESCUENTAN AQUÍ, en el saldo, y no en un
+         -- guard aparte: así «deuda» las ve sin tener que repetir la resta, y
+         -- el orden de los candados —que es un invariante global de este
+         -- repositorio— no cambia ni una coma. El LEFT JOIN no bloquea nada:
+         -- graded_cards no participa del FOR UPDATE, sólo aporta el contador.
+         --
+         -- Ojo: esto NO introduce la copia reservada en el intercambio. Una
+         -- carta única sin graduar sigue siendo intercambiable, que es la
+         -- decisión documentada arriba. Lo único que se protege es la copia que
+         -- tiene una fila de graded_cards apuntándola.
+         SELECT uc.user_id, uc.card_id, uc.quantity - COALESCE(g.n, 0) AS quantity
          FROM user_collection uc
+         LEFT JOIN (
+           SELECT user_id, card_id, count(*)::int AS n
+           FROM graded_cards
+           -- Solo las que siguen en la vitrina: una copia vendida conserva su
+           -- fila para que su indice no se recicle, pero ya no ocupa copia.
+           WHERE estado = 'activa'
+           GROUP BY user_id, card_id
+         ) g ON g.user_id = uc.user_id AND g.card_id = uc.card_id
          WHERE (uc.user_id, uc.card_id) IN (SELECT m.user_id, m.card_id FROM mov m)
          ORDER BY uc.user_id, uc.card_id
          FOR UPDATE OF uc

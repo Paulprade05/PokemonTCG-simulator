@@ -13,6 +13,12 @@ interface Card {
   name: string;
   rarity: string;
   images: { small: string; large: string };
+  /**
+   * Precio real de Cardmarket en euros, si el cron de precios ya pasó por ella.
+   * Opcional SIEMPRE: la inmensa mayoría de las cartas no lo tienen, y sin él
+   * todo se comporta exactamente como antes de que existiera esta columna.
+   */
+  precioEur?: number | null;
 }
 
 // 1. Clasificador de Rarezas (He añadido protección '?' por si la rareza viene vacía de la BD)
@@ -92,21 +98,176 @@ interface RamaDePremio {
   respaldo: NombreDePool;
 }
 
-const PREMIO_ESTANDAR: readonly RamaDePremio[] = [
-  { prob:  0.5, pool: 'hyperRare',               respaldo: 'ultraRare'  },
-  { prob:  2.0, pool: 'specialIllustrationRare', respaldo: 'ultraRare'  },
-  { prob:  4.0, pool: 'ultraRare',               respaldo: 'doubleRare' },
-  { prob:  8.0, pool: 'illustrationRare',        respaldo: 'rare'       },
-  { prob: 15.5, pool: 'doubleRare',              respaldo: 'rare'       },
-  { prob: 70.0, pool: 'rare',                    respaldo: 'uncommon'   },
-];
+/* ==================================================================== *
+ * PERFILES POR ERA: POR QUÉ POR ERA Y NO POR EXPANSIÓN
+ * ====================================================================
+ *
+ * LA PETICIÓN era "estudiar cada expansión a fondo y personalizarle las
+ * probabilidades". No se ha hecho así, y la razón es de mantenimiento, no de
+ * pereza: hay 171 expansiones en src/data/all-sets.json y el cron
+ * /api/cron/sync-sets AÑADE MÁS SOLO, cada noche. Una tabla por expansión
+ * significa que cada expansión nueva nace sin configurar y con el reparto por
+ * defecto, en silencio — exactamente el mismo fallo que ya nos costó una tarde
+ * con los diccionarios de español (ver app/api/cron/sync-sets/route.ts).
+ *
+ * LO QUE SÍ VARÍA DE VERDAD ES LA ERA. Las tiradas reales de Escarlata y
+ * Púrpura no se parecen a las de Espada y Escudo, pero DENTRO de Escarlata y
+ * Púrpura son casi iguales entre sí. Agrupando por `series` —que ya viene en
+ * los datos, en `sets.series` y en all-sets.json— se consigue casi todo el
+ * realismo, es una tabla de tres filas en vez de 171, y una expansión nueva
+ * HEREDA el perfil de su era sin que nadie tenga que acordarse de nada.
+ *
+ * SI ALGÚN DÍA HACE FALTA AFINAR UNA EXPANSIÓN CONCRETA, el sitio es
+ * `eraDeSerie`: una excepción por id delante del reparto por serie. Pero que
+ * sea la excepción y no la regla.
+ */
+export type Era = 'moderna' | 'media' | 'clasica';
 
-const PREMIO_PREMIUM: readonly RamaDePremio[] = [
-  { prob:  5.0, pool: 'hyperRare',               respaldo: 'ultraRare'  },
-  { prob: 10.0, pool: 'specialIllustrationRare', respaldo: 'ultraRare'  },
-  { prob: 25.0, pool: 'ultraRare',               respaldo: 'doubleRare' },
-  { prob: 60.0, pool: 'doubleRare',              respaldo: 'rare'       },
-];
+/** La era por defecto: el reparto que tenía el juego antes de las eras. */
+const ERA_POR_DEFECTO: Era = 'media';
+
+/* NOMBRE EXACTO Y NO `includes`, y esto NO es purismo.
+ *
+ * La primera versión de esta función buscaba subcadenas: `s.includes('ex')`
+ * para la serie EX, `s.includes('np')` para NP, y así. El invariante de eras de
+ * scripts/test-invariantes.mjs lo cazó a la primera con el caso
+ * "Una Serie Que No Existe", que contiene «ex» y por tanto caía en 'clasica'.
+ * Con nombres de serie inventados por una API que no controlamos —y el cron
+ * /api/cron/sync-sets trae series nuevas solo— eso es una bomba de relojería:
+ * una expansión moderna con una palabra desafortunada en su serie repartiría
+ * con las probabilidades de los sobres de 1999.
+ *
+ * Las claves son los `series` REALES de src/data/all-sets.json, en minúsculas.
+ * Lo que no esté aquí cae en ERA_POR_DEFECTO, que es el reparto de siempre. */
+const ERA_POR_SERIE: Record<string, Era> = {
+  // Modernas: la generación actual, donde el sobre real va cargado de hits.
+  'scarlet & violet': 'moderna',
+  'mega evolution': 'moderna',
+
+  // Medias: Espada y Escudo y Sol y Luna, el reparto histórico de este juego.
+  'sword & shield': 'media',
+  'sun & moon': 'media',
+
+  // Clásicas: XY hacia atrás. Sobres con mucha morralla y pocos premios.
+  'xy': 'clasica',
+  'black & white': 'clasica',
+  'heartgold & soulsilver': 'clasica',
+  'platinum': 'clasica',
+  'diamond & pearl': 'clasica',
+  'ex': 'clasica',
+  'pop': 'clasica',
+  'np': 'clasica',
+  'e-card': 'clasica',
+  'neo': 'clasica',
+  'gym': 'clasica',
+  'base': 'clasica',
+
+  // 'Other' mezcla expansiones de 2001 y de 2022: sin criterio posible, el
+  // reparto de siempre. Está escrito y no omitido para que se vea que es una
+  // decisión y no un olvido.
+  'other': 'media',
+};
+
+/**
+ * A qué era pertenece una expansión, a partir de su `series`.
+ *
+ * Sin serie —una expansión recién ingerida a la que aún no le ha llegado la
+ * ficha, o los invitados que tiran de los JSON locales— cae en ERA_POR_DEFECTO,
+ * que es EXACTAMENTE el reparto que tenía el juego antes de que existieran las
+ * eras. Es decir: no saber la era nunca cambia el comportamiento de siempre.
+ */
+export const eraDeSerie = (serie?: string | null): Era => {
+  const s = (serie ?? '').trim().toLowerCase();
+  if (!s) return ERA_POR_DEFECTO;
+  return ERA_POR_SERIE[s] ?? ERA_POR_DEFECTO;
+};
+
+/* Los tres repartos del hueco de premio del sobre ESTÁNDAR.
+ *
+ * 'media' es, carácter por carácter, la tabla que había antes de esto: es la
+ * línea base contra la que se midió todo lo demás. Las otras dos se separan de
+ * ella en la dirección que marca el juego real.
+ *
+ * DE DÓNDE SALEN LOS NÚMEROS DE 'moderna', porque NO son a ojo. Subir las
+ * probabilidades no abre ninguna fuga —`calibrar` reacciona sola: un sobre que
+ * vale más pierde relleno hasta volver por debajo de su precio—, pero sí choca
+ * contra TOLERANCIA_RELLENO: en cuanto una era obliga a quitar MÁS DE 2 huecos,
+ * la expansión deja de considerarse un sobre y se cae de la tienda.
+ *
+ * El primer intento (Hyper 1,0 · SIR 3,5 · Ultra 6,5 · Ilustración 13 · Doble
+ * 24) hacía exactamente eso: cero fugas, pero TRECE de las dieciséis
+ * expansiones modernas desaparecían de la tienda porque el estándar pasaba a
+ * retirar 3 huecos. Se barrió entonces el trayecto entre el reparto de siempre
+ * y ese objetivo, en pasos de 0,05, midiendo cuántas se caían en cada punto:
+ *
+ *   t = 0,00 .. 0,65  ->  no se cae ninguna (sv8 retira 1-2 huecos)
+ *   t = 0,70 .. 1,00  ->  se caen 14        (sv8 retira 3-4 huecos)
+ *
+ * El acantilado está entre 0,65 y 0,70. Estos números son t = 0,60: por debajo
+ * del borde con margen, y aun así el hueco de premio pasa de repartir hit el
+ * 30% de las veces al 40,6%. Si alguien quiere subirlos más, el techo medido
+ * es 0,65 y quien lo comprueba es el invariante de eras de
+ * scripts/test-invariantes.mjs. */
+const PREMIO_ESTANDAR_POR_ERA: Record<Era, readonly RamaDePremio[]> = {
+  moderna: [
+    { prob:  0.8, pool: 'hyperRare',               respaldo: 'ultraRare'  },
+    { prob:  2.8, pool: 'specialIllustrationRare', respaldo: 'ultraRare'  },
+    { prob:  5.5, pool: 'ultraRare',               respaldo: 'doubleRare' },
+    { prob: 11.0, pool: 'illustrationRare',        respaldo: 'rare'       },
+    { prob: 20.5, pool: 'doubleRare',              respaldo: 'rare'       },
+    { prob: 59.4, pool: 'rare',                    respaldo: 'uncommon'   },
+  ],
+  media: [
+    { prob:  0.5, pool: 'hyperRare',               respaldo: 'ultraRare'  },
+    { prob:  2.0, pool: 'specialIllustrationRare', respaldo: 'ultraRare'  },
+    { prob:  4.0, pool: 'ultraRare',               respaldo: 'doubleRare' },
+    { prob:  8.0, pool: 'illustrationRare',        respaldo: 'rare'       },
+    { prob: 15.5, pool: 'doubleRare',              respaldo: 'rare'       },
+    { prob: 70.0, pool: 'rare',                    respaldo: 'uncommon'   },
+  ],
+  clasica: [
+    { prob:  0.3, pool: 'hyperRare',               respaldo: 'ultraRare'  },
+    { prob:  1.2, pool: 'specialIllustrationRare', respaldo: 'ultraRare'  },
+    { prob:  2.5, pool: 'ultraRare',               respaldo: 'doubleRare' },
+    { prob:  5.0, pool: 'illustrationRare',        respaldo: 'rare'       },
+    { prob: 11.0, pool: 'doubleRare',              respaldo: 'rare'       },
+    { prob: 80.0, pool: 'rare',                    respaldo: 'uncommon'   },
+  ],
+};
+
+/** Lo mismo para el sobre PREMIUM. 'media' vuelve a ser la tabla de siempre. */
+const PREMIO_PREMIUM_POR_ERA: Record<Era, readonly RamaDePremio[]> = {
+  moderna: [
+    { prob:  8.0, pool: 'hyperRare',               respaldo: 'ultraRare'  },
+    { prob: 15.0, pool: 'specialIllustrationRare', respaldo: 'ultraRare'  },
+    { prob: 30.0, pool: 'ultraRare',               respaldo: 'doubleRare' },
+    { prob: 47.0, pool: 'doubleRare',              respaldo: 'rare'       },
+  ],
+  media: [
+    { prob:  5.0, pool: 'hyperRare',               respaldo: 'ultraRare'  },
+    { prob: 10.0, pool: 'specialIllustrationRare', respaldo: 'ultraRare'  },
+    { prob: 25.0, pool: 'ultraRare',               respaldo: 'doubleRare' },
+    { prob: 60.0, pool: 'doubleRare',              respaldo: 'rare'       },
+  ],
+  clasica: [
+    { prob:  3.0, pool: 'hyperRare',               respaldo: 'ultraRare'  },
+    { prob:  7.0, pool: 'specialIllustrationRare', respaldo: 'ultraRare'  },
+    { prob: 20.0, pool: 'ultraRare',               respaldo: 'doubleRare' },
+    { prob: 70.0, pool: 'doubleRare',              respaldo: 'rare'       },
+  ],
+};
+
+const premioEstandar = (era: Era = ERA_POR_DEFECTO): readonly RamaDePremio[] =>
+  PREMIO_ESTANDAR_POR_ERA[era] ?? PREMIO_ESTANDAR_POR_ERA[ERA_POR_DEFECTO];
+
+const premioPremium = (era: Era = ERA_POR_DEFECTO): readonly RamaDePremio[] =>
+  PREMIO_PREMIUM_POR_ERA[era] ?? PREMIO_PREMIUM_POR_ERA[ERA_POR_DEFECTO];
+
+/** Se exportan para que la tienda pueda ANUNCIAR las probabilidades reales. */
+export const ramasDelPremio = (
+  tipo: 'STANDARD' | 'PREMIUM',
+  era: Era = ERA_POR_DEFECTO,
+): readonly RamaDePremio[] => (tipo === 'PREMIUM' ? premioPremium(era) : premioEstandar(era));
 
 /** Reparte el hueco de premio según la tabla. La última rama recoge el resto. */
 const sacarPremio = (
@@ -138,8 +299,14 @@ const sacarPremio = (
  * puede usar para DECIDIR la composición del sobre sin que la decisión dependa
  * de la suerte de una simulación.
  */
+// El precio real de la carta entra AQUÍ, y sólo aquí. Es lo que hace que el
+// ajuste de Cardmarket no pueda abrir una fuga: el sobre se calibra contra los
+// MISMOS precios que la tienda va a pagar, así que si una expansión sube de
+// valor porque sus cartas son caras de verdad, `calibrar` le quita relleno sola
+// y el sobre sigue por debajo de su precio. Si el ajuste se aplicase al vender
+// pero no aquí, el sobre se calibraría contra un precio que ya no existe.
 const valorMedio = (pool: Card[]): number =>
-  pool.reduce((suma, c) => suma + precioDeCartaSuelta(c.rarity), 0) / pool.length;
+  pool.reduce((suma, c) => suma + precioDeCartaSuelta(c.rarity, c.precioEur), 0) / pool.length;
 
 /** Valor esperado de un hueco, siguiendo la misma cadena de respaldo que draw(). */
 const valorDelHueco = (...cadena: Card[][]): number => {
@@ -266,18 +433,18 @@ const calibrar = (valores: number[], cantidades: number[], fijo: number, techo: 
   return { huecos, valor, retirados, cabe: valor <= techo && retirados <= Math.min(TOLERANCIA_RELLENO, total) };
 };
 
-const calibrarEstandar = (pools: Pools, allCards: Card[]): Calibrado =>
+const calibrarEstandar = (pools: Pools, allCards: Card[], era?: Era): Calibrado =>
   calibrar(
     [
       valorDelHueco(pools.common, pools.uncommon, allCards),
       valorDelHueco(pools.uncommon, pools.common, allCards),
     ],
     [RELLENO_ESTANDAR.comunes, RELLENO_ESTANDAR.infrecuentes],
-    valorDelPremio(pools, PREMIO_ESTANDAR, allCards),
+    valorDelPremio(pools, premioEstandar(era), allCards),
     PACK_PRICES.STANDARD,
   );
 
-const calibrarPremium = (pools: Pools, allCards: Card[]): Calibrado =>
+const calibrarPremium = (pools: Pools, allCards: Card[], era?: Era): Calibrado =>
   calibrar(
     [
       valorDelHueco(pools.uncommon, pools.common, allCards),
@@ -285,7 +452,7 @@ const calibrarPremium = (pools: Pools, allCards: Card[]): Calibrado =>
     ],
     [RELLENO_PREMIUM.infrecuentes, RELLENO_PREMIUM.raras],
     valorDelHueco([...pools.illustrationRare, ...pools.doubleRare], pools.rare, allCards) +
-      valorDelPremio(pools, PREMIO_PREMIUM, allCards),
+      valorDelPremio(pools, premioPremium(era), allCards),
     PACK_PRICES.PREMIUM,
   );
 
@@ -293,12 +460,12 @@ const calibrarPremium = (pools: Pools, allCards: Card[]): Calibrado =>
  * Valor de venta esperado de un sobre estándar de este set, ya calibrado.
  * Determinista: no depende de la suerte de ninguna simulación.
  */
-export const valorEsperadoEstandar = (allCards: Card[]): number =>
-  calibrarEstandar(categorizeCards(allCards), allCards).valor;
+export const valorEsperadoEstandar = (allCards: Card[], era?: Era): number =>
+  calibrarEstandar(categorizeCards(allCards), allCards, era).valor;
 
 /** Lo mismo para el sobre premium. */
-export const valorEsperadoPremium = (allCards: Card[]): number =>
-  calibrarPremium(categorizeCards(allCards), allCards).valor;
+export const valorEsperadoPremium = (allCards: Card[], era?: Era): number =>
+  calibrarPremium(categorizeCards(allCards), allCards, era).valor;
 
 /**
  * ¿Se puede vender un sobre estándar de este set? False en las colecciones sin
@@ -310,12 +477,12 @@ export const valorEsperadoPremium = (allCards: Card[]): number =>
  * pasar swsh35, que sí imprimía dinero, y depende de que el nombre del set lleve
  * la palabra "gallery".
  */
-export const admiteSobreEstandar = (allCards: Card[]): boolean =>
-  calibrarEstandar(categorizeCards(allCards), allCards).cabe;
+export const admiteSobreEstandar = (allCards: Card[], era?: Era): boolean =>
+  calibrarEstandar(categorizeCards(allCards), allCards, era).cabe;
 
 /** Lo mismo para el sobre premium. */
-export const admiteSobrePremium = (allCards: Card[]): boolean =>
-  calibrarPremium(categorizeCards(allCards), allCards).cabe;
+export const admiteSobrePremium = (allCards: Card[], era?: Era): boolean =>
+  calibrarPremium(categorizeCards(allCards), allCards, era).cabe;
 
 /* ==================================================================== *
  * QUÉ REPARTE DE VERDAD EL SOBRE DE ESTA EXPANSIÓN
@@ -434,11 +601,12 @@ const ramasEfectivas = (pools: Pools, ramas: readonly RamaDePremio[]): RamaEfect
 export const composicionDelSobre = (
   allCards: Card[],
   tipo: TipoDeSobre,
+  era?: Era,
 ): ComposicionDelSobre => {
   const pools = categorizeCards(allCards);
 
   if (tipo === "STANDARD") {
-    const { huecos: [comunes, infrecuentes], retirados } = calibrarEstandar(pools, allCards);
+    const { huecos: [comunes, infrecuentes], retirados } = calibrarEstandar(pools, allCards, era);
     const huecos = [
       hueco(pools, "common", "uncommon", comunes),
       hueco(pools, "uncommon", "common", infrecuentes),
@@ -446,13 +614,13 @@ export const composicionDelSobre = (
     return {
       cartas: comunes + infrecuentes + 1,
       huecos,
-      premio: ramasEfectivas(pools, PREMIO_ESTANDAR),
+      premio: ramasEfectivas(pools, premioEstandar(era)),
       retirados,
     };
   }
 
   if (tipo === "PREMIUM") {
-    const { huecos: [infrecuentes, raras], retirados } = calibrarPremium(pools, allCards);
+    const { huecos: [infrecuentes, raras], retirados } = calibrarPremium(pools, allCards, era);
     // El hueco de gama media del premium mezcla dos pools, así que no encaja en
     // `hueco()`: se describe por el que de verdad tenga cartas.
     const mediaDisponible =
@@ -481,7 +649,7 @@ export const composicionDelSobre = (
     return {
       cartas: infrecuentes + raras + 2,
       huecos,
-      premio: ramasEfectivas(pools, PREMIO_PREMIUM),
+      premio: ramasEfectivas(pools, premioPremium(era)),
       retirados,
     };
   }
@@ -502,33 +670,33 @@ export const composicionDelSobre = (
 };
 
 /** Cuántas cartas trae de verdad un sobre de esta expansión. */
-export const cartasDelSobre = (allCards: Card[], tipo: TipoDeSobre): number =>
-  composicionDelSobre(allCards, tipo).cartas;
+export const cartasDelSobre = (allCards: Card[], tipo: TipoDeSobre, era?: Era): number =>
+  composicionDelSobre(allCards, tipo, era).cartas;
 
 // --- NIVEL 1: SOBRE ESTÁNDAR ---
-export const openStandardPack = (allCards: Card[]): Card[] => {
+export const openStandardPack = (allCards: Card[], era?: Era): Card[] => {
   const pools = categorizeCards(allCards);
   const pack: Card[] = [];
   const existingIds = new Set<string>();
 
-  const [comunes, infrecuentes] = calibrarEstandar(pools, allCards).huecos;
+  const [comunes, infrecuentes] = calibrarEstandar(pools, allCards, era).huecos;
 
   // Pasamos 'allCards' a todas las llamadas de draw
   for (let i = 0; i < comunes; i++) pack.push(draw(pools.common, pools.uncommon, existingIds, allCards));
   for (let i = 0; i < infrecuentes; i++) pack.push(draw(pools.uncommon, pools.common, existingIds, allCards));
 
-  pack.push(sacarPremio(pools, PREMIO_ESTANDAR, existingIds, allCards));
+  pack.push(sacarPremio(pools, premioEstandar(era), existingIds, allCards));
 
   return pack;
 };
 
 // --- NIVEL 2: SOBRE PREMIUM ---
-export const openPremiumPack = (allCards: Card[]): Card[] => {
+export const openPremiumPack = (allCards: Card[], era?: Era): Card[] => {
   const pools = categorizeCards(allCards);
   const pack: Card[] = [];
   const existingIds = new Set<string>();
 
-  const [infrecuentes, raras] = calibrarPremium(pools, allCards).huecos;
+  const [infrecuentes, raras] = calibrarPremium(pools, allCards, era).huecos;
 
   for (let i = 0; i < infrecuentes; i++) pack.push(draw(pools.uncommon, pools.common, existingIds, allCards));
   for (let i = 0; i < raras; i++) pack.push(draw(pools.rare, pools.uncommon, existingIds, allCards));
@@ -536,7 +704,7 @@ export const openPremiumPack = (allCards: Card[]): Card[] => {
   const midTierPool = [...pools.illustrationRare, ...pools.doubleRare];
   pack.push(draw(midTierPool, pools.rare, existingIds, allCards));
 
-  pack.push(sacarPremio(pools, PREMIO_PREMIUM, existingIds, allCards));
+  pack.push(sacarPremio(pools, premioPremium(era), existingIds, allCards));
 
   return pack;
 };

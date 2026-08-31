@@ -49,6 +49,10 @@ async function cargarModulo(rel) {
 const constantes = await cargarModulo("utils/constanst.ts");
 const packLogic = await cargarModulo("utils/packLogic.ts");
 const mercado = await cargarModulo("utils/mercado.ts");
+// Los dos módulos nuevos. Igual que packLogic, no importan nada fuera de
+// utils/, así que el cargador de arriba los resuelve sin tocar nada.
+const graduacion = await cargarModulo("utils/graduacion.ts");
+const bazar = await cargarModulo("utils/bazar.ts");
 
 const {
   SELL_PRICES, PACK_PRICES, RARITY_RANK, COPIAS_PROTEGIDAS,
@@ -432,6 +436,437 @@ comprueba(
   comprueba(
     admitidos.length < setIds.length,
     `el filtro de expansiones atables deja fuera las que no tienen pirámide (${setIds.length - admitidos.length} de ${setIds.length})`,
+  );
+}
+
+
+/* ------------------------------------------------------------------ */
+/* GRADUACIÓN                                                          */
+/* ------------------------------------------------------------------ */
+/*
+ * POR QUÉ ESTOS INVARIANTES Y NO OTROS: la graduación multiplica el valor de
+ * una carta a cambio de un pago fijo. La propuesta original (10→×3, 9→×2,
+ * 8→×1,5, 7→×1) daba un multiplicador MEDIO de ×1,7415, y con un coste de 100
+ * monedas eso convertía graduar en beneficio garantizado para cualquier carta
+ * de más de 135 monedas. Como se pueden graduar las REPETIDAS, el bucle no
+ * terminaba nunca: era una imprenta con un botón.
+ *
+ * El arreglo no fue sólo bajar números —ver el razonamiento completo en
+ * utils/graduacion.ts—, así que lo que se comprueba aquí es la CONCLUSIÓN, no
+ * los números concretos: se puede cambiar la tabla entera mientras siga sin
+ * imprimir dinero. Si alguien la sube y se pasa, estos invariantes fallan.
+ */
+{
+  seccion("Graduación: ninguna nota imprime dinero");
+
+  const {
+    PROBABILIDAD_NOTA, MULTIPLICADOR_NOTA, MULTIPLICADOR_MEDIO,
+    COSTE_FRACCION, COSTE_BASE,
+    costeDeGraduar, descuentoPorVolumen, notaDeCopia, desperfectosDeCopia,
+    valorGraduado, semillaDeCopia,
+  } = graduacion;
+
+  const notas = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+  // 1. El reparto es un reparto: suma 100% y no hay notas fuera de la escala.
+  const suma = notas.reduce((a, n) => a + (PROBABILIDAD_NOTA[n] ?? 0), 0);
+  comprueba(
+    Math.abs(suma - 1) < 1e-9 && Object.keys(PROBABILIDAD_NOTA).length === 10,
+    "las probabilidades de las diez notas suman 100%",
+    `suman ${(100 * suma).toFixed(4)}% en ${Object.keys(PROBABILIDAD_NOTA).length} notas`,
+  );
+
+  // 2. Más nota, más valor. Sin esto se podría dar el caso absurdo de que un 6
+  //    valiera más que un 7, que fue justo lo que pasó al bajar el 7 para
+  //    cerrar la fuga sin tocar la parte baja de la escalera.
+  let monotona = true;
+  const rompe = [];
+  for (let n = 2; n <= 10; n++) {
+    if (!(MULTIPLICADOR_NOTA[n] > MULTIPLICADOR_NOTA[n - 1])) {
+      monotona = false;
+      rompe.push(`${n - 1}→${n}`);
+    }
+  }
+  comprueba(monotona, "la escalera de multiplicadores es estrictamente creciente", rompe.join(", "));
+
+  // 3. EL INVARIANTE CENTRAL. Con coste = max(BASE, FRACCION·V), graduar es
+  //    neutral cuando el multiplicador medio vale 1 + FRACCION. Por encima de
+  //    ahí imprime dinero a cualquier valor por encima del suelo.
+  const techo = 1 + COSTE_FRACCION;
+  comprueba(
+    MULTIPLICADOR_MEDIO <= techo,
+    `el multiplicador medio (×${MULTIPLICADOR_MEDIO.toFixed(4)}) no pasa del techo ×${techo.toFixed(2)}`,
+    `se pasa en ${(MULTIPLICADOR_MEDIO - techo).toFixed(4)}: graduar sería beneficio garantizado`,
+  );
+
+  // 4. Y comprobado a la fuerza bruta sobre todo el rango de valores y todos
+  //    los descuentos por volumen, que es donde de verdad se podría colar: un
+  //    descuento generoso sobre el suelo podría reabrir el agujero.
+  const imprime = [];
+  for (const cuantas of [1, 5, 10, 25, 100]) {
+    for (let v = 1; v <= 20000; v += v < 400 ? 1 : 37) {
+      const coste = costeDeGraduar(v, cuantas);
+      const neto = v * MULTIPLICADOR_MEDIO - v - coste;
+      if (neto > 0) {
+        imprime.push(`v=${v} n=${cuantas} neto=+${neto.toFixed(1)}`);
+        break;
+      }
+    }
+  }
+  comprueba(
+    imprime.length === 0,
+    "graduar no da beneficio esperado a ningún valor ni con ningún descuento",
+    imprime.slice(0, 4).join(" | "),
+  );
+
+  // 5. El descuento por volumen nunca puede bajar del tramo proporcional: es lo
+  //    que hace que el punto 4 se sostenga por muy generoso que se ponga.
+  let sueloRespetado = true;
+  for (const cuantas of [1, 5, 10, 25, 1000]) {
+    for (const v of [10, 100, 250, 1000, 10000]) {
+      if (costeDeGraduar(v, cuantas) < Math.round(COSTE_FRACCION * v)) sueloRespetado = false;
+    }
+  }
+  comprueba(
+    sueloRespetado && descuentoPorVolumen(1) === 0,
+    "el descuento por volumen nunca baja del tramo proporcional del coste",
+  );
+
+  seccion("Graduación: la nota es un hecho, no una tirada");
+
+  // 6. DETERMINISMO. Es la promesa de la que cuelga todo el diseño: si la nota
+  //    se sorteara al graduar, quien no quedara contento vendería la carta, la
+  //    volvería a conseguir y volvería a tirar.
+  // El cuarto argumento es el SECRETO DE SERVIDOR, y no es opcional: sin él la
+  // semilla sería `idUsuario|idCarta|indice`, los tres datos que el navegador
+  // ya tiene, y cualquiera podría calcular la nota de sus copias sin graduar
+  // (utils/graduacion.ts lo explica entero). Aquí se usa uno de prueba.
+  const SECRETO = "secreto-de-prueba-para-los-invariantes";
+  const semilla = semillaDeCopia("user_prueba", "sv8-32", 3, SECRETO);
+  const unaVez = notaDeCopia(semilla);
+  let estable = true;
+  for (let i = 0; i < 200; i++) if (notaDeCopia(semilla) !== unaVez) estable = false;
+  comprueba(estable, "la misma copia da SIEMPRE la misma nota");
+
+  // 7. Copias distintas de la misma carta tienen notas independientes: si no,
+  //    elegir cuál gradúas no significaría nada.
+  const porCopia = new Set();
+  for (let c = 1; c <= 60; c++) porCopia.add(notaDeCopia(semillaDeCopia("user_prueba", "sv8-32", c, SECRETO)));
+  comprueba(porCopia.size > 1, "dos copias de la misma carta pueden sacar notas distintas");
+
+  // 8. Y usuarios distintos también, o la nota se filtraría en cuanto alguien
+  //    publicase la suya.
+  let difieren = 0;
+  for (let c = 1; c <= 100; c++) {
+    if (
+      notaDeCopia(semillaDeCopia("user_a", "sv8-32", c, SECRETO)) !==
+      notaDeCopia(semillaDeCopia("user_b", "sv8-32", c, SECRETO))
+    ) difieren++;
+  }
+  comprueba(difieren > 0, "la nota depende del usuario, no sólo de la carta");
+
+  // 9. La distribución empírica se parece a la declarada. 40.000 tiradas dan
+  //    margen de sobra para detectar una tabla mal implementada sin ser
+  //    quisquilloso con el ruido.
+  const N = 40000;
+  const cuenta = {};
+  for (let i = 0; i < N; i++) {
+    const n = notaDeCopia(semillaDeCopia("u", "c", i, SECRETO));
+    cuenta[n] = (cuenta[n] ?? 0) + 1;
+  }
+  let peor = 0, peorNota = 0;
+  for (const n of notas) {
+    const esperado = (PROBABILIDAD_NOTA[n] ?? 0) * N;
+    const visto = cuenta[n] ?? 0;
+    // Desviación en sigmas de una binomial.
+    const sigma = Math.sqrt(Math.max(1, esperado * (1 - (PROBABILIDAD_NOTA[n] ?? 0))));
+    const d = Math.abs(visto - esperado) / sigma;
+    if (d > peor) { peor = d; peorNota = n; }
+  }
+  comprueba(
+    peor < 5,
+    `las notas salen con la frecuencia declarada (peor desvío ${peor.toFixed(1)}σ en la nota ${peorNota})`,
+  );
+
+  /* EL SECRETO TIENE QUE CAMBIAR LAS NOTAS DE VERDAD.
+   *
+   * Es el invariante que protege el arreglo del agujero: si alguien
+   * "simplificara" semillaDeCopia y dejara de usar el secreto, todo lo demás
+   * seguiría pasando —las notas seguirían siendo deterministas y bien
+   * repartidas— y nadie se enteraría de que el jugador ha vuelto a poder
+   * calcularlas antes de pagar. Esto lo caza. */
+  let cambian = 0;
+  for (let c = 1; c <= 300; c++) {
+    const a = notaDeCopia(semillaDeCopia("u", "sv8-32", c, "secreto-A"));
+    const b = notaDeCopia(semillaDeCopia("u", "sv8-32", c, "secreto-B"));
+    if (a !== b) cambian++;
+  }
+  comprueba(
+    cambian > 150,
+    `el secreto del servidor cambia las notas (${cambian} de 300 copias cambian al rotarlo)`,
+    "semillaDeCopia parece estar ignorando el secreto: el jugador podría calcular sus notas",
+  );
+
+  // 10. Los desperfectos NUNCA contradicen la nota: un 10 no puede salir con un
+  //     arañazo, y un 3 no puede salir impecable. Es lo que hace creíble que la
+  //     nota se "revele" en vez de inventarse.
+  let coherentes = true;
+  const incoherencias = [];
+  for (let i = 0; i < 4000; i++) {
+    const s = semillaDeCopia("u", "c", i, SECRETO);
+    const n = notaDeCopia(s);
+    const d = desperfectosDeCopia(s, n);
+    if (n === 10 && (d.piques > 0 || d.aranazos > 0 || d.manchas > 0 || d.palidez > 0)) {
+      coherentes = false; incoherencias.push(`nota 10 con desperfectos`);
+    }
+    if (n >= 6 && d.aranazos > 0) { coherentes = false; incoherencias.push(`nota ${n} con arañazos`); }
+    if (n >= 4 && d.manchas > 0) { coherentes = false; incoherencias.push(`nota ${n} con manchas`); }
+    if (n >= 4 && d.palidez > 0) { coherentes = false; incoherencias.push(`nota ${n} descolorida`); }
+    if (n >= 8 && (d.descentrado.x !== 0 || d.descentrado.y !== 0)) {
+      coherentes = false; incoherencias.push(`nota ${n} descentrada`);
+    }
+    if (n <= 3 && d.piques < 6) { coherentes = false; incoherencias.push(`nota ${n} casi limpia`); }
+  }
+  comprueba(
+    coherentes,
+    "los desperfectos visibles nunca contradicen la nota",
+    [...new Set(incoherencias)].slice(0, 4).join(", "),
+  );
+
+  // 11. Una carta graduada no puede valer menos que cero ni más de lo que dice
+  //     su multiplicador. Suena obvio; es la barrera contra un redondeo que se
+  //     escape hacia arriba.
+  let acotado = true;
+  for (const base of [1, 2, 14, 70, 150, 250, 1000]) {
+    for (const n of notas) {
+      const v = valorGraduado(base, n);
+      if (v < 0 || v > Math.round(base * MULTIPLICADOR_NOTA[n]) + 1) acotado = false;
+    }
+  }
+  comprueba(acotado, "el valor de una carta graduada nunca se sale de su multiplicador");
+
+  /* ------------------------------------------------------------------ *
+   * GRADUAR NO PUEDE ESQUIVAR LA CURVA DE REPETIDAS
+   * ------------------------------------------------------------------
+   *
+   * ESTE INVARIANTE NACIÓ DE UN FALLO REAL, y merece la pena contarlo porque
+   * es sutil y volvería a colarse igual.
+   *
+   * Las rutas de venta protegen las copias graduadas descontándolas de lo
+   * vendible. La primera versión hacía eso pasándole a `valorDeVenta` las
+   * copias LIBRES como si fueran todo el montón — y eso REINICIA LA CURVA: lo
+   * que quedaba libre se cobraba como si fueran las primeras copias, que es
+   * donde la curva paga el 100%.
+   *
+   * Resultado medido: con 300 copias de una Hyper Rare, graduar parte del
+   * montón y vender el resto daba +785 monedas frente a venderlo todo por la
+   * vía normal. Graduar era la forma de esquivar la curva anti-acaparamiento,
+   * que es justo lo que la curva existe para impedir.
+   *
+   * El arreglo: la curva se calcula sobre el montón ENTERO (las graduadas
+   * siguen siendo copias en propiedad) y lo que se acota es CUÁNTAS se venden.
+   *
+   * Lo que se comprueba aquí es la CONCLUSIÓN, no la implementación: se recorre
+   * cada estrategia posible de "graduar G copias y vender el resto" y se exige
+   * que ninguna gane a vender por la vía normal. Si alguien vuelve a pasarle a
+   * valorDeVenta un montón recortado, esto se pone rojo.
+   */
+  {
+    const RAREZAS = [
+      "Rare", "Rare Holo", "Double Rare", "Illustration Rare",
+      "Ultra Rare", "Special Illustration Rare", "Hyper Rare",
+    ];
+    let peor = -Infinity;
+    let peorCaso = "";
+    for (const rareza of RAREZAS) {
+      for (const N of [2, 3, 5, 10, 20, 50, 100, 300]) {
+        // Estrategia honesta: vender todas las repetidas de una tacada.
+        const normal = valorDeVenta(rareza, N);
+
+        for (let g = 1; g <= N - 1; g++) {
+          const libres = N - g;
+          // Las libres, con la curva del montón ENTERO (que es el arreglo).
+          const porLibres = valorDeVenta(rareza, N, libres - 1);
+          // Las graduadas, una a una, al multiplicador medio de la tabla.
+          let porGraduadas = 0;
+          let q = N - (libres - 1);
+          for (let k = 0; k < g && q > 1; k++) {
+            porGraduadas += valorDeVenta(rareza, q, 1) * graduacion.MULTIPLICADOR_MEDIO;
+            q--;
+          }
+          const coste = g * graduacion.costeDeGraduar(precioDeCartaSuelta(rareza), g);
+          const ventaja = porLibres + porGraduadas - coste - normal;
+          if (ventaja > peor) {
+            peor = ventaja;
+            peorCaso = `${rareza} con ${N} copias, graduando ${g}`;
+          }
+        }
+      }
+    }
+    comprueba(
+      peor <= 0,
+      `graduar parte del montón nunca gana a venderlo (peor caso ${peor.toFixed(1)} monedas)`,
+      `sale a cuenta graduar: +${peor.toFixed(1)} monedas en ${peorCaso}.` +
+        " Casi seguro que alguna ruta de venta ha vuelto a pasarle a valorDeVenta" +
+        " las copias LIBRES en vez del montón entero, y eso reinicia la curva.",
+    );
+  }
+
+}
+
+/* ------------------------------------------------------------------ */
+/* BAZAR ENTRE JUGADORES                                               */
+/* ------------------------------------------------------------------ */
+/*
+ * LO QUE SE PROTEGE AQUÍ es lo único que de verdad importa del bazar: que no
+ * sea un canal para pasar monedas entre dos cuentas de la misma persona.
+ *
+ * Hasta que existió el bazar, las monedas NO SE PODÍAN MOVER entre cuentas por
+ * ninguna vía: toda escritura sobre users.coins filtra por el id de la sesión y
+ * el trueque de app/social.ts es carta por carta, sin dinero. El bazar rompe
+ * eso por diseño, así que lo que queda es que cada pase PIERDA valor.
+ */
+{
+  seccion("Bazar: pasar monedas entre cuentas siempre pierde valor");
+
+  const {
+    PRECIO_MINIMO_FRACCION, PRECIO_MAXIMO_FRACCION, COMISION,
+    SOBRES_PARA_VENDER, SOBRES_PARA_COMPRAR, MAX_ANUNCIOS_ABIERTOS,
+    bandaDePrecio, precioValido, comisionDe, pagoAlVendedor,
+  } = bazar;
+
+  // 1. La banda existe y es una banda: sin techo, publicar un Common a 10.000
+  //    convertiría el bazar en una transferencia bancaria.
+  comprueba(
+    PRECIO_MAXIMO_FRACCION > PRECIO_MINIMO_FRACCION &&
+      PRECIO_MAXIMO_FRACCION < Infinity &&
+      PRECIO_MINIMO_FRACCION > 0,
+    `el precio está acotado entre el ${(100 * PRECIO_MINIMO_FRACCION).toFixed(0)}% y el ${(100 * PRECIO_MAXIMO_FRACCION).toFixed(0)}% del valor real`,
+  );
+
+  // 2. Nadie puede publicar fuera de la banda. A la fuerza bruta sobre todo el
+  //    catálogo de valores posibles.
+  let fuera = 0;
+  for (let v = 1; v <= 5000; v += 7) {
+    const { min, max } = bandaDePrecio(v);
+    if (precioValido(min - 1, v)) fuera++;
+    if (precioValido(max + 1, v)) fuera++;
+    if (!precioValido(min, v) || !precioValido(max, v)) fuera++;
+    if (precioValido(0, v) || precioValido(-100, v) || precioValido(1e9, v)) fuera++;
+  }
+  comprueba(fuera === 0, "ningún precio fuera de la banda se acepta, a ningún valor");
+
+  // 3. LA COMISIÓN SIEMPRE MUERDE, incluso en las ventas de una moneda. Un
+  //    bazar de cartas de 2 monedas sin comisión volvería a ser un canal libre.
+  let sinComision = 0;
+  for (let p = 1; p <= 20000; p += p < 100 ? 1 : 19) {
+    if (comisionDe(p) < 1) sinComision++;
+    if (pagoAlVendedor(p) >= p) sinComision++;
+  }
+  comprueba(
+    sinComision === 0 && COMISION > 0,
+    `la comisión (${(100 * COMISION).toFixed(0)}%) se cobra siempre y nunca es cero`,
+  );
+
+  // 4. EL INVARIANTE DE VERDAD: el mejor caso posible para quien intenta lavar
+  //    monedas —publicar al máximo de la banda— sigue perdiendo dinero en cada
+  //    pase. Se mide el ciclo completo: la cuenta A paga `precio`, la cuenta B
+  //    recibe `pagoAlVendedor(precio)`, y entre las dos manos hay una carta que
+  //    vale `valor`. Lo que importa es que el DINERO trasladado sea menor que
+  //    el dinero gastado.
+  const fugas = [];
+  for (let v = 1; v <= 5000; v += 3) {
+    const { max } = bandaDePrecio(v);
+    const trasladado = pagoAlVendedor(max);
+    if (trasladado >= max) fugas.push(`v=${v}`);
+    // Y el traslado nunca puede superar el valor real de la carta por más del
+    // margen de la banda: es lo que impide mover 10.000 monedas con un Common.
+    if (trasladado > v * PRECIO_MAXIMO_FRACCION) fugas.push(`v=${v} traslado desbocado`);
+  }
+  comprueba(
+    fugas.length === 0,
+    "mover monedas por el bazar siempre cuesta la comisión, a cualquier valor",
+    fugas.slice(0, 3).join(", "),
+  );
+
+  // 5. Las barreras de entrada existen. No comprueban un número concreto, sólo
+  //    que alguien no las haya puesto a cero sin darse cuenta.
+  /* LAS DOS BARRERAS, y la del comprador es la importante: el lavado va de la
+   * cuenta alternativa (que tiene las monedas del grifo) a la principal, o sea
+   * que la alternativa es quien COMPRA. Con la barrera sólo en la venta se
+   * estaba protegiendo la dirección equivocada, y el test no lo habría notado. */
+  comprueba(
+    SOBRES_PARA_VENDER > 0 && SOBRES_PARA_COMPRAR > 0 && MAX_ANUNCIOS_ABIERTOS > 0,
+    `hay barrera de antigüedad en las DOS direcciones (vender ${SOBRES_PARA_VENDER} sobres, comprar ${SOBRES_PARA_COMPRAR}) y tope de anuncios (${MAX_ANUNCIOS_ABIERTOS})`,
+    "una barrera a cero deja abierto el lavado de monedas entre cuentas",
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* PERFILES POR ERA                                                    */
+/* ------------------------------------------------------------------ */
+/*
+ * Las eras suben las probabilidades de premio de las expansiones modernas. Eso
+ * NO puede abrir una fuga —`calibrar` reacciona sola quitando relleno— pero sí
+ * puede tirar expansiones fuera de la tienda: en cuanto una era obliga a
+ * retirar más de TOLERANCIA_RELLENO huecos, el sobre deja de considerarse un
+ * sobre. El primer intento de perfil hacía exactamente eso con TRECE de las
+ * dieciséis expansiones modernas, y no lo habría visto nadie hasta producción.
+ */
+{
+  seccion("Eras: ninguna era rompe la tienda");
+
+  const { eraDeSerie } = packLogic;
+  const serieDe = new Map(
+    JSON.parse(readFileSync(join(raiz, "src", "data", "all-sets.json"), "utf8"))
+      .map((s) => [s.id, s.series]),
+  );
+
+  const eras = new Set();
+  const imprimen = [];
+  const caidas = [];
+  for (const [setId, cartas] of CARTAS) {
+    const era = eraDeSerie(serieDe.get(setId));
+    eras.add(era);
+
+    // Con la era de verdad no puede pasar de su precio.
+    if (admiteSobreEstandar(cartas, era)) {
+      const v = valorEsperadoEstandar(cartas, era);
+      if (v > PACK_PRICES.STANDARD + 1e-9) imprimen.push(`${setId} estándar ${v.toFixed(2)}`);
+    }
+    if (admiteSobrePremium(cartas, era)) {
+      const v = valorEsperadoPremium(cartas, era);
+      if (v > PACK_PRICES.PREMIUM + 1e-9) imprimen.push(`${setId} premium ${v.toFixed(2)}`);
+    }
+
+    // Y no puede caerse de la tienda por culpa de la era: lo que se vendía con
+    // el reparto de siempre se sigue vendiendo.
+    if (admiteSobreEstandar(cartas) && !admiteSobreEstandar(cartas, era)) {
+      caidas.push(`${setId} estándar (${era})`);
+    }
+    if (admiteSobrePremium(cartas) && !admiteSobrePremium(cartas, era)) {
+      caidas.push(`${setId} premium (${era})`);
+    }
+  }
+
+  comprueba(
+    imprimen.length === 0,
+    `ningún sobre pasa de su precio con las probabilidades de su era (${eras.size} eras en juego)`,
+    imprimen.slice(0, 4).join(", "),
+  );
+  comprueba(
+    caidas.length === 0,
+    "subir las probabilidades por era no tira ninguna expansión fuera de la tienda",
+    caidas.slice(0, 6).join(", "),
+  );
+
+  // Una serie desconocida —una expansión recién ingerida por el cron, o el
+  // respaldo local sin ficha— tiene que caer en el reparto de SIEMPRE. Si no,
+  // el juego cambiaría solo cada vez que TCGdex inventara un nombre de serie.
+  comprueba(
+    eraDeSerie(null) === eraDeSerie(undefined) &&
+      eraDeSerie("") === eraDeSerie("Una Serie Que No Existe"),
+    "una expansión sin serie conocida usa el reparto de siempre",
   );
 }
 

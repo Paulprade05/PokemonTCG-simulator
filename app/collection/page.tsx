@@ -593,6 +593,37 @@ export default function CollectionPage() {
         title="Mi Colección"
         subtitle="Tus cartas, progreso y estadísticas"
         actions={
+          <>
+          {/* LAS DOS PUERTAS A LAS PANTALLAS NUEVAS.
+              Están AQUÍ y no en la barra inferior a propósito: la barra tiene
+              cuatro pestañas y meter dos más la deja apretada en un móvil
+              estrecho. Las dos cuelgan de la colección —la vitrina la enseña y
+              la graduación es un servicio sobre ella—, así que la pestaña de
+              Colección cubre sus rutas (ver components/nav-items.tsx) y el
+              acceso vive donde el jugador ya está mirando sus cartas.
+              El rótulo se oculta en móvil como el del botón de al lado; el
+              aria-label es lo que lo mantiene con nombre para un lector. */}
+          <Link
+            href="/vitrina"
+            aria-label="Abrir la vitrina"
+            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press touch-target justify-center"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
+            </svg>
+            <span className="hidden sm:inline">Vitrina</span>
+          </Link>
+          <Link
+            href="/graduacion"
+            aria-label="Graduar cartas"
+            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press touch-target justify-center"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+              <path d="M12 2 15 9l7 .6-5.3 4.6L18.2 21 12 17.3 5.8 21l1.5-6.8L2 9.6 9 9z" />
+            </svg>
+            <span className="hidden sm:inline">Graduar</span>
+          </Link>
           <button
             onClick={requestSellAllDuplicates}
             disabled={isSelling}
@@ -617,6 +648,7 @@ export default function CollectionPage() {
               {pendingSale === "duplicates" ? "Vendiendo…" : "Limpiar duplicados"}
             </span>
           </button>
+          </>
         }
       />
 

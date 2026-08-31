@@ -2038,6 +2038,11 @@ export default function Home() {
               }}
               role="button"
               tabIndex={0}
+              // Ancla de la regla que quita el anillo verde de foco (el porqué
+              // está en app/globals.css, junto a la propia regla). Tiene que ser
+              // un atributo y no una clase de Tailwind: la regla de foco vive
+              // fuera de @layer y ninguna utilidad de Tailwind la gana.
+              data-carta-abierta=""
               // La carta siempre está de cara: la etiqueta dice qué es y qué
               // pasa al tocarla, que ya no es girarla.
               aria-label={`${currentCard.name}${currentCard.rarity ? `, ${currentCard.rarity}` : ""}. ${

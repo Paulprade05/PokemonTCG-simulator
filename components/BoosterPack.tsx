@@ -3,6 +3,7 @@
 import { useMemo, type RefObject } from "react";
 import { touchActionFor } from "../hooks/useSwipe";
 import { formatNumber } from "../utils/format";
+import { arteDeSobre, selloCss } from "../utils/sobreArte";
 
 export type FaseSobre = "sellado" | "rasgando" | "abriendo" | "cartas";
 
@@ -19,6 +20,13 @@ export type FaseSobre = "sellado" | "rasgando" | "abriendo" | "cartas";
 /* lenticular son impresión, idénticos en todos los sobres. La          */
 /* variación sólo convence si hay una referencia regular contra la que  */
 /* compararla.                                                          */
+/*                                                                     */
+/* MATIZ QUE AÑADE utils/sobreArte.ts: "idénticos en todos los sobres"  */
+/* quiere decir idénticos en todos los sobres DE LA MISMA EXPANSIÓN.    */
+/* El color y la textura de impresión son de la expansión y no del      */
+/* sorteo: son constantes entre aperturas, y por eso viven en otro      */
+/* useMemo con otra dependencia. Lo que se sortea son las arrugas y los */
+/* reflejos —el manoseo—, que sí son de este sobre y de ningún otro.    */
 /* ------------------------------------------------------------------ */
 
 /** Mulberry32: un PRNG de 32 bits, sin estado global y reproducible. */
@@ -139,6 +147,23 @@ interface BoosterPackProps {
   anchoCarta: string;
   logo?: string;
   nombreSet?: string;
+  /**
+   * Id de la expansión ("swsh12pt5"). OPCIONAL y hoy nadie lo pasa: el color y
+   * la textura del sobre se sacan del id que viene DENTRO de la URL del logo
+   * (utils/sobreArte.ts). Existe porque app/page.tsx sí lo tiene a mano
+   * (`currentSetObj.id`) y pasarlo convierte una deducción en un dato. Añadirlo
+   * aquí no rompe la llamada actual, que es justo lo que se busca: esa pantalla
+   * la está tocando otro agente.
+   */
+  setId?: string;
+  /**
+   * URL del símbolo del set para el sello impreso. También opcional y por la
+   * misma razón: hoy se deriva del logo, pero eso SÓLO funciona cuando el logo
+   * viene de pokemontcg.io. Con la app en español el logo lo sirve tcgdex y el
+   * sobre se queda sin sello, aunque `currentSetObj.images.symbol` siga estando
+   * ahí y siga siendo el inglés (services/idioma.ts `traducirSet` no lo toca).
+   */
+  simbolo?: string;
   cartas: number;
   /** true justo tras un arrastre: el click sintético que sigue no abre. */
   gestoRef: RefObject<boolean>;
@@ -164,11 +189,36 @@ interface BoosterPackProps {
  * El recorte vive SÓLO en .sobre__cuerpo. Si alguna vez vuelve a aparecer un
  * overflow en .sobre o en .sobre__tapa, la tira deja de verse volar: fue
  * exactamente el bug original.
+ *
+ * ESTA CADENA ES UNA CONSTANTE Y TIENE QUE SEGUIR SIÉNDOLO. El sobre se parece
+ * al de SU expansión (utils/sobreArte.ts), pero eso entra entero por custom
+ * properties inline en el elemento: `--sb-a`/`--sb-b` (los dos colores),
+ * `--sb-ang`/`--sb-rayado`/`--sb-paso` (el rayado de su era),
+ * `--sb-lustre` (cuánta luz devuelve el film) y `--sb-sello` (el símbolo del
+ * set). Generar CSS distinto por expansión significaría una cadena nueva —y
+ * un `<style>` nuevo que parsear— en cada apertura, con 171 expansiones y
+ * subiendo. Si necesitas que algo varíe por set, añade una variable, no una
+ * regla.
  */
 const CSS = `
 .sobre-capa { animation: sobre-entra .42s cubic-bezier(.16,1,.3,1) both; }
 
-.sobre { position: relative; border-radius: 14px; --tapa-h: 48px; }
+/* OJO AL EDITAR: este bloque es un template literal, así que aquí dentro no
+   puede aparecer un acento grave ni un \${. Los comentarios de abajo citan
+   variables sin comillar por eso, no por descuido.
+
+   Los --sb-* son la IDENTIDAD DE LA EXPANSIÓN (utils/sobreArte.ts) y llegan
+   inline en el elemento. Aquí van sus respaldos, y no son un valor cualquiera:
+   son EXACTAMENTE los que estaban escritos a mano en las reglas de abajo antes
+   de que el sobre se pareciese a su expansión. Un sobre del que no sepamos
+   nada —sin logo del que sacar el id— se ve hoy igual que ayer, y eso es lo
+   que permite comparar. */
+.sobre {
+  position: relative; border-radius: 14px; --tapa-h: 48px;
+  --sb-a: var(--accent); --sb-b: var(--accent-2);
+  --sb-ang: 102deg; --sb-rayado: .55; --sb-paso: 1; --sb-lustre: 1;
+  --sb-t1: 30%; --sb-t2: 22%;
+}
 .sobre[data-fase="sellado"] { animation: sobre-flota 4.2s ease-in-out infinite; }
 .sobre[data-fase="sellado"]:active { animation: none; transform: scale(.985); }
 /* El balanceo es adorno: con efectos reducidos no se mueve nada. */
@@ -179,16 +229,22 @@ const CSS = `
   border-radius: inherit; border: 1px solid var(--border-strong);
   /* Degradado HORIZONTAL con núcleo claro: es lo que hace que se lea como un
      cilindro de plástico y no como un rectángulo. Los extremos oscuros son
-     las costuras laterales del envoltorio. */
+     las costuras laterales del envoltorio.
+     El color ya no es el acento del tema sino el de la expansión (--sb-a y
+     --sb-b). El NÚCLEO se queda en --surface pase lo que pase: los dos
+     radiales tiñen sólo las esquinas (at 50% 0% y at 50% 112%, apagados
+     antes del 62%) y el centro es donde va el nombre del set en --ink-soft.
+     Si algún día alguien sube --sb-t1 por encima del 42%, ese texto deja de
+     leerse; el tope está puesto en utils/sobreArte.ts y explicado allí. */
   background:
     var(--grain),
-    radial-gradient(120% 62% at 50% 0%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 58%),
-    radial-gradient(140% 70% at 50% 112%, color-mix(in srgb, var(--accent-2) 22%, transparent), transparent 62%),
-    linear-gradient(102deg,
+    radial-gradient(120% 62% at 50% 0%, color-mix(in srgb, var(--sb-a) var(--sb-t1,30%), transparent), transparent 58%),
+    radial-gradient(140% 70% at 50% 112%, color-mix(in srgb, var(--sb-b) var(--sb-t2,22%), transparent), transparent 62%),
+    linear-gradient(var(--sb-ang,102deg),
       color-mix(in srgb, var(--ink) 20%, var(--surface-2)) 0%,
-      color-mix(in srgb, var(--accent) 18%, var(--surface)) 18%,
+      color-mix(in srgb, var(--sb-a) 18%, var(--surface)) 18%,
       var(--surface) 50%,
-      color-mix(in srgb, var(--accent-2) 14%, var(--surface-2)) 80%,
+      color-mix(in srgb, var(--sb-b) 14%, var(--surface-2)) 80%,
       color-mix(in srgb, var(--ink) 18%, var(--surface-2)) 100%);
   box-shadow:
     /* Las dos costuras pesan distinto según de dónde venga la luz. */
@@ -210,16 +266,49 @@ const CSS = `
 
 /* Rayado lenticular: el arcoíris IMPRESO del envoltorio. No se sortea — es de
    fábrica, igual que el crimpado. Cuatro bandas por periodo (tinta, veta de
-   acento, hueco y filo blanco) en vez de las dos rayitas grises de antes. */
+   acento, hueco y filo blanco) en vez de las dos rayitas grises de antes.
+   Lo que SÍ cambia es la fábrica: un sobre de Base es cartón mate con trama
+   gruesa (--sb-paso 1.8, --sb-rayado .16) y uno de Escarlata y Púrpura es film
+   lenticular fino y brillante (.78 y .74). El periodo se escala entero con
+   --sb-paso para que las cuatro bandas mantengan su proporción: multiplicar
+   sólo algunas convierte el rayado en cebra. */
 .sobre__rayas {
-  position: absolute; inset: 0; pointer-events: none; opacity: .55;
-  background: repeating-linear-gradient(102deg,
-    transparent 0 3px,
-    color-mix(in srgb, var(--ink) 7%, transparent) 3px 4px,
-    color-mix(in srgb, var(--accent-2) 24%, transparent) 4px 5px,
-    transparent 5px 6px,
-    rgba(255,255,255,.16) 6px 7px);
+  position: absolute; inset: 0; pointer-events: none; opacity: var(--sb-rayado,.55);
+  background: repeating-linear-gradient(var(--sb-ang,102deg),
+    transparent 0 calc(var(--sb-paso,1) * 3px),
+    color-mix(in srgb, var(--ink) 7%, transparent) calc(var(--sb-paso,1) * 3px) calc(var(--sb-paso,1) * 4px),
+    color-mix(in srgb, var(--sb-b) 24%, transparent) calc(var(--sb-paso,1) * 4px) calc(var(--sb-paso,1) * 5px),
+    transparent calc(var(--sb-paso,1) * 5px) calc(var(--sb-paso,1) * 6px),
+    rgba(255,255,255,.16) calc(var(--sb-paso,1) * 6px) calc(var(--sb-paso,1) * 7px));
 }
+/* SELLO: el símbolo de la expansión, impreso pequeño en la esquina como en el
+   sobre de verdad. Es la única imagen del sobre y ya la servimos (la misma
+   carpeta de la que sale el logo, ver utils/sobreArte.ts): no añade ningún
+   recurso nuevo al repositorio.
+
+   Va como background-image y NO como <img> a propósito: los símbolos son de un
+   host de terceros y, si uno falla, un background roto no pinta nada mientras
+   que un <img> roto pinta el icono de imagen partida en mitad del sobre. El
+   sello es adorno; su ausencia tiene que ser invisible.
+
+   El disco claro de debajo no es decoración: casi todos los símbolos son
+   siluetas negras con transparencia y en tema oscuro desaparecerían. Con
+   mix-blend-mode se arreglaría en una línea, pero está prohibido en toda esta
+   pantalla (WebKit rasteriza), así que se resuelve como en el sobre real: el
+   símbolo va impreso sobre un medallón claro.
+
+   Y va aquí, entre el rayado y los pliegues, porque es TINTA: los pliegues y
+   los reflejos del film tienen que pasarle por encima. */
+.sobre__sello {
+  position: absolute; right: 6%; bottom: 44px; width: 13%; aspect-ratio: 1;
+  pointer-events: none; opacity: .5;
+  background-image: var(--sb-sello, none),
+    radial-gradient(closest-side, rgba(255,255,255,.42), rgba(255,255,255,.10) 68%, transparent 100%);
+  background-position: center, center;
+  background-size: 66%, 100%;
+  background-repeat: no-repeat, no-repeat;
+}
+html[data-theme="dark"] .sobre__sello { opacity: .66; }
 /* PLIEGUES: cada arruga es un par valle (negro) + ceja (blanco) pegado a 1,2%
    del valle — un pliegue real es una sombra con un filo iluminado al lado, no
    una raya oscura. Los valles van en rgba(0,0,0,…) y NO en var(--ink): en
@@ -263,20 +352,33 @@ html[data-theme="dark"] .sobre__pliegues { opacity: .66; }
 /* REFLEJOS: capa PROPIA y por ENCIMA del rayado. Meterlos en el background del
    cuerpo los dejaría DEBAJO de la impresión, que es al revés de como funciona
    un envoltorio: la tinta va bajo el film y el reflejo, sobre él. Y aparte de
-   los pliegues, porque su opacity por tema los dejaría en nada. */
+   los pliegues, porque su opacity por tema los dejaría en nada.
+
+   El sorteo decide DÓNDE caen los reflejos y la era decide CUÁNTO devuelven:
+   --sb-lustre multiplica las dos alfas. Un sobre de cartón de 1999 no brilla
+   como uno de film metalizado, y ésa es la diferencia que se ve antes que el
+   color. El multiplicador va dentro del alfa con calc() y no en un opacity de
+   la capa entera porque el opacity de .sobre__pliegues ya está repartido por
+   tema y no quiero dos escalas peleándose sobre el mismo píxel. */
 .sobre__luces {
   position: absolute; inset: 0; pointer-events: none;
   background:
     radial-gradient(var(--gl1-w,36%) var(--gl1-h,11%) at var(--gl1-x,50%) var(--gl1-y,24%),
-      rgba(255,255,255,var(--gl1-a,.15)), transparent 70%),
+      rgba(255,255,255,calc(var(--gl1-a,.15) * var(--sb-lustre,1))), transparent 70%),
     radial-gradient(var(--gl2-w,26%) var(--gl2-h,9%) at var(--gl2-x,50%) var(--gl2-y,70%),
-      rgba(255,255,255,var(--gl2-a,.09)), transparent 72%);
+      rgba(255,255,255,calc(var(--gl2-a,.09) * var(--sb-lustre,1))), transparent 72%);
 }
 /* Barrido de reflejo. transform, no background-position: lo lleva el
    compositor. Dos crestas y no una: un reflejo real sobre film metalizado
-   rebota dos veces (el filo y el cuerpo del pliegue). */
+   rebota dos veces (el filo y el cuerpo del pliegue).
+   El opacity por era es el mismo --sb-lustre de los reflejos fijos: si el
+   sobre es mate, el barrido tiene que ser mate también. Por encima de 1 el
+   navegador recorta a 1, así que las eras brillantes se quedan en el barrido
+   de siempre y sólo las mates lo apagan — que es justo el reparto que se
+   quiere: nadie echa de menos MÁS destello. */
 .sobre__brillo {
   position: absolute; top: -25%; bottom: -25%; left: 0; width: var(--br-w,36%); pointer-events: none;
+  opacity: var(--sb-lustre,1);
   background: linear-gradient(100deg, transparent 0%,
     rgba(255,255,255,.09) 30%,
     rgba(255,255,255,.30) 46%,
@@ -323,11 +425,15 @@ html[data-theme="dark"] .sobre__pliegues { opacity: .66; }
     repeating-linear-gradient(90deg, color-mix(in srgb, var(--ink) 22%, transparent) 0 2px, transparent 2px 5px),
     color-mix(in srgb, var(--surface-2) 90%, var(--ink));
 }
+/* La tira SÍ toma el color de la expansión y el crimpado de arriba NO: en un
+   sobre real la tira de apertura va impresa con el mismo arte y el crimpado es
+   el aluminio del sellado, plateado en todas las expansiones. Es la misma
+   frontera que ya separaba lo sorteado de lo de fábrica. */
 .sobre__tira {
   flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px;
   background: linear-gradient(180deg,
-    color-mix(in srgb, var(--accent) 34%, var(--surface-2)),
-    color-mix(in srgb, var(--accent) 14%, var(--surface-2)));
+    color-mix(in srgb, var(--sb-a) 34%, var(--surface-2)),
+    color-mix(in srgb, var(--sb-a) 14%, var(--surface-2)));
   border-bottom: 2px dashed var(--border-strong); /* la perforación */
   box-shadow: inset 0 1px 0 rgba(255,255,255,.2);
 }
@@ -383,6 +489,8 @@ export default function BoosterPack({
   anchoCarta,
   logo,
   nombreSet,
+  setId,
+  simbolo,
   cartas,
   gestoRef,
   semilla,
@@ -391,6 +499,27 @@ export default function BoosterPack({
   // Una sola vez por sobre: durante el rasgado hay tres re-renders (setFase) y
   // los pliegues no pueden re-sortearse a mitad de la coreografía.
   const film = useMemo(() => derivarSobre(semilla), [semilla]);
+  /*
+   * IDENTIDAD DE LA EXPANSIÓN: color, textura de impresión y sello.
+   *
+   * Depende del SET y no de la semilla, y por eso va en su propio useMemo: la
+   * semilla cambia en cada apertura (lleva dentro el número de sobre) y el
+   * sobre de Escarlata y Púrpura tiene que ser el mismo rojo en la apertura
+   * número uno y en la número cuarenta. Abrir diez sobres seguidos del mismo
+   * set recalcula esto UNA vez.
+   */
+  const arte = useMemo(() => arteDeSobre(logo, nombreSet, setId), [logo, nombreSet, setId]);
+  /*
+   * El símbolo explícito manda sobre el deducido de la URL del logo: cuando
+   * page.tsx lo pase, esta línea deja de adivinar sin tocar nada más.
+   *
+   * Se guarda el VALOR CSS ya montado y no la URL, porque es el valor el que
+   * decide si el sello se pinta: `selloCss` devuelve null para cualquier URL
+   * que no se pueda meter en un url() sin riesgo, y montar el <div> con una
+   * imagen que no va a cargar dejaría el medallón claro solo, flotando en una
+   * esquina del sobre sin símbolo dentro.
+   */
+  const sello = useMemo(() => selloCss(simbolo ?? arte.sello), [simbolo, arte.sello]);
   return (
     <div
       // z-50 SIEMPRE (la carta va a z-40): durante la emergencia el sobre
@@ -438,6 +567,13 @@ export default function BoosterPack({
           // El sorteo va PRIMERO: son custom properties que heredan todas las
           // capas del sobre, nunca propiedades de caja.
           ...film,
+          // Y la identidad de la expansión detrás, por el mismo motivo. Las dos
+          // familias de variables no se pisan (`--sb-*` contra `--pl-`/`--gl-`/
+          // `--br-`/`--sm-`/`--dt-`/`--luz`) y esto es TODO lo que cambia entre
+          // el sobre de una expansión y el de otra: el bloque CSS de arriba es
+          // una constante, la misma cadena para las 171.
+          ...arte.vars,
+          ...(sello ? { "--sb-sello": sello } : null),
           // 0.93 con 2.5/3.76 da 1.399·W de alto = el alto exacto de la carta:
           // el sobre ocupa su misma ranura y la carta sale del mismo hueco.
           width: `calc(${anchoCarta} * 0.93)`,
@@ -450,6 +586,10 @@ export default function BoosterPack({
         {/* CUERPO — aquí vive el overflow-hidden, no en .sobre */}
         <div className="sobre__cuerpo">
           <div className="sobre__rayas" aria-hidden="true" />
+          {/* El sello va pegado al rayado y por DEBAJO de pliegues y reflejos:
+              es tinta impresa, no un adorno encima del film. Sólo se monta si
+              hay símbolo con el que pintarlo (ver `sello` arriba). */}
+          {sello && <div className="sobre__sello" aria-hidden="true" />}
           {/* Pliegues y reflejos NO se mueven: reducir efectos no es reducir
               detalle, así que se pintan también con efectosApagados. Se
               rasterizan una vez al montar y no cuestan nada después. */}

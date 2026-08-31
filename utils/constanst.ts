@@ -319,6 +319,47 @@ export const COPIA_SUELO = 1 + SEMIVIDA_COPIAS * (1 / SUELO_COPIAS - 1); // 43
 /** Tarifa cuando la rareza no está en SELL_PRICES (mismo respaldo de siempre). */
 const PRECIO_BASE_POR_DEFECTO = 10;
 
+/* ==================================================================== *
+ * AJUSTE POR PRECIO REAL DE CARDMARKET
+ * ====================================================================
+ *
+ * LA FÓRMULA (la pedida, sin cambios):
+ *
+ *     precio = base + base × (euros / DIVISOR_EUROS)
+ *
+ * Una carta de 100 monedas que en Cardmarket vale 234 € pasa a valer
+ * 100 + 100 × (234/1000) = 123,4 monedas.
+ *
+ * MEDIDO ANTES DE ESCRIBIRLO, porque el resultado no es el que parece: sobre
+ * las 252 cartas de sv08 con precios reales de TCGdex, el ajuste mueve la ficha
+ * MENOS DE UN 1% en todas las rarezas menos una. La media por rareza:
+ *
+ *   Common +0,0%   Uncommon +0,0%   Rare +0,1%   Double Rare +0,1%
+ *   Illustration Rare +0,8%   Hyper Rare +2,0%   Special Illustration Rare +6,7%
+ *
+ * De 252 cartas, 179 valen menos de 1 € (ajuste < 0,1%) y sólo CUATRO pasan de
+ * 50 € (que es donde el ajuste llega al 5%). El techo medido de toda la
+ * expansión fue +27%, en la carta más cara (271 €).
+ *
+ * O sea: con divisor 1000 esto es un matiz, no un vuelco. Es deliberado y es lo
+ * que lo hace SEGURO — al mover los precios menos de un 1% de media, no puede
+ * reabrir la fuga que utils/packLogic.ts tiene cerrada. Si algún día se quiere
+ * que muerda de verdad, se baja DIVISOR_EUROS y se vuelve a correr
+ * `npm test` y `npm run sim:economia`: son lo único que dice cuánto margen hay.
+ */
+export const DIVISOR_EUROS = 1000;
+
+/**
+ * Aplica el ajuste por precio real. Sin precio (lo normal: la mayoría de las
+ * cartas nunca han pasado por el cron de precios) devuelve la tarifa tal cual,
+ * que es exactamente el comportamiento de siempre.
+ */
+export function ajustePorPrecioReal(base: number, euros?: number | null): number {
+  const e = Number(euros);
+  if (!Number.isFinite(e) || e <= 0) return base;
+  return base + base * (e / DIVISOR_EUROS);
+}
+
 /**
  * Tarifa de una carta suelta: lo que paga su PRIMERA copia repetida, sin la
  * curva de copias. Es SELL_PRICES con el respaldo aplicado, y existe para que
@@ -326,9 +367,19 @@ const PRECIO_BASE_POR_DEFECTO = 10;
  * lo necesita para calcular cuánto vale un sobre antes de repartirlo, y si ese
  * respaldo se separase del de valorDeVenta, el sobre se calibraría contra un
  * precio que la tienda no paga.
+ *
+ * `euros` es el precio real de Cardmarket de ESA carta concreta, si se conoce.
+ * Es opcional a propósito: packLogic la llama con la carta entera y la tienda
+ * sin ella, y las dos tienen que dar el mismo número para la misma carta o el
+ * sobre se calibraría contra un precio que la tienda no paga. Por eso el ajuste
+ * vive AQUÍ dentro y no en quien llama.
  */
-export function precioDeCartaSuelta(rareza: string | null | undefined): number {
-  return SELL_PRICES[rareza ?? ""] ?? PRECIO_BASE_POR_DEFECTO;
+export function precioDeCartaSuelta(
+  rareza: string | null | undefined,
+  euros?: number | null,
+): number {
+  const base = SELL_PRICES[rareza ?? ""] ?? PRECIO_BASE_POR_DEFECTO;
+  return Math.max(1, Math.round(ajustePorPrecioReal(base, euros)));
 }
 
 /** Precio de la copia repetida nº `indice` (1 = la primera repetida). */
@@ -347,14 +398,16 @@ function precioDeCopia(base: number, indice: number): number {
  * @param rareza        rareza de la carta (la de la BD en el servidor).
  * @param copiasQueTengo copias en propiedad ANTES de vender.
  * @param copiasAVender  cuántas se venden; por defecto todas las repetidas.
+ * @param euros          precio real de Cardmarket de esa carta, si se conoce.
  * @returns monedas totales, ya en entero.
  */
 export function valorDeVenta(
   rareza: string | null | undefined,
   copiasQueTengo: number,
   copiasAVender?: number,
+  euros?: number | null,
 ): number {
-  const base = precioDeCartaSuelta(rareza);
+  const base = precioDeCartaSuelta(rareza, euros);
   const repetidas = Math.max(0, Math.floor(Number(copiasQueTengo) || 0) - COPIAS_PROTEGIDAS);
   const pedidas = copiasAVender === undefined ? repetidas : Math.floor(Number(copiasAVender) || 0);
   const aVender = Math.min(repetidas, Math.max(0, pedidas));
@@ -384,13 +437,29 @@ export const PACK_PRICES = {
   // retorno con los precios viejos.
   STANDARD: 50,
   PREMIUM: 220,
-  GOLDEN: 600,
-  // 700 y no 600: en las colecciones especiales (Trainer Gallery, Galarian
-  // Gallery) TODO lo que cae es carta cara y a 600 la reventa media daba el
-  // 101-105% del coste — una imprenta lenta pero infinita. Medido con 800
-  // sobres simulados por set: a 700 el peor caso (Crown Zenith GG, 629 de
-  // reventa media) queda en el 90%.
-  SPECIAL: 700,
+
+  /* LEYENDA Y PROMO: 1.200 y 1.500 (antes 600 y 700).
+   *
+   * Los sube el dueño del juego a propósito, para que los sobres de arriba sean
+   * una decisión y no una compra rutinaria. Van de la mano de la subida de
+   * probabilidades por era (utils/packLogic.ts, PERFILES_DE_ERA): lo que se
+   * paga de más se devuelve en tiradas mejores.
+   *
+   * QUÉ HAY QUE VIGILAR AL TOCAR ESTOS DOS NÚMEROS, y no es lo que parece: el
+   * sobre Leyenda es el ÚNICO que no pasa por `calibrar` —se vende a dos
+   * precios y la función no sabe cuál le toca (ver openGoldenPack)—, así que su
+   * fuga se cierra sólo con estos precios y con la rama `else` de allí. SUBIR
+   * el precio siempre es seguro por ese lado: el mismo contenido sobre un
+   * precio mayor es un retorno porcentual menor. Lo que NO es gratis es la
+   * subida de probabilidades que lo acompaña, y por eso las dos cosas se
+   * midieron juntas en scripts/sim-economia.mjs antes de escribirlas.
+   *
+   * EL COSTE REAL DE SUBIRLOS es de ritmo, no de fuga: la diaria son 150-300
+   * monedas, así que un Promo de 1.500 son entre cinco y diez días de juego.
+   * Es la palanca a mover si algún día se ve que la tienda se hace cuesta
+   * arriba, y se mueve SOLA: nada más depende de estos dos números. */
+  GOLDEN: 1200,
+  SPECIAL: 1500,
 } as const;
 
 // Monedas iniciales (nuevo usuario / invitado)
