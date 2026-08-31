@@ -43,6 +43,24 @@ export const IDIOMA_PREDETERMINADO: Idioma = "en";
 /** Cualquier cosa que no sea "es" es inglés. */
 export const saneaIdioma = (v: unknown): Idioma => (v === "es" ? "es" : "en");
 
+/**
+ * ¿Ha elegido idioma ALGUIEN en este dispositivo, o es el valor por defecto?
+ *
+ * `leerIdioma()` no sirve para esto: siempre devuelve "en" o "es", así que no
+ * distingue "el usuario eligió inglés" de "nadie ha elegido nada". Y esa
+ * diferencia decide quién manda cuando la cuenta dice una cosa y el dispositivo
+ * otra (ver el efecto de sincronización de SettingsSheet).
+ */
+export function hayIdiomaDeDispositivo(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const v = window.localStorage.getItem(CLAVE_IDIOMA);
+    return v === "es" || v === "en";
+  } catch {
+    return false;
+  }
+}
+
 /** Idioma aplicado ahora mismo. En el servidor, el predeterminado. */
 export function leerIdioma(): Idioma {
   if (typeof document === "undefined") return IDIOMA_PREDETERMINADO;

@@ -8,6 +8,7 @@ import { useHaptics } from "../../hooks/useHaptics";
 import { STARTING_COINS } from "../../utils/constanst";
 import {
   aplicarIdioma,
+  hayIdiomaDeDispositivo,
   guardarAjustes,
   leerAjustes,
   leerIdioma,
@@ -224,6 +225,20 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
     }
     if (idiomaDeLaNubeConsultado) return;
     idiomaDeLaNubeConsultado = true;
+    /* MANDA EL DISPOSITIVO SI AQUÍ SE HA ELEGIDO ALGO.
+     *
+     * Antes la cuenta se imponía SIEMPRE, y eso era lo que hacía que poner
+     * español no "cuajara": bastaba con que `users.lang` siguiera en "en"
+     * —porque el guardado no llegó a salir, ver `cambiarIdioma`— para que al
+     * recargar este efecto leyera "en", lo aplicara y RECARGARA otra vez,
+     * dejando la app en inglés. Y como `aplicarIdioma` también escribe
+     * localStorage, la vuelta atrás quedaba grabada: el español no volvía ni
+     * insistiendo.
+     *
+     * La regla correcta es la que espera cualquiera: la preferencia de la
+     * cuenta SIEMBRA un dispositivo que no ha elegido nada (entrar desde otro
+     * navegador), pero no pisa una elección hecha aquí. */
+    if (hayIdiomaDeDispositivo()) return;
     getUserLang()
       .catch(() => null)
       .then((l) => {
@@ -239,10 +254,26 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
     haptic("select");
     aplicarTema(t);
     // Y en la nube, para que el resto de dispositivos de la cuenta lo hereden.
-    if (isSignedIn) setUserTheme(t).catch(() => {});
+    // `isLoaded` importa: con Clerk sin resolver, `isSignedIn` es undefined y la
+    // preferencia no llegaría a guardarse nunca en la cuenta.
+    if (isLoaded && isSignedIn) setUserTheme(t).catch(() => {});
   };
 
+  /**
+   * ESPERA A CLERK ANTES DE DECIDIR SI HAY SESIÓN.
+   *
+   * `Boolean(isSignedIn)` con Clerk a medio cargar da `false`, así que a un
+   * usuario con sesión se le trataba como invitado: se le escribía la cookie y
+   * se recargaba, pero `setUserLang` no llegaba a llamarse y `users.lang` se
+   * quedaba en el idioma viejo. Combinado con el efecto de sincronización de
+   * arriba —que antes hacía ganar siempre a la cuenta— el resultado era que
+   * poner español no servía de nada: la página volvía sola a inglés.
+   *
+   * Los botones están desactivados mientras `!isLoaded`, así que esta guarda es
+   * el segundo cerrojo, no el único.
+   */
   const cambiarIdioma = (i: Idioma) => {
+    if (!isLoaded) return;
     if (i === idioma) return;
     haptic("select");
     cambiarIdiomaYRecargar(i, Boolean(isSignedIn));
@@ -323,6 +354,7 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                   <button
                     type="button"
                     aria-pressed={idioma === "en"}
+                    disabled={!isLoaded}
                     onClick={() => cambiarIdioma("en")}
                     className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-medium transition-colors"
                     style={estiloOpcion(idioma === "en")}
@@ -336,6 +368,7 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                   <button
                     type="button"
                     aria-pressed={idioma === "es"}
+                    disabled={!isLoaded}
                     onClick={() => cambiarIdioma("es")}
                     className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-medium transition-colors"
                     style={estiloOpcion(idioma === "es")}
