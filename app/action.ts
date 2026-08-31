@@ -18,6 +18,7 @@
   // del sobre, validación del mercado): ésas siguen viendo el dato inglés.
   import {
     nombreSetEs,
+    tieneEspanol,
     traducirCartas,
     traducirSet,
     traducirSets,
@@ -1146,7 +1147,21 @@
   async function setsEnIdioma(sets: any[]): Promise<any[]> {
     const idioma = await idiomaActual();
     if (idioma !== "es") return sets;
-    return [...traducirSets(sets, idioma)];
+    /* `tieneEs` marca las expansiones SIN diccionario, que se ven en inglés.
+     *
+     * Hace falta porque el cron trae expansiones a `sets` mucho antes de que
+     * exista su diccionario, y la lista va por fecha descendente: salen LAS
+     * PRIMERAS. Sin este aviso el idioma parece roto cuando no lo está —pasó, y
+     * costó una tarde de diagnóstico—.
+     *
+     * SÓLO SE AÑADE EN ESPAÑOL, a propósito: así `tieneEs === false` significa
+     * una única cosa y la pantalla no tiene que consultar además el idioma. Es
+     * un `Set.has` sobre el índice estático, no toca Postgres.
+     */
+    return traducirSets(sets, idioma).map((s: any) => ({
+      ...s,
+      tieneEs: tieneEspanol(s.id),
+    }));
   }
   // Añade esto al final de tu src/app/action.ts
 

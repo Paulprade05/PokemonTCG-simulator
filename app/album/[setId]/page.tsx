@@ -341,9 +341,19 @@ export default function SetAlbumPage() {
           className="surface rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-3 md:gap-4"
         >
           <div className="min-w-0">
-            <h2 className="text-base sm:text-lg font-semibold ink truncate">
-              {setInfo?.name || "Expansión"}
-            </h2>
+            <div className="flex items-center gap-2 min-w-0">
+              <h2 className="text-base sm:text-lg font-semibold ink truncate">
+                {setInfo?.name || "Expansión"}
+              </h2>
+              {/* Mismo aviso que en la tienda: al álbum se llega por URL propia,
+                  así que aquí también hay que decir por qué está en inglés. */}
+              {setInfo?.tieneEs === false && (
+                <span className="shrink-0 chip ink-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] leading-none">
+                  EN
+                  <span className="sr-only"> · esta expansión todavía no está traducida al español</span>
+                </span>
+              )}
+            </div>
             <p className="text-[11px] sm:text-xs ink-faint mt-1">
               <span className="tnum">{owned}</span> de <span className="tnum">{total}</span> cartas coleccionadas
               {setInfo?.releaseDate && <span className="ml-2">· {setInfo.releaseDate}</span>}

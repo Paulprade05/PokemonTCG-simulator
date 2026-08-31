@@ -385,10 +385,12 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                   española y detalles que sólo existen en inglés. */}
               <p className="ink-faint border-t border-[var(--border)] px-4 py-3 text-[12px] leading-relaxed">
                 En español verás el nombre y, donde exista, la ilustración
-                española de la carta. Algunas expansiones (promos, Galerías de
-                Entrenadores, Shiny Vault) sólo tienen ilustración en inglés, y
-                el texto de ambientación, el ilustrador y la rareza se quedan
-                siempre en inglés. Al cambiarlo se recarga la página.
+                española de la carta. Las expansiones recién salidas tardan un
+                tiempo en traducirse y se ven enteras en inglés: en la lista van
+                marcadas con «EN». En otras (promos, Galerías de Entrenadores,
+                Shiny Vault) sólo la ilustración es inglesa. El texto de
+                ambientación, el ilustrador y la rareza se quedan siempre en
+                inglés. Al cambiarlo se recarga la página.
               </p>
             </div>
           </Seccion>

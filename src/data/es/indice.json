@@ -1,4 +1,53 @@
 {
+ "me1": {
+  "idEs": "me01",
+  "nombre": "Megaevolución",
+  "logo": "https://assets.tcgdex.net/es/me/me01/logo",
+  "serie": "Megaevolución",
+  "traducidas": 188
+ },
+ "me2": {
+  "idEs": "me02",
+  "nombre": "Fuegos Fantasmales",
+  "logo": "https://assets.tcgdex.net/es/me/me02/logo",
+  "serie": "Megaevolución",
+  "traducidas": 130
+ },
+ "me2pt5": {
+  "idEs": "me02.5",
+  "nombre": "Héroes Ascendentes",
+  "logo": "https://assets.tcgdex.net/es/me/me02.5/logo",
+  "serie": "Megaevolución",
+  "traducidas": 295
+ },
+ "me3": {
+  "idEs": "me03",
+  "nombre": "Equilibrio Perfecto",
+  "logo": "https://assets.tcgdex.net/es/me/me03/logo",
+  "serie": "Megaevolución",
+  "traducidas": 124
+ },
+ "me4": {
+  "idEs": "me04",
+  "nombre": "Caos Creciente",
+  "logo": "https://assets.tcgdex.net/es/me/me04/logo",
+  "serie": "Megaevolución",
+  "traducidas": 122
+ },
+ "me5": {
+  "idEs": "me05",
+  "nombre": "Oscuridad Absoluta",
+  "logo": "https://assets.tcgdex.net/es/me/me05/logo",
+  "serie": "Megaevolución",
+  "traducidas": 120
+ },
+ "rsv10pt5": {
+  "idEs": "sv10.5w",
+  "nombre": "Llama Blanca",
+  "logo": null,
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 173
+ },
  "sv1": {
   "idEs": "sv01",
   "nombre": "Escarlata y Púrpura",
@@ -126,7 +175,7 @@
   "traducidas": 216
  },
  "swsh10tg": {
-  "idEs": "swsh10.5tg",
+  "idEs": "swsh10tg",
   "nombre": "Resplandor Astral Galería de Entrenador",
   "logo": null,
   "serie": "Espada y Escudo",
@@ -140,7 +189,7 @@
   "traducidas": 217
  },
  "swsh11tg": {
-  "idEs": "swsh11.5tg",
+  "idEs": "swsh11tg",
   "nombre": "Origen Perdido Galería de Entrenador",
   "logo": null,
   "serie": "Espada y Escudo",
@@ -168,7 +217,7 @@
   "traducidas": 27
  },
  "swsh12tg": {
-  "idEs": "swsh12.5tg",
+  "idEs": "swsh12tg",
   "nombre": "Tempestad Plateada Galería de Entrenador",
   "logo": null,
   "serie": "Espada y Escudo",
@@ -252,7 +301,7 @@
   "traducidas": 186
  },
  "swsh9tg": {
-  "idEs": "swsh9.5tg",
+  "idEs": "swsh9tg",
   "nombre": "Astros Brillantes Galería de Entrenador",
   "logo": null,
   "serie": "Espada y Escudo",
@@ -264,5 +313,12 @@
   "logo": "https://assets.tcgdex.net/es/swsh/swshp/logo",
   "serie": "Espada y Escudo",
   "traducidas": 223
+ },
+ "zsv10pt5": {
+  "idEs": "sv10.5b",
+  "nombre": "Fulgor Negro",
+  "logo": null,
+  "serie": "Escarlata y Púrpura",
+  "traducidas": 172
  }
 }

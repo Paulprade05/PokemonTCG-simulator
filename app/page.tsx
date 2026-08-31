@@ -1564,6 +1564,22 @@ export default function Home() {
                           className="group surface surface-hover p-3.5 md:p-8 rounded-2xl md:rounded-3xl flex flex-col items-center justify-between gap-2 md:gap-4 overflow-hidden relative min-h-[126px] md:min-h-[180px]"
                         >
                           <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.06),transparent_60%)] pointer-events-none" />
+                          {/* Esta expansión todavía no tiene diccionario español
+                              y se ve en inglés. El aviso existe porque el cron
+                              trae expansiones nuevas y la lista va por fecha
+                              descendente: salen las PRIMERAS, así que sin él
+                              parece que el idioma está roto.
+                              `=== false` y no `!set.tieneEs`: el servidor sólo
+                              añade el campo en español, así que en inglés es
+                              undefined y aquí no se pinta nada.
+                              Va como <span> y no como botón: la tarjeta ya es un
+                              botón y anidarlos es HTML inválido. */}
+                          {set.tieneEs === false && (
+                            <span className="absolute top-2 right-2 md:top-3 md:right-3 z-10 chip ink-soft px-1.5 py-0.5 text-[9px] md:text-[10px] font-semibold uppercase tracking-[0.12em] leading-none">
+                              EN
+                              <span className="sr-only"> · esta expansión todavía no está traducida al español</span>
+                            </span>
+                          )}
                           <div className="flex-1 flex items-center justify-center w-full relative z-10">
                             {set.images?.logo ? (
                               <img

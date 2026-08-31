@@ -1,0 +1,501 @@
+{
+ "set": {
+  "id": "me5",
+  "idEs": "me05",
+  "nombre": "Oscuridad Absoluta",
+  "nombreEn": null,
+  "logo": "https://assets.tcgdex.net/es/me/me05/logo",
+  "serie": "Megaevolución"
+ },
+ "sinPareja": [],
+ "resumen": {
+  "locales": 120,
+  "traducidas": 120,
+  "sinPareja": 0,
+  "sinImagenEs": 0,
+  "nombresCambiados": 40,
+  "identicasOmitidas": 0
+ },
+ "cartas": {
+  "me5-1": {
+   "n": "Tropius",
+   "i": "https://assets.tcgdex.net/es/me/me05/001"
+  },
+  "me5-10": {
+   "n": "Centiskorch",
+   "i": "https://assets.tcgdex.net/es/me/me05/010"
+  },
+  "me5-100": {
+   "n": "Rampardos ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/100"
+  },
+  "me5-101": {
+   "n": "Mega-Darkrai ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/101"
+  },
+  "me5-102": {
+   "n": "Morpeko ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/102"
+  },
+  "me5-103": {
+   "n": "Mega-Excadrill ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/103"
+  },
+  "me5-104": {
+   "n": "Pulsera Osada",
+   "i": "https://assets.tcgdex.net/es/me/me05/104"
+  },
+  "me5-105": {
+   "n": "Martillo Demoledor",
+   "i": "https://assets.tcgdex.net/es/me/me05/105"
+  },
+  "me5-106": {
+   "n": "Campanilla Oscuridad",
+   "i": "https://assets.tcgdex.net/es/me/me05/106"
+  },
+  "me5-107": {
+   "n": "Interruptor de Energía",
+   "i": "https://assets.tcgdex.net/es/me/me05/107"
+  },
+  "me5-108": {
+   "n": "Combate Final de Gladio",
+   "i": "https://assets.tcgdex.net/es/me/me05/108"
+  },
+  "me5-109": {
+   "n": "Inma",
+   "i": "https://assets.tcgdex.net/es/me/me05/109"
+  },
+  "me5-11": {
+   "n": "Charcadet",
+   "i": "https://assets.tcgdex.net/es/me/me05/011"
+  },
+  "me5-110": {
+   "n": "Defensor Férreo",
+   "i": "https://assets.tcgdex.net/es/me/me05/110"
+  },
+  "me5-111": {
+   "n": "Vitalidad de Misty",
+   "i": "https://assets.tcgdex.net/es/me/me05/111"
+  },
+  "me5-112": {
+   "n": "Recluta del Clan Corrosión",
+   "i": "https://assets.tcgdex.net/es/me/me05/112"
+  },
+  "me5-113": {
+   "n": "Bomba Formidable",
+   "i": "https://assets.tcgdex.net/es/me/me05/113"
+  },
+  "me5-114": {
+   "n": "Mega-Zeraora ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/114"
+  },
+  "me5-115": {
+   "n": "Mega-Chandelure ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/115"
+  },
+  "me5-116": {
+   "n": "Mega-Darkrai ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/116"
+  },
+  "me5-117": {
+   "n": "Morpeko ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/117"
+  },
+  "me5-118": {
+   "n": "Combate Final de Gladio",
+   "i": "https://assets.tcgdex.net/es/me/me05/118"
+  },
+  "me5-119": {
+   "n": "Inma",
+   "i": "https://assets.tcgdex.net/es/me/me05/119"
+  },
+  "me5-12": {
+   "n": "Armarouge",
+   "i": "https://assets.tcgdex.net/es/me/me05/012"
+  },
+  "me5-120": {
+   "n": "Mega-Darkrai ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/120"
+  },
+  "me5-13": {
+   "n": "Goldeen",
+   "i": "https://assets.tcgdex.net/es/me/me05/013"
+  },
+  "me5-14": {
+   "n": "Seaking",
+   "i": "https://assets.tcgdex.net/es/me/me05/014"
+  },
+  "me5-15": {
+   "n": "Wailmer",
+   "i": "https://assets.tcgdex.net/es/me/me05/015"
+  },
+  "me5-16": {
+   "n": "Wailord ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/016"
+  },
+  "me5-17": {
+   "n": "Relicanth",
+   "i": "https://assets.tcgdex.net/es/me/me05/017"
+  },
+  "me5-18": {
+   "n": "Popplio",
+   "i": "https://assets.tcgdex.net/es/me/me05/018"
+  },
+  "me5-19": {
+   "n": "Brionne",
+   "i": "https://assets.tcgdex.net/es/me/me05/019"
+  },
+  "me5-2": {
+   "n": "Grubbin",
+   "i": "https://assets.tcgdex.net/es/me/me05/002"
+  },
+  "me5-20": {
+   "n": "Primarina",
+   "i": "https://assets.tcgdex.net/es/me/me05/020"
+  },
+  "me5-21": {
+   "n": "Finizen",
+   "i": "https://assets.tcgdex.net/es/me/me05/021"
+  },
+  "me5-22": {
+   "n": "Palafin",
+   "i": "https://assets.tcgdex.net/es/me/me05/022"
+  },
+  "me5-23": {
+   "n": "Electrike",
+   "i": "https://assets.tcgdex.net/es/me/me05/023"
+  },
+  "me5-24": {
+   "n": "Manectric",
+   "i": "https://assets.tcgdex.net/es/me/me05/024"
+  },
+  "me5-25": {
+   "n": "Charjabug",
+   "i": "https://assets.tcgdex.net/es/me/me05/025"
+  },
+  "me5-26": {
+   "n": "Vikavolt",
+   "i": "https://assets.tcgdex.net/es/me/me05/026"
+  },
+  "me5-27": {
+   "n": "Mega-Zeraora ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/027"
+  },
+  "me5-28": {
+   "n": "Miraidon",
+   "i": "https://assets.tcgdex.net/es/me/me05/028"
+  },
+  "me5-29": {
+   "n": "Slowpoke",
+   "i": "https://assets.tcgdex.net/es/me/me05/029"
+  },
+  "me5-3": {
+   "n": "Fomantis",
+   "i": "https://assets.tcgdex.net/es/me/me05/003"
+  },
+  "me5-30": {
+   "n": "Slowbro",
+   "i": "https://assets.tcgdex.net/es/me/me05/030"
+  },
+  "me5-31": {
+   "n": "Mega-Slowbro ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/031"
+  },
+  "me5-32": {
+   "n": "Jynx",
+   "i": "https://assets.tcgdex.net/es/me/me05/032"
+  },
+  "me5-33": {
+   "n": "Shuppet",
+   "i": "https://assets.tcgdex.net/es/me/me05/033"
+  },
+  "me5-34": {
+   "n": "Banette",
+   "i": "https://assets.tcgdex.net/es/me/me05/034"
+  },
+  "me5-35": {
+   "n": "Spiritomb",
+   "i": "https://assets.tcgdex.net/es/me/me05/035"
+  },
+  "me5-36": {
+   "n": "Litwick",
+   "i": "https://assets.tcgdex.net/es/me/me05/036"
+  },
+  "me5-37": {
+   "n": "Lampent",
+   "i": "https://assets.tcgdex.net/es/me/me05/037"
+  },
+  "me5-38": {
+   "n": "Mega-Chandelure ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/038"
+  },
+  "me5-39": {
+   "n": "Dhelmise",
+   "i": "https://assets.tcgdex.net/es/me/me05/039"
+  },
+  "me5-4": {
+   "n": "Lurantis ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/004"
+  },
+  "me5-40": {
+   "n": "Marshadow",
+   "i": "https://assets.tcgdex.net/es/me/me05/040"
+  },
+  "me5-41": {
+   "n": "Annihilape",
+   "i": "https://assets.tcgdex.net/es/me/me05/041"
+  },
+  "me5-42": {
+   "n": "Mankey",
+   "i": "https://assets.tcgdex.net/es/me/me05/042"
+  },
+  "me5-43": {
+   "n": "Primeape",
+   "i": "https://assets.tcgdex.net/es/me/me05/043"
+  },
+  "me5-44": {
+   "n": "Cranidos",
+   "i": "https://assets.tcgdex.net/es/me/me05/044"
+  },
+  "me5-45": {
+   "n": "Rampardos ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/045"
+  },
+  "me5-46": {
+   "n": "Drilbur",
+   "i": "https://assets.tcgdex.net/es/me/me05/046"
+  },
+  "me5-47": {
+   "n": "Koraidon",
+   "i": "https://assets.tcgdex.net/es/me/me05/047"
+  },
+  "me5-48": {
+   "n": "Mega-Darkrai ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/048"
+  },
+  "me5-49": {
+   "n": "Vullaby",
+   "i": "https://assets.tcgdex.net/es/me/me05/049"
+  },
+  "me5-5": {
+   "n": "Poltchageist",
+   "i": "https://assets.tcgdex.net/es/me/me05/005"
+  },
+  "me5-50": {
+   "n": "Mandibuzz",
+   "i": "https://assets.tcgdex.net/es/me/me05/050"
+  },
+  "me5-51": {
+   "n": "Inkay",
+   "i": "https://assets.tcgdex.net/es/me/me05/051"
+  },
+  "me5-52": {
+   "n": "Malamar",
+   "i": "https://assets.tcgdex.net/es/me/me05/052"
+  },
+  "me5-53": {
+   "n": "Nickit",
+   "i": "https://assets.tcgdex.net/es/me/me05/053"
+  },
+  "me5-54": {
+   "n": "Thievul",
+   "i": "https://assets.tcgdex.net/es/me/me05/054"
+  },
+  "me5-55": {
+   "n": "Morpeko ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/055"
+  },
+  "me5-56": {
+   "n": "Zarude",
+   "i": "https://assets.tcgdex.net/es/me/me05/056"
+  },
+  "me5-57": {
+   "n": "Maschiff",
+   "i": "https://assets.tcgdex.net/es/me/me05/057"
+  },
+  "me5-58": {
+   "n": "Mabosstiff",
+   "i": "https://assets.tcgdex.net/es/me/me05/058"
+  },
+  "me5-59": {
+   "n": "Chi-Yu",
+   "i": "https://assets.tcgdex.net/es/me/me05/059"
+  },
+  "me5-6": {
+   "n": "Sinistcha",
+   "i": "https://assets.tcgdex.net/es/me/me05/006"
+  },
+  "me5-60": {
+   "n": "Skarmory",
+   "i": "https://assets.tcgdex.net/es/me/me05/060"
+  },
+  "me5-61": {
+   "n": "Shieldon",
+   "i": "https://assets.tcgdex.net/es/me/me05/061"
+  },
+  "me5-62": {
+   "n": "Bastiodon",
+   "i": "https://assets.tcgdex.net/es/me/me05/062"
+  },
+  "me5-63": {
+   "n": "Bronzor",
+   "i": "https://assets.tcgdex.net/es/me/me05/063"
+  },
+  "me5-64": {
+   "n": "Bronzong",
+   "i": "https://assets.tcgdex.net/es/me/me05/064"
+  },
+  "me5-65": {
+   "n": "Mega-Excadrill ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/065"
+  },
+  "me5-66": {
+   "n": "Pikipek",
+   "i": "https://assets.tcgdex.net/es/me/me05/066"
+  },
+  "me5-67": {
+   "n": "Trumbeak",
+   "i": "https://assets.tcgdex.net/es/me/me05/067"
+  },
+  "me5-68": {
+   "n": "Toucannon",
+   "i": "https://assets.tcgdex.net/es/me/me05/068"
+  },
+  "me5-69": {
+   "n": "Código Cero",
+   "i": "https://assets.tcgdex.net/es/me/me05/069"
+  },
+  "me5-7": {
+   "n": "Heatran",
+   "i": "https://assets.tcgdex.net/es/me/me05/007"
+  },
+  "me5-70": {
+   "n": "Silvally",
+   "i": "https://assets.tcgdex.net/es/me/me05/070"
+  },
+  "me5-71": {
+   "n": "Bombirdier",
+   "i": "https://assets.tcgdex.net/es/me/me05/071"
+  },
+  "me5-72": {
+   "n": "Fósil Coraza Antiguo",
+   "i": "https://assets.tcgdex.net/es/me/me05/072"
+  },
+  "me5-73": {
+   "n": "Fósil Cráneo Antiguo",
+   "i": "https://assets.tcgdex.net/es/me/me05/073"
+  },
+  "me5-74": {
+   "n": "Insignia Reintento",
+   "i": "https://assets.tcgdex.net/es/me/me05/074"
+  },
+  "me5-75": {
+   "n": "Campanilla Oscuridad",
+   "i": "https://assets.tcgdex.net/es/me/me05/075"
+  },
+  "me5-76": {
+   "n": "Cantera de Fósiles",
+   "i": "https://assets.tcgdex.net/es/me/me05/076"
+  },
+  "me5-77": {
+   "n": "Combate Final de Gladio",
+   "i": "https://assets.tcgdex.net/es/me/me05/077"
+  },
+  "me5-78": {
+   "n": "Inma",
+   "i": "https://assets.tcgdex.net/es/me/me05/078"
+  },
+  "me5-79": {
+   "n": "Viona",
+   "i": "https://assets.tcgdex.net/es/me/me05/079"
+  },
+  "me5-8": {
+   "n": "Mega-Delphox ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/008"
+  },
+  "me5-80": {
+   "n": "Vitalidad de Misty",
+   "i": "https://assets.tcgdex.net/es/me/me05/080"
+  },
+  "me5-81": {
+   "n": "Recluta del Clan Corrosión",
+   "i": "https://assets.tcgdex.net/es/me/me05/081"
+  },
+  "me5-82": {
+   "n": "Bomba Formidable",
+   "i": "https://assets.tcgdex.net/es/me/me05/082"
+  },
+  "me5-83": {
+   "n": "Energía Darkness Sombría",
+   "i": "https://assets.tcgdex.net/es/me/me05/083"
+  },
+  "me5-84": {
+   "n": "Energía Lightning Voltaica",
+   "i": "https://assets.tcgdex.net/es/me/me05/084"
+  },
+  "me5-85": {
+   "n": "Fomantis",
+   "i": "https://assets.tcgdex.net/es/me/me05/085"
+  },
+  "me5-86": {
+   "n": "Armarouge",
+   "i": "https://assets.tcgdex.net/es/me/me05/086"
+  },
+  "me5-87": {
+   "n": "Goldeen",
+   "i": "https://assets.tcgdex.net/es/me/me05/087"
+  },
+  "me5-88": {
+   "n": "Primarina",
+   "i": "https://assets.tcgdex.net/es/me/me05/088"
+  },
+  "me5-89": {
+   "n": "Manectric",
+   "i": "https://assets.tcgdex.net/es/me/me05/089"
+  },
+  "me5-9": {
+   "n": "Sizzlipede",
+   "i": "https://assets.tcgdex.net/es/me/me05/009"
+  },
+  "me5-90": {
+   "n": "Slowbro",
+   "i": "https://assets.tcgdex.net/es/me/me05/090"
+  },
+  "me5-91": {
+   "n": "Dhelmise",
+   "i": "https://assets.tcgdex.net/es/me/me05/091"
+  },
+  "me5-92": {
+   "n": "Thievul",
+   "i": "https://assets.tcgdex.net/es/me/me05/092"
+  },
+  "me5-93": {
+   "n": "Bastiodon",
+   "i": "https://assets.tcgdex.net/es/me/me05/093"
+  },
+  "me5-94": {
+   "n": "Toucannon",
+   "i": "https://assets.tcgdex.net/es/me/me05/094"
+  },
+  "me5-95": {
+   "n": "Silvally",
+   "i": "https://assets.tcgdex.net/es/me/me05/095"
+  },
+  "me5-96": {
+   "n": "Lurantis ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/096"
+  },
+  "me5-97": {
+   "n": "Wailord ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/097"
+  },
+  "me5-98": {
+   "n": "Mega-Zeraora ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/098"
+  },
+  "me5-99": {
+   "n": "Mega-Chandelure ex",
+   "i": "https://assets.tcgdex.net/es/me/me05/099"
+  }
+ }
+}

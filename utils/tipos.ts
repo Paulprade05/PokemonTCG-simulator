@@ -95,6 +95,12 @@ export interface Expansion {
   images?: { logo?: string; symbol?: string };
   total?: number;
   cardsCount?: number;
+  /**
+   * Sólo con la app en español: `false` marca una expansión sin diccionario,
+   * que se verá en inglés. Ausente en inglés, donde no hay nada que avisar —por
+   * eso se pregunta por `=== false` y no por `!tieneEs`.
+   */
+  tieneEs?: boolean;
   releaseDate?: string | null;
   release_date?: string | null;
   printed_total?: number;
