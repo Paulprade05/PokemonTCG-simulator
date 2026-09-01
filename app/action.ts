@@ -3200,16 +3200,47 @@ const RESPALDO_SECRETO_NOTAS = "tcg-notas-sin-configurar";
 let avisadoSinSecreto = false;
 
 function secretoDeNotas(): string {
-  const s = process.env.GRADING_SECRET;
-  if (s && s.length >= 16) return s;
+  /* SE LIMPIA ANTES DE MIRAR NADA. Copiar y pegar en el panel de Vercel arrastra
+   * saltos de línea y espacios con una facilidad pasmosa, y un secreto con un
+   * "\n" al final SÍ pasaría el corte de longitud pero sería otro secreto
+   * distinto del que se pegó — o sea, notas distintas entre despliegues sin que
+   * nadie entienda por qué. Mejor recortarlo aquí. */
+  const bruto = process.env.GRADING_SECRET;
+  const s = typeof bruto === "string" ? bruto.trim() : "";
+  if (s.length >= 16) return s;
+
   if (!avisadoSinSecreto) {
     avisadoSinSecreto = true;
+    /* EL AVISO DICE QUÉ CASO ES, y no es un lujo: la primera versión decía "no
+     * está configurada (o es demasiado corta)" y con eso no se puede
+     * diagnosticar nada. Los tres casos se arreglan de forma distinta —falta la
+     * variable, está puesta en el entorno equivocado, o se pegó mal— y la
+     * diferencia entre ellos es justamente si la variable llega y con qué
+     * longitud.
+     *
+     * SE PUBLICA LA LONGITUD, NUNCA EL VALOR. Saber que mide 64 caracteres no
+     * ayuda a adivinarlo; verlo escrito en un registro sí lo quema. */
+    const diagnostico =
+      bruto === undefined
+        ? "la variable NO LLEGA a este despliegue (no está definida). Si la" +
+          " acabas de crear en Vercel: comprueba que esté marcada para" +
+          " *Production* y no sólo para Preview/Development, y RECUERDA que las" +
+          " variables sólo entran en despliegues NUEVOS — hay que redesplegar" +
+          " después de guardarla."
+        : s.length === 0
+          ? "la variable llega VACÍA. Se guardó sin valor, o con sólo espacios."
+          : `la variable llega pero mide ${s.length} caracteres y hacen falta 16` +
+            " o más. Probablemente se pegó a medias.";
+
     console.warn(
-      "[graduacion] GRADING_SECRET no está configurada (o es demasiado corta):" +
-        " las notas usan el respaldo público y un jugador podría calcularlas" +
-        " antes de pagar. Genera una con" +
-        " node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"" +
-        " y ponla en las variables de entorno. Es seguro añadirla en caliente.",
+      "[graduacion] GRADING_SECRET: " +
+        diagnostico +
+        " · MIENTRAS TANTO las notas usan el respaldo público, así que un" +
+        " jugador podría calcularlas antes de pagar y quedarse sólo con los" +
+        " dieces. Genera una con" +
+        " node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"." +
+        " Ponerla o cambiarla es seguro en caliente: las notas ya asignadas" +
+        " están guardadas en graded_cards.nota y no se recalculan.",
     );
   }
   return RESPALDO_SECRETO_NOTAS;
