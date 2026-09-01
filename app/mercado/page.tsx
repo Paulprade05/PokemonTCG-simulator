@@ -7,76 +7,39 @@ import { useUser } from "@clerk/nextjs";
 import { cumplirOferta, getCartasMercado, getMercado } from "../action";
 import {
   copiasEntregables,
-  cumpleFiltro,
   pagoDelLote,
-  setDeCarta,
-  type CartaMinima,
-  type Categoria,
   type Oferta,
   type Requisito,
 } from "../../utils/mercado";
+// EL REPARTO DEL LOTE VIVE EN utils/repartoMercado.ts, fuera del componente,
+// para que scripts/test-invariantes.mjs pueda cargarlo (la cabecera de ese
+// módulo explica por qué no puede volver aquí). Los comentarios de más abajo
+// siguen nombrando `normalizarFijadas`, que se quedó allí y aquí no se importa:
+// es en ese fichero donde hay que buscarla, no en éste.
+import {
+  candidatasPara,
+  esFijable,
+  podarFijadas,
+  repartir,
+  type CartaMercado,
+  type FijadasPorOferta,
+  type Opcion,
+  type ParteReparto,
+  type Reparto,
+} from "../../utils/repartoMercado";
 import { AVAILABLE_SETS } from "../../utils/constanst";
 import { formatNumber } from "../../utils/format";
 import { getCollection } from "../../utils/storage";
 import { useCurrency } from "../../hooks/useGameCurrency";
 import { useHaptics } from "../../hooks/useHaptics";
 import { useToast } from "../../components/ui/Toast";
+import Sheet from "../../components/ui/Sheet";
 import PageHeader from "../../components/PageHeader";
 import Loader from "../../components/Loader";
 
 /* ------------------------------------------------------------------ *
- * DATOS
+ * RÓTULOS
  * ------------------------------------------------------------------ */
-
-interface CartaMercado extends CartaMinima {
-  /**
-   * Copias que tiene el jugador EN TOTAL. Las entregables son
-   * `copiasEntregables(cantidad)`, nunca `cantidad`: ver la nota de `repartir`.
-   */
-  cantidad: number;
-  /** SELL_PRICES de su rareza (lo calcula el servidor). */
-  precio: number;
-  /** Rótulo español, sólo para pintar. El emparejamiento usa `name` (inglés). */
-  nombreEs?: string;
-}
-
-interface ParteReparto {
-  requisito: Requisito;
-  /** Copias apartadas para este requisito (una entrada por copia entregada). */
-  elegidas: CartaMercado[];
-  /** Unidades conseguidas (tipos para el arcoíris, copias para el playset...). */
-  progreso: number;
-}
-
-interface Reparto {
-  partes: ParteReparto[];
-  completa: boolean;
-  ids: string[];
-  /** Precio suelto del lote: lo que darían las cartas vendidas una a una. */
-  valor: number;
-}
-
-/**
- * Orden en que se reparten las cartas entre requisitos: primero los que casi no
- * admiten alternativas y al final el "cartas cualesquiera de la expansión", que
- * acepta todo. Al revés, el requisito comodín se llevaría las cartas que el
- * exigente necesitaba y la oferta parecería incompleta teniéndolo todo.
- */
-const PRIORIDAD: Record<Categoria, number> = {
-  evolucion: 0,
-  playset: 1,
-  arcoiris: 2,
-  artista: 3,
-  pokedex: 3,
-  etapa: 3,
-  hp: 3,
-  rareza: 3,
-  supertipo: 3,
-  numero: 3,
-  inicial: 3,
-  tipo: 4,
-  set: 5,
-};
 
 /**
  * Rótulo de la expansión que exige un requisito. El nombre español lo manda
@@ -87,191 +50,6 @@ const nombreDeSet = (setId: string | null, nombresEs: Record<string, string>): s
   setId
     ? nombresEs[setId] ?? AVAILABLE_SETS.find((s) => s.id === setId)?.name ?? setId.toUpperCase()
     : "Cualquier expansión";
-
-const clave = (v: unknown) => String(v ?? "").trim().toLowerCase();
-
-/** Misma comprobación que hace el servidor: el set va aparte del filtro. */
-const sirve = (c: CartaMinima, r: Requisito): boolean =>
-  (r.setId === null || setDeCarta(c) === r.setId) && cumpleFiltro(c, r.filtro);
-
-/** Barata primero y, a igual precio, la que tiene más copias de sobra. */
-const comparar = (a: CartaMercado, b: CartaMercado) =>
-  a.precio - b.precio || b.cantidad - a.cantidad || a.id.localeCompare(b.id);
-
-/**
- * Elige, para cada requisito, las cartas MÁS BARATAS que lo cumplen, contando
- * SÓLO DUPLICADOS.
- *
- * POR QUÉ SÓLO DUPLICADOS, Y POR QUÉ AQUÍ Y NO AL FINAL: el mercado sólo compra
- * las copias que sobran, y el servidor exige tener `entregadas + 1` de cada
- * carta. Si esta función repartiera sobre las copias POSEÍDAS y el filtro se
- * aplicara después, el progreso diría "5/5", el botón se pondría verde y el
- * cobro fallaría: el peor fallo posible en esta pantalla. Por eso el fondo
- * común del que se reparte ya son los duplicados —`copiasEntregables`, la misma
- * función que usa el servidor— y todo lo que sale de aquí (progreso, barra,
- * lote, valor) está medido en duplicados por construcción.
- *
- * POR QUÉ LO MÁS BARATO: el pago es multiplicador × precio de venta del lote, y
- * el multiplicador ya está fijado en la oferta. Entregar la carta cara que
- * también cumple sube el cobro unas monedas y regala la carta buena; el
- * requisito lleva banda de rareza, así que lo barato cumple igual.
- *
- * Esta propuesta es sólo eso, una propuesta: el servidor vuelve a comprobar
- * posesión, duplicados y requisitos con los datos de la base de datos.
- */
-function repartir(oferta: Oferta, cartas: CartaMercado[]): Reparto {
-  // Copias ENTREGABLES sin apartar, por id (la copia del álbum nunca entra en
-  // este fondo). Una carta no puede valer para dos requisitos.
-  const libres = new Map<string, number>();
-  for (const c of cartas) libres.set(c.id, copiasEntregables(c.cantidad));
-  const libre = (c: CartaMercado) => libres.get(c.id) ?? 0;
-  const apartar = (c: CartaMercado, n = 1) => libres.set(c.id, libre(c) - n);
-
-  const orden = oferta.requisitos
-    .map((requisito, indice) => ({ requisito, indice }))
-    .sort(
-      (a, b) =>
-        (PRIORIDAD[a.requisito.filtro.categoria] ?? 3) -
-          (PRIORIDAD[b.requisito.filtro.categoria] ?? 3) || a.indice - b.indice,
-    );
-
-  const porIndice = new Map<number, { elegidas: CartaMercado[]; progreso: number }>();
-
-  for (let k = 0; k < orden.length; k++) {
-    const { requisito: r, indice } = orden[k];
-    // Requisitos que aún no se han servido: las cartas que también les valen
-    // hay que gastarlas LO ÚLTIMO. Sin esto, "8 de tipo Fuego o Lucha" + "3 de
-    // Kalos" se rompía en cuanto las tres cartas de Kalos más baratas eran
-    // además de tipo Fuego: el requisito exigente se quedaba sin material que
-    // sólo él podía usar y la oferta se veía incompleta teniéndolo todo. Es el
-    // mismo criterio (`utilidadEnOtros`) con el que el servidor ordena sus
-    // opciones, y por eso las dos partes convergen en el mismo lote.
-    const pendientes = orden.slice(k + 1).map((x) => x.requisito);
-    // La utilidad se calcula una vez por carta y no dentro del comparador: el
-    // sort la pediría O(n log n) veces y cada una recorre los filtros.
-    const utilidad = new Map<string, number>();
-    const candidatas = cartas.filter((c) => libre(c) > 0 && sirve(c, r));
-    for (const c of candidatas) {
-      utilidad.set(c.id, pendientes.filter((p) => sirve(c, p)).length);
-    }
-    candidatas.sort(
-      (a, b) => (utilidad.get(a.id) ?? 0) - (utilidad.get(b.id) ?? 0) || comparar(a, b),
-    );
-    let elegidas: CartaMercado[] = [];
-    let progreso = 0;
-
-    if (r.filtro.categoria === "playset") {
-      // `cantidad` copias de LA MISMA carta: la más barata que llegue.
-      const suficientes = candidatas.filter((c) => libre(c) >= r.cantidad);
-      progreso = candidatas.reduce((mejor, c) => Math.max(mejor, Math.min(libre(c), r.cantidad)), 0);
-      if (suficientes.length > 0) {
-        elegidas = Array.from({ length: r.cantidad }, () => suficientes[0]);
-        progreso = r.cantidad;
-      }
-    } else if (r.filtro.categoria === "arcoiris") {
-      // Una carta por TIPO distinto, empezando por las baratas.
-      const tipos = new Set<string>();
-      for (const c of candidatas) {
-        if (elegidas.length >= r.cantidad) break;
-        if (libre(c) <= 0) continue;
-        const tipo = (c.types ?? []).map(clave).find((t) => !tipos.has(t));
-        if (!tipo) continue;
-        tipos.add(tipo);
-        elegidas.push(c);
-        apartar(c);
-      }
-      progreso = elegidas.length;
-      if (elegidas.length < r.cantidad) {
-        // Incompleta: se devuelven al fondo común para el siguiente requisito.
-        elegidas.forEach((c) => apartar(c, -1));
-        elegidas = [];
-      }
-    } else if (r.filtro.categoria === "evolucion") {
-      const cadena = mejorCadena(candidatas, r.cantidad, libre);
-      if (cadena) {
-        elegidas = cadena;
-        progreso = r.cantidad;
-      } else {
-        // Para la barra: si pedían 3 eslabones, enseñar si al menos hay 2.
-        progreso = r.cantidad === 3 && mejorCadena(candidatas, 2, libre) ? 2 : 0;
-      }
-      elegidas.forEach((c) => apartar(c));
-    } else {
-      for (const c of candidatas) {
-        // Una carta con varias copias puede llenar varios huecos del requisito.
-        while (libre(c) > 0 && elegidas.length < r.cantidad) {
-          elegidas.push(c);
-          apartar(c);
-        }
-        if (elegidas.length >= r.cantidad) break;
-      }
-      progreso = elegidas.length;
-      if (elegidas.length < r.cantidad) {
-        elegidas.forEach((c) => apartar(c, -1));
-        elegidas = [];
-      }
-    }
-
-    if (r.filtro.categoria === "playset" && elegidas.length > 0) apartar(elegidas[0], r.cantidad);
-
-    porIndice.set(indice, { elegidas, progreso });
-  }
-
-  const partes: ParteReparto[] = oferta.requisitos.map((requisito, indice) => {
-    const { elegidas, progreso } = porIndice.get(indice) ?? { elegidas: [], progreso: 0 };
-    return { requisito, progreso, elegidas };
-  });
-
-  const todas = partes.flatMap((p) => p.elegidas);
-  const completa = partes.every((p) => p.elegidas.length === p.requisito.cantidad);
-
-  return {
-    partes,
-    completa,
-    ids: todas.map((c) => c.id),
-    valor: todas.reduce((total, c) => total + c.precio, 0),
-  };
-}
-
-/**
- * Cadena evolutiva más barata de `eslabones` cartas (B.evolvesFrom === A.name).
- * Se indexa por nombre con la copia más barata de cada uno: recorrer todas las
- * combinaciones sería cúbico sobre una colección de miles de cartas.
- */
-function mejorCadena(
-  candidatas: CartaMercado[],
-  eslabones: number,
-  libre: (c: CartaMercado) => number,
-): CartaMercado[] | null {
-  const porNombre = new Map<string, CartaMercado>();
-  for (const c of candidatas) {
-    if (libre(c) <= 0) continue;
-    const k = clave(c.name);
-    const actual = porNombre.get(k);
-    if (!actual || comparar(c, actual) < 0) porNombre.set(k, c);
-  }
-
-  let mejor: CartaMercado[] | null = null;
-  const precio = (cs: CartaMercado[]) => cs.reduce((t, c) => t + c.precio, 0);
-
-  for (const fin of porNombre.values()) {
-    if (!fin.evolvesFrom) continue;
-    const medio = porNombre.get(clave(fin.evolvesFrom));
-    if (!medio) continue;
-    let cadena: CartaMercado[];
-    if (eslabones === 2) {
-      cadena = [medio, fin];
-    } else {
-      if (!medio.evolvesFrom) continue;
-      const base = porNombre.get(clave(medio.evolvesFrom));
-      if (!base) continue;
-      cadena = [base, medio, fin];
-    }
-    if (!mejor || precio(cadena) < precio(mejor)) mejor = cadena;
-  }
-
-  return mejor;
-}
 
 /* ------------------------------------------------------------------ *
  * PANTALLA
@@ -304,6 +82,20 @@ export default function MercadoPage() {
   const [ahora, setAhora] = useState(0);
   const [enCurso, setEnCurso] = useState<string | null>(null);
 
+  /**
+   * LO QUE EL JUGADOR HA CLAVADO, por oferta y por requisito.
+   *
+   * En memoria y nada más: se pierde al recargar y eso es lo pedido. Persistirlo
+   * obligaría a revalidarlo contra un tablón que caduca cada 24 h y a inventar
+   * qué hacer cuando la carta clavada ya no está — dos problemas nuevos a cambio
+   * de conservar una elección de treinta segundos.
+   */
+  const [fijadas, setFijadas] = useState<FijadasPorOferta>(() => new Map());
+  /** Hueco del lote que se está cambiando; `null` cierra el selector. */
+  const [destino, setDestino] = useState<
+    { ofertaId: string; indice: number; posicion: number } | null
+  >(null);
+
   const cargar = useCallback(
     async (conSpinner = true) => {
       if (!isLoaded) return;
@@ -331,6 +123,19 @@ export default function MercadoPage() {
           const copias = new Map(getCollection().map((c) => [c.id, c.quantity || 1]));
           lista = lista.map((c) => ({ ...c, cantidad: copias.get(c.id) ?? 1 }));
         }
+
+        // Las elecciones a mano caducan con el tablón —cuando entra un ciclo
+        // nuevo, las de las ofertas que ya no están sobran— y además se podan
+        // contra la colección recién leída: ver `podarFijadas`.
+        setFijadas((prev) => podarFijadas(prev, tablon.ofertas, lista));
+        // Y EL SELECTOR SE CIERRA. Es la única hoja de la app que puede
+        // sobrevivir a que desaparezca lo que está editando: al entrar un ciclo
+        // nuevo los ids de oferta cambian, la hoja se queda con el subtítulo
+        // vacío y afirmando "no te sobra ninguna otra carta que valga para este
+        // requisito" sobre un requisito que ya no existe. Se cierra siempre y no
+        // sólo cuando la oferta se va, porque una recarga también puede mover
+        // las cantidades bajo el hueco que se estaba cambiando.
+        setDestino(null);
 
         setOfertas(tablon.ofertas);
         setNombresSet(tablon.nombresSet ?? {});
@@ -366,9 +171,176 @@ export default function MercadoPage() {
 
   const repartos = useMemo(() => {
     const mapa = new Map<string, Reparto>();
-    for (const o of ofertas) mapa.set(o.id, repartir(o, cartas));
+    for (const o of ofertas) mapa.set(o.id, repartir(o, cartas, fijadas.get(o.id)));
     return mapa;
-  }, [ofertas, cartas]);
+  }, [ofertas, cartas, fijadas]);
+
+  /**
+   * ¿La oferta se completaría SOLA, sin lo que el jugador ha clavado?
+   *
+   * Es lo único que distingue "tus cambios dejan el lote incompleto" de "te
+   * faltan duplicados", y sin ello el botón acusa al jugador de romper una
+   * oferta que era imposible antes de que tocara nada: le basta con clavar algo
+   * en un requisito que sí cumple para que el rótulo cambie, y el botón de
+   * emergencia que le ofrece a cambio no arregla nada porque no hay nada roto.
+   *
+   * Se reparte una segunda vez y sólo para las ofertas que el jugador ha tocado,
+   * que son una o dos: repartir es barato y adivinarlo no se puede.
+   */
+  const automaticaCompleta = useMemo(() => {
+    const mapa = new Map<string, boolean>();
+    for (const o of ofertas) {
+      if (!fijadas.has(o.id)) continue;
+      mapa.set(o.id, repartir(o, cartas).completa);
+    }
+    return mapa;
+  }, [ofertas, cartas, fijadas]);
+
+  /* ---------------------------------------------------------------- *
+   * ELEGIR A MANO
+   * ---------------------------------------------------------------- */
+
+  const ofertaDestino = destino ? ofertas.find((o) => o.id === destino.ofertaId) : undefined;
+  const repartoDestino = destino ? repartos.get(destino.ofertaId) : undefined;
+  const parteDestino =
+    destino && repartoDestino ? repartoDestino.partes[destino.indice] : undefined;
+
+  const opcionesDestino = useMemo(() => {
+    if (!destino || !ofertaDestino || !repartoDestino) return [];
+    return candidatasPara(
+      ofertaDestino,
+      cartas,
+      repartoDestino,
+      destino.indice,
+      destino.posicion,
+    );
+  }, [destino, ofertaDestino, repartoDestino, cartas]);
+
+  /**
+   * Reescribe la lista de clavadas de un requisito.
+   *
+   * LA RECETA TRABAJA SOBRE EL LOTE PINTADO ENTERO, no sólo sobre lo que ya
+   * estaba clavado, y ésa es la corrección que hace que tocar un chip cambie EL
+   * CHIP QUE SE HA TOCADO. Antes se partía de `elegidas.slice(0, nFijadas)` y
+   * elegir en un hueco automático AÑADÍA la carta nueva al final; el algoritmo
+   * rellenaba los huecos restantes con lo más barato, que es justo la carta que
+   * el jugador acababa de intentar quitar, así que volvía a entrar:
+   *
+   *     requisito "3 cartas", libres A(10) B(20) C(30) D(40) E(50)
+   *     automático  [A, B, C]
+   *     toca "A", elige E  →  [E, A, B]   ← A sigue, y se ha ido C, que ni miró
+   *
+   * Es el fallo más grave posible en una pantalla que se usa con el pulgar: el
+   * objeto que tocas no es el que cambia. Y rompía el motivo del encargo —
+   * "quiero mandar la basura y quedarme la buena"— porque para sacar de verdad
+   * una carta había que clavar los N huecos uno a uno.
+   *
+   * La consecuencia, buscada: tocar UNA copia clava el lote entero DE ESE
+   * REQUISITO tal y como se ve. Los demás requisitos los sigue repartiendo el
+   * algoritmo, así que la protección contra el atasco sigue en pie; y lo que se
+   * clava de propina es exactamente lo que el algoritmo ya había elegido, o sea
+   * que el lote no cambia por debajo de sus pies. "Lo que veo es lo que mando".
+   *
+   * Se parte SIEMPRE de lo pintado (`parte.elegidas`) y no del estado crudo: el
+   * estado puede llevar ids que `normalizarFijadas` ya descartó (una copia que
+   * se vendió en otra pestaña), y si se editara sobre él volverían a la vida al
+   * primer cambio.
+   */
+  const escribirFijadas = useCallback(
+    (
+      ofertaId: string,
+      indice: number,
+      receta: (lote: { ids: string[]; fijas: boolean[] }) => (string | null)[],
+    ) => {
+      setFijadas((prev) => {
+        const parte = repartos.get(ofertaId)?.partes[indice];
+        const nuevas = receta({
+          ids: parte ? parte.elegidas.map((c) => c.id) : [],
+          fijas: parte ? parte.fijas : [],
+        });
+
+        const deOferta = new Map(prev.get(ofertaId) ?? []);
+        // Una lista de puros huecos vacíos es "aquí no hay nada clavado": se
+        // borra la entrada en vez de guardarla, o la oferta se quedaría marcada
+        // como tocada para siempre después de soltar la última copia.
+        if (nuevas.every((id) => id === null)) deOferta.delete(indice);
+        else deOferta.set(indice, nuevas);
+
+        const copia = new Map(prev);
+        if (deOferta.size === 0) copia.delete(ofertaId);
+        else copia.set(ofertaId, deOferta);
+        return copia;
+      });
+    },
+    [repartos],
+  );
+
+  const onElegirCarta = useCallback(
+    (carta: CartaMercado) => {
+      if (!destino || !ofertaDestino) return;
+      const { ofertaId, indice, posicion } = destino;
+      const r = ofertaDestino.requisitos[indice];
+      haptic("select");
+      escribirFijadas(ofertaId, indice, ({ ids }) => {
+        // El playset es UNA decisión: cambiar la carta cambia sus N copias.
+        if (r.filtro.categoria === "playset") {
+          return Array.from({ length: r.cantidad }, () => carta.id);
+        }
+        // Sustituir EN SU SITIO la copia que se tocó y dejar el resto del lote
+        // tal y como está pintado (ver la cabecera de `escribirFijadas`).
+        const lote =
+          posicion < ids.length
+            ? ids.map((id, j) => (j === posicion ? carta.id : id))
+            : [...ids, carta.id];
+        return lote.slice(0, r.cantidad);
+      });
+      setDestino(null);
+    },
+    [destino, ofertaDestino, haptic, escribirFijadas],
+  );
+
+  /**
+   * Soltar la copia que se está mirando: ese hueco vuelve a elegirlo la pantalla
+   * y el resto del requisito se queda como está.
+   *
+   * Que el resto se quede clavado no es un descuido: si soltar una copia
+   * devolviera el requisito entero al automático, el jugador perdería de golpe
+   * las demás elecciones que sí quería. Para eso está el botón de la tarjeta.
+   */
+  const onSoltarCopia = useCallback(() => {
+    if (!destino || !ofertaDestino) return;
+    const { ofertaId, indice, posicion } = destino;
+    const r = ofertaDestino.requisitos[indice];
+    haptic("tap");
+    escribirFijadas(ofertaId, indice, ({ ids, fijas }) =>
+      // Soltar un playset los suelta todos: sus N copias son la misma decisión.
+      //
+      // SOLTAR NO AGARRA NADA. A diferencia de elegir, aquí se parte de lo que
+      // YA estaba clavado (`fijas`) y no del lote pintado: si se partiera del
+      // lote, devolverle un hueco a la pantalla le quitaría de paso otro que
+      // ella estaba eligiendo sola, y el jugador acabaría con más copias
+      // clavadas de las que ha elegido en su vida.
+      r.filtro.categoria === "playset"
+        ? []
+        : ids.map((id, j) => (fijas[j] && j !== posicion ? id : null)),
+    );
+    setDestino(null);
+  }, [destino, ofertaDestino, haptic, escribirFijadas]);
+
+  /** La salida de emergencia: toda la oferta vuelve a la propuesta automática. */
+  const onSoltarTodo = useCallback(
+    (ofertaId: string) => {
+      haptic("tap");
+      setDestino(null);
+      setFijadas((prev) => {
+        if (!prev.has(ofertaId)) return prev;
+        const copia = new Map(prev);
+        copia.delete(ofertaId);
+        return copia;
+      });
+    },
+    [haptic],
+  );
 
   const onCumplir = useCallback(
     async (oferta: Oferta) => {
@@ -388,6 +360,9 @@ export default function MercadoPage() {
         haptic("success");
         setCoins(res.coins);
         setCumplidas((prev) => [...prev, oferta.id]);
+        // El lote ya se fue: las copias clavadas ya no existen y arrastrarlas
+        // sólo serviría para que `normalizarFijadas` las tirara una a una.
+        onSoltarTodo(oferta.id);
         toast(`Lote entregado: +${formatNumber(res.pago)} monedas`, "success");
         cargar(false);
       } catch (e) {
@@ -398,7 +373,7 @@ export default function MercadoPage() {
         setEnCurso(null);
       }
     },
-    [repartos, enCurso, haptic, toast, setCoins, cargar],
+    [repartos, enCurso, haptic, toast, setCoins, cargar, onSoltarTodo],
   );
 
   if (estado === "cargando") return <Loader label="Abriendo el mercado" />;
@@ -500,7 +475,13 @@ export default function MercadoPage() {
               bloqueada={enCurso !== null && enCurso !== oferta.id}
               retardo={i * 0.04}
               nombresSet={nombresSet}
+              autoCompleta={automaticaCompleta.get(oferta.id) ?? true}
               onCumplir={() => onCumplir(oferta)}
+              onTocarCopia={(indice, posicion) => {
+                haptic("tap");
+                setDestino({ ofertaId: oferta.id, indice, posicion });
+              }}
+              onSoltarTodo={() => onSoltarTodo(oferta.id)}
             />
           ))}
         </div>
@@ -509,8 +490,24 @@ export default function MercadoPage() {
       <p className="text-[11px] ink-faint text-center mt-6 mb-2 max-w-lg mx-auto leading-relaxed">
         Al mercado sólo van duplicados: de cada carta que entregues te queda siempre una copia en
         el álbum, así que ningún encargo te deja un hueco. El comprador paga su cuota entera sobre
-        el precio de venta del lote, sin topes, y se proponen las cartas más baratas que cumplan.
+        el precio de venta del lote, sin topes, y se proponen las cartas más baratas que cumplan
+        — pero la última palabra la tienes tú: toca cualquier carta del lote para cambiarla.
       </p>
+
+      <SelectorEntrega
+        destino={destino}
+        requisito={
+          destino && ofertaDestino ? ofertaDestino.requisitos[destino.indice] : undefined
+        }
+        opciones={opcionesDestino}
+        actual={destino && parteDestino ? parteDestino.elegidas[destino.posicion] : undefined}
+        posicion={destino ? destino.posicion : 0}
+        copiasDelRequisito={destino && parteDestino ? parteDestino.elegidas.length : 0}
+        fijada={Boolean(destino && parteDestino && parteDestino.fijas[destino.posicion])}
+        onElegir={onElegirCarta}
+        onSoltar={onSoltarCopia}
+        onCerrar={() => setDestino(null)}
+      />
     </>
   );
 }
@@ -540,7 +537,10 @@ function TarjetaOferta({
   bloqueada,
   retardo,
   nombresSet,
+  autoCompleta,
   onCumplir,
+  onTocarCopia,
+  onSoltarTodo,
 }: {
   oferta: Oferta;
   reparto?: Reparto;
@@ -550,12 +550,27 @@ function TarjetaOferta({
   bloqueada: boolean;
   retardo: number;
   nombresSet: Record<string, string>;
+  /**
+   * ¿La oferta se completaría sin lo que el jugador ha clavado? Sólo se usa para
+   * decidir a quién se le echa la culpa cuando el lote no cuadra.
+   */
+  autoCompleta: boolean;
   onCumplir: () => void;
+  onTocarCopia: (indice: number, posicion: number) => void;
+  onSoltarTodo: () => void;
 }) {
   const color = COLOR_DIFICULTAD[oferta.dificultad];
   const completa = Boolean(reparto?.completa);
   const pago = completa && reparto ? pagoDelLote(oferta, reparto.valor) : 0;
   const prima = completa && reparto ? pago - reparto.valor : 0;
+  /**
+   * Se lee DEL REPARTO y no del estado crudo de la pantalla. El estado conserva
+   * elecciones que `normalizarFijadas` ya descartó —una copia vendida en otra
+   * pestaña—, y con él la tarjeta ofrecía "volver a la propuesta automática" sin
+   * nada que soltar (pulsarlo no cambiaba el lote) y le echaba la culpa al
+   * jugador de unos cambios que ya no existían. Clavado de verdad es lo pintado.
+   */
+  const hayFijadas = reparto?.partes.some((p) => p.fijas.some(Boolean)) ?? false;
 
   return (
     <motion.article
@@ -608,7 +623,7 @@ function TarjetaOferta({
                 // es la única cifra que casa con lo que el servidor aceptará.
                 title="Contando sólo las copias que te sobran"
                 className={`text-xs font-semibold tnum shrink-0 ${
-                  parte.progreso >= parte.requisito.cantidad ? "accent" : "ink-faint"
+                  parte.completo ? "accent" : "ink-faint"
                 }`}
               >
                 {parte.progreso}/{parte.requisito.cantidad}
@@ -619,17 +634,21 @@ function TarjetaOferta({
                 className="h-full rounded-full transition-[width] duration-500"
                 style={{
                   width: `${Math.min(100, (parte.progreso / Math.max(1, parte.requisito.cantidad)) * 100)}%`,
-                  background: parte.progreso >= parte.requisito.cantidad ? "var(--accent)" : "var(--ink-faint)",
+                  background: parte.completo ? "var(--accent)" : "var(--ink-faint)",
                 }}
               />
             </div>
             {/* La regla no se repite aquí a propósito: ya la dice la descripción
                 de cada oferta y el botón ("Te faltan duplicados"). Repetirla en
                 cada requisito son catorce líneas iguales en una pantalla. */}
-            {parte.elegidas.length > 0 && (
-              <p className="text-[10px] ink-faint mt-2 leading-relaxed">
-                Entregarías: {resumirCartas(parte.elegidas)}
-              </p>
+            {esFijable(parte.requisito) ? (
+              <CopiasDeParte parte={parte} onTocar={(pos) => onTocarCopia(i, pos)} />
+            ) : (
+              parte.elegidas.length > 0 && (
+                <p className="text-[10px] ink-faint mt-2 leading-relaxed">
+                  Entregarías: {resumirCartas(parte.elegidas)}
+                </p>
+              )
             )}
           </li>
         ))}
@@ -672,6 +691,26 @@ function TarjetaOferta({
           </p>
         )}
 
+        {/* LA SALIDA DE EMERGENCIA. Aparece en cuanto se toca algo y no sólo
+            cuando el lote queda incompleto: quien clava cuatro cartas y luego se
+            arrepiente no tiene por qué soltarlas de una en una, y quien se ha
+            atascado necesita ver la salida SIN tener que deducir cuál de sus
+            elecciones sobra. Va encima del botón de cobrar, que es donde va a
+            mirar cuando algo no cuadre. */}
+        {hayFijadas && !cumplida && (
+          <button
+            type="button"
+            onClick={onSoltarTodo}
+            className="w-full touch-target py-2.5 rounded-xl text-xs font-medium btn-ghost ink-soft press flex items-center justify-center gap-2"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="w-3.5 h-3.5 shrink-0" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+              <path d="M21 3v6h-6" />
+            </svg>
+            Volver a la propuesta automática
+          </button>
+        )}
+
         <button
           onClick={onCumplir}
           disabled={!completa || cumplida || !puedeCobrar || enCurso || bloqueada}
@@ -687,12 +726,411 @@ function TarjetaOferta({
                 ? "Inicia sesión para cobrar"
                 : completa
                   ? "Cumplir encargo"
-                  : // "Duplicados" y no "cartas": es la respuesta a por qué el
-                    // progreso dice 3/5 con cinco cartas que encajan en el álbum.
-                    "Te faltan duplicados"}
+                  : hayFijadas && autoCompleta
+                    ? // TERCER CASO, y existe porque desde que se puede elegir a
+                      // mano "Te faltan duplicados" puede ser MENTIRA: el jugador
+                      // los tiene y los ha colocado de forma que no cuadran. Decirle
+                      // que le faltan cartas lo mandaría a abrir sobres para
+                      // arreglar algo que se arregla con el botón de aquí arriba.
+                      //
+                      // Hacen falta LAS DOS condiciones. Con sólo `hayFijadas`,
+                      // una oferta que el jugador NO PUEDE cumplir (no tiene los
+                      // duplicados) pasaba a acusarle en cuanto tocaba un chip de
+                      // otro requisito que sí cumplía: el botón de emergencia no
+                      // arreglaba nada porque no había nada que arreglar, y el
+                      // rótulo volvía solo a "Te faltan duplicados" al pulsarlo.
+                      "Tus cambios dejan el lote incompleto"
+                    : // "Duplicados" y no "cartas": es la respuesta a por qué el
+                      // progreso dice 3/5 con cinco cartas que encajan en el álbum.
+                      "Te faltan duplicados"}
         </button>
       </div>
     </motion.article>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * LAS COPIAS DEL LOTE, UNA A UNA
+ * ------------------------------------------------------------------ */
+
+const nombreDe = (c: CartaMercado) => String(c.nombreEs ?? c.name ?? c.id);
+
+/** Chips que se pintan antes de plegar el resto. Dos filas en un iPhone. */
+const TOPE_CHIPS = 6;
+
+/**
+ * La fila de copias que se van a entregar por este requisito, cada una tocable.
+ *
+ * SUSTITUYE al viejo "Entregarías: Pikachu ×2 (de 3)…", que era texto plano.
+ * Aquí cada chip es un botón porque es la única forma de que "quiero mandar la
+ * basura y quedarme la buena" se pueda hacer, y por eso el PRECIO va en el chip
+ * y no escondido en el selector: la decisión se toma mirando esta fila.
+ *
+ * UN CHIP POR COPIA, con una excepción: el PLAYSET son N copias de la MISMA
+ * carta y una sola decisión, así que se pinta un chip con "×N". Cuatro chips
+ * idénticos que hacen los cuatro lo mismo mentirían sobre lo que se puede
+ * cambiar.
+ *
+ * Nada de `scale` ni de filtros aquí ni en el selector: aunque en esta pantalla
+ * no haya ilustraciones que emborronar (el mercado no las recibe del servidor,
+ * ver la cabecera de SelectorEntrega), el día que las haya el realce ya es un
+ * BORDE y no hay que reescribir nada.
+ */
+function CopiasDeParte({
+  parte,
+  onTocar,
+}: {
+  parte: ParteReparto;
+  onTocar: (posicion: number) => void;
+}) {
+  const [desplegado, setDesplegado] = useState(false);
+  const playset = parte.requisito.filtro.categoria === "playset";
+  const huecos = playset ? parte.elegidas.slice(0, 1) : parte.elegidas;
+
+  /* SIN CHIPS NO SE CALLA. Un requisito que no se llena se queda sin copias
+     (`devolverAutomaticas` las devuelve al fondo común para que las use el
+     siguiente requisito), y antes eso era un `return null`: el jugador veía
+     "1/5", media barra y NINGUNA superficie que tocar, justo donde más querría
+     meter mano, mientras los requisitos que sí funcionaban se llenaban de chips.
+     Eso es el reparto de afordancias exactamente al revés, así que al menos hay
+     que decir por qué aquí no hay nada. */
+  if (huecos.length === 0) {
+    return (
+      <p className="text-[10px] ink-faint mt-2 leading-relaxed">
+        Con los duplicados que te sobran no se llena este requisito, así que
+        todavía no hay copias que elegir.
+      </p>
+    );
+  }
+
+  /* UN CHIP POR COPIA NO ESCALA A 20 COPIAS, y las hay: la morralla a granel
+     pide hasta 20 cartas (utils/mercado.ts, REJILLA_BANDAS), y casi un tercio
+     de los requisitos del tablón piden 8 o más. A 44px de alto y dos o tres por
+     fila eso son 350-500px de chips en una tarjeta que antes resolvía lo mismo
+     con una línea de texto, y el desglose de pago y el botón de cobrar se van
+     debajo del pliegue. Se pliega a una fila y media y se despliega a mano; el
+     que quiere cambiar una copia suelta casi nunca necesita verlas las 20. */
+  const visibles = desplegado ? huecos : huecos.slice(0, TOPE_CHIPS);
+  const ocultas = huecos.length - visibles.length;
+
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-2">
+      {visibles.map((c, posicion) => {
+        const fija = parte.fijas[posicion] ?? false;
+        const copias = playset ? parte.requisito.cantidad : 1;
+        return (
+          <button
+            key={`${posicion}-${c.id}`}
+            type="button"
+            onClick={() => onTocar(posicion)}
+            aria-label={`Cambiar ${nombreDe(c)}${fija ? " (la elegiste tú)" : ""}`}
+            /* `min-h-11` son los 44px de zona táctil: esto se toca con el
+               pulgar y una fila de chips finos se falla la mitad de las veces.
+               `rounded-xl` sobreescribe el 999px de `.chip` —que va en un
+               `:where()` de especificidad cero justo para esto— porque una
+               píldora de 44px de alto parece un botón de acción y aquí lo que
+               hay es una lista de cartas. */
+            className="chip press-flat min-h-11 rounded-xl px-2.5 py-1 flex items-center gap-1.5 text-[10px] max-w-full transition-colors hover:border-[var(--border-strong)]"
+            style={fija ? { borderColor: "var(--accent)" } : undefined}
+          >
+            {fija && (
+              // El alfiler distingue "esto lo he puesto yo" de "esto lo propuso
+              // la pantalla", que es lo único que hay que saber para decidir si
+              // soltarlo. Un color no basta: se lee mal en la tarjeta cumplida.
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-3 h-3 shrink-0" style={{ color: "var(--accent)" }} aria-hidden="true">
+                <path d="M12 17v5" />
+                <path d="M9 10.76V5h6v5.76l2 2.24v2H7v-2z" />
+              </svg>
+            )}
+            <span className="truncate max-w-[9rem]">{nombreDe(c)}</span>
+            {copias > 1 && <span className="tnum ink-faint">×{copias}</span>}
+            <span className="tnum ink-faint">{formatNumber(c.precio * copias)}</span>
+          </button>
+        );
+      })}
+      {(ocultas > 0 || desplegado) && (
+        <button
+          type="button"
+          onClick={() => setDesplegado((v) => !v)}
+          className="chip press-flat min-h-11 rounded-xl px-2.5 py-1 flex items-center text-[10px] ink-soft transition-colors hover:border-[var(--border-strong)]"
+        >
+          {desplegado ? "Ver menos" : `y ${ocultas} más`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * EL SELECTOR
+ * ------------------------------------------------------------------ */
+
+/** Opciones por tanda. Una tanda llena unas tres pantallas de la hoja. */
+const TANDA_OPCIONES = 30;
+
+/**
+ * Qué carta mando en este hueco.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUÉ NO SE REUTILIZA components/vitrina/SelectorCarta.tsx
+ * ---------------------------------------------------------------------------
+ * Resuelve el mismo problema (elegir una carta con el pulgar) y de ahí sale el
+ * ESQUELETO: hoja inferior arrastrable, buscador, lista por tandas y zonas
+ * táctiles de 44px. Pero pide `CartaEnColeccion` —con `images` y `rarity`
+ * obligatorios— y habla de fundas y de copias colocadas, que es la cuenta del
+ * archivador y no la del mercado ("copias entregables que este lote no está
+ * usando ya"). Generalizarlo habría metido el vocabulario del mercado en un
+ * fichero de la vitrina para no repetir cuarenta líneas de maquetación.
+ *
+ * ---------------------------------------------------------------------------
+ * POR QUÉ NO HAY ILUSTRACIONES, que es lo que primero se echa en falta
+ * ---------------------------------------------------------------------------
+ * El mercado NO recibe imágenes: `COLUMNAS_MERCADO` (app/action.ts) trae id,
+ * nombre, rareza, tipos, PS, ilustrador, Pokédex y set, y ni una URL. Pintar
+ * `PokemonCard` aquí daría una rejilla de huecos grises con el nombre dentro,
+ * que es peor que una lista honesta. Se arregla con una línea en esa consulta
+ * (añadir `c.images` y pasarla en `cartaDesdeFila`), pero ese fichero está
+ * tomado por otro trabajo. Cuando esté, esta lista se convierte en la rejilla
+ * de tres columnas del selector de la vitrina y el resto no se toca.
+ *
+ * Mientras tanto se enseña lo que de verdad decide: NOMBRE, RAREZA, COPIAS
+ * LIBRES y PRECIO SUELTO. El precio va en la fila y no detrás de un toque
+ * porque el motivo de abrir esto casi siempre es "mandar la basura y quedarme
+ * la buena", y el orden es el mismo del algoritmo, así que la primera opción es
+ * la que la pantalla habría elegido sola.
+ */
+function SelectorEntrega({
+  destino,
+  requisito,
+  opciones,
+  actual,
+  posicion,
+  copiasDelRequisito,
+  fijada,
+  onElegir,
+  onSoltar,
+  onCerrar,
+}: {
+  destino: { ofertaId: string; indice: number; posicion: number } | null;
+  requisito?: Requisito;
+  opciones: Opcion[];
+  /** La copia que ocupa ahora el hueco. */
+  actual?: CartaMercado;
+  /** Qué hueco del requisito se está cambiando, contando desde 0. */
+  posicion: number;
+  /** Cuántas copias tiene ahora mismo el lote de este requisito. */
+  copiasDelRequisito: number;
+  /** ¿Esa copia la clavó el jugador? Entonces se puede soltar. */
+  fijada: boolean;
+  onElegir: (carta: CartaMercado) => void;
+  onSoltar: () => void;
+  onCerrar: () => void;
+}) {
+  const [busqueda, setBusqueda] = useState("");
+  const [tope, setTope] = useState(TANDA_OPCIONES);
+
+  /* CADA HUECO EMPIEZA LIMPIO. El buscador de la copia anterior no tiene nada
+   * que ver con ésta —a diferencia del selector de la vitrina, donde el filtro
+   * de expansión se conserva a propósito porque una hoja se monta con cartas
+   * del mismo set— y arrastrarlo escondería media lista sin que se note.
+   *
+   * Se ajusta DURANTE EL RENDER y no en un efecto: es el patrón que documenta
+   * React para "estado que depende de una prop" y evita el fotograma con la
+   * búsqueda vieja que deja el efecto.
+   *
+   * AL CERRAR SE OLVIDA EL HUECO, y esa línea es la que faltaba: la guarda
+   * comparaba con el último hueco PINTADO, que no se borraba nunca, así que
+   * reabrir EL MISMO hueco conservaba la búsqueda y el "ver más" de la vez
+   * anterior. El jugador escribía "pika", elegía, volvía a abrir el mismo chip y
+   * se encontraba "Ninguna de las que valen aquí encaja con esa búsqueda" sobre
+   * una lista que él no había filtrado en esta apertura. Sólo se borra el hueco
+   * —no la búsqueda—, o la lista se repintaría entera bajo la animación
+   * de salida de la hoja. */
+  const huecoActual = destino
+    ? `${destino.ofertaId}:${destino.indice}:${destino.posicion}`
+    : null;
+  const [huecoPintado, setHuecoPintado] = useState<string | null>(null);
+  if (huecoActual !== null && huecoActual !== huecoPintado) {
+    setHuecoPintado(huecoActual);
+    setBusqueda("");
+    setTope(TANDA_OPCIONES);
+  } else if (huecoActual === null && huecoPintado !== null) {
+    setHuecoPintado(null);
+  }
+
+  const texto = busqueda.trim().toLowerCase();
+  const filtradas = texto
+    ? opciones.filter(
+        (o) =>
+          nombreDe(o.carta).toLowerCase().includes(texto) ||
+          String(o.carta.name ?? "").toLowerCase().includes(texto),
+      )
+    : opciones;
+  const visibles = filtradas.slice(0, tope);
+  const playset = requisito?.filtro.categoria === "playset";
+
+  return (
+    <Sheet open={destino !== null} onClose={onCerrar} label="Elegir qué carta entregas">
+      <div className="px-4 pt-1 pb-6 sm:px-5">
+        <h2 className="ink text-center text-[17px] font-semibold">
+          {playset ? "Elegir el playset" : "Elegir la carta que entregas"}
+        </h2>
+        <p aria-live="polite" className="ink-soft mt-1.5 text-center text-[12px] leading-relaxed">
+          {requisito?.descripcion ?? ""}
+        </p>
+        {/* QUÉ COPIA SE ESTÁ CAMBIANDO, con su nombre y su precio.
+            Antes el único subtítulo era la descripción del requisito, que dice
+            lo mismo para los ocho chips: fallar el chip de al lado con el pulgar
+            es normal en una fila de ocho, y la hoja no daba NINGUNA forma de
+            darse cuenta. El otro selector de la app lo resuelve igual
+            (components/vitrina/SelectorCarta.tsx dice "Hoja 1, funda 3").
+
+            El nombre además hace de rescate: la lista va ordenada como ordena el
+            algoritmo (lo barato primero) y se pinta por tandas de 30, así que la
+            copia cara que el jugador clavó puede estar fuera de la primera
+            tanda. Sabiendo cómo se llama la encuentra con el buscador. */}
+        {actual && (
+          <p className="ink-faint mt-1 text-center text-[11px] leading-relaxed">
+            Cambias <span className="ink-soft font-medium">{nombreDe(actual)}</span>
+            {playset ? ` ×${requisito?.cantidad ?? 1}` : ""} ·{" "}
+            {formatNumber(actual.precio * (playset ? (requisito?.cantidad ?? 1) : 1))} monedas
+            {!playset && copiasDelRequisito > 1
+              ? ` · copia ${posicion + 1} de ${copiasDelRequisito}`
+              : ""}
+          </p>
+        )}
+
+        {/* SOLTAR DE UNA EN UNA. La otra mitad ("volver a la propuesta
+            automática") vive en la tarjeta: quien se atasca necesita las dos,
+            porque soltar la carta equivocada no siempre desatasca. */}
+        {fijada && (
+          <button
+            type="button"
+            onClick={onSoltar}
+            className="btn-ghost press touch-target mx-auto mt-3 flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[12px] font-medium"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+              <path d="M21 3v6h-6" />
+            </svg>
+            {playset ? "Que lo elija la pantalla" : "Que esta copia la elija la pantalla"}
+          </button>
+        )}
+
+        {opciones.length === 0 ? (
+          /* SIN OPCIONES no se dice "no hay resultados": el jugador se pondría
+             a buscar un filtro inexistente. Lo que pasa es que no le sobra
+             ninguna otra carta que valga aquí, y eso hay que decirlo. */
+          <p className="ink-soft py-12 text-center text-[12px] leading-relaxed">
+            No te sobra ninguna otra carta que valga para este requisito. Sólo se pueden
+            entregar duplicados, y las que ya está usando el resto del lote no cuentan.
+          </p>
+        ) : (
+          <>
+            <label className="input-field mt-4 flex min-h-11 items-center gap-2 rounded-xl px-3 py-2">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ink-faint h-4 w-4 shrink-0" aria-hidden="true">
+                <circle cx="11" cy="11" r="8" />
+                <path d="m21 21-4.3-4.3" />
+              </svg>
+              <input
+                type="search"
+                inputMode="search"
+                enterKeyHint="search"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                aria-label="Buscar entre las cartas que valen"
+                placeholder="Buscar una carta…"
+                value={busqueda}
+                onChange={(e) => {
+                  setBusqueda(e.target.value);
+                  setTope(TANDA_OPCIONES);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                }}
+                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:opacity-50 [&::-webkit-search-cancel-button]:hidden"
+              />
+            </label>
+
+            {filtradas.length === 0 ? (
+              <p className="ink-soft py-12 text-center text-[12px] leading-relaxed">
+                Ninguna de las que valen aquí encaja con esa búsqueda.
+              </p>
+            ) : (
+              <>
+                <ul className="mt-3 flex flex-col gap-1.5">
+                  {visibles.map(({ carta, libres }) => {
+                    const esLaDeAhora = carta.id === actual?.id;
+                    // El playset se lleva `cantidad` copias de golpe: lo que se
+                    // entrega —y lo que se cobra— es ese múltiplo, no una carta.
+                    const copias = playset ? (requisito?.cantidad ?? 1) : 1;
+                    return (
+                      <li key={carta.id}>
+                        <button
+                          type="button"
+                          onClick={() => onElegir(carta)}
+                          /* El precio del rótulo es el MISMO que se pinta. En un
+                             playset la fila enseña el precio de las N copias y
+                             este `aria-label` cantaba el de una sola: con
+                             VoiceOver el número leído no era el número escrito. */
+                          aria-label={
+                            copias > 1
+                              ? `Entregar ${copias} copias de ${nombreDe(carta)}, precio ${carta.precio * copias}`
+                              : `Entregar ${nombreDe(carta)}, precio ${carta.precio}`
+                          }
+                          className="surface-2 press-flat min-h-11 w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:border-[var(--border-strong)]"
+                          style={esLaDeAhora ? { borderColor: "var(--accent)" } : undefined}
+                        >
+                          <div className="flex items-baseline justify-between gap-3">
+                            <span className="truncate text-[13px] font-medium">
+                              {nombreDe(carta)}
+                            </span>
+                            <span className="tnum accent shrink-0 text-[13px] font-semibold">
+                              {/* El "×N" del playset va aquí y no sólo en el chip:
+                                  sin él la fila enseña un número cuatro veces
+                                  mayor que el precio de la carta y nada que los
+                                  relacione. */}
+                              {copias > 1 && (
+                                <span className="ink-faint font-normal">×{copias} </span>
+                              )}
+                              {formatNumber(carta.precio * copias)}
+                            </span>
+                          </div>
+                          <div className="mt-0.5 flex items-baseline justify-between gap-3">
+                            <span className="ink-faint truncate text-[10px]">
+                              {carta.rarity ?? "Sin rareza"}
+                              {esLaDeAhora ? " · la de ahora" : ""}
+                            </span>
+                            <span className="tnum ink-faint shrink-0 text-[10px]">
+                              {/* "Libres" y no "copias": son las que sobran
+                                  DESPUÉS de dejar la del álbum y de descontar
+                                  las que ya usa el resto del lote. */}
+                              {libres} {libres === 1 ? "libre" : "libres"} de {carta.cantidad}
+                            </span>
+                          </div>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+
+                {filtradas.length > visibles.length && (
+                  <button
+                    type="button"
+                    onClick={() => setTope((t) => t + TANDA_OPCIONES)}
+                    className="btn-ghost press touch-target mx-auto mt-4 block rounded-xl px-5 py-2.5 text-[12px] font-medium"
+                  >
+                    Ver más ({formatNumber(filtradas.length - visibles.length)} restantes)
+                  </button>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </Sheet>
   );
 }
 

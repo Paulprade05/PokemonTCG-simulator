@@ -70,6 +70,9 @@
   // Precios reales de Cardmarket. Degrada a "sin ajuste" si la tabla no existe
   // o si Postgres no responde: el juego se comporta como antes de que existiera.
   import { preciosEnEuros } from "../services/preciosBD";
+  // Fotos de sobre que trajo el cron nocturno. Mismo contrato que la línea de
+  // arriba: nunca lanza y devuelve vacío si la tabla no existe todavía.
+  import { variantesDeSobre } from "../services/sobresBD";
   import {
     COPIAS_RESERVADAS,
     OFERTAS_ACTIVAS,
@@ -1623,10 +1626,29 @@
       // Si la tabla está vacía todavía no se ha ejecutado el seed.
       if (rows.length === 0) return setsEnIdioma(await loadLocalSets());
 
+      /* CUÁNTAS FOTOS DE SOBRE TIENE CADA EXPANSIÓN EN POSTGRES.
+       *
+       * VA EN UNA CONSULTA APARTE Y NO EN UN JOIN DE LA DE ARRIBA, y esto no es
+       * gusto: si `set_pack_art` no existe todavía —la migración /migrate-sobres
+       * se ejecuta a mano— un LEFT JOIN contra ella haría lanzar la consulta
+       * ENTERA, el catch de aquí abajo se lo tragaría y devolvería
+       * `loadLocalSets()`, que sólo conoce las expansiones con fichero de cartas
+       * en el repositorio: 38 de 171. O sea que una tabla que falta convertiría
+       * la tienda en una octava parte de sí misma, en silencio y sin que nadie
+       * relacionase una cosa con la otra.
+       *
+       * `variantesDeSobre` no lanza nunca y devuelve un mapa vacío ante
+       * cualquier fallo, que es el mismo contrato de services/preciosBD.ts y de
+       * services/idiomaBD.ts. Con el mapa vacío, `variantesSobre` queda
+       * `undefined` en todas y el sobre se pinta como se ha pintado siempre. */
+      const variantesSobre = await variantesDeSobre();
+
       return setsEnIdioma(rows.map(set => ({
         ...set,
         releaseDate: set.release_date,
         cardsCount: Number(set.cards_count) || 0,
+        // El id va CRUDO, que es la clave de la tabla y la que compone la URL.
+        variantesSobre: variantesSobre.get(String(set.id)),
         images: typeof set.images === 'string' ? JSON.parse(set.images) : set.images
       })));
     } catch (error) {

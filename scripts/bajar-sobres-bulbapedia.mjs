@@ -137,8 +137,65 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { transform, loadBindings } from "next/dist/build/swc/index.js";
 import sharp from "sharp";
+
+/* ------------------------------------------------------------------ *
+ * EL EMPAREJAMIENTO YA NO VIVE AQUÍ
+ * ------------------------------------------------------------------ *
+ *
+ * Lo difícil de este script —decidir QUÉ fichero de la wiki es el sobre de QUÉ
+ * expansión— se ha mudado a services/sobresEmparejar.ts, y desde aquí se
+ * IMPORTA. El porqué largo está en la cabecera de aquel fichero; el corto es
+ * que ahora hay un segundo consumidor, el cron nocturno
+ * (services/sobresIngest.ts), y dos copias de esta lógica no se separan "por
+ * si acaso": se separan seguro, y cuando lo hagan el resultado no será un
+ * error sino UN SOBRE EN LA EXPANSIÓN EQUIVOCADA, que no lo mira nadie dos
+ * veces.
+ *
+ * CARGAR UN .ts DESDE UN .mjs: mismo truco que scripts/test-invariantes.mjs y
+ * scripts/sim-mercado.mjs — se transpila con el SWC que Next ya trae y se
+ * ejecuta con `new Function`. Se copian las ~18 líneas en vez de compartirlas
+ * porque compartirlas obligaría a que los tres scripts importasen de un cuarto
+ * fichero, y entonces el cargador necesitaría un cargador.
+ *
+ * El módulo cargado NO IMPORTA NADA (es una regla suya, escrita allí), así que
+ * este `require` de mentira no llega a usarse nunca. Se deja igualmente para
+ * que el día que alguien le añada una dependencia el fallo sea un mensaje
+ * claro y no un `undefined` diez líneas más abajo.
+ */
+await loadBindings();
+
+const _modulos = new Map();
+async function cargarModulo(rel) {
+  const clave = resolve(process.cwd(), rel);
+  if (_modulos.has(clave)) return _modulos.get(clave);
+  const { code } = await transform(readFileSync(clave, "utf8"), {
+    jsc: { parser: { syntax: "typescript" }, target: "es2022" },
+    module: { type: "commonjs" },
+  });
+  const mod = { exports: {} };
+  const requiere = (spec) => {
+    const destino = resolve(dirname(clave), spec.endsWith(".ts") ? spec : spec + ".ts");
+    const dep = _modulos.get(destino);
+    if (!dep) throw new Error("dependencia no precargada: " + spec);
+    return dep;
+  };
+  new Function("module", "exports", "require", code)(mod, mod.exports, requiere);
+  _modulos.set(clave, mod.exports);
+  return mod.exports;
+}
+
+const {
+  RATIO,
+  MAX_VARIANTES,
+  acumularPaginas,
+  candidatasDe,
+  pasaElFiltro,
+  resolverPaginas,
+  tituloDePagina,
+} = await cargarModulo("services/sobresEmparejar.ts");
 
 /* ------------------------------------------------------------------ *
  * CONSTANTES
@@ -162,10 +219,6 @@ const LOTE = 50;
 const ANCHO = 560;
 /** Calidad WebP, la misma que preparar-sobres.mjs. */
 const CALIDAD = 82;
-/** Variantes por expansión. */
-const MAX_VARIANTES = 3;
-/** Cuántas candidatas de más se piden por si alguna cae por proporción. */
-const CANDIDATAS_EXTRA = 3;
 /**
  * Tope de peso de public/sobres. Si se pasa, se para y se avisa.
  *
@@ -174,52 +227,19 @@ const CANDIDATAS_EXTRA = 3;
  * cron los próximos meses sin que nadie tenga que volver aquí. Cuando salte el
  * aviso hay que decidir a conciencia, no subir el número: bajar MAX_VARIANTES
  * a 2 quita un tercio del peso de golpe y deja variedad de sobra.
+ *
+ * OJO: este tope es SÓLO de este script, porque sólo aquí las fotos son
+ * ficheros de un repositorio de git que se despliega entero. El cron escribe
+ * en Postgres y no tiene este problema; el suyo es otro (no martillear la
+ * wiki) y está en services/sobresIngest.ts.
  */
 const TOPE_MB = 30;
 
-/** La proporción que components/BoosterPack.tsx da por hecha: 780/1426. */
-const RATIO = 1426 / 780;
-/** Fuera de esta horquilla no es la foto de un sobre. */
-const RATIO_MIN = 1.65;
-const RATIO_MAX = 2.0;
-/**
- * Por debajo de esto la imagen es un icono, no un escaneo.
- *
- * 140 px es BAJO a propósito y es la frontera entre dos males. Muchos
- * escaneos de 2005-2018 no llegan a 200 px de ancho (Ultra Prism tiene 144,
- * Detective Pikachu 187, Camino Campeón 187) y a 140 se aceptan: el sobre se
- * pinta a ~280 px, o sea que se ven blandos. La alternativa era dejar esas
- * expansiones con el sobre dibujado, y la petición era justo la contraria.
- * Súbelo a 200 si algún día se prefiere el dibujo limpio al escaneo pastoso;
- * es una constante y el informe dirá cuáles se caen.
- */
-const ANCHO_MINIMO = 140;
-
-/* Palabras que descalifican un fichero aunque el nombre encaje. */
-const PALABRAS_NO = new Set([
-  // no es un sobre suelto
-  "box", "case", "display", "bundle", "tin", "blister", "sleeve",
-  // no es la foto del sobre sino el dibujo suelto o un montaje
-  "art", "scan", "illustration", "logo", "mockup", "sampling",
-]);
-
-/* Marcas de idioma en el nombre del fichero. "EN" NO está: ése es el que
- * queremos, y hay expansiones (Rayo Negro) donde es la única forma de nombrar
- * la versión internacional. */
-const IDIOMAS_NO = new Set([
-  "br", "de", "es", "fr", "it", "ko", "zh", "jp", "ja", "cn", "kr", "tw", "ru",
-  "pl", "nl", "pt",
-  "chinese", "korean", "japanese", "indonesian", "thai", "german", "french",
-  "spanish", "italian", "portuguese", "russian", "dutch", "polish",
-  "taiwanese", "traditional", "simplified", "brazilian",
-]);
-
-/* Palabras de tirada, no de dibujo: "Base Set Booster Charizard Unlimited" y
- * "… Shadowless" son el MISMO sobre con otra marca de imprenta. Se quitan para
- * decidir si dos ficheros son la misma ilustración, no del nombre. */
-const TIRADAS = new Set(["long", "shadowless", "unlimited", "1st", "edition", "copy", "new", "old"]);
-
-const EXTENSIONES = new Set(["png", "jpg", "jpeg", "webp"]);
+/* RATIO, RATIO_MIN, RATIO_MAX, ANCHO_MINIMO, MAX_VARIANTES, CANDIDATAS_EXTRA,
+ * PALABRAS_NO, IDIOMAS_NO, TIRADAS y EXTENSIONES estaban aquí y ahora viven en
+ * services/sobresEmparejar.ts, junto con las tres funciones que los usan. Lo
+ * que este script necesita nombrar directamente se destructura arriba; el
+ * resto lo aplican `candidatasDe` y `pasaElFiltro` por dentro. */
 
 /* ------------------------------------------------------------------ *
  * RUTAS Y ARGUMENTOS
@@ -269,28 +289,6 @@ mkdirSync(join(CACHE, "img"), { recursive: true });
  * ------------------------------------------------------------------ */
 
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/**
- * Deja una cadena en minúsculas, sin acentos y con un solo espacio entre
- * palabras. Se aplica IGUAL al nombre de la expansión y al del fichero, que es
- * lo único que hace comparables "Pokémon GO" y "Pokémon_GO_Booster.jpg", o
- * "McDonald's Collection 2021" y "McDonalds Collection 2021 Booster.jpg".
- *
- * El apóstrofo se BORRA en vez de convertirse en espacio como el resto de la
- * puntuación, y no es un detalle: quien sube el fichero a la wiki escribe
- * "McDonalds", sin él. Convertido en espacio queda "mcdonald s collection"
- * contra "mcdonalds collection", y las dos colecciones de McDonald's que sí
- * tienen sobre se caían por una comilla.
- */
-function normaliza(s) {
-  return s
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/['’]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
 
 /** Nombre de fichero de caché a partir de un título, con hash para no colisionar. */
 function claveCache(s) {
@@ -361,6 +359,14 @@ async function pedirApi(params) {
  * La continuación de la API no es un adorno: con 50 páginas de golpe y hasta
  * 500 ficheros cada una, la respuesta llega partida y las páginas del final
  * volverían vacías. Se sigue el `continue` hasta que no queda nada.
+ *
+ * QUÉ DE ESTO ES DE AQUÍ Y QUÉ NO: los lotes de 50, la caché en disco y las 8
+ * rondas son transporte y son de aquí. Seguir los alias de la wiki
+ * (`normalized`/`redirects`) y cerrar el mapa PEDIDO -> página son
+ * `acumularPaginas` y `resolverPaginas`, de services/sobresEmparejar.ts, y no
+ * pueden ser de aquí: el título final entra en `prefijosDe` como PREFIJO, o sea
+ * que decide qué ficheros se aceptan. Estaba escrito aquí y otra vez en el cron,
+ * y dos copias de eso no se separan en un log sino en un prefijo.
  */
 async function ficherosDePaginas(titulos) {
   const salida = new Map();
@@ -387,26 +393,16 @@ async function ficherosDePaginas(titulos) {
 
     for (let ronda = 0; ronda < 8; ronda++) {
       const j = await pedirApi(params);
-      for (const n of j.query?.normalized ?? []) {
-        for (const [k, v] of destinoDe) if (v === n.from) destinoDe.set(k, n.to);
-      }
-      for (const rd of j.query?.redirects ?? []) {
-        for (const [k, v] of destinoDe) if (v === rd.from) destinoDe.set(k, rd.to);
-      }
-      for (const p of j.query?.pages ?? []) {
-        const previo = acumulado.get(p.title) ?? { titulo: p.title, existe: !p.missing, ficheros: [] };
-        for (const im of p.images ?? []) previo.ficheros.push(im.title);
-        acumulado.set(p.title, previo);
-      }
+      acumularPaginas(j, destinoDe, acumulado);
       if (!j.continue) break;
       params = { ...params, ...j.continue };
       await dormir(PAUSA_API);
     }
 
-    for (const t of lote) {
-      const final = destinoDe.get(t);
-      const p = acumulado.get(final) ?? { titulo: final, existe: false, ficheros: [] };
-      const entrada = { titulo: p.titulo, existe: p.existe, redirigido: final !== t, ficheros: p.ficheros };
+    for (const [t, p] of resolverPaginas(lote, destinoDe, acumulado)) {
+      // `redirigido` es sólo del informe de aquí y por eso se calcula aquí: el
+      // título final ya viene resuelto, así que basta con mirar si cambió.
+      const entrada = { titulo: p.titulo, existe: p.existe, redirigido: p.titulo !== t, ficheros: p.ficheros };
       escribirCache("api", claveCache("pag:" + t), entrada);
       salida.set(t, entrada);
     }
@@ -420,79 +416,14 @@ async function ficherosDePaginas(titulos) {
 
 /* ------------------------------------------------------------------ *
  * PASO 2. CUÁL DE ESOS FICHEROS ES EL SOBRE
- * ------------------------------------------------------------------ */
-
-/**
- * Los prefijos con los que puede empezar el nombre de un fichero para que se
- * acepte como sobre de ESTA expansión.
+ * ------------------------------------------------------------------ *
  *
- * `permitePack` distingue dos cosas que parecen la misma. Bulbapedia llama
- * "<algo> Booster <lo que sea>" a los sobres internacionales y "<código>
- * <nombre japonés> pack" a los japoneses. El problema es que algunos códigos
- * japoneses COINCIDEN con nuestros ids: "SV3 pack.png" es el sobre japonés de
- * Obsidian Flames y "SV3 Booster Charizard.png" el internacional. Por eso el
- * patrón "… pack" sólo se acepta detrás del NOMBRE completo de la expansión
- * (que es lo que hace falta para POP Series, cuyos sobres se llaman así) y
- * nunca detrás del id.
+ * Ya no está aquí: `prefijosDe` y `analizarFichero` viven en
+ * services/sobresEmparejar.ts y las aplica `candidatasDe`, que además
+ * deduplica, ordena y corta. Este script la llama más abajo, en el bucle del
+ * programa, con exactamente los mismos argumentos que usaba el código suelto
+ * que había ahí.
  */
-function prefijosDe(set, tituloPagina, extra) {
-  const lista = [];
-  const mete = (texto, permitePack) => {
-    const t = normaliza(texto ?? "");
-    if (t && !lista.some((p) => p.texto === t)) lista.push({ texto: t, permitePack });
-  };
-
-  mete(set.name, true);
-  mete(set.id, false);
-
-  /* El título de la página sólo vale si es MÁS ESPECÍFICO que nuestro nombre.
-   * "Base" -> "Base Set" sí (la wiki completa el nombre). "McDonald's
-   * Collection 2011" -> "McDonald's Collection" NO: ahí la wiki junta nueve
-   * colecciones en una página y su sobre no es el de 2011. */
-  const limpio = (tituloPagina ?? "").replace(/\s*\(TCG\)\s*$/i, "");
-  const nom = normaliza(set.name);
-  const pag = normaliza(limpio);
-  if (pag && nom && pag.startsWith(nom)) mete(limpio, true);
-
-  for (const p of extra ?? []) mete(p, false);
-  return lista;
-}
-
-/**
- * ¿Es este fichero el sobre de la expansión de esos prefijos? Devuelve null si
- * no, y si sí, con qué se queda y bajo qué clave de "misma ilustración".
- */
-function analizarFichero(tituloFichero, prefijos) {
-  const sinEspacio = tituloFichero.replace(/^File:/i, "");
-  const m = /^(.*)\.([A-Za-z0-9]+)$/.exec(sinEspacio);
-  if (!m) return null;
-  if (!EXTENSIONES.has(m[2].toLowerCase())) return null;
-
-  const nombre = normaliza(m[1]);
-
-  for (const p of prefijos) {
-    // "… pack" a secas y nada más: ni una palabra detrás. Es el caso de "POP
-    // Series 1 pack.png", y ser tan estricto es lo que impide que se cuele
-    // "SV2a Pokémon Card 151 pack.png" por un prefijo demasiado corto.
-    if (p.permitePack && nombre === p.texto + " pack") {
-      return { titulo: tituloFichero, resto: "", clave: "", prefijo: p.texto };
-    }
-
-    const cabeza = p.texto + " booster";
-    if (nombre !== cabeza && !nombre.startsWith(cabeza + " ")) continue;
-
-    const resto = nombre.slice(cabeza.length).trim();
-    const palabras = resto ? resto.split(" ") : [];
-    if (palabras.some((w) => PALABRAS_NO.has(w))) return null;
-    if (palabras.some((w) => IDIOMAS_NO.has(w))) return null;
-
-    // Dos ficheros con la misma clave son el mismo dibujo con otra marca de
-    // imprenta; sólo se guarda uno.
-    const clave = palabras.filter((w) => !TIRADAS.has(w)).join(" ");
-    return { titulo: tituloFichero, resto, clave, prefijo: p.texto };
-  }
-  return null;
-}
 
 /* ------------------------------------------------------------------ *
  * PASO 3. TAMAÑO Y URL DE CADA CANDIDATA
@@ -631,8 +562,11 @@ if (existsSync(DESTINO)) {
 /* --- Paso 1: las páginas. --- */
 const titulosPorSet = new Map();
 for (const s of enOrden) {
-  if (MANUAL[s.id]?.omitir) continue;
-  titulosPorSet.set(s.id, MANUAL[s.id]?.pagina ?? `${s.name} (TCG)`);
+  // `tituloDePagina` devuelve null para las marcadas `omitir`, que es lo mismo
+  // que hacía el `continue` que había aquí. La diferencia es que ahora el cron
+  // decide el título con esta misma función y no con una copia suya.
+  const titulo = tituloDePagina(s, MANUAL[s.id]);
+  if (titulo) titulosPorSet.set(s.id, titulo);
 }
 console.log("Consultando páginas...");
 const paginas = await ficherosDePaginas([...new Set(titulosPorSet.values())]);
@@ -659,25 +593,13 @@ for (const s of enOrden) {
     continue;
   }
 
-  const prefijos = prefijosDe(s, pag.titulo, man.prefijos);
-  const vistas = new Set();
-  const candidatas = [];
-  for (const f of pag.ficheros) {
-    const a = analizarFichero(f, prefijos);
-    if (!a) continue;
-    if (vistas.has(a.clave)) continue;   // el mismo dibujo con otra marca de imprenta
-    vistas.add(a.clave);
-    candidatas.push(a);
-  }
-  // Orden estable y con criterio: primero los nombres cortos ("Crown Zenith
-  // Booster" antes que "… Booster Pikachu Full"), luego alfabético. Que sea
-  // estable importa tanto como que sea bueno: la variante 1 de una expansión
-  // tiene que ser la misma en la próxima ejecución.
-  candidatas.sort((a, b) => {
-    const na = a.resto ? a.resto.split(" ").length : 0;
-    const nb = b.resto ? b.resto.split(" ").length : 0;
-    return na - nb || a.titulo.localeCompare(b.titulo, "en");
-  });
+  /* Prefijos, filtro de nombre, deduplicado por dibujo, orden estable y corte:
+   * todo eso era código suelto aquí y ahora lo hace `candidatasDe`. Lo que se
+   * ganó al mudarlo no es brevedad —son las mismas líneas en otro sitio— sino
+   * que el orden, que es la parte que menos parece importar, sea LITERALMENTE
+   * el mismo en el cron: la variante 1 de una expansión tiene que ser la misma
+   * foto aquí y allí, porque ese número acaba en la URL y en el CDN. */
+  const candidatas = candidatasDe(s, pag.ficheros, pag.titulo, man);
 
   if (candidatas.length === 0) {
     sinSobre.push({
@@ -687,7 +609,7 @@ for (const s of enOrden) {
     });
     continue;
   }
-  planes.push({ set: s, pagina: pag.titulo, candidatas: candidatas.slice(0, MAX_VARIANTES + CANDIDATAS_EXTRA) });
+  planes.push({ set: s, pagina: pag.titulo, candidatas });
 }
 
 /* --- Un fichero, una expansión. Si dos se lo pelean, ninguna se lo lleva. --- */
@@ -723,17 +645,11 @@ for (const plan of planes) {
   for (const c of plan.candidatas) {
     if (elegidas.length >= MAX_VARIANTES) break;
     const i = info.get(c.titulo);
-    if (!i?.url) {
-      descartes.push(`${s.id}: ${c.titulo} — la API no da URL`);
-      continue;
-    }
-    const ratio = i.alto / i.ancho;
-    if (!(ratio >= RATIO_MIN && ratio <= RATIO_MAX)) {
-      descartes.push(`${s.id}: ${c.titulo} — proporción ${ratio.toFixed(2)}, no tiene forma de sobre`);
-      continue;
-    }
-    if (Math.min(i.ancho, i.alto / RATIO) < ANCHO_MINIMO) {
-      descartes.push(`${s.id}: ${c.titulo} — sólo ${i.ancho}px de ancho`);
+    // El cedazo de forma también se comparte, y con él los textos del informe:
+    // `pasaElFiltro` devuelve null si pasa y el motivo si no.
+    const motivo = pasaElFiltro(i);
+    if (motivo) {
+      descartes.push(`${s.id}: ${c.titulo} — ${motivo}`);
       continue;
     }
     elegidas.push({ ...c, ...i });

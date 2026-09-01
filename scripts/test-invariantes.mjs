@@ -53,6 +53,20 @@ const mercado = await cargarModulo("utils/mercado.ts");
 // utils/, así que el cargador de arriba los resuelve sin tocar nada.
 const graduacion = await cargarModulo("utils/graduacion.ts");
 const bazar = await cargarModulo("utils/bazar.ts");
+/* El reparto del lote del mercado. Vivía dentro de app/mercado/page.tsx, que
+ * importa React, Clerk y framer-motion, así que este cargador NO podía abrirlo y
+ * la parte más delicada de esa pantalla era la única de la que ningún invariante
+ * podía decir nada. Se sacó a utils/ para poder escribir los de más abajo; la
+ * cabecera del módulo explica por qué no puede volver a importar nada de app/. */
+const repartoMercado = await cargarModulo("utils/repartoMercado.ts");
+/* El emparejamiento de sobres con Bulbapedia. Vive en services/ y no en utils/
+ * porque lo comparten un script y un cron, pero cumple la misma condición que
+ * los de arriba —no importa NADA— y por eso este cargador lo resuelve.
+ *
+ * Que se pueda probar aquí es media razón de que se extrajera: mientras fue
+ * código suelto dentro de scripts/bajar-sobres-bulbapedia.mjs, la única forma
+ * de comprobarlo era ejecutar el script entero contra la wiki. */
+const sobres = await cargarModulo("services/sobresEmparejar.ts");
 
 const {
   SELL_PRICES, PACK_PRICES, RARITY_RANK, COPIAS_PROTEGIDAS,
@@ -438,6 +452,1003 @@ comprueba(
     admitidos.length < setIds.length,
     `el filtro de expansiones atables deja fuera las que no tienen pirámide (${setIds.length - admitidos.length} de ${setIds.length})`,
   );
+}
+
+
+/* ------------------------------------------------------------------ */
+/* EL REPARTO DEL MERCADO                                              */
+/* ------------------------------------------------------------------ */
+/*
+ * POR QUÉ ESTA SECCIÓN: la pantalla del mercado decide, sin preguntar a nadie,
+ * qué copias del álbum van a cada requisito de una oferta. Esa decisión no es un
+ * detalle de presentación: es lo que hace que el botón se ponga verde o gris, y
+ * el jugador no tiene forma de discutirla.
+ *
+ * El fallo que se vigila aquí no lanza excepción, no rompe nada y no deja hueco
+ * en ningún sitio: con dos requisitos que compiten por las mismas cartas
+ * —"8 cartas de tipo Fuego o Lucha" + "3 cartas de Kalos"—, si el reparto gasta
+ * las tres de Kalos más baratas y resultan ser además de Fuego, el requisito
+ * exigente se queda sin material que sólo él podía usar y LA OFERTA SE VE
+ * INCOMPLETA TENIÉNDOLO TODO. El juego le dice al jugador que no puede hacer
+ * algo que sí puede.
+ *
+ * Contra eso existen las dos defensas de `repartir`: PRIORIDAD (los requisitos
+ * que menos alternativas admiten se sirven primero) y "utilidad" (dentro de cada
+ * requisito se gastan antes las cartas que menos sirven a los que faltan). Ni
+ * una ni otra se notan cuando funcionan, así que sin invariantes se pueden
+ * borrar por "simplificar" y nadie se entera hasta que un jugador se queda
+ * mirando una barra clavada.
+ *
+ * Y desde que el jugador puede CLAVAR cartas a mano hay un segundo fallo, peor,
+ * porque parece culpa suya: que su elección deje la oferta incompleta, o que le
+ * deje un chip que no puede soltar.
+ */
+{
+  seccion("Mercado: el reparto del lote entre los requisitos");
+
+  const {
+    repartir, candidatasPara, normalizarFijadas, podarFijadas,
+    coloresDistintos, ordenDeRequisitos, PRIORIDAD, sirve, comparar, esFijable,
+  } = repartoMercado;
+  const { copiasEntregables, setDeCarta } = mercado;
+
+  /* Constructores mínimos. Una CartaMercado es una CartaMinima más las dos cosas
+   * que el mercado necesita: cuántas copias tiene el jugador y cuánto vale cada
+   * una. El id lleva el set delante ("xy1-3") porque `setDeCarta` lo deduce de
+   * ahí cuando la carta no trae `set`. */
+  const carta = (id, o = {}) => ({
+    id,
+    name: o.name ?? id,
+    rarity: o.rarity ?? "Common",
+    supertype: o.supertype ?? "Pokémon",
+    subtypes: o.subtypes ?? [],
+    types: o.types ?? [],
+    evolvesFrom: o.evolvesFrom,
+    cantidad: o.cantidad ?? 2,
+    precio: o.precio ?? 5,
+  });
+  const req = (categoria, cantidad, filtro = {}, setId = null) => ({
+    descripcion: `${cantidad} de ${categoria}`,
+    cantidad,
+    filtro: { categoria, ...filtro },
+    setId,
+  });
+  const oferta = (id, requisitos) => ({
+    id, titulo: id, descripcion: id, requisitos,
+    multiplicador: 2, dificultad: "media", setId: null,
+  });
+  /* Lo que el jugador tiene clavado AHORA MISMO, leído de un reparto ya hecho:
+   * una entrada por hueco, con el id en los que él fijó y null en los demás. Es
+   * exactamente lo que guarda la pantalla. */
+  const fijadasDe = (reparto) =>
+    new Map(reparto.partes.map((p, i) => [i, p.elegidas.map((c, j) => (p.fijas[j] ? c.id : null))]));
+  const marcador = (r) => r.partes.map((p) => `${p.elegidas.length}/${p.requisito.cantidad}`).join(" ");
+
+  /* CUÁNTOS COLORES DISTINTOS cubre un grupo, contado A LO BRUTO: se prueban
+   * todas las asignaciones carta→tipo y se queda la mejor. Es exponencial y aquí
+   * da igual (los arcoíris son de dos a cuatro cartas), pero tiene que ser
+   * código INDEPENDIENTE de `coloresDistintos`: un validador que llama a la
+   * misma función que vigila comparte con ella cualquier defecto que tenga, así
+   * que se pondría verde justo en el caso que debería cazar. */
+  function coloresAMano(cartas) {
+    const tiposDe = cartas.map((c) =>
+      [...new Set((c.types ?? []).map((t) => String(t).trim().toLowerCase()))].filter(Boolean));
+    let mejor = 0;
+    const rec = (i, usados) => {
+      if (i === tiposDe.length) { mejor = Math.max(mejor, usados.size); return; }
+      rec(i + 1, usados); // esta carta se queda sin color
+      for (const t of tiposDe[i]) {
+        if (usados.has(t)) continue;
+        usados.add(t);
+        rec(i + 1, usados);
+        usados.delete(t);
+      }
+    };
+    rec(0, new Set());
+    return mejor;
+  }
+
+  /* ----------------------------------------------------------------
+   * EL VALIDADOR DEL LOTE
+   * ----------------------------------------------------------------
+   * Lo que un reparto no puede hacer NUNCA, pase lo que pase con la oferta, la
+   * colección o lo que el jugador haya clavado. Devuelve la lista de pegas para
+   * que el invariante pueda decir cuál ha saltado y en qué caso.
+   */
+  function pegasDelLote(of, cartas, reparto) {
+    const pegas = [];
+    const porId = new Map(cartas.map((c) => [c.id, c]));
+
+    // Ninguna copia se entrega dos veces, y la copia del álbum no se entrega
+    // nunca: el servidor exige `entregadas + COPIAS_RESERVADAS` y rechazaría el
+    // lote con el botón ya en verde.
+    const entregadas = new Map();
+    for (const id of reparto.ids) entregadas.set(id, (entregadas.get(id) ?? 0) + 1);
+    for (const [id, n] of entregadas) {
+      const c = porId.get(id);
+      if (!c) { pegas.push(`entrega ${id}, que no está en la colección`); continue; }
+      if (n > copiasEntregables(c.cantidad)) {
+        pegas.push(`entrega ${n} de ${id} teniendo ${c.cantidad} (entregables ${copiasEntregables(c.cantidad)})`);
+      }
+    }
+
+    // `ids`, `valor` y `completa` son lo que hay en las partes, no otra cuenta.
+    const todas = reparto.partes.flatMap((p) => p.elegidas);
+    if (reparto.ids.join("|") !== todas.map((c) => c.id).join("|")) {
+      pegas.push("reparto.ids no es lo que hay en las partes");
+    }
+    if (reparto.valor !== todas.reduce((t, c) => t + c.precio, 0)) pegas.push("el valor del lote no suma");
+    if (reparto.completa !== reparto.partes.every((p) => p.completo)) {
+      pegas.push("`completa` no es que lo estén todos los requisitos");
+    }
+    // Una oferta completa entrega EXACTAMENTE lo que pide: ni una carta de más
+    // (que sería regalarla) ni de menos (que el servidor rechaza).
+    if (reparto.completa) {
+      const pedidas = of.requisitos.reduce((t, r) => t + r.cantidad, 0);
+      if (reparto.ids.length !== pedidas) {
+        pegas.push(`oferta completa con ${reparto.ids.length} cartas cuando pide ${pedidas}`);
+      }
+    }
+
+    reparto.partes.forEach((p, i) => {
+      const r = of.requisitos[i];
+      if (p.fijas.length !== p.elegidas.length) pegas.push(`r${i}: fijas y elegidas no van a la par`);
+      if (p.elegidas.length > r.cantidad) pegas.push(`r${i}: ${p.elegidas.length} cartas para ${r.cantidad} huecos`);
+      // Misma comprobación que hace el servidor: si una carta apartada no cumple
+      // su requisito, el lote se rechaza al cobrar.
+      for (const c of p.elegidas) {
+        if (!sirve(c, r)) pegas.push(`r${i}: ${c.id} no cumple "${r.descripcion}"`);
+        // La expansión, APARTE Y A MANO. `sirve` es del módulo que se está
+        // probando y es una composición de dos cosas (el set y el filtro): si se
+        // le cae la mitad del set, este validador se cae con ella y el lote
+        // llegaría al servidor con cartas de otra expansión y el botón en verde.
+        // El filtro sí se deja en `cumpleFiltro`, que es de utils/mercado.ts y
+        // tiene su propia sección más arriba.
+        if (r.setId !== null && setDeCarta(c) !== r.setId) {
+          pegas.push(`r${i}: ${c.id} es de ${setDeCarta(c)} y el requisito pide ${r.setId}`);
+        }
+      }
+      if (p.completo) {
+        if (p.elegidas.length !== r.cantidad) pegas.push(`r${i}: completo con ${p.elegidas.length}/${r.cantidad}`);
+        // Las tres categorías de CONJUNTO: `sirve` mira carta a carta y no puede
+        // ver esto, que es justo lo que el servidor comprueba aparte.
+        if (r.filtro.categoria === "playset" && new Set(p.elegidas.map((c) => c.id)).size !== 1) {
+          pegas.push(`r${i}: playset con cartas distintas`);
+        }
+        if (r.filtro.categoria === "arcoiris" && coloresAMano(p.elegidas) < r.cantidad) {
+          pegas.push(`r${i}: arcoíris de ${r.cantidad} con sólo ${coloresAMano(p.elegidas)} colores`);
+        }
+        if (r.filtro.categoria === "evolucion") {
+          for (let k = 1; k < p.elegidas.length; k++) {
+            const viene = String(p.elegidas[k].evolvesFrom ?? "").trim().toLowerCase();
+            if (viene !== String(p.elegidas[k - 1].name ?? "").trim().toLowerCase()) {
+              pegas.push(`r${i}: la cadena no encadena (${p.elegidas[k - 1].name} -> ${p.elegidas[k].name})`);
+            }
+          }
+        }
+      } else {
+        // Un requisito a medias devuelve al fondo común TODO lo automático: si
+        // retuviera algo, se lo estaría quitando a un requisito que sí se
+        // completa. Lo clavado sí se queda, y por eso se mira `fijas`.
+        p.fijas.forEach((f, j) => { if (!f) pegas.push(`r${i}: retiene ${p.elegidas[j].id} sin completarse`); });
+      }
+    });
+    return pegas;
+  }
+
+  /* Y las dos cuentas de colores tienen que coincidir, o el validador de arriba
+   * estaría midiendo con otra vara que el reparto. El caso es el que documenta
+   * `coloresDistintos`: cuatro cartas de DOBLE TIPO que entre las cuatro cubren
+   * cuatro colores. Un voraz que le da a cada carta el primer color libre saca
+   * sólo tres si Exeggcute entra la primera —se lleva Planta y deja a Riolu sin
+   * color—, y entonces la oferta se ve incompleta teniéndolo todo. Por eso el
+   * módulo hace un emparejamiento de verdad y por eso hay que vigilar que lo
+   * siga haciendo: el voraz es más corto y parece equivalente. */
+  {
+    const dobles = [
+      carta("base1-mac", { name: "Machop", types: ["Fighting"] }),
+      carta("base1-rio", { name: "Riolu", types: ["Fighting", "Grass"] }),
+      carta("base1-exe", { name: "Exeggcute", types: ["Grass", "Psychic"] }),
+      carta("base1-chi", { name: "Chikorita", types: ["Grass", "Lightning"] }),
+    ];
+    const conExeggcuteDelante = [dobles[2], dobles[0], dobles[1], dobles[3]];
+    comprueba(
+      coloresDistintos(dobles) === 4 && coloresDistintos(conExeggcuteDelante) === 4,
+      "cuatro cartas de doble tipo cubren cuatro colores, entren en el orden que entren",
+      `en orden ${coloresDistintos(dobles)}, con Exeggcute delante ${coloresDistintos(conExeggcuteDelante)}`,
+    );
+    const desacuerdos = [];
+    // El grupo de dos Machop está para que la lista incluya un caso donde
+    // sobran cartas para los colores que hay: sin él, un conteo que devolviera
+    // "una por carta" pasaría por todos los demás.
+    for (const grupo of [dobles, conExeggcuteDelante, dobles.slice(0, 2), dobles.slice(1),
+                         [dobles[0], dobles[0]], [dobles[1], dobles[1]], [dobles[2], dobles[3]]]) {
+      if (coloresDistintos(grupo) !== coloresAMano(grupo)) {
+        desacuerdos.push(`${grupo.map((c) => c.name).join("+")}: el módulo dice ${coloresDistintos(grupo)} y a lo bruto salen ${coloresAMano(grupo)}`);
+      }
+    }
+    comprueba(desacuerdos.length === 0,
+      "y el módulo cuenta lo mismo que el conteo a lo bruto con el que se validan los lotes",
+      desacuerdos.join(" · "));
+  }
+
+  /* ================================================================
+   * A. EL ATASCO, QUE ES EL MOTIVO DE TODO
+   * ================================================================ */
+
+  /* El reparto SIN las dos defensas, para tener contra qué medir: los requisitos
+   * en el orden en que vienen y las candidatas ordenadas sólo por precio. Es una
+   * réplica deliberada —como la de `admiteOfertaAtada` más arriba— y está aquí
+   * por una razón: un caso de prueba que el algoritmo ingenuo TAMBIÉN resuelve
+   * no vigila nada, y esa comprobación no se puede hacer sin él. */
+  function repartoIngenuo(of, cartas, conUtilidad = false) {
+    const libres = new Map(cartas.map((c) => [c.id, copiasEntregables(c.cantidad)]));
+    const partes = [];
+    for (const r of of.requisitos) {
+      // Las dos defensas se pueden quitar por separado, y hace falta poder
+      // hacerlo: si el ingenuo no tiene ninguna de las dos, un caso que se cae
+      // no dice CUÁL de ellas lo salvaba. Con `conUtilidad` se conserva la
+      // utilidad y se pierde sólo PRIORIDAD (los requisitos en el orden en que
+      // vienen), que es lo que aísla el orden.
+      const pendientes = of.requisitos.slice(of.requisitos.indexOf(r) + 1);
+      const util = (c) => (conUtilidad ? pendientes.filter((p) => sirve(c, p)).length : 0);
+      const cand = cartas
+        .filter((c) => (libres.get(c.id) ?? 0) > 0 && sirve(c, r))
+        .sort((a, b) => util(a) - util(b) || comparar(a, b));
+      let elegidas = [];
+      if (r.filtro.categoria === "playset") {
+        const base = cand.find((c) => libres.get(c.id) >= r.cantidad);
+        if (base) {
+          elegidas = Array.from({ length: r.cantidad }, () => base);
+          libres.set(base.id, libres.get(base.id) - r.cantidad);
+        }
+      } else {
+        for (const c of cand) {
+          while (libres.get(c.id) > 0 && elegidas.length < r.cantidad) {
+            elegidas.push(c);
+            libres.set(c.id, libres.get(c.id) - 1);
+          }
+          if (elegidas.length >= r.cantidad) break;
+        }
+        if (elegidas.length < r.cantidad) for (const c of elegidas) libres.set(c.id, libres.get(c.id) + 1);
+      }
+      partes.push({ requisito: r, elegidas, completo: elegidas.length === r.cantidad });
+    }
+    return { partes, completa: partes.every((p) => p.completo) };
+  }
+
+  /* --- El caso literal del encargo: las tres cartas de Kalos son ADEMÁS de
+   *     Fuego y son las más baratas de la colección, así que el requisito de
+   *     tipo se las lleva si nadie lo impide. --- */
+  const CARTAS_ATASCO = [
+    ...[1, 2, 3].map((i) => carta("xy1-" + i, { types: ["Fire"], cantidad: 2, precio: 1 })),
+    ...Array.from({ length: 8 }, (_, i) =>
+      carta("base1-" + (i + 1), { types: ["Fire"], cantidad: 2, precio: 9 })),
+  ];
+  const OFERTA_ATASCO = oferta("atasco", [
+    req("tipo", 8, { valor: "Fire|Fighting" }),
+    req("set", 3, { valor: "xy1" }),
+  ]);
+  {
+    const r = repartir(OFERTA_ATASCO, CARTAS_ATASCO);
+    comprueba(
+      r.completa,
+      "el atasco se resuelve: la oferta que se puede cumplir se ve completa",
+      `"8 de Fuego o Lucha" + "3 de Kalos" sale ${marcador(r)}`,
+    );
+    comprueba(
+      !repartoIngenuo(OFERTA_ATASCO, CARTAS_ATASCO).completa &&
+      repartoIngenuo(OFERTA_ATASCO, CARTAS_ATASCO, true).completa,
+      "y el caso prueba algo, y prueba la UTILIDAD: sin ella se atasca y con ella sale",
+      "aquí PRIORIDAD no pinta nada (tipo ya va antes que expansión): si el ingenuo también lo resolviera, este caso no vigilaría nada",
+    );
+  }
+
+  /* --- La otra defensa, PRIORIDAD, con un caso que la utilidad no salva: las
+   *     cuatro cartas sirven igual a los dos requisitos, así que la utilidad las
+   *     empata y sólo el ORDEN decide. El playset es el requisito que menos
+   *     alternativas admite (necesita 3 copias de la MISMA carta) y sólo hay una
+   *     carta con tres; si va detrás, el requisito de tipo se las come. --- */
+  {
+    const cartas = [
+      carta("base1-p", { types: ["Fire"], cantidad: 4, precio: 1 }),
+      ...["r", "s", "t"].map((k) => carta("base1-" + k, { types: ["Fire"], cantidad: 2, precio: 2 })),
+    ];
+    const of = oferta("prio", [req("tipo", 3, { valor: "Fire" }), req("playset", 3)]);
+    const r = repartir(of, cartas);
+    comprueba(r.completa, "PRIORIDAD: el requisito con menos alternativas se sirve primero", marcador(r));
+    comprueba(
+      !repartoIngenuo(of, cartas, true).completa,
+      "y ahí la utilidad no salva nada: CON utilidad pero sin PRIORIDAD el caso se cae igual",
+      "las cuatro cartas sirven a los dos requisitos, así que la utilidad las empata y sólo el ORDEN decide",
+    );
+    comprueba(
+      ordenDeRequisitos(of).map((x) => x.indice).join(",") === "1,0",
+      "y la cola la reparte `ordenDeRequisitos`, la misma que llaman el reparto y el selector",
+      "aquí el playset (índice 1) tiene que servirse antes que el requisito de tipo (índice 0)",
+    );
+    comprueba(
+      PRIORIDAD.evolucion < PRIORIDAD.playset &&
+      PRIORIDAD.playset < PRIORIDAD.arcoiris &&
+      PRIORIDAD.arcoiris < PRIORIDAD.tipo &&
+      PRIORIDAD.tipo < PRIORIDAD.set,
+      "y va de lo que menos alternativas admite a lo que las admite todas",
+      "cadena < playset < arcoíris < tipo < expansión",
+    );
+  }
+
+  /* ================================================================
+   * B. EL LOTE ES VÁLIDO, PASE LO QUE PASE
+   * ================================================================ */
+
+  /* Una batería determinista: colecciones y ofertas sorteadas con una semilla
+   * fija, para que el mismo fallo salga siempre en la misma pasada. Cubre las
+   * cuatro ramas de `repartir` (playset, arcoíris, cadena evolutiva y el resto)
+   * y se corre dos veces cada caso, con y sin cartas clavadas. */
+  const rng = (semilla) => () => (semilla = (semilla * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const CADENAS = [["Charmander", "Charmeleon", "Charizard"], ["Bulbasaur", "Ivysaur", "Venusaur"],
+                   ["Machop", "Machoke", "Machamp"], ["Pichu", "Pikachu", "Raichu"]];
+  const TIPOS = ["Fire", "Water", "Grass", "Psychic", "Fighting", "Lightning"];
+  const SETS = ["base1", "xy1", "sv3"];
+
+  function coleccion(azar, cuantas) {
+    const cartas = [];
+    for (let i = 0; i < cuantas; i++) {
+      const cadena = CADENAS[Math.floor(azar() * CADENAS.length)];
+      const eslabon = Math.floor(azar() * 3);
+      const tipos = [TIPOS[Math.floor(azar() * TIPOS.length)]];
+      if (azar() < 0.3) tipos.push(TIPOS[Math.floor(azar() * TIPOS.length)]);
+      cartas.push(carta(SETS[Math.floor(azar() * SETS.length)] + "-" + (i + 1), {
+        name: cadena[eslabon],
+        evolvesFrom: eslabon > 0 ? cadena[eslabon - 1] : undefined,
+        types: Array.from(new Set(tipos)),
+        // Con `cantidad` 1 la carta NO tiene copias entregables: entra a
+        // propósito para que el lote tenga que saber esquivarla.
+        cantidad: 1 + Math.floor(azar() * 4),
+        precio: [1, 2, 5, 9, 20][Math.floor(azar() * 5)],
+      }));
+    }
+    return cartas;
+  }
+  function requisitoAlAzar(azar) {
+    const n = 1 + Math.floor(azar() * 3);
+    switch (Math.floor(azar() * 6)) {
+      case 0: return req("tipo", n + 1, { valor: TIPOS[Math.floor(azar() * TIPOS.length)] + "|" + TIPOS[Math.floor(azar() * TIPOS.length)] });
+      case 1: return req("set", n, { valor: SETS[Math.floor(azar() * SETS.length)] });
+      case 2: return req("playset", 1 + n);
+      case 3: return req("arcoiris", 1 + n);
+      case 4: return req("evolucion", 2 + Math.floor(azar() * 2));
+      default: return req("supertipo", n + 1, { valor: "Pokémon" }, SETS[Math.floor(azar() * SETS.length)]);
+    }
+  }
+
+  const CASOS = [];
+  {
+    const azar = rng(20486);
+    for (let i = 0; i < 300; i++) {
+      const cartas = coleccion(azar, 6 + Math.floor(azar() * 20));
+      const cuantos = 1 + Math.floor(azar() * 3);
+      CASOS.push({
+        of: oferta("f" + i, Array.from({ length: cuantos }, () => requisitoAlAzar(azar))),
+        cartas,
+        // Clavadas sorteadas: ids que pueden servir o no, porque el estado de la
+        // pantalla puede traer cualquier cosa y `normalizarFijadas` es la red.
+        fijadas: new Map(Array.from({ length: cuantos }, (_, k) => [
+          k,
+          Array.from({ length: 4 }, () =>
+            azar() < 0.4 ? cartas[Math.floor(azar() * cartas.length)].id : null),
+        ])),
+      });
+    }
+  }
+
+  {
+    const malos = [];
+    let conFijadas = 0, completas = 0;
+    for (const { of, cartas, fijadas } of CASOS) {
+      for (const f of [undefined, fijadas]) {
+        const r = repartir(of, cartas, f);
+        if (f && r.partes.some((p) => p.fijas.some(Boolean))) conFijadas++;
+        if (r.completa) completas++;
+        for (const pega of pegasDelLote(of, cartas, r)) malos.push(`${of.id}${f ? " (clavadas)" : ""}: ${pega}`);
+      }
+    }
+    comprueba(
+      malos.length === 0,
+      `el lote siempre es válido (${CASOS.length} colecciones × 2, ${completas} ofertas completas)`,
+      malos.slice(0, 4).join("\n          "),
+    );
+    // Que la batería EJERCITE lo que dice ejercitar: si un cambio en los
+    // generadores dejara de producir clavadas, los invariantes de arriba
+    // seguirían en verde sin mirar nada.
+    comprueba(conFijadas > 100 && completas > 100,
+      "la batería ejercita de verdad las dos mitades (clavadas y ofertas completas)",
+      `${conFijadas} repartos con clavadas, ${completas} completos`);
+  }
+
+  /* LA BARRA DICE LA VERDAD. `progreso` es el número que el jugador lee encima
+   * de cada requisito y el ancho de la barra, y NO entra en el lote: se puede
+   * estropear entero —ponerlo a cero, contarlo después de devolver las cartas al
+   * fondo— sin que ningún lote salga inválido y sin que nada se ponga rojo. Lo
+   * único que promete es contar en las mismas unidades que `completo`, así que
+   * lo que se ata es eso: nunca pasa de lo que pide el requisito, y llega al
+   * tope exactamente cuando el requisito está servido. */
+  {
+    const malos = [];
+    for (const { of, cartas, fijadas } of CASOS) {
+      for (const f of [undefined, fijadas]) {
+        const r = repartir(of, cartas, f);
+        r.partes.forEach((p, i) => {
+          const n = p.requisito.cantidad;
+          if (!(p.progreso >= 0 && p.progreso <= n)) malos.push(`${of.id} r${i}: la barra marca ${p.progreso} de ${n}`);
+          if (p.completo !== (p.progreso === n)) {
+            malos.push(`${of.id} r${i}: ${p.completo ? "completo" : "a medias"} con la barra en ${p.progreso}/${n}`);
+          }
+        });
+      }
+    }
+    comprueba(malos.length === 0,
+      "la barra va con el requisito: nunca pasa de lo pedido y llega al tope justo cuando está servido",
+      malos.slice(0, 4).join("\n          "));
+  }
+
+  /* Y CUANDO EL REQUISITO NO SE COMPLETA, la barra enseña hasta dónde se llega
+   * con los duplicados que sobran. Es el único sitio donde el jugador ve si le
+   * falta una carta o le faltan cinco, y no se puede sacar del lote: un
+   * requisito a medias devuelve sus cartas al fondo común y `elegidas` se queda
+   * vacío, así que la barra es lo ÚNICO que queda de esa cuenta. Cada rama la
+   * mide en su unidad, y las tres son código distinto. */
+  {
+    const gen = repartir(oferta("barra", [req("tipo", 3, { valor: "Fire" })]), [
+      carta("base1-1", { types: ["Fire"], cantidad: 2, precio: 1 }),
+      carta("base1-2", { types: ["Fire"], cantidad: 2, precio: 2 }),
+    ]);
+    comprueba(
+      gen.partes[0].progreso === 2 && gen.partes[0].elegidas.length === 0,
+      "un requisito a medias enseña los duplicados que sí tiene, aunque haya soltado el lote",
+      `2 duplicados para "3 de Fuego" -> barra ${gen.partes[0].progreso}/3 con ${gen.partes[0].elegidas.length} cartas apartadas`,
+    );
+    // El playset cuenta COPIAS de la misma carta: de "base1-k" sobran dos y el
+    // playset pide cuatro, así que la barra tiene que decir 2 y no 0.
+    const play = repartir(oferta("barrap", [req("playset", 4)]),
+      [carta("base1-k", { types: ["Fire"], cantidad: 3, precio: 1 })]);
+    // La cadena cuenta ESLABONES: con Charmander y Charmeleon pero sin
+    // Charizard, una cadena de tres se queda en 2 y así se pinta.
+    const evo = repartir(oferta("barrae", [req("evolucion", 3)]), [
+      carta("base1-e1", { name: "Charmander", types: ["Fire"], cantidad: 2, precio: 1 }),
+      carta("base1-e2", { name: "Charmeleon", evolvesFrom: "Charmander", types: ["Fire"], cantidad: 2, precio: 2 }),
+    ]);
+    comprueba(
+      play.partes[0].progreso === 2 && evo.partes[0].progreso === 2,
+      "y cada rama cuenta en su unidad: copias sueltas en el playset, eslabones en la cadena",
+      `playset ${play.partes[0].progreso}/4 · cadena ${evo.partes[0].progreso}/3`,
+    );
+  }
+
+  /* SE ENTREGAN LAS BARATAS. El pago es multiplicador × precio del lote y el
+   * multiplicador ya viene fijado en la oferta, así que meter la carta cara que
+   * también cumple sube el cobro unas monedas y REGALA la carta buena. Es una
+   * decisión de diseño y no un detalle de orden: darle la vuelta a `comparar` no
+   * deja ningún lote inválido —el servidor lo aceptaría igual, cumple el
+   * requisito— y el jugador se quedaría sin sus cartas caras sin que nada se
+   * pusiera rojo. */
+  {
+    const escala = [1, 2, 9, 20].map((precio, i) =>
+      carta("base1-" + (i + 1), { types: ["Fire"], cantidad: 2, precio }));
+    const r = repartir(oferta("barato", [req("tipo", 2, { valor: "Fire" })]), escala);
+    comprueba(
+      r.completa && r.valor === 3 && [...r.ids].sort().join(",") === "base1-1,base1-2",
+      "se entregan las copias más baratas que cumplen: la carta buena se queda en el álbum",
+      `lote ${r.ids.join(",")} por ${r.valor}, pudiendo ser 3`,
+    );
+    // A igual precio, primero la que MÁS copias tiene de sobra: gastar la que
+    // sólo tenía una de repuesto la deja fuera del próximo lote, y para este
+    // requisito las dos son intercambiables.
+    const empate = repartir(oferta("empate", [req("tipo", 1, { valor: "Fire" })]), [
+      carta("base1-poca", { types: ["Fire"], cantidad: 2, precio: 5 }),
+      carta("base1-mucha", { types: ["Fire"], cantidad: 5, precio: 5 }),
+    ]);
+    comprueba(
+      empate.ids.join(",") === "base1-mucha",
+      "y a igual precio se gasta la que más copias tiene de sobra",
+      `entrega ${empate.ids.join(",")}`,
+    );
+  }
+
+  /* LA AMARRA DE LA RÉPLICA INGENUA. Los dos guardianes de la sección A miden
+   * `repartir` contra `repartoIngenuo`, que es una copia a mano de sus ramas: en
+   * cuanto `repartir` cambie de forma, la copia se queda vieja y los dos
+   * guardianes siguen en verde comparando contra un algoritmo que ya no se
+   * parece al de producción — confianza falsa, que es justo lo que esta sección
+   * existe para evitar.
+   *
+   * Así que se atan: cuando la oferta tiene UN SOLO requisito no hay orden que
+   * elegir ni requisitos detrás a los que reservar cartas, o sea que las dos
+   * defensas no pintan nada y los dos repartos tienen que dar EL MISMO LOTE. Si
+   * dejan de darlo, o la réplica se ha quedado atrás o `repartir` ha cambiado
+   * algo que nadie pidió. Se comparan sólo las ofertas que se completan: la
+   * réplica no imita el paso de devolver lo automático al fondo común, ni las
+   * ramas de arcoíris y cadena. */
+  {
+    const malos = [];
+    let atados = 0;
+    for (const { of, cartas } of CASOS) {
+      if (of.requisitos.length !== 1) continue;
+      const cat = of.requisitos[0].filtro.categoria;
+      if (cat === "arcoiris" || cat === "evolucion") continue;
+      const real = repartir(of, cartas);
+      if (!real.completa) continue;
+      atados++;
+      const copia = repartoIngenuo(of, cartas, true);
+      const suyo = copia.partes.flatMap((p) => p.elegidas).map((c) => c.id).join("|");
+      if (real.ids.join("|") !== suyo) malos.push(`${of.id} (${cat}): real ${real.ids.join(",")} · réplica ${suyo}`);
+    }
+    comprueba(malos.length === 0 && atados > 30,
+      `con un solo requisito la réplica ingenua da el mismo lote que el reparto (${atados} ofertas)`,
+      malos.slice(0, 3).join("\n          ") || `sólo se han podido atar ${atados}`,
+    );
+  }
+
+  /* ================================================================
+   * C. LAS FIJADAS SE RESPETAN
+   * ================================================================ */
+
+  /* CLAVAR LA PROPUESTA NO PUEDE CAMBIARLA. Es la forma más fuerte de decir que
+   * las clavadas se respetan: si el jugador fija exactamente lo que la pantalla
+   * ya le había propuesto, tiene que salir el mismo lote. Cualquier trato
+   * distinto entre "esta carta la puso el algoritmo" y "esta carta la puso el
+   * jugador" —un orden, un descuento del fondo hecho dos veces, un requisito que
+   * arranca sin lo suyo— se ve aquí. */
+  {
+    const malos = [];
+    let probados = 0;
+    for (const { of, cartas } of CASOS) {
+      const antes = repartir(of, cartas);
+      if (!antes.completa) continue;
+      probados++;
+      const despues = repartir(of, cartas, new Map(
+        antes.partes.map((p, i) => [i, p.elegidas.map((c) => c.id)]),
+      ));
+      if (!despues.completa) malos.push(`${of.id}: clavar la propuesta la deja incompleta (${marcador(despues)})`);
+      else if (despues.ids.join("|") !== antes.ids.join("|")) malos.push(`${of.id}: clavar la propuesta cambia el lote`);
+    }
+    comprueba(malos.length === 0,
+      `clavar la propuesta automática no la cambia (${probados} ofertas)`,
+      malos.slice(0, 4).join("\n          "));
+  }
+
+  /* LO CLAVADO SE APARTA ANTES DE REPARTIR NADA, no requisito a requisito. El
+   * playset va antes que el tipo por PRIORIDAD y "base1-p" es la única carta con
+   * tres copias, así que si el fondo se descontara sobre la marcha el playset se
+   * llevaría las tres y la elección del jugador se evaporaría sin que él tocara
+   * nada — que es el peor final posible para una elección a mano. */
+  {
+    const cartas = [
+      carta("base1-p", { types: ["Fire"], cantidad: 4, precio: 1 }),
+      carta("base1-q", { types: ["Fire"], cantidad: 4, precio: 2 }),
+    ];
+    const of = oferta("clavada", [req("playset", 3), req("tipo", 2, { valor: "Fire" })]);
+    const r = repartir(of, cartas, new Map([[1, ["base1-p", null]]]));
+    comprueba(
+      r.completa && r.partes[1].elegidas[0]?.id === "base1-p" && r.partes[1].fijas[0] === true,
+      "lo clavado se aparta antes de repartir: no se lo lleva un requisito de más prioridad",
+      `${marcador(r)} · el requisito de tipo empieza por ${r.partes[1].elegidas[0]?.id}`,
+    );
+    comprueba(
+      r.partes[0].elegidas.every((c) => c.id === "base1-q"),
+      "y el requisito de más prioridad se apaña con lo que queda",
+    );
+  }
+
+  /* CLAVAR UNA CARTA QUE CABÍA NO PUEDE ROMPER EL RESTO. En el atasco, fijar
+   * cualquiera de las de Fuego caras es una elección que deja la oferta
+   * cumplible; si el reparto del RESTO se hiciera sin saber qué copias ya no
+   * están, volvería a gastar las de Kalos y la oferta caería — pareciendo culpa
+   * del jugador. */
+  {
+    const malos = [];
+    for (let i = 1; i <= 8; i++) {
+      const r = repartir(OFERTA_ATASCO, CARTAS_ATASCO, new Map([[0, ["base1-" + i]]]));
+      if (!r.completa) malos.push(`clavar base1-${i} deja ${marcador(r)}`);
+      if (!r.partes[0].elegidas.some((c) => c.id === "base1-" + i)) malos.push(`base1-${i} clavada y no sale en el lote`);
+    }
+    comprueba(malos.length === 0,
+      "clavar una carta que cabía no rompe el reparto del resto",
+      malos.slice(0, 3).join("\n          "));
+  }
+
+  /* CADA CLAVADA SE PINTA EN SU HUECO. Dentro del algoritmo las clavadas van
+   * todas delante —es lo que deja separar lo automático con un `slice`—, pero
+   * PINTARLAS así reordenaba la fila de chips entera cada vez que el jugador
+   * soltaba una copia: el chip que acababa de tocar dejaba de estar donde lo
+   * tocó y el alfiler aparecía en otro. Eso no rompe ningún lote y ningún
+   * invariante que mire conjuntos lo ve, así que aquí se mira la POSICIÓN: se
+   * clavan las dos caras en los huecos 1 y 3 —los que el algoritmo jamás
+   * elegiría, porque va por precio— y tienen que salir ahí, con el relleno
+   * automático cayendo en los libres. */
+  {
+    const seis = Array.from({ length: 6 }, (_, i) =>
+      carta("base1-" + (i + 1), { types: ["Fire"], cantidad: 2, precio: i + 1 }));
+    const of = oferta("huecos", [req("tipo", 4, { valor: "Fire" })]);
+    const r = repartir(of, seis, new Map([[0, [null, "base1-5", null, "base1-6"]]]));
+    const p = r.partes[0];
+    comprueba(
+      p.completo &&
+      p.elegidas.map((c) => c.id).join(",") === "base1-1,base1-5,base1-2,base1-6" &&
+      p.fijas.join(",") === "false,true,false,true",
+      "cada clavada se pinta en SU hueco y el relleno automático cae en los que quedan libres",
+      p.elegidas.map((c, j) => c.id + (p.fijas[j] ? "*" : "")).join(" "),
+    );
+  }
+
+  /* CLAVAR DOS DEL MISMO COLOR NO PONE LA TARJETA VERDE. Es el peor fallo que
+   * puede tener esta pantalla y el único que el jugador se puede provocar solo:
+   * el arcoíris pide N cartas Y N COLORES, y desde que se elige a mano puede
+   * llegar con sus N huecos llenos y un color repetido. Si `completo` se midiera
+   * por cartas —que es lo que parece razonable y lo que hacía antes— el botón se
+   * pondría verde, el servidor rechazaría el lote y encima parecería culpa suya.
+   * El selector ya no ofrece la repetida (sección E), pero el estado puede
+   * traerla igual —una recarga, otra pestaña— y aquí es donde tiene que frenar. */
+  {
+    const arco = [
+      carta("base1-w1", { types: ["Water"], cantidad: 2, precio: 1 }),
+      carta("base1-w2", { types: ["Water"], cantidad: 2, precio: 2 }),
+      carta("base1-f", { types: ["Fire"], cantidad: 2, precio: 9 }),
+    ];
+    const of = oferta("dosagua", [req("arcoiris", 2)]);
+    const r = repartir(of, arco, new Map([[0, ["base1-w1", "base1-w2"]]]));
+    const p = r.partes[0];
+    comprueba(
+      !p.completo && !r.completa && p.elegidas.length === 2 && p.fijas.every(Boolean) &&
+      pegasDelLote(of, arco, r).length === 0,
+      "dos cartas del mismo color no completan un arcoíris de dos, aunque llenen los dos huecos",
+      `${p.elegidas.map((c) => c.id).join(",")} -> ${p.completo ? "COMPLETO" : "a medias"} (${p.progreso}/2)`,
+    );
+  }
+
+  /* ================================================================
+   * D. NO SE PUEDE ATASCAR SIN SALIDA
+   * ================================================================ */
+
+  /* Un jugador que no sabe cómo salir es peor que uno que no puede elegir. Si el
+   * requisito se queda a medias, la carta clavada TIENE que seguir pintada y
+   * marcada como clavada: es el chip que hay que tocar para soltarla. Si
+   * desapareciera del reparto, la pantalla no tendría dónde enseñar el alfiler y
+   * la única salida sería recargar. */
+  {
+    // El peor rincón: el requisito pide tres y de la única carta que sirve sólo
+    // sobra una copia, que además es la que el jugador clavó. El requisito NO se
+    // va a completar haga lo que haga, así que todo lo que la pantalla le puede
+    // dar es el chip.
+    const cartas = [carta("base1-x", { types: ["Fire"], cantidad: 2, precio: 9 })];
+    const of = oferta("sinsalida", [req("tipo", 3, { valor: "Fire" })]);
+    const fijadas = new Map([[0, ["base1-x", null, null]]]);
+    const r = repartir(of, cartas, fijadas);
+    const parte = r.partes[0];
+    const hueco = parte.elegidas.findIndex((c) => c.id === "base1-x");
+    comprueba(
+      !parte.completo && hueco >= 0 && parte.fijas[hueco] === true,
+      "un requisito que no se completa sigue enseñando lo clavado, para poder soltarlo",
+      `elegidas: ${parte.elegidas.map((c) => c.id).join(",") || "(vacío)"}`,
+    );
+    // Y el chip se puede tocar: el selector de un hueco clavado se ofrece SIEMPRE
+    // a sí mismo, porque la copia que ocupa el hueco vuelve a la cuenta al
+    // cambiarla. Sin eso, la única carta que hay sale de la lista por estar ya
+    // comprometida, el selector se abre vacío y el jugador se queda sin salida.
+    comprueba(
+      hueco >= 0 && candidatasPara(of, cartas, r, 0, hueco).some((o) => o.carta.id === "base1-x"),
+      "el selector de un hueco clavado nunca sale vacío: la copia que lo ocupa cuenta como libre",
+      `opciones: ${candidatasPara(of, cartas, r, 0, Math.max(hueco, 0)).map((o) => o.carta.id).join(",") || "(ninguna)"}`,
+    );
+    // La poda tampoco puede borrar la clavada que atasca: si la tirase, el
+    // estado se quedaría sin ella y el chip desaparecería sin que él lo suelte.
+    const podado = podarFijadas(new Map([[of.id, fijadas]]), [of], cartas);
+    comprueba(
+      podado.get(of.id)?.get(0)?.includes("base1-x") === true,
+      "y la poda no borra la clavada que atasca: el chip sigue ahí para soltarlo",
+      `poda: ${JSON.stringify([...(podado.get(of.id)?.entries() ?? [])])}`,
+    );
+  }
+
+  /* Y AL FONDO COMÚN SÓLO VUELVE LO AUTOMÁTICO. Un requisito que se queda a
+   * medias suelta lo que puso el algoritmo, pero lo clavado se queda donde está;
+   * si volviera, el requisito de detrás se lo comería —y aquí sólo hay una copia
+   * entregable de esa carta— así que el mismo hueco quedaría prometido dos veces
+   * y el chip que el jugador tiene que tocar para salir estaría pintando una
+   * copia que ya no es suya. */
+  {
+    const cartas = [carta("base1-z", { types: ["Fire"], cantidad: 2, precio: 1 })];
+    const of = oferta("nodevuelve", [
+      req("tipo", 3, { valor: "Fire" }),       // no se va a completar: pide tres
+      req("set", 1, { valor: "base1" }),       // va detrás y le vale la misma carta
+    ]);
+    const r = repartir(of, cartas, new Map([[0, ["base1-z", null, null]]]));
+    const pegas = pegasDelLote(of, cartas, r);
+    comprueba(
+      pegas.length === 0 && r.ids.filter((id) => id === "base1-z").length === 1,
+      "lo clavado en un requisito a medias no vuelve al fondo: nadie más se lo come",
+      pegas.join(" · ") || `ids: ${r.ids.join(",")}`,
+    );
+  }
+
+  /* En toda la batería: allí donde el jugador clavó algo que se sostiene, sale
+   * en el lote marcado como clavado, se complete el requisito o no. */
+  {
+    const malos = [];
+    for (const { of, cartas, fijadas } of CASOS) {
+      const r = repartir(of, cartas, fijadas);
+      for (const [i, lista] of normalizarFijadas(of, cartas, fijadas)) {
+        const puestas = r.partes[i].elegidas.filter((_, j) => r.partes[i].fijas[j]).map((c) => c.id).sort();
+        const esperadas = lista.filter(Boolean).map((c) => c.id).sort();
+        if (puestas.join("|") !== esperadas.join("|")) {
+          malos.push(`${of.id} r${i}: clavadas ${esperadas.join(",")} y pintadas ${puestas.join(",") || "(ninguna)"}`);
+        }
+      }
+    }
+    comprueba(malos.length === 0,
+      "ninguna clavada válida se pierde por el camino",
+      malos.slice(0, 4).join("\n          "));
+  }
+
+  /* ================================================================
+   * E. EL SELECTOR NO OFRECE LO QUE NO PUEDE DAR
+   * ================================================================ */
+
+  /* Ofrecer una carta que no cabe es peor que no ofrecer ninguna: el jugador la
+   * elige, el lote sale mal y el error le llega del servidor. Así que de cada
+   * carta que `candidatasPara` ofrece se comprueba lo único que de verdad
+   * importa: que CLAVARLA FUNCIONE. Se clava, se vuelve a repartir y tiene que
+   * salir en su requisito, marcada, y con el lote entero todavía válido. */
+  {
+    const malos = [];
+    let ofrecidas = 0, huecos = 0;
+    for (const { of, cartas } of CASOS) {
+      const base = repartir(of, cartas);
+      of.requisitos.forEach((r, i) => {
+        const parte = base.partes[i];
+        for (let pos = 0; pos < parte.elegidas.length; pos++) {
+          const opciones = candidatasPara(of, cartas, base, i, pos);
+          if (!esFijable(r)) {
+            if (opciones.length > 0) malos.push(`${of.id} r${i}: la cadena evolutiva no admite elección a mano`);
+            continue;
+          }
+          huecos++;
+          for (const o of opciones) {
+            ofrecidas++;
+            if (!sirve(o.carta, r)) { malos.push(`${of.id} r${i}: ofrece ${o.carta.id}, que no cumple el requisito`); continue; }
+            const necesita = r.filtro.categoria === "playset" ? r.cantidad : 1;
+            if (copiasEntregables(o.carta.cantidad) < necesita) {
+              malos.push(`${of.id} r${i}: ofrece ${o.carta.id} con ${o.carta.cantidad} copias (necesita ${necesita} entregables)`);
+              continue;
+            }
+            // La prueba de fuego: clavarla de verdad, dejando el resto del lote
+            // clavado como estaba para que el cambio sea sólo este hueco.
+            const ranuras = fijadasDe(base);
+            ranuras.set(i, r.filtro.categoria === "playset"
+              ? Array.from({ length: r.cantidad }, () => o.carta.id)
+              : parte.elegidas.map((c, j) => (j === pos ? o.carta.id : (base.partes[i].fijas[j] ? c.id : null))));
+            const tras = repartir(of, cartas, ranuras);
+            const puesta = tras.partes[i].elegidas.some((c, j) => c.id === o.carta.id && tras.partes[i].fijas[j]);
+            if (!puesta) malos.push(`${of.id} r${i}[${pos}]: ofrece ${o.carta.id} y al clavarla no entra`);
+            for (const pega of pegasDelLote(of, cartas, tras)) malos.push(`${of.id} r${i} tras clavar ${o.carta.id}: ${pega}`);
+          }
+        }
+      });
+    }
+    comprueba(malos.length === 0,
+      `todo lo que el selector ofrece se puede clavar (${ofrecidas} opciones en ${huecos} huecos)`,
+      malos.slice(0, 4).join("\n          "));
+    comprueba(ofrecidas > 500 && huecos > 200, "el selector se ha ejercitado de verdad", `${ofrecidas} opciones / ${huecos} huecos`);
+  }
+
+  /* Y LA PRIMERA DE LA LISTA ES LA QUE EL ALGORITMO YA HABÍA PUESTO. La hoja se
+   * abre con las opciones ordenadas y arriba del todo va, según promete el
+   * módulo, la misma carta que la pantalla había elegido sola. Eso sólo se
+   * cumple si el selector ordena con la MISMA utilidad que el reparto, y la
+   * utilidad depende de qué requisitos quedan detrás en la cola: si el selector
+   * la calculara por su cuenta —o simplemente ordenara por precio— la primera
+   * opción sería otra, y el jugador que abre la hoja y toca la de arriba se
+   * cambiaría el lote creyendo que lo deja como estaba. Darle la vuelta a ese
+   * orden no rompe ningún lote, así que hace falta mirarlo aquí.
+   *
+   * Se compara en el requisito que se sirve PRIMERO y en su hueco inicial, que
+   * es el único sitio donde las dos listas son comparables carta a carta: ahí el
+   * fondo común está entero y ninguna copia se la ha llevado nadie todavía. El
+   * arcoíris queda fuera a propósito (filtra por color contra el resto del
+   * grupo, así que su lista es de otra cosa) y la cadena también (no admite
+   * elección a mano). */
+  {
+    const malos = [];
+    let mirados = 0;
+    for (const { of, cartas } of CASOS) {
+      const base = repartir(of, cartas);
+      const { requisito: r, indice } = ordenDeRequisitos(of)[0];
+      if (r.filtro.categoria === "arcoiris" || !esFijable(r)) continue;
+      const puesta = base.partes[indice].elegidas[0];
+      if (!puesta) continue; // requisito a medias: soltó el lote y no hay con qué comparar
+      mirados++;
+      const primera = candidatasPara(of, cartas, base, indice, 0)[0];
+      if (primera?.carta.id !== puesta.id) {
+        malos.push(`${of.id} r${indice}: el lote empieza por ${puesta.id} y el selector ofrece ${primera?.carta.id ?? "(nada)"}`);
+      }
+    }
+    comprueba(malos.length === 0,
+      `la primera opción del selector es la que el algoritmo ya había puesto (${mirados} huecos)`,
+      malos.slice(0, 4).join("\n          "));
+    comprueba(mirados > 100, "y se ha comprobado en bastantes huecos", `${mirados} huecos comparados`);
+  }
+
+  /* Las dos exclusiones que no se ven en el lote pero sí en la lista: el playset
+   * necesita las N copias de la MISMA carta, y el arcoíris sólo admite lo que
+   * aporta un color que las demás no cubren. Fuera de eso el selector enseñaría
+   * cartas que al tocarlas no hacen nada, o peor, que deshacen el requisito. */
+  {
+    const cartas = [
+      carta("base1-a", { types: ["Fire"], cantidad: 4, precio: 1 }),   // 3 entregables
+      carta("base1-b", { types: ["Fire"], cantidad: 3, precio: 2 }),   // 2
+      carta("base1-c", { types: ["Water"], cantidad: 2, precio: 3 }),  // 1
+      carta("base1-d", { types: ["Fire"], cantidad: 1, precio: 1 }),   // 0: sólo la del álbum
+    ];
+    const ofPlayset = oferta("psel", [req("playset", 3)]);
+    const rPlayset = repartir(ofPlayset, cartas);
+    const opsPlayset = candidatasPara(ofPlayset, cartas, rPlayset, 0, 0);
+    comprueba(
+      opsPlayset.length > 0 && opsPlayset.every((o) => copiasEntregables(o.carta.cantidad) >= 3),
+      "playset: sólo se ofrecen cartas con copias suficientes para el playset entero",
+      opsPlayset.map((o) => `${o.carta.id}(${o.carta.cantidad})`).join(" "),
+    );
+    comprueba(
+      !opsPlayset.some((o) => o.carta.id === "base1-d") &&
+      !candidatasPara(oferta("t", [req("tipo", 2, { valor: "Fire" })]), cartas,
+        repartir(oferta("t", [req("tipo", 2, { valor: "Fire" })]), cartas), 0, 0)
+        .some((o) => o.carta.id === "base1-d"),
+      "una carta de la que sólo se tiene la copia del álbum no se ofrece nunca",
+      "copiasEntregables(1) = 0: entregarla dejaría al jugador sin la carta",
+    );
+
+    // "base1-w2" es la que de verdad prueba esto: es de Agua, le sobran copias y
+    // el otro hueco del arcoíris ya tiene el Agua cubierta. Ofrecerla sería
+    // enseñar una carta que, al tocarla, DESHACE el requisito: dos cartas, un
+    // color, tarjeta verde y lote que el servidor rechaza.
+    const arco = [
+      carta("base1-f", { types: ["Fire"], cantidad: 2, precio: 1 }),
+      carta("base1-w", { types: ["Water"], cantidad: 2, precio: 1 }),
+      carta("base1-w2", { types: ["Water"], cantidad: 3, precio: 2 }),
+      carta("base1-g", { types: ["Grass"], cantidad: 2, precio: 9 }),
+    ];
+    const ofArco = oferta("arco", [req("arcoiris", 2)]);
+    const rArco = repartir(ofArco, arco);
+    const opsArco = candidatasPara(ofArco, arco, rArco, 0, 0);
+    const otras = rArco.partes[0].elegidas.filter((_, j) => j !== 0);
+    comprueba(
+      rArco.partes[0].completo &&
+      opsArco.length > 0 &&
+      !opsArco.some((o) => o.carta.id === "base1-w2") &&
+      opsArco.every((o) => coloresDistintos([...otras, o.carta]) > coloresDistintos(otras)),
+      "arcoíris: sólo se ofrece lo que aporta un color que el resto no cubre",
+      `hueco 0 de [${rArco.partes[0].elegidas.map((c) => c.id).join(",")}] -> ${opsArco.map((o) => o.carta.id).join(" ")}`,
+    );
+  }
+
+  /* Ni una copia que otro requisito de la MISMA oferta ya tiene apartada: no
+   * están libres aunque la carta las tenga, y ofrecerlas sería prometer una
+   * copia que ya está prometida. */
+  {
+    const cartas = [
+      carta("base1-u", { types: ["Fire"], cantidad: 2, precio: 1 }),
+      carta("base1-v", { types: ["Fire"], cantidad: 2, precio: 2 }),
+    ];
+    const of = oferta("compartida", [req("tipo", 1, { valor: "Fire" }), req("set", 1, { valor: "base1" })]);
+    const r = repartir(of, cartas);
+    const yaEn0 = r.partes[0].elegidas[0].id;
+    comprueba(
+      r.completa && !candidatasPara(of, cartas, r, 1, 0).some((o) => o.carta.id === yaEn0),
+      "una copia que ya usa otro requisito de la oferta no se ofrece",
+      `el hueco del segundo requisito no puede ofrecer ${yaEn0}`,
+    );
+  }
+
+  /* ================================================================
+   * F. LA ELECCIÓN CADUCA SOLA
+   * ================================================================ */
+
+  /* El jugador clava una carta y luego la vende en otra pestaña, o abre sobres y
+   * la colección cambia bajo la pantalla. `normalizarFijadas` es la red que
+   * impide que una elección que ya no se sostiene llegue al servidor, y
+   * `podarFijadas` la que impide que se quede en el estado: una entrada muerta
+   * deja un botón de "volver a la propuesta automática" que no hace nada, y peor
+   * —si el jugador vuelve a tener duplicados de esa carta— RESUCITA sin que él
+   * la haya vuelto a elegir. */
+  {
+    const of = oferta("caduca", [req("tipo", 2, { valor: "Fire" })]);
+    const antes = [
+      carta("base1-m", { types: ["Fire"], cantidad: 3, precio: 1 }),
+      carta("base1-n", { types: ["Fire"], cantidad: 3, precio: 2 }),
+    ];
+    // La otra pestaña vende las dos copias que sobraban de "base1-m".
+    const despues = [carta("base1-m", { types: ["Fire"], cantidad: 1, precio: 1 }), antes[1]];
+    const fijadas = new Map([[0, ["base1-m", null]]]);
+
+    comprueba(
+      normalizarFijadas(of, antes, fijadas).get(0)?.[0]?.id === "base1-m" &&
+      normalizarFijadas(of, despues, fijadas).get(0) === undefined,
+      "una carta clavada que se ha vendido en otra pestaña deja de estar clavada",
+    );
+    const r = repartir(of, despues, fijadas);
+    comprueba(
+      pegasDelLote(of, despues, r).length === 0 && !r.ids.includes("base1-m"),
+      "y el lote que sale de ahí sigue siendo válido: no entrega lo que ya no hay",
+      pegasDelLote(of, despues, r).join(" · "),
+    );
+    comprueba(
+      podarFijadas(new Map([[of.id, fijadas]]), [of], despues).size === 0,
+      "la poda saca del estado la elección muerta, para que no resucite",
+    );
+
+    // El tablón caduca cada ciclo: las ofertas de ayer ya no existen y sus
+    // elecciones tampoco pueden sobrevivir, o se validarían contra otro tablón.
+    comprueba(
+      podarFijadas(new Map([["oferta-de-ayer", fijadas]]), [of], antes).size === 0,
+      "cuando el tablón caduca, las elecciones de las ofertas que ya no están se van con ellas",
+    );
+    // Misma referencia si nada ha cambiado: el reparto vive en un useMemo que
+    // depende de este mapa, y devolver un mapa nuevo repintaría el tablón entero
+    // en cada tic de la cuenta atrás.
+    const vivas = new Map([[of.id, fijadas]]);
+    comprueba(
+      podarFijadas(vivas, [of], antes) === vivas,
+      "y si no ha cambiado nada devuelve el MISMO mapa, para no repintar el tablón",
+    );
+  }
+
+  /* El playset es indivisible: son N copias de la MISMA carta, y media docena de
+   * copias sueltas no es un playset. Si al volver quedan menos de las que hacen
+   * falta, se cae ENTERO; dejar tres de cuatro serviría un lote que el servidor
+   * no empareja. */
+  {
+    const of = oferta("playsetcaduca", [req("playset", 4)]);
+    const cuatro = [carta("base1-k", { types: ["Fire"], cantidad: 5, precio: 1 })];
+    const tres = [carta("base1-k", { types: ["Fire"], cantidad: 4, precio: 1 })];
+    const fijadas = new Map([[0, ["base1-k", "base1-k", "base1-k", "base1-k"]]]);
+    comprueba(
+      normalizarFijadas(of, cuatro, fijadas).get(0)?.length === 4 &&
+      normalizarFijadas(of, tres, fijadas).get(0) === undefined,
+      "un playset clavado al que le falta una copia se cae entero, no a medias",
+      "tres de cuatro no es un playset: el servidor lo rechazaría",
+    );
+  }
+
+  /* Dos reglas más de la red, que sólo se ven desde fuera: una copia no se puede
+   * clavar dos veces (la cuenta es por CARTA y a lo largo de toda la oferta, no
+   * dentro de cada requisito), y la cadena evolutiva no admite elección a mano
+   * aunque alguien meta la elección en el estado — `mejorCadena` no sabe
+   * resolver cadenas con un eslabón impuesto y devolvería una cadena rota. */
+  {
+    const of = oferta("dosveces", [req("tipo", 1, { valor: "Fire" }), req("set", 1, { valor: "base1" })]);
+    const cartas = [
+      carta("base1-z", { types: ["Fire"], cantidad: 2, precio: 1 }),   // 1 sola entregable
+      carta("base1-w2", { types: ["Fire"], cantidad: 2, precio: 2 }),
+    ];
+    const dosVeces = normalizarFijadas(of, cartas, new Map([[0, ["base1-z"]], [1, ["base1-z"]]]));
+    comprueba(
+      dosVeces.get(0)?.[0]?.id === "base1-z" && dosVeces.get(1) === undefined,
+      "la misma copia no se puede clavar en dos requisitos de la misma oferta",
+    );
+    const ofEvo = oferta("evo", [req("evolucion", 2)]);
+    const evoCartas = [
+      carta("base1-e1", { name: "Charmander", types: ["Fire"], cantidad: 2, precio: 1 }),
+      carta("base1-e2", { name: "Charmeleon", evolvesFrom: "Charmander", types: ["Fire"], cantidad: 2, precio: 2 }),
+      carta("base1-e3", { name: "Machop", types: ["Fighting"], cantidad: 2, precio: 1 }),
+    ];
+    const rEvo = repartir(ofEvo, evoCartas, new Map([[0, ["base1-e3", null]]]));
+    comprueba(
+      normalizarFijadas(ofEvo, evoCartas, new Map([[0, ["base1-e3"]]])).size === 0 &&
+      rEvo.partes[0].fijas.every((f) => !f) &&
+      rEvo.partes[0].completo,
+      "una elección metida en una cadena evolutiva se ignora: la cadena se propone entera o nada",
+      `cadena: ${rEvo.partes[0].elegidas.map((c) => c.name).join(" -> ")}`,
+    );
+  }
 }
 
 
@@ -1098,6 +2109,292 @@ comprueba(
     !!sana && sana.desperfectos === undefined && sana.marcas === undefined,
     "una copia sana sigue llegando sin estado, y no con uno vacío",
     "fundasDelServidor se ha inventado un estado para una carta que no lo traía.",
+  );
+}
+
+/* ==================================================================== *
+ * EMPAREJAR UNA EXPANSIÓN CON EL SOBRE DE BULBAPEDIA
+ * ====================================================================
+ *
+ * POR QUÉ ESTO ES UN INVARIANTE Y NO UN TEST CUALQUIERA: el fallo que se
+ * previene aquí no se ve. Si el emparejamiento se tuerce, la expansión no se
+ * queda sin foto —eso se notaría, quedaría el sobre dibujado— sino CON LA FOTO
+ * DE OTRA, y a un sobre equivocado no le mira nadie dos veces.
+ *
+ * Y ahora hay DOS consumidores de esta lógica: scripts/bajar-sobres-bulbapedia.mjs
+ * (a mano, escribe en public/sobres) y services/sobresIngest.ts (el cron, escribe
+ * en Postgres). Comparten módulo justo para que no se separen; esto comprueba
+ * que el módulo dice lo que los dos creen que dice.
+ *
+ * Los casos no son inventados: cada uno es una expansión real que rompió algo.
+ */
+{
+  seccion("Sobres: emparejar expansión con su foto en Bulbapedia");
+
+  const { normaliza, prefijosDe, analizarFichero, candidatasDe, pasaElFiltro,
+          tituloDePagina, tamanoDeFondo, RATIO,
+          acumularPaginas, resolverPaginas } = sobres;
+
+  /* --- El apóstrofo. Quien sube el fichero a la wiki escribe "McDonalds" sin
+   *     él; si se convirtiera en espacio como el resto de la puntuación,
+   *     "mcdonald s collection" no casaría con "mcdonalds collection" y las dos
+   *     colecciones que sí tienen sobre se caerían por una comilla. --- */
+  comprueba(
+    normaliza("McDonald's Collection 2021") === normaliza("McDonalds Collection 2021"),
+    "el apóstrofo no separa palabras al normalizar (McDonald's)",
+    "normaliza() ha vuelto a convertir la comilla en espacio.",
+  );
+  comprueba(
+    normaliza("Pokémon GO") === "pokemon go",
+    "los acentos se pierden al normalizar (Pokémon GO)",
+  );
+
+  /* --- "<algo> pack" SÓLO detrás del nombre completo, nunca detrás del id.
+   *     "SV3 pack.png" es el sobre JAPONÉS de Obsidian Flames y "SV3 Booster
+   *     Charizard.png" el internacional: aceptar el primero por el id sería
+   *     poner el producto equivocado. --- */
+  const obsidian = { id: "sv3", name: "Obsidian Flames" };
+  const prefObsidian = prefijosDe(obsidian, "Obsidian Flames (TCG)", null);
+  comprueba(
+    analizarFichero("File:SV3 pack.png", prefObsidian) === null,
+    "el sobre japonés (\"SV3 pack.png\") no se acepta por el id",
+    "un patrón '… pack' detrás del id deja entrar el producto japonés.",
+  );
+  comprueba(
+    analizarFichero("File:SV3 Booster Charizard.png", prefObsidian) !== null,
+    "el sobre internacional (\"SV3 Booster Charizard.png\") sí se acepta",
+  );
+  comprueba(
+    analizarFichero("File:POP Series 1 pack.png",
+      prefijosDe({ id: "pop1", name: "POP Series 1" }, "POP Series 1 (TCG)", null)) !== null,
+    "\"POP Series 1 pack.png\" sí, porque va detrás del NOMBRE completo",
+  );
+
+  /* --- El idioma. "S12a VSTAR Universe Booster Chinese.png" cuelga de la
+   *     página de Zenit Supremo y es otro producto con otro dibujo. --- */
+  const zenit = { id: "swsh12pt5", name: "Crown Zenith" };
+  const prefZenit = prefijosDe(zenit, "Crown Zenith (TCG)", null);
+  comprueba(
+    analizarFichero("File:Crown Zenith Booster Chinese.png", prefZenit) === null,
+    "un fichero marcado con idioma no es el sobre internacional",
+  );
+  comprueba(
+    analizarFichero("File:Crown Zenith Booster Display.png", prefZenit) === null,
+    "un display no es un sobre suelto",
+  );
+
+  /* --- El título de la página sólo aporta prefijo si es MÁS ESPECÍFICO. "Base"
+   *     -> "Base Set" sí; "McDonald's Collection 2011" -> "McDonald's
+   *     Collection" no, porque ahí la wiki junta nueve colecciones y su sobre
+   *     no es el de 2011. --- */
+  const conBaseSet = prefijosDe({ id: "base1", name: "Base" }, "Base Set (TCG)", null);
+  comprueba(
+    conBaseSet.some((p) => p.texto === "base set"),
+    "un título de página más específico añade prefijo (Base -> Base Set)",
+  );
+  const mcd = prefijosDe(
+    { id: "mcd11", name: "McDonald's Collection 2011" },
+    "McDonald's Collection (TCG)",
+    null,
+  );
+  comprueba(
+    !mcd.some((p) => p.texto === "mcdonalds collection"),
+    "un título de página MENOS específico no añade prefijo (McDonald's)",
+    "aceptarlo daría a la colección de 2011 el sobre de otro año.",
+  );
+
+  /* --- El orden de las candidatas es parte del contrato, no una preferencia:
+   *     el número de variante acaba en la URL que sirve la foto y en el CDN, así
+   *     que la variante 1 tiene que ser la misma hoy, mañana, en el script y en
+   *     el cron. --- */
+  const ficheros = [
+    "File:Crown Zenith Booster Pikachu Full Art.png",
+    "File:Crown Zenith Booster.png",
+    "File:Crown Zenith Booster Arceus.png",
+    "File:Crown Zenith Logo.png",
+    "File:Crown Zenith Booster Chinese.png",
+  ];
+  const cands = candidatasDe(zenit, ficheros, "Crown Zenith (TCG)", undefined);
+  comprueba(
+    cands[0] && cands[0].titulo === "File:Crown Zenith Booster.png",
+    "primero el nombre más corto (\"… Booster\" antes que \"… Booster Arceus\")",
+  );
+  comprueba(
+    JSON.stringify(candidatasDe(zenit, [...ficheros].reverse(), "Crown Zenith (TCG)", undefined)
+      .map((c) => c.titulo)) === JSON.stringify(cands.map((c) => c.titulo)),
+    "el orden no depende de cómo venga la lista de la wiki",
+    "si depende, la misma expansión saca fotos distintas en dos ejecuciones.",
+  );
+  comprueba(
+    !cands.some((c) => /Logo|Chinese/.test(c.titulo)),
+    "ni el logo ni el sobre chino llegan a ser candidatas",
+  );
+
+  /* --- Las dos marcas de imprenta del mismo dibujo son UNA candidata. --- */
+  const base = { id: "base1", name: "Base Set" };
+  const dosTiradas = candidatasDe(
+    base,
+    ["File:Base Set Booster Charizard.jpg", "File:Base Set Booster Charizard Shadowless.jpg"],
+    "Base Set (TCG)",
+    undefined,
+  );
+  comprueba(
+    dosTiradas.length === 1,
+    "el mismo dibujo con otra marca de imprenta cuenta una vez",
+  );
+
+  /* --- Nunca más candidatas de las que caben. --- */
+  comprueba(
+    candidatasDe(
+      base,
+      Array.from({ length: 20 }, (_, i) => `File:Base Set Booster P${i} A B C.jpg`),
+      "Base Set (TCG)",
+      undefined,
+    ).length <= 6,
+    "las candidatas se cortan (3 variantes + 3 de repuesto)",
+  );
+
+  /* --- `omitir` no gasta ni una petición: es el mecanismo que impide que el
+   *     cron le pregunte cada noche por las que nunca tuvieron sobre. --- */
+  comprueba(
+    tituloDePagina({ id: "sve", name: "Scarlet & Violet Energies" },
+      { omitir: true, motivo: "energías" }) === null,
+    "una expansión marcada \"omitir\" no produce título que consultar",
+    "sin esto el cron preguntaría a la wiki por ella todas las noches.",
+  );
+  comprueba(
+    tituloDePagina({ id: "ex3", name: "EX Dragon" }, { pagina: "EX Dragon (TCG)" })
+      === "EX Dragon (TCG)" &&
+    tituloDePagina({ id: "sv8", name: "Surging Sparks" }, undefined)
+      === "Surging Sparks (TCG)",
+    "el mapa a mano manda sobre el título por defecto",
+  );
+
+  /* --- El cedazo de forma, con los mismos textos que salen en el informe. --- */
+  comprueba(
+    pasaElFiltro({ url: "u", ancho: 560, alto: 1024 }) === null,
+    "una foto con forma de sobre pasa el filtro",
+  );
+  comprueba(
+    /proporción 1\.46/.test(pasaElFiltro({ url: "u", ancho: 500, alto: 730 }) ?? ""),
+    "una foto chata se descarta diciendo su proporción",
+  );
+  comprueba(
+    /109px/.test(pasaElFiltro({ url: "u", ancho: 109, alto: 200 }) ?? ""),
+    "un icono se descarta diciendo su ancho",
+  );
+  comprueba(
+    pasaElFiltro(null) !== null && pasaElFiltro({ ancho: 500, alto: 900 }) !== null,
+    "sin URL no hay foto que valorar",
+  );
+  /* Con URL pero sin medidas el texto es "proporción NaN", que es LITERALMENTE
+   * el que imprimía el script antes de que esto se extrajera a una función.
+   * Ningún caso de la caché lo toca, o sea que el informe salía idéntico aunque
+   * el texto cambiara: la clase de divergencia que sólo caza un invariante. */
+  comprueba(
+    /proporción NaN/.test(pasaElFiltro({ url: "u" }) ?? ""),
+    "con URL y sin medidas se descarta por proporción, no por falta de URL",
+    "el texto tiene que ser el mismo que imprimía el script antes de extraerlo.",
+  );
+
+  /* ==================================================================
+   * LA OTRA MITAD DE LA LLAVE 1: QUÉ PÁGINA CONTESTÓ LA WIKI
+   * ==================================================================
+   *
+   * El título final no es informativo: entra en `prefijosDe` como PREFIJO, o
+   * sea que decide qué ficheros se aceptan. Estaba escrito dos veces —el script
+   * y el cron— y ahora lo hacen `acumularPaginas` y `resolverPaginas`.
+   *
+   * El caso es real: Rayo Negro y Llama Blanca son DOS expansiones nuestras y
+   * UNA página de la wiki, a la que las dos llegan por redirección.
+   */
+  {
+    const titulos = ["Black Bolt (TCG)", "White Flare (TCG)"];
+    const destinoDe = new Map(titulos.map((t) => [t, t]));
+    const acumulado = new Map();
+    acumularPaginas(
+      { query: {
+          redirects: [
+            { from: "Black Bolt (TCG)", to: "Black Bolt & White Flare (TCG)" },
+            { from: "White Flare (TCG)", to: "Black Bolt & White Flare (TCG)" },
+          ],
+          pages: [{ title: "Black Bolt & White Flare (TCG)", images: [{ title: "File:ZSV10 Booster.png" }] }],
+      } },
+      destinoDe,
+      acumulado,
+    );
+    const r = resolverPaginas(titulos, destinoDe, acumulado);
+    comprueba(
+      r.get("Black Bolt (TCG)")?.titulo === "Black Bolt & White Flare (TCG)" &&
+        r.get("White Flare (TCG)")?.titulo === "Black Bolt & White Flare (TCG)" &&
+        r.get("Black Bolt (TCG)")?.ficheros.length === 1,
+      "se siguen las redirecciones de la wiki hasta el título final",
+      "sin esto el prefijo de la página no es el bueno y cambia qué ficheros se aceptan.",
+    );
+  }
+  {
+    // Una respuesta partida por `continue`: los ficheros de la segunda ronda se
+    // SUMAN a los de la primera. Perderlos deja una lista incompleta, que es lo
+    // que convierte "aún no la han subido" en un negativo de 180 días.
+    const destinoDe = new Map([["Grande (TCG)", "Grande (TCG)"]]);
+    const acumulado = new Map();
+    acumularPaginas({ query: { pages: [{ title: "Grande (TCG)", images: [{ title: "File:1.png" }] }] } }, destinoDe, acumulado);
+    acumularPaginas({ query: { pages: [{ title: "Grande (TCG)", images: [{ title: "File:2.png" }] }] } }, destinoDe, acumulado);
+    const r = resolverPaginas(["Grande (TCG)"], destinoDe, acumulado);
+    comprueba(
+      r.get("Grande (TCG)")?.ficheros.join(",") === "File:1.png,File:2.png",
+      "las rondas de `continue` se acumulan en vez de pisarse",
+    );
+  }
+  {
+    // "No hay tal página" tiene que ser distinguible, porque es lo único que
+    // justifica un negativo largo. Que la wiki no conteste NO cae aquí: eso lo
+    // decide `fallo` en services/sobresIngest.ts, no esta función.
+    const r = resolverPaginas(["Nope (TCG)"], new Map([["Nope (TCG)", "Nope (TCG)"]]), new Map());
+    comprueba(
+      r.get("Nope (TCG)")?.existe === false && r.get("Nope (TCG)")?.ficheros.length === 0,
+      "un título del que no se sabe nada sale como que no existe",
+    );
+  }
+
+  /* ==================================================================
+   * EL RECORTE EN CSS, QUE ES LO QUE SUSTITUYE A `sharp`
+   * ==================================================================
+   *
+   * La foto se pinta en DOS elementos que se separan al rasgar: el cuerpo
+   * (W x 1,8282·W) y la tapa (W x 0,0951·W). `background-size: cover` se
+   * calcula POR ELEMENTO, así que con una foto más chata que 1,8282 el cuerpo
+   * escalaría por alto y la tapa por ancho: la misma imagen a dos tamaños
+   * distintos, y el desajuste justo en la línea de rasgado. `tamanoDeFondo`
+   * devuelve una ANCHURA explícita, que es común a las dos cajas porque las dos
+   * miden lo mismo de ancho.
+   */
+  comprueba(
+    tamanoDeFondo(780, 1426) === null,
+    "una foto ya recortada a 780/1426 no lleva recorte: cae en \"100% auto\"",
+    "emitir la variable aquí cambiaría el pintado de las 130 que ya funcionan.",
+  );
+  comprueba(
+    tamanoDeFondo(500, 1000) === null,
+    "una foto MÁS alargada tampoco: \"100% auto\" ya la recorta por abajo",
+  );
+  {
+    // r = 1,65 es el límite que acepta el filtro, y el caso que rompía `cover`.
+    const v = tamanoDeFondo(1000, 1650);
+    const x = parseFloat(String(v));
+    comprueba(
+      v !== null && Math.abs(x - (100 * RATIO) / 1.65) < 0.01,
+      "una foto chata se agranda justo lo que hace falta para llenar el sobre",
+      `tamanoDeFondo(1000,1650) = ${v}`,
+    );
+    comprueba(
+      v !== null && / auto$/.test(String(v)) && !/[()"']/.test(String(v)),
+      "el valor es un \"X% auto\" limpio: nada que pueda cerrar la declaración CSS",
+    );
+  }
+  comprueba(
+    tamanoDeFondo(0, 100) === null && tamanoDeFondo(100, 0) === null,
+    "sin medidas no se inventa un recorte",
   );
 }
 

@@ -4,8 +4,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import TypeBadge, { EnergyCost } from "./TypeBadge";
+// `desgasteEnPalabras` ya no se importa: era de los dos rótulos que se
+// quitaron (ver el comentario largo donde estaba el panel "Estado de la
+// copia"). Las marcas se siguen pintando, así que el resto sigue aquí.
 import DesperfectosCarta, {
-  desgasteEnPalabras,
   estadoDeCopia,
   estiloDescentrado,
 } from "./DesperfectosCarta";
@@ -573,7 +575,26 @@ export default function CardDetailModal({
                         // Sombra con box-shadow y no drop-shadow: un filter dentro
                         // del contexto 3D del balanceo rasterizaría la carta.
                         style={{ borderRadius: "4.5%", boxShadow: "var(--shadow-lg)" }}
-                        className={`absolute inset-0 h-full w-full cursor-zoom-in object-contain ${c.owned === false ? "grayscale opacity-70" : ""}`}
+                        /* `cover` y no `contain`, por lo mismo que en
+                           components/PokemonCard.tsx (allí está la cuenta
+                           entera): el hueco es aspect-[2.5/3.5] = 0,71429, la
+                           proporción FÍSICA de una carta, y ningún escaneo de
+                           la API la tiene — las modernas son 734x1024 (0,71680)
+                           y las de 1999-2009, 600x825 (0,72727). Con `contain`
+                           quedaba banda arriba y abajo. Medido en catorce
+                           expansiones: ninguna imagen es más estrecha de
+                           proporción que el hueco, así que el recorte es
+                           siempre lateral y nunca se come el nombre ni los PS.
+
+                           AQUÍ ADEMÁS ARREGLA UNA SEGUNDA COSA que en la
+                           rejilla no se notaba: la capa de DesperfectosCarta se
+                           posiciona con `absolute inset-0`, o sea contra el
+                           CONTENEDOR. Con `contain` la imagen no llenaba el
+                           contenedor, así que los piques y los arañazos caían
+                           unos píxeles desplazados respecto a la ilustración
+                           sobre la que dicen estar. Con `cover` las dos cajas
+                           son la misma y las marcas caen donde tienen que caer. */
+                        className={`absolute inset-0 h-full w-full cursor-zoom-in object-cover ${c.owned === false ? "grayscale opacity-70" : ""}`}
                       />
                     );
                     // Copia limpia: el árbol se queda EXACTAMENTE como estaba.
@@ -612,24 +633,12 @@ export default function CardDetailModal({
                     );
                   })()}
 
-                  {/* El rótulo sobre la propia carta: las marcas sin nada que
-                      las nombre se leen como una imagen rota. Aquí es sólo la
-                      etiqueta corta —aria-hidden— porque el porqué entero está
-                      escrito en la ficha de al lado, en texto de verdad. */}
-                  {estado && (
-                    <span
-                      aria-hidden="true"
-                      className="pointer-events-none absolute bottom-[4%] left-[5%] z-40 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
-                      style={{
-                        background: "var(--surface)",
-                        color: "var(--warn-ink)",
-                        border: "1px solid var(--border-strong)",
-                        boxShadow: "var(--shadow-sm)",
-                      }}
-                    >
-                      Estado: dañada
-                    </span>
-                  )}
+                  {/* AQUÍ ESTABA LA INSIGNIA "ESTADO: DAÑADA", y no vuelve.
+                      Las marcas se siguen pintando arriba: lo que se ha
+                      quitado es el rótulo que las nombraba, no el desgaste.
+                      El porqué entero está escrito unas líneas más abajo,
+                      donde estaba el panel "Estado de la copia"; léelo antes
+                      de reponer ninguna de las dos cosas. */}
                 </div>
               </div>
 
@@ -707,29 +716,81 @@ export default function CardDetailModal({
                   )}
                 </div>
 
-                {/* ESTADO DE LA COPIA.
-                    Va aquí arriba, pegado a la cabecera, porque es lo que
-                    explica las marcas que se acaban de ver en la ilustración y
-                    porque más abajo quedaría por debajo del pliegue en móvil.
-                    Es texto de verdad y no el `title` de la insignia: en la
-                    columna de la carta el rótulo va aria-hidden, así que ésta
-                    es la única forma de que un lector de pantalla se entere.
-                    Nombra las clases de defecto y ningún recuento; el porqué
-                    está sobre desgasteEnPalabras. */}
-                {estado && (
-                  <div className="surface-2 rounded-2xl px-3 py-2.5">
-                    <p className="text-[9px] uppercase tracking-wider ink-faint font-semibold">
-                      Estado de la copia
-                    </p>
-                    <p
-                      className="text-[12px] leading-snug mt-0.5 font-medium"
-                      style={{ color: "var(--warn-ink)" }}
-                    >
-                      Dañada. Se le ven{" "}
-                      {desgasteEnPalabras(estado.desperfectos).join(", ")}.
-                    </p>
-                  </div>
-                )}
+                {/* ==================================================== *
+                 * AQUÍ ESTABA EL PANEL "ESTADO DE LA COPIA". NO VUELVE.
+                 * ====================================================
+                 *
+                 * Decía «Dañada. Se le ven piques en los cantos, arañazos»
+                 * debajo del nombre, y arriba, sobre la ilustración, iba la
+                 * insignia corta "Estado: dañada" (también quitada). Las dos
+                 * se han ido a petición del dueño del juego: «cuando una
+                 * carta esté dañada no quiero que se me informe de ninguna
+                 * manera, sólo cuando esté graduada». LAS MARCAS PINTADAS SE
+                 * QUEDAN — se le preguntó expresamente y eligió que sí.
+                 *
+                 * PERO EL MOTIVO DE FONDO NO ES EL GUSTO, ES QUE EL TEXTO
+                 * MENTÍA, y por eso no puede volver ni siquiera "sólo si la
+                 * carta está graduada":
+                 *
+                 *   · `desperfectos`/`marcas` los pone estadoDeLaMejorCopia()
+                 *     (app/action.ts), que recorre las copias 1..N y devuelve
+                 *     el desgaste de la de NOTA MÁS ALTA.
+                 *   · `mejor_nota` sale de un LEFT JOIN con graded_cards en
+                 *     getFullCollection: el máximo de las copias GRADUADAS
+                 *     activas. Y se gradúan las copias LIBRES MÁS BAJAS, por
+                 *     índice y sin mirar la nota (app/action.ts, el bucle de
+                 *     graduarCartasAction).
+                 *
+                 * Los dos criterios son opuestos, así que casi nunca es la
+                 * misma copia.
+                 *
+                 * OJO AL EJEMPLO, PORQUE AQUÍ HUBO UNO MAL Y CONVIENE NO
+                 * REPETIRLO: el caso que se escribió primero era «notas 4, 9 y
+                 * 10, graduada la copia 1: la ficha decía GEM MINT 10 sobre los
+                 * piques de otra». ESE CASO NO EXISTE, por dos motivos
+                 * independientes. Si la única graduada es la del 4, la insignia
+                 * dice 4 y no 10, porque `mejor_nota` es el MÁXIMO de las
+                 * graduadas. Y si existiera una copia de nota 10, el desgaste
+                 * que se pinta sería el suyo — y un 10 no tiene ni un pique
+                 * (TOPE_PIQUES[10] = [0,0] en utils/graduacion.ts), así que
+                 * `estadoDeCopia` devuelve null y no se pinta nada. «GEM MINT
+                 * 10 sobre una carta con piques» no puede pasar.
+                 *
+                 * EL CASO REAL ES MÁS PEQUEÑO, PERO ES REAL: dos copias, notas
+                 * 3 y 6, graduada la copia 1 (la del 3). Se pinta el desgaste
+                 * del 6 —4 a 7 piques, sin manchas ni decoloración— y el panel
+                 * decía «Dañada. Se le ven piques en los cantos» junto a la
+                 * insignia de un 3, cuya copia real tiene de 10 a 16 piques,
+                 * manchas y decoloración. Desgaste de la copia A con la nota de
+                 * la copia B: la mentira es de grado, no de existencia, y sigue
+                 * siendo la peor clase — la que parece un dato.
+                 *
+                 * En general se cumple que `mejor_nota` <= la nota de la copia
+                 * cuyo desgaste se pinta, porque graduar no baja `quantity` y
+                 * el barrido cubre 1..min(quantity, 60). O sea que el error
+                 * siempre va en la misma dirección: la insignia enseña una nota
+                 * PEOR que la copia que se está viendo. (Hay dos desajustes
+                 * más: el barrido para a las 60 copias y el JOIN sólo cuenta
+                 * estado='activa'.)
+                 *
+                 * DÓNDE SÍ ESTÁN EMPAREJADOS, por si lo que buscas es enseñar
+                 * el desgaste de una copia graduada: en /graduacion. Allí
+                 * getVitrina() calcula la semilla y los desperfectos FILA A
+                 * FILA de graded_cards, con la nota de esa misma fila, y ya lo
+                 * dice en texto (components/graduacion/Revelacion.tsx). Ése es
+                 * el sitio, y ya está hecho: no hay nada que reponer aquí.
+                 *
+                 * CONSECUENCIA DE ACCESIBILIDAD, Y ES DELIBERADA: este panel
+                 * era la ÚNICA vía textual del estado en el detalle. La
+                 * insignia iba aria-hidden y la capa de DesperfectosCarta
+                 * también lo va. Sin él, las marcas quedan como DECORACIÓN
+                 * PURA y un lector de pantalla no se entera de nada.
+                 *
+                 * ESO ES LO PEDIDO. Si has llegado hasta aquí pensando que
+                 * falta un `aria-label` o un `title` que lo cuente: no falta,
+                 * se quitó a propósito, y reponerlo deshace el encargo y
+                 * vuelve a emparejar el desgaste de una copia con la nota de
+                 * otra. No lo pongas sin volver a preguntar al dueño. */}
 
                 {/* PRICES */}
                 <div className="grid grid-cols-2 gap-2">
@@ -855,12 +916,23 @@ export default function CardDetailModal({
       </AnimatePresence>
       </Portal>
 
-      {/* Sólo la carta, a pantalla completa */}
+      {/* Sólo la carta, a pantalla completa.
+
+          EL ESTADO VIAJA AL ZOOM. Hasta ahora CardZoom recibía una URL y nada
+          más, así que la carta ampliada salía IMPECABLE aunque la rejilla y
+          esta misma ficha la estuvieran enseñando con piques: ampliar una
+          carta dañada la "curaba". Es el mismo `estado` que se pinta arriba
+          (el de la mejor copia, calculado en el servidor), y va suelto en dos
+          props opcionales para que el otro sitio que abre el visor —el
+          catálogo de app/album/[setId], donde no hay copia y por tanto no hay
+          desgaste— no tenga que cambiar ni enterarse. */}
       <CardZoom
         open={zoomed && !!c}
         src={c?.images?.large}
         alt={c?.name}
         caption={c?.name}
+        desperfectos={estado?.desperfectos}
+        marcas={estado?.marcas}
         onClose={() => setZoomed(false)}
         onPrev={canPrev ? goPrev : undefined}
         onNext={canNext ? goNext : undefined}

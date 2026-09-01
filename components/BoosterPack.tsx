@@ -3,7 +3,17 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { touchActionFor } from "../hooks/useSwipe";
 import { formatNumber } from "../utils/format";
-import { arteDeSobre, ilustracionDeSobre, selloCss } from "../utils/sobreArte";
+import {
+  PREFIJO_ARTE_REMOTO,
+  arteDeSobre,
+  ilustracionDeSobre,
+  selloCss,
+} from "../utils/sobreArte";
+// El recorte de una foto cruda se calcula con la MISMA función que usan el cron
+// y el script para decidir qué fotos valen. Que la forma de la imagen y la
+// forma que le da el CSS salgan del mismo sitio es lo que impide que un día
+// dejen de cuadrar.
+import { tamanoDeFondo } from "../services/sobresEmparejar";
 
 export type FaseSobre = "sellado" | "rasgando" | "abriendo" | "cartas";
 
@@ -226,6 +236,26 @@ interface BoosterPackProps {
    * la está tocando otro agente.
    */
   setId?: string;
+  /**
+   * Cuántas fotos de sobre tiene esta expansión en `set_pack_art`, la tabla que
+   * llena el cron nocturno (services/sobresIngest.ts).
+   *
+   * ES LA PIEZA QUE VISTE A LA EXPANSIÓN RECIÉN SALIDA. El manifiesto estático
+   * (src/data/sobres.json) viaja en el bundle y sólo puede saber de las
+   * expansiones que existían al desplegar; el cron mete expansiones nuevas cada
+   * noche, así que la más nueva —la que más se abre— llegaba SIEMPRE sin foto
+   * hasta que una persona ejecutaba el script a mano. Con esto, deja de hacer
+   * falta esa persona.
+   *
+   * VIAJA COMO PROP Y NO COMO OTRO IMPORT porque un import se resuelve al
+   * compilar y esta tabla cambia después. Llega desde `getSetsFromDB`, que ya
+   * pasaba por app/page.tsx, y sólo hace falta un entero: las URLs las compone
+   * `ilustracionDeSobre` con `setId` y el número de variante.
+   *
+   * EL MANIFIESTO ESTÁTICO SIGUE MANDANDO cuando tiene entrada, así que las 130
+   * expansiones que ya tenían foto no cambian de comportamiento por esto.
+   */
+  variantesSobre?: number;
   /**
    * URL del símbolo del set para el sello impreso. También opcional y por la
    * misma razón: hoy se deriva del logo, pero eso SÓLO funciona cuando el logo
@@ -539,6 +569,39 @@ html[data-theme="dark"] .sobre__pliegues { opacity: .66; }
    expansión trae una foto más alta, los dos elementos la escalan igual
    y la costura sigue sin verse.
 
+   Y POR QUÉ EL ANCHO YA NO ES SIEMPRE 100%, que es lo único que ha
+   cambiado aquí. Las fotos de public/sobres vienen recortadas a 780/1426
+   EXACTOS por sharp, así que "100% auto" las encaja clavadas. Las que
+   trae el cron nocturno NO: llegan crudas de la wiki con la proporción
+   que tengan, y ahí sharp no está —no es dependencia de este proyecto y
+   meter un binario nativo en una función serverless por un recorte es
+   desproporcionado—. El recorte lo hace esta línea.
+
+   LA TENTACIÓN ERA PONER "cover" EN LAS DOS REGLAS Y ES UN ERROR, porque
+   "cover" se calcula POR ELEMENTO y estas dos cajas no tienen la misma
+   proporción: el cuerpo mide W x 1,8282·W y la tapa W x 0,0951·W. Con una
+   foto de r = alto/ancho, el cuerpo escala por ancho sólo si r >= 1,8282
+   y la tapa escala por ancho SIEMPRE. O sea que con cualquier foto más
+   chata que 1,8282 las dos mitades pintarían la misma imagen a DOS
+   TAMAÑOS DISTINTOS, y el desajuste cae justo en la línea de rasgado, que
+   es donde este comentario lleva quince líneas diciendo que la costura no
+   se puede ver. Medido: a r = 1,75 son un 4,5% de diferencia; a r = 1,65
+   —que el filtro de services/sobresEmparejar.ts ACEPTA— un 11%, con el
+   crimpado descuadrado a ojo. Y no es un caso raro: de las 481 candidatas
+   que hay hoy en la caché del script, 161 están por debajo de 1,8282 en
+   crudo.
+
+   Lo que sí vale es un ANCHO EXPLÍCITO, el mismo para las dos cajas —que
+   miden lo mismo de ancho—, con el que las dos reproducen el resultado
+   que "cover" daría en el cuerpo. Ese número lo calcula "tamanoDeFondo"
+   (services/sobresEmparejar.ts) y llega por --sb-arte-size.
+
+   EL VALOR POR DEFECTO ES LA REGLA DE SIEMPRE, literalmente la misma
+   cadena. Las 130 expansiones con foto estática NO EMITEN la variable
+   —el componente sólo la pone para las fotos crudas— así que su pintado
+   no cambia ni en una milésima. Y una foto remota que ya venga con
+   r >= 1,8282 tampoco la emite, porque en ese caso el cálculo da 100%.
+
    DÓNDE CORTA: en --tapa-h, que en modo foto vale CORTE_ARTE (la
    constante de arriba, con las mediciones). No hay una segunda constante
    de corte porque la línea de rasgado y el alto de la tapa SON la misma
@@ -550,7 +613,7 @@ html[data-theme="dark"] .sobre__pliegues { opacity: .66; }
      borde— la pinta desde el 0: un píxel basta para que se vea la
      costura entre las dos mitades. */
   border: 0;
-  background: var(--sb-arte) 50% 0 / 100% auto no-repeat;
+  background: var(--sb-arte) 50% 0 / var(--sb-arte-size, 100% auto) no-repeat;
   /* Se queda la sombra propia (la que sigue a la luz del sorteo) y se
      van las interiores: las costuras laterales del envoltorio ya están
      FOTOGRAFIADAS, y pintarlas encima las duplica. */
@@ -559,7 +622,7 @@ html[data-theme="dark"] .sobre__pliegues { opacity: .66; }
     var(--shadow-lg);
 }
 .sobre[data-arte="si"] .sobre__tapa-dedo {
-  background: var(--sb-arte) 50% 0 / 100% auto no-repeat;
+  background: var(--sb-arte) 50% 0 / var(--sb-arte-size, 100% auto) no-repeat;
   /* El .touch-target de la tira reserva 44px de alto para el dedo, y la
      tapa en modo foto mide bastante menos (5,2% del sobre: unos 21px).
      Sin esto el dedo sobresale por debajo de la línea de rasgado y se
@@ -658,6 +721,7 @@ export default function BoosterPack({
   logo,
   nombreSet,
   setId,
+  variantesSobre,
   simbolo,
   cartas,
   gestoRef,
@@ -699,8 +763,29 @@ export default function BoosterPack({
    *    mientras el sobre está en pantalla: la variante no puede cambiar a
    *    mitad del rasgado, que es lo mismo que se cuida en los otros dos
    *    useMemo de aquí arriba.
+   *
+   *    SIGUE SIENDO SÍNCRONO aunque ahora haya un segundo almacén en Postgres,
+   *    y ésa es la razón de que `variantesSobre` sea una PROP y no una
+   *    petición: el número llega con el resto de la expansión, en el mismo
+   *    viaje, así que en el primer render se sabe igual de bien que antes si
+   *    hay foto. Con un fetch aquí habría que pintar el sobre sin saberlo y
+   *    cambiarle la cara después, que es justo lo que esta pantalla no puede
+   *    hacer.
+   *
+   *    El id que se le pasa al manifiesto es el NORMALIZADO (`arte.id`) y el
+   *    que se le pasa al almacén remoto es el CRUDO (`setId`). No son
+   *    intercambiables y la función espera cada uno en su sitio; el porqué
+   *    largo está allí.
    */
-  const urlArte = useMemo(() => ilustracionDeSobre(arte.id, semilla), [arte.id, semilla]);
+  const urlArte = useMemo(
+    () =>
+      ilustracionDeSobre(
+        arte.id,
+        semilla,
+        setId && variantesSobre ? { setId, variantes: variantesSobre } : null,
+      ),
+    [arte.id, semilla, setId, variantesSobre],
+  );
 
   /*
    * 2. SI YA ESTÁ CARGADA. La foto no puede llegar a medias: se pinta en el
@@ -736,14 +821,59 @@ export default function BoosterPack({
   }, [fase]);
 
   const [arteEnUso, setArteEnUso] = useState<string | null>(null);
+  /*
+   * EL RECORTE DE LAS FOTOS CRUDAS, y por qué se mide aquí y no en el servidor.
+   *
+   * Las de public/sobres vienen recortadas a 780/1426 exactos por sharp. Las
+   * que trae el cron llegan con la proporción que tuviera la wiki, y hay que
+   * decirle a la hoja de estilos cuánto agrandarlas para que llenen el sobre
+   * sin dejar una banda transparente al pie (el porqué, y por qué no vale
+   * `cover`, está en el bloque CSS de arriba y en `tamanoDeFondo`).
+   *
+   * Ese cálculo necesita el ancho y el alto de LA FOTO CONCRETA que ha tocado.
+   * Podrían viajar desde el servidor, pero costaría llevar una lista por
+   * variante hasta aquí para un dato que el navegador YA TIENE: esta descarga
+   * es la misma que ya se hacía, y al terminar `naturalWidth`/`naturalHeight`
+   * están ahí. No hay ni una petición de más, ni un campo de más en la prop.
+   *
+   * Y NO SE TOCA A LAS ESTÁTICAS. Sólo se mide lo que viene de la ruta remota:
+   * las 130 de siempre no emiten la variable, caen en el valor por defecto
+   * ("100% auto", la regla literal de antes) y se pintan hasta la última
+   * milésima como se pintaban ayer.
+   */
+  const [tamanoArte, setTamanoArte] = useState<string | null>(null);
+  /*
+   * LA FOTO NO HA LLEGADO Y NO VA A LLEGAR.
+   *
+   * Existe sólo para volver a la FORMA del sobre dibujado, y hace falta desde
+   * que la foto puede venir de Postgres. Antes, `urlArte` no nulo significaba un
+   * .webp horneado en el despliegue —que no falla— así que dar por hecha la
+   * caja de la foto era gratis. Ahora significa una consulta a Postgres por
+   * imagen, y basta un 503 de la ruta para que no llegue.
+   *
+   * Y lo que quedaba entonces era raro de una forma difícil de diagnosticar: la
+   * caja mide `780/1426` porque la decide `urlArte`, pero DENTRO se pinta el
+   * sobre dibujado, que se hizo para `2.5/3.76`. Mismo alto y un 17,7% más
+   * estrecho que los sobres de al lado, para siempre y sin que nada lo explique.
+   *
+   * Se paga un reajuste de tamaño en el caso de fallo, que es el intercambio
+   * bueno: pasa una vez, al principio y con el sobre aún sellado, y deja el
+   * sobre con las proporciones de las otras ~170 expansiones sin foto.
+   */
+  const [urlFallida, setUrlFallida] = useState<string | null>(null);
   useEffect(() => {
     if (!urlArte) return;
     let vivo = true;
     const img = new Image();
-    // onerror NO hace nada, y es deliberado: sin foto se queda el sobre
-    // dibujado para siempre, que es exactamente lo que ven las otras ~170
-    // expansiones. Un 404 aquí no es un fallo que haya que contar.
-    img.onerror = () => {};
+    // No cuenta como avería —una expansión sin foto es el caso normal de 41 de
+    // las 171— pero sí decide la forma de la caja: ver el bloque de arriba.
+    //
+    // SE GUARDA LA URL QUE FALLÓ Y NO UN `true`, por el mismo motivo que
+    // `arteEnUso` guarda la que se puso: un booleano heredado seguiría diciendo
+    // "esta expansión no tiene foto" después de cambiar de expansión.
+    img.onerror = () => {
+      if (vivo) setUrlFallida(urlArte);
+    };
     img.onload = () => {
       // decode() descomprime el WebP (780x1426) FUERA del hilo de pintado. Sin
       // él la descompresión cae en el primer fotograma que use la imagen, que
@@ -751,7 +881,16 @@ export default function BoosterPack({
       // sigue adelante: los bytes ya están, que es lo que preguntaba el onload.
       const decodificando = typeof img.decode === "function" ? img.decode() : null;
       const poner = () => {
-        if (vivo && faseRef.current === "sellado") setArteEnUso(urlArte);
+        if (!vivo || faseRef.current !== "sellado") return;
+        // Los dos estados se ponen juntos, en el mismo evento, para que React
+        // los agrupe: la URL y su tamaño no pueden pintarse en dos fotogramas
+        // distintos o se vería un salto de escala.
+        setTamanoArte(
+          urlArte.startsWith(PREFIJO_ARTE_REMOTO)
+            ? tamanoDeFondo(img.naturalWidth, img.naturalHeight)
+            : null,
+        );
+        setArteEnUso(urlArte);
       };
       if (decodificando) decodificando.then(poner, poner);
       else poner();
@@ -763,6 +902,9 @@ export default function BoosterPack({
   }, [urlArte]);
 
   const conArte = urlArte !== null && arteEnUso === urlArte;
+  /* ¿Se reserva la caja de la foto? Se sabe SIN RED en el caso normal —`urlArte`
+   * sale del bundle— y sólo se retira si la descarga ha fallado de verdad. */
+  const cajaDeFoto = urlArte !== null && urlFallida !== urlArte;
 
   return (
     <div
@@ -828,6 +970,14 @@ export default function BoosterPack({
           ...(conArte && urlArte
             ? { "--sb-arte": `url("${urlArte}")`, "--tapa-h": CORTE_ARTE }
             : null),
+          /* Y el recorte, SÓLO cuando hace falta. `tamanoArte` es null para las
+             130 fotos estáticas (ya vienen a 780/1426) y también para una foto
+             remota que ya venga alargada, así que en la inmensa mayoría de los
+             casos esta variable no se emite y la regla CSS cae en su valor por
+             defecto, que es la cadena "100% auto" de siempre. Es un `X% auto`
+             con tres decimales: ni comillas ni paréntesis, nada que pueda
+             cerrar la declaración. */
+          ...(conArte && tamanoArte ? { "--sb-arte-size": tamanoArte } : null),
           // GEOMETRÍA. El alto es el mismo en los dos modos: 1,399·W, el alto
           // exacto de la carta, para que el sobre ocupe su misma ranura y la
           // carta salga del mismo hueco. Lo que cambia es el ancho, porque la
@@ -838,8 +988,13 @@ export default function BoosterPack({
           // tener y cuando la foto llega sólo cambia lo pintado. Con `conArte`
           // el sobre daría un salto de ancho a mitad de espera, delante de los
           // ojos de quien está a punto de tocarlo.
-          width: `calc(${anchoCarta} * ${urlArte ? ANCHO_ARTE : "0.93"})`,
-          aspectRatio: urlArte ? RATIO_ARTE : "2.5 / 3.76",
+          //
+          // La ÚNICA marcha atrás es que la descarga falle (`falloArte`): ahí no
+          // va a haber foto nunca y quedarse con su caja dejaría el sobre
+          // dibujado un 17,7% más estrecho que sus vecinos para siempre. Un
+          // reajuste al principio es mejor que una forma equivocada permanente.
+          width: `calc(${anchoCarta} * ${cajaDeFoto ? ANCHO_ARTE : "0.93"})`,
+          aspectRatio: cajaDeFoto ? RATIO_ARTE : "2.5 / 3.76",
           // El arrastre vale en TODO el sobre, no sólo en la tira: apuntar a
           // una franja de 48px con el dedo es puntería fina.
           touchAction: touchActionFor("x"),

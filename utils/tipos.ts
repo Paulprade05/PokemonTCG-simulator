@@ -130,6 +130,26 @@ export interface Expansion {
    * eso se pregunta por `=== false` y no por `!tieneEs`.
    */
   tieneEs?: boolean;
+  /**
+   * Cuántas fotos de sobre tiene esta expansión en `set_pack_art`, la tabla que
+   * llena el cron nocturno para las expansiones que salieron después del último
+   * despliegue.
+   *
+   * OPCIONAL, y las dos formas de que falte significan lo mismo —"no hay foto
+   * en Postgres"— que es justo lo que hace que no haya nada que decidir:
+   *   · el respaldo local (`loadLocalSets`) no lo trae, igual que `cardsCount`;
+   *   · una base sin la migración /migrate-sobres tampoco.
+   * En los dos casos queda `undefined`, el componente cae al manifiesto
+   * estático y todo se ve como antes de que esto existiera.
+   *
+   * ES UN ENTERO Y NO UNA LISTA DE RUTAS a propósito. Las URLs se componen en
+   * utils/sobreArte.ts con el id de la expansión y el número de variante, y
+   * mandar un número evita el único problema serio que tenía esto: el id que
+   * viaja aquí es el CRUDO de `sets.id` ("me2pt5") y el que indexa el
+   * manifiesto es el NORMALIZADO ("me2.5"). Un entero no tiene espacio de
+   * claves en el que equivocarse.
+   */
+  variantesSobre?: number;
   releaseDate?: string | null;
   release_date?: string | null;
   printed_total?: number;

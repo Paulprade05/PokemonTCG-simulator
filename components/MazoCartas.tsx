@@ -4,7 +4,6 @@ import { motion } from "framer-motion";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type MutableRefObject, type RefObject } from "react";
 import PokemonCard from "./PokemonCard";
 import DesperfectosCarta, {
-  desgasteEnPalabras,
   estadoDeCopia,
   estiloDescentrado,
 } from "./DesperfectosCarta";
@@ -345,7 +344,6 @@ export default function MazoCartas({
   const marcoRef = useRef<HTMLDivElement>(null);
   const ranurasRef = useRef<(HTMLDivElement | null)[]>([]);
   /** Región viva que dicta el estado de la copia que se está mirando. */
-  const avisoRef = useRef<HTMLParagraphElement>(null);
   /** Ancho de la carta frontal: se lee una vez por gesto, nunca por fotograma. */
   const anchoRef = useRef(0);
   /** Selección continua bajo el dedo. Se lleva la cuenta pero NO se pinta: sólo
@@ -513,26 +511,33 @@ export default function MazoCartas({
   /**
    * EL DESGASTE, DICHO. Sin esto, una copia machacada sólo existe para quien la
    * ve: el rótulo de la esquina es una imagen más dentro de la carta.
+  /**
+   * AQUÍ NO SE DICE NADA DEL DESGASTE, Y ES DELIBERADO.
    *
-   * Se escribe a mano sobre el nodo en vez de pintarlo como texto de React por
-   * dos motivos que se refuerzan. El primero es el presupuesto: un `useState`
-   * aquí añadiría un render entero de las diez ranuras JUSTO en el fotograma
-   * del relevo, que es el que tiene que salir limpio. El segundo es que una
-   * región viva sólo anuncia los CAMBIOS de su contenido, así que escribirla
-   * después del montaje es además lo que garantiza que se oiga.
+   * Había una región viva que anunciaba «Estado de la copia: dañada. Se le ven
+   * piques en los cantos, arañazos» en cada relevo del mazo, y un rótulo
+   * «ESTADO: DAÑADA» sobre la ilustración. Las dos se han quitado porque el
+   * dueño del juego lo pidió así, con estas palabras: «cuando una carta este
+   * dañada no quiero que se me informe de ninguna manera solo cuando este
+   * graduada».
    *
-   * Es hermana de las ranuras y no hija de ninguna: las nueve que no se ven
-   * llevan aria-hidden, y dentro de una de ellas el aviso quedaría mudo en
-   * cuanto pasaras de carta.
+   * SE LE PREGUNTÓ SI ERAN SÓLO LOS RÓTULOS O TAMBIÉN LAS MARCAS PINTADAS, y
+   * eligió expresamente: sólo los rótulos. Por eso las marcas siguen
+   * pintándose aquí abajo, con DesperfectosCarta, exactamente igual que antes.
+   * Se ve el desgaste; no se nombra.
+   *
+   * LA CONSECUENCIA DE ACCESIBILIDAD ESTÁ ACEPTADA: las marcas quedan como
+   * decoración pura y quien navega con lector de pantalla no se entera de que
+   * la copia está dañada. Eso NO es un descuido que haya que arreglar
+   * reponiendo un aria-label, un title o una región viva: sería deshacer lo
+   * que se pidió. Lo mismo está escrito en components/CardDetailModal.tsx y en
+   * components/vitrina/FundaCarta.tsx, que tenían las otras cuatro salidas del
+   * mismo dato.
+   *
+   * DÓNDE SÍ SE DICE: en la vitrina de graduadas, que es lo que el dueño pidió
+   * con «solo cuando este graduada». Allí la nota está pagada y enseñada, así
+   * que describir el desgaste no adelanta nada.
    */
-  useEffect(() => {
-    const el = avisoRef.current;
-    if (!el) return;
-    const e = estados[indice];
-    el.textContent = e
-      ? `Estado de la copia: dañada. Se le ven ${desgasteEnPalabras(e.desperfectos).join(", ")}.`
-      : "";
-  }, [indice, estados]);
 
   /**
    * La barra dinámica de Safari mueve --app-height y con ella CARD_WIDTH: sin
@@ -840,7 +845,6 @@ export default function MazoCartas({
       {/* AVISO DE ESTADO. Va fuera de las ranuras (ver el efecto que lo
           escribe) y nace vacío: su contenido lo pone el efecto, que es lo que
           hace que la región viva de verdad anuncie algo. */}
-      <p ref={avisoRef} className="sr-only" aria-live="polite" />
 
       {cartas.map((carta, j) => {
         // En una constante y no leído tres veces del array: así el compilador
@@ -926,35 +930,9 @@ export default function MazoCartas({
             />
           )}
 
-          {/* EL RÓTULO. Sin él las marcas se leen como un fallo de pintado, no
-              como una copia en mal estado, y es la primera vez que el jugador
-              las ve. Dice "dañada" y nada más: el detalle lo dicta la región
-              viva de arriba, y ampliarlo aquí con recuentos enseñaría más de lo
-              que el invariante de la economía protege (ver desgasteEnPalabras).
-
-              Va DENTRO de la ranura porque es una propiedad de esta copia y no
-              de la posición: al pasar de carta tiene que irse con ella, al
-              revés que la insignia de "Nueva", que es de la posición y por eso
-              vive fuera del mazo (app/page.tsx).
-
-              aria-hidden porque ya lo dice la región viva; duplicarlo haría que
-              el lector recitara el estado dos veces por carta. Abajo a la
-              izquierda: es el único rincón que no se pelea ni con "Nueva"
-              (arriba a la izquierda) ni con "Carta garantizada" (arriba). */}
-          {estado && (
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute bottom-[4%] left-[5%] z-40 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
-              style={{
-                background: "var(--surface)",
-                color: "var(--warn-ink)",
-                border: "1px solid var(--border-strong)",
-                boxShadow: "var(--shadow-sm)",
-              }}
-            >
-              Estado: dañada
-            </span>
-          )}
+          {/* Aquí iba el rótulo «ESTADO: DAÑADA». Quitado a petición del dueño;
+              el porqué entero está arriba, donde estaba la región viva. Las
+              marcas de DesperfectosCarta se siguen pintando. */}
         </div>
         );
       })}

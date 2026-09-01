@@ -582,13 +582,83 @@ const ILUSTRACIONES: Record<string, Ilustracion> = (() => {
  *
  * La ruta se compone con una carpeta que ya pasó ID_SANO y con un entero, así
  * que no hay forma de que traiga un carácter que se coma el `url()`.
+ *
+ * ====================================================================
+ * EL SEGUNDO ALMACÉN: LAS FOTOS QUE TRAE EL CRON
+ * ====================================================================
+ *
+ * `remoto` es el tercer parámetro y es OPCIONAL. Describe lo que la expansión
+ * tiene en `set_pack_art`, la tabla que llena el cron nocturno
+ * (services/sobresIngest.ts) para las expansiones que salieron DESPUÉS del
+ * último despliegue — que son justo las que más se abren y las que antes se
+ * quedaban siempre con el sobre dibujado.
+ *
+ * EL MANIFIESTO ESTÁTICO MANDA SIEMPRE QUE TENGA ENTRADA, y eso no es una
+ * preferencia: es la garantía de que las 130 expansiones que ya tienen foto no
+ * cambian de comportamiento por nada de esto. Se mira primero, y si contesta,
+ * aquí se acabó. El almacén de Postgres sólo se consulta cuando el manifiesto
+ * dice que no hay nada, y por construcción el cron ni siquiera baja fotos de
+ * las que ya están en él.
+ *
+ * LOS DOS ESPACIOS DE IDS, OTRA VEZ, y aquí es donde se cruzan. `id` es el
+ * NORMALIZADO ("me2.5"), porque con él se busca en el manifiesto y es lo único
+ * que funciona en los dos idiomas. `remoto.setId` es el CRUDO ("me2pt5"),
+ * porque es la clave de `sets.id`, la de la tabla y la que va en la URL. No se
+ * derivan el uno del otro y no se pueden confundir: el que viaja como número
+ * es `remoto.variantes`, un entero, que no tiene problema de claves.
+ *
+ * LA URL NO CUELGA DE /sobres/, a propósito. Ahí viven los ficheros estáticos
+ * de public/ y una ruta con el mismo prefijo dejaría en el aire quién gana
+ * —el fichero o la función— según cómo despliegue Vercel ese día. /api/arte-sobre
+ * no se parece a nada de public/ y no hay ambigüedad posible.
  */
-export function ilustracionDeSobre(id: string | null | undefined, semilla: number): string | null {
-  if (!id) return null;
-  const entrada = ILUSTRACIONES[id];
-  if (!entrada) return null;
-  const variante = hashDeClave(`${entrada.carpeta}#${semilla}`) % entrada.variantes;
-  return `/sobres/${entrada.carpeta}/${variante + 1}.webp`;
+export function ilustracionDeSobre(
+  id: string | null | undefined,
+  semilla: number,
+  remoto?: { setId: string; variantes: number } | null,
+): string | null {
+  if (id) {
+    const entrada = ILUSTRACIONES[id];
+    if (entrada) {
+      const variante = hashDeClave(`${entrada.carpeta}#${semilla}`) % entrada.variantes;
+      return `/sobres/${entrada.carpeta}/${variante + 1}.webp`;
+    }
+  }
+
+  if (!remoto) return null;
+  const variantes = Math.floor(remoto.variantes);
+  // El id crudo pasa por ID_SANO igual que la carpeta del manifiesto y por lo
+  // mismo: esto acaba dentro de un `url()` en un atributo style, así que deja
+  // de ser un dato y pasa a ser CSS. `sets.id` viene de una API de terceros.
+  if (!(variantes > 0) || !ID_SANO.test(remoto.setId)) return null;
+  const variante = hashDeClave(`${remoto.setId}#${semilla}`) % variantes;
+  return `/api/arte-sobre/${remoto.setId}/${variante + 1}`;
+}
+
+/**
+ * Prefijo de las fotos que sirve la ruta de Postgres.
+ *
+ * Existe para que quien pinta pueda distinguir de un vistazo una foto RECORTADA
+ * (las de public/sobres, que pasaron por sharp y miden 780/1426 exactos) de una
+ * CRUDA (las del cron, que tienen la proporción que la wiki tuviera). Sólo las
+ * segundas necesitan que se les calcule el recorte en CSS, y hacerlo con las
+ * primeras cambiaría —por milésimas, pero cambiaría— algo que hoy funciona.
+ */
+export const PREFIJO_ARTE_REMOTO = "/api/arte-sobre/";
+
+/**
+ * ¿Tiene esta expansión foto en public/sobres?
+ *
+ * La usa el cron para NO PREGUNTARLE A LA WIKI por las 130 que ya la tienen,
+ * que es el filtro que más peticiones ahorra de todos. Vive aquí y no allí
+ * porque la comparación es por id NORMALIZADO y la tabla normalizada se
+ * construye en este fichero: preguntarlo desde fuera con el id crudo es
+ * exactamente el fallo que documenta `ILUSTRACIONES` —funciona de chiripa con
+ * "me5" y falla en silencio con "me2pt5"—.
+ */
+export function tieneIlustracionEstatica(idBruto: string | null | undefined): boolean {
+  if (!idBruto) return false;
+  return ILUSTRACIONES[normalizarId(idBruto)] !== undefined;
 }
 
 /**

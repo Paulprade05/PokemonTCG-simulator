@@ -16,7 +16,7 @@ import {
 import { getCardsFromSet } from "../services/pokemon";
 // La ilustración real del sobre, para precargarla en cuanto se elige la
 // expansión (ver el efecto de más abajo).
-import { ilustracionDeSobre } from "../utils/sobreArte";
+import { ilustracionDeSobre, normalizarId } from "../utils/sobreArte";
 import {
   openStandardPack,
   openPremiumPack,
@@ -393,6 +393,20 @@ export default function Home() {
    * La semilla de la variante no importa aquí: se precargan TODAS las variantes
    * de la expansión, que son cuatro y pesan medio mega entre las cuatro. Así da
    * igual qué número saque el sobre cuando se compre.
+   *
+   * EL ID VA NORMALIZADO, Y ANTES NO. Este bucle le pasaba `currentSetObj.id`
+   * en crudo a una función que indexa el manifiesto por el id NORMALIZADO
+   * (`normalizarId`: "sv3pt5" y "sv03.5" son la misma expansión y las dos caen
+   * en "sv3.5"). El resultado era que ocho de las expansiones con foto no se
+   * precargaban NUNCA —me2pt5, rsv10pt5, sv3pt5, sv4pt5, sv6pt5, sv8pt5,
+   * swsh12pt5 y zsv10pt5, o sea Zenit Supremo y Evoluciones Prismáticas entre
+   * ellas—. No se veía: BoosterPack sí normaliza y acababa enseñando la foto,
+   * sólo que descargándola tarde, que es exactamente lo que estas veinte líneas
+   * de comentario existen para evitar. Es el mismo fallo de dos espacios de ids
+   * que documenta utils/sobreArte.ts, y aquí estaba en silencio.
+   *
+   * El almacén remoto, en cambio, quiere el id CRUDO: es la clave de `sets.id`
+   * y la que compone la URL. Cada uno en su sitio.
    */
   useEffect(() => {
     const id = currentSetObj?.id;
@@ -405,15 +419,17 @@ export default function Home() {
     }).connection;
     if (conexion?.saveData) return;
 
+    const variantes = currentSetObj?.variantesSobre;
+    const remoto = variantes ? { setId: id, variantes } : null;
     const vistas = new Set<string>();
     for (let variante = 0; variante < 8; variante++) {
-      const url = ilustracionDeSobre(id, variante);
+      const url = ilustracionDeSobre(normalizarId(id), variante, remoto);
       if (!url || vistas.has(url)) continue;
       vistas.add(url);
       const img = new Image();
       img.src = url;
     }
-  }, [currentSetObj?.id]);
+  }, [currentSetObj?.id, currentSetObj?.variantesSobre]);
 
   /**
    * Catálogo del set indexado por id. El sobre llega del servidor con lo justo
@@ -2072,6 +2088,18 @@ export default function Home() {
                  * nadie lo mira dos veces. Aquí el id es el bueno y lo tenemos
                  * delante, así que se pasa. */
                 setId={currentSetObj?.id}
+                /* CUÁNTAS FOTOS TIENE ESTA EXPANSIÓN EN POSTGRES.
+                 *
+                 * Es lo que viste a la expansión recién salida. El manifiesto
+                 * estático se hornea en el build y el cron mete expansiones
+                 * cada noche, así que la más nueva —la que más se abre— llegaba
+                 * siempre sin foto hasta que una persona ejecutaba el script a
+                 * mano. Viene de `getSetsFromDB` y es sólo un entero: las URLs
+                 * las compone `ilustracionDeSobre` con el id de arriba.
+                 *
+                 * Si falta (respaldo local, o migración sin ejecutar) queda
+                 * undefined y todo se ve como antes. */
+                variantesSobre={currentSetObj?.variantesSobre}
                 cartas={cartasDelSobre}
                 gestoRef={tearSwipeRef}
                 semilla={semillaSobre}

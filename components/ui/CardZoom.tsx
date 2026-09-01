@@ -5,6 +5,8 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useHaptics } from "../../hooks/useHaptics";
 import { useSwipe } from "../../hooks/useSwipe";
+import DesperfectosCarta, { estiloDescentrado } from "../DesperfectosCarta";
+import type { Desperfectos, MarcasDeCarta } from "../../utils/graduacion";
 
 interface CardZoomProps {
   open: boolean;
@@ -15,6 +17,26 @@ interface CardZoomProps {
   onPrev?: () => void;
   onNext?: () => void;
   caption?: string;
+  /* ==================================================================== *
+   * EL DESGASTE DE LA COPIA — OPCIONAL A PROPÓSITO
+   * ====================================================================
+   *
+   * El visor nació recibiendo sólo una URL, y por eso la carta ampliada
+   * salía siempre impecable aunque la rejilla la enseñara con piques:
+   * ampliar una carta dañada la curaba. Ahora quien la abre CON UNA COPIA
+   * del jugador (components/CardDetailModal.tsx) le pasa aquí el mismo
+   * estado que pinta en pequeño.
+   *
+   * OPCIONALES Y NO OBLIGATORIAS porque el otro sitio que abre el visor,
+   * app/album/[setId]/page.tsx, enseña el CATÁLOGO de una expansión: ahí no
+   * hay copia, luego no hay desgaste que pintar, y no tiene que cambiar ni
+   * enterarse de que estas props existen.
+   *
+   * Vienen YA CALCULADAS DEL SERVIDOR y no se derivan aquí de una semilla:
+   * la semilla lleva dentro el secreto de las notas. El porqué entero está
+   * en components/DesperfectosCarta.tsx. */
+  desperfectos?: Desperfectos;
+  marcas?: MarcasDeCarta;
 }
 
 /** Ampliación máxima del pellizco. */
@@ -46,15 +68,83 @@ export default function CardZoom({
   onPrev,
   onNext,
   caption,
+  desperfectos,
+  marcas,
 }: CardZoomProps) {
   const haptic = useHaptics();
   const surfaceRef = useRef<HTMLDivElement>(null);
   /** Capa de escala + desplazamiento del pellizco (envuelve a la inclinación). */
   const zoomRef = useRef<HTMLDivElement>(null);
   const tiltRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const [mounted, setMounted] = useState(false);
   /** true mientras la carta está ampliada: cambia gestos y rótulo. */
   const [zoomActive, setZoomActive] = useState(false);
+  /**
+   * El estado de la copia como un solo objeto, o nada.
+   *
+   * Se juntan aquí las dos props para no ir arrastrando la pareja por todo el
+   * render: o están las dos o no hay estado, igual que en
+   * `estadoDeCopia` (components/DesperfectosCarta.tsx). Un `const` además
+   * conserva el estrechado de tipos dentro del closure de abajo, cosa que dos
+   * props sueltas no harían.
+   */
+  const estado = desperfectos && marcas ? { desperfectos, marcas } : null;
+  const hayDesgaste = estado !== null;
+  /** Medida real del <img> pintado. El porqué, en el bloque de abajo. */
+  const [caja, setCaja] = useState<{ w: number; h: number } | null>(null);
+
+  /* ==================================================================== *
+   * POR QUÉ SE MIDE LA IMAGEN EN VEZ DE DEJAR QUE EL CSS LO RESUELVA
+   * ====================================================================
+   *
+   * DesperfectosCarta se coloca con `absolute inset-0`, así que necesita un
+   * contenedor que mida EXACTAMENTE la caja del <img>. Y aquí el <img> no
+   * ocupa el hueco que le dan: lleva `width:auto` con `max-w-[92vw]` y un
+   * `max-height` calculado, y de esas dos restricciones manda una u otra
+   * según la pantalla. En vertical de iPhone corta el ancho y la caja llena
+   * el hueco; en escritorio y en móvil apaisado corta el ALTO, y entonces la
+   * imagen pintada es MÁS ESTRECHA que el div que la contiene.
+   *
+   * Un marco de bloque normal se estiraría a ese hueco y las marcas
+   * quedarían desplazadas hacia la izquierda: piques flotando fuera del
+   * canto. `width: fit-content` lo arregla sólo si el motor traslada la
+   * restricción de alto al eje del ancho a través de la proporción, que es
+   * justo la parte del cálculo intrínseco donde los motores han ido cada uno
+   * a su ritmo. Y el fallo saldría en escritorio, que es donde nadie lo
+   * probaría.
+   *
+   * Medir el elemento quita la ambigüedad: el ResizeObserver da el ancho y
+   * el alto pintados y se le clavan al marco. No hay bucle posible porque
+   * las dos restricciones del <img> son de VIEWPORT (92vw y --app-height) y
+   * ninguna depende del ancho del padre: cambiar el marco no cambia la
+   * imagen. `w-fit` se queda como valor de partida para el primer pintado,
+   * antes de que el observador haya medido nada.
+   *
+   * Sólo se monta con desgaste que pintar: la carta limpia —que es el caso
+   * normal— no paga ni el observador ni los dos divs de más.
+   */
+  useEffect(() => {
+    const img = imgRef.current;
+    if (!open || !hayDesgaste || !img) return;
+    const medir = () => {
+      const w = img.clientWidth;
+      const h = img.clientHeight;
+      // La imagen aún sin cargar mide 0: sin medida no se toca el marco, y
+      // el observador volverá a llamar en cuanto tenga tamaño.
+      if (w <= 0 || h <= 0) return;
+      setCaja((prev) => (prev && prev.w === w && prev.h === h ? prev : { w, h }));
+    };
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(img);
+    return () => ro.disconnect();
+    // `src` NO va aquí a propósito: pasar de carta cambia el atributo del
+    // MISMO <img>, el observador sigue enganchado a ese elemento y vuelve a
+    // medir solo cuando la nueva imagen cambia la caja. Mientras la nueva
+    // carga, el navegador mantiene la caja anterior, que es justo la que se
+    // está viendo. Volver a montar el observador no adelantaría nada.
+  }, [open, hayDesgaste]);
 
   // Estado del pellizco fuera de React: se escribe en cada movimiento.
   const scaleRef = useRef(1);
@@ -144,6 +234,10 @@ export default function CardZoom({
   );
 
   // Cerrar o cambiar de carta devuelve el visor a su estado natural.
+  // `caja` NO se borra aquí a propósito: es una medida de la caja que se está
+  // viendo, no estado del gesto, y ponerla a null dejaría el marco de las
+  // marcas estirado al hueco durante el pintado que va desde el cambio de
+  // carta hasta que el observador vuelve a medir. Se corrige sola.
   useEffect(() => {
     scaleRef.current = 1;
     offsetRef.current = { x: 0, y: 0 };
@@ -409,24 +503,84 @@ export default function CardZoom({
           >
             <div ref={zoomRef}>
               <div ref={tiltRef}>
-                {src && (
-                  <img
-                    src={src}
-                    alt={alt ?? ""}
-                    draggable={false}
-                    // Sombra con box-shadow y no con drop-shadow: un filter
-                    // rasteriza la imagen y aquí es justo la que debe verse
-                    // nítida.
-                    // Contra el viewport medido, no contra vh: se descuentan
-                    // las safe areas y el hueco del pie con la ayuda del gesto.
-                    style={{
-                      boxShadow: "0 30px 60px rgba(0,0,0,0.8)",
-                      maxHeight:
-                        "calc(var(--app-height) - var(--sat) - var(--sab) - 132px)",
-                    }}
-                    className="w-auto max-w-[92vw] rounded-2xl object-contain"
-                  />
-                )}
+                {src && (() => {
+                  const imagen = (
+                    <img
+                      ref={imgRef}
+                      src={src}
+                      alt={alt ?? ""}
+                      draggable={false}
+                      // Sombra con box-shadow y no con drop-shadow: un filter
+                      // rasteriza la imagen y aquí es justo la que debe verse
+                      // nítida. Con marcas la sombra sube al marco: aquí
+                      // dentro quedaría comida por su overflow-hidden.
+                      // Contra el viewport medido, no contra vh: se descuentan
+                      // las safe areas y el hueco del pie con la ayuda del gesto.
+                      style={{
+                        boxShadow: hayDesgaste
+                          ? undefined
+                          : "0 30px 60px rgba(0,0,0,0.8)",
+                        maxHeight:
+                          "calc(var(--app-height) - var(--sat) - var(--sab) - 132px)",
+                      }}
+                      // `block` SÓLO en la rama con marcas: un <img> en línea
+                      // arrastra el hueco del descendente bajo la línea base y
+                      // el marco mediría unos píxeles más que la imagen, que es
+                      // exactamente el descuadre que se está evitando. En la
+                      // rama limpia el elemento se queda como estaba.
+                      className={`w-auto max-w-[92vw] rounded-2xl object-contain${
+                        hayDesgaste ? " block" : ""
+                      }`}
+                    />
+                  );
+                  // Copia limpia —el caso normal—: el árbol se queda EXACTAMENTE
+                  // como estaba. La rama de abajo mete dos divs entre el
+                  // balanceo y la imagen y no hay razón para que los pague
+                  // quien no tiene nada que enseñar.
+                  if (!estado) return imagen;
+                  return (
+                    /* Marco + tira, el mismo montaje que
+                       components/CardDetailModal.tsx y
+                       components/graduacion/CartaConDesperfectos.tsx: el
+                       descentrado de una carta mal cortada no se pinta, se
+                       MUEVE la ilustración dentro del marco y el marco
+                       recorta; por el lado del que se retira asoma el cartón,
+                       que es el fondo. El marco es además el `relative` +
+                       `overflow-hidden` que DesperfectosCarta exige.
+
+                       `estiloDescentrado` es un `translate` y va en su PROPIO
+                       div: encima ya hay dos transforms escritos a mano —el
+                       scale del pellizco en zoomRef y el perspective del
+                       balanceo en tiltRef— y un tercero en el mismo elemento
+                       pisaría a uno de ellos. Nunca `scale` aquí: ver la
+                       cabecera de components/DesperfectosCarta.tsx.
+
+                       El radio es `rounded-2xl`, el mismo del <img>, para que
+                       el recorte del descentrado muerda la misma esquina que
+                       la imagen y no una ligeramente distinta.
+
+                       Ancho y alto son la MEDIDA REAL del <img> (ver el bloque
+                       del ResizeObserver); `w-fit` es sólo el valor de partida
+                       del primer pintado. */
+                    <div
+                      className="relative w-fit overflow-hidden rounded-2xl"
+                      style={{
+                        background: "var(--surface-2)",
+                        boxShadow: "0 30px 60px rgba(0,0,0,0.8)",
+                        width: caja?.w,
+                        height: caja?.h,
+                      }}
+                    >
+                      <div style={estiloDescentrado(estado.desperfectos)}>
+                        {imagen}
+                      </div>
+                      <DesperfectosCarta
+                        desperfectos={estado.desperfectos}
+                        marcas={estado.marcas}
+                      />
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           </div>

@@ -2,11 +2,9 @@
 
 import PokemonCard from "../PokemonCard";
 import DesperfectosCarta, {
-  desgasteEnPalabras,
   estadoDeCopia,
   estiloDescentrado,
 } from "../DesperfectosCarta";
-import type { Desperfectos, MarcasDeCarta } from "../../utils/graduacion";
 import type { CartaEnColeccion } from "../../utils/tipos";
 
 /**
@@ -222,11 +220,37 @@ export default function FundaCarta({
    */
   const huerfana = copias <= 0;
   const nombre = carta.name || "carta sin datos";
-  /* La copia que hay EN ESTA FUNDA se ve como está: si salió machacada del
-   * sobre, en el archivador sigue machacada. Sólo llega en el ~5% de las
-   * copias; en el resto es null y la funda se pinta exactamente como siempre. */
+  /* El desgaste que se pinta aquí NO ES NECESARIAMENTE EL DE ESTA COPIA, y hay
+   * que saberlo antes de escribir nada sobre él.
+   *
+   * `binder_slots` guarda hoja, ranura y card_id: NO guarda qué copia se puso.
+   * Y `getArchivador` rellena el estado con estadoDeLaMejorCopia(userId, id,
+   * copias), que devuelve el desgaste de la MEJOR de las copias 1..N. Así que
+   * con tres Pikachu y el primero en la funda, lo que se ve son los piques del
+   * tercero.
+   *
+   * Aquí decía lo contrario —«la copia que hay EN ESTA FUNDA se ve como está:
+   * si salió machacada del sobre, en el archivador sigue machacada»— y era
+   * falso. Se corrige porque ese comentario era justamente el que invitaba a
+   * escribir texto afirmando cosas de "esta copia": había un `title` y un
+   * sufijo en el `aria-label` que decían «Copia dañada: se le ven piques en los
+   * cantos», y describían una copia que la aplicación no sabe identificar.
+   *
+   * LOS DOS SE HAN QUITADO, y no sólo por esto: el dueño del juego pidió que no
+   * se le informe por escrito del desgaste salvo en las cartas graduadas. Se le
+   * preguntó si eran sólo los rótulos o también las marcas pintadas y eligió
+   * expresamente sólo los rótulos, así que la capa de DesperfectosCarta sigue
+   * ahí y el desgaste SE VE. Simplemente ya no se nombra, que además es lo
+   * único honesto mientras no se sepa de qué copia es.
+   *
+   * SI ALGÚN DÍA SE QUIERE QUE LA FUNDA ENSEÑE SU COPIA DE VERDAD, el arreglo
+   * no es volver a poner el texto: es guardar el índice de copia en
+   * `binder_slots` al colocarla. Hasta entonces, esto es una aproximación y hay
+   * que tratarla como tal.
+   *
+   * Sólo llega en las copias que de verdad se ven mal; en el resto es null y la
+   * funda se pinta exactamente como siempre. */
   const estado = estadoDeCopia(carta);
-  const desgaste = estado ? desgasteEnPalabras(estado.desperfectos).join(", ") : "";
 
   /* El realce va en un div interior y no en el <button> para que el transform
    * no arrastre el anillo de foco fuera de sitio. Sólo translate: ver la
@@ -279,7 +303,6 @@ export default function FundaCarta({
     <div
       className="group/funda relative rounded-[6%] p-[4%]"
       style={FUNDA}
-      title={estado ? `Copia dañada: se le ven ${desgaste}` : undefined}
     >
       {onTocar ? (
         <button
@@ -298,7 +321,6 @@ export default function FundaCarta({
               : copias > 1
                 ? `, ${copias} copias`
                 : "") +
-            (estado ? `, dañada: se le ven ${desgaste}` : "") +
             ". Abrir opciones"
           }
           className="block w-full cursor-pointer rounded-[4.5%] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
