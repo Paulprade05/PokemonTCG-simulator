@@ -1,7 +1,11 @@
 "use client";
 
 import PokemonCard from "../PokemonCard";
-import DesperfectosCarta, { estiloDescentrado } from "../DesperfectosCarta";
+import DesperfectosCarta, {
+  desgasteEnPalabras,
+  estadoDeCopia,
+  estiloDescentrado,
+} from "../DesperfectosCarta";
 import type { Desperfectos, MarcasDeCarta } from "../../utils/graduacion";
 import type { CartaEnColeccion } from "../../utils/tipos";
 
@@ -83,23 +87,6 @@ interface FundaCartaProps {
  * utils/tipos.ts y por eso se comprueba la forma antes de pintar. Una funda que
  * revienta se lleva por delante la hoja entera.
  */
-function estadoDeCopia(carta: {
-  desperfectos?: unknown;
-  marcas?: unknown;
-}): { desperfectos: Desperfectos; marcas: MarcasDeCarta } | null {
-  const desperfectos = carta?.desperfectos as Desperfectos | undefined;
-  const marcas = carta?.marcas as MarcasDeCarta | undefined;
-  if (!desperfectos || !marcas) return null;
-  if (
-    !Array.isArray(marcas.piques) ||
-    !Array.isArray(marcas.aranazos) ||
-    !Array.isArray(marcas.manchas)
-  ) {
-    return null;
-  }
-  if (desgasteEnPalabras(desperfectos).length === 0) return null;
-  return { desperfectos, marcas };
-}
 
 /**
  * El desgaste en palabras. QUÉ HAY, NUNCA CUÁNTO.
@@ -111,16 +98,6 @@ function estadoDeCopia(carta: {
  * así que escribir "6 piques" enseñaría más de lo que el invariante protege.
  * El 1,5 % del descentrado es su mismo umbral para llamar "torcida" a una copia.
  */
-function desgasteEnPalabras(d: Desperfectos): string[] {
-  const partes: string[] = [];
-  if (d.piques > 0) partes.push("piques en los cantos");
-  if (d.aranazos > 0) partes.push("arañazos");
-  if (d.manchas > 0) partes.push("manchas");
-  if (d.palidez > 0) partes.push("decoloración por el sol");
-  const desvio = Math.abs(d.descentrado?.x ?? 0) + Math.abs(d.descentrado?.y ?? 0);
-  if (desvio > 1.5) partes.push("mal centrada");
-  return partes;
-}
 
 /* El bolsillo: papel de la hoja visto a través del plástico. El `inset` de
  * arriba es el canto iluminado del plástico y el de abajo la sombra que

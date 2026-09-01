@@ -4,9 +4,14 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import TypeBadge, { EnergyCost } from "./TypeBadge";
-import DesperfectosCarta, { estiloDescentrado } from "./DesperfectosCarta";
+import DesperfectosCarta, {
+  desgasteEnPalabras,
+  estadoDeCopia,
+  estiloDescentrado,
+} from "./DesperfectosCarta";
 import type { Desperfectos, MarcasDeCarta } from "../utils/graduacion";
-import { SELL_PRICES, valorDeVenta } from "../utils/constanst";
+import { precioDeCartaSuelta, valorDeVenta } from "../utils/constanst";
+import { etiquetaNota, valorGraduado } from "../utils/graduacion";
 import { getCardFromDB, toggleWishlist, getWishlistIds } from "../app/action";
 import { useHaptics } from "../hooks/useHaptics";
 import { useSwipe, touchActionFor } from "../hooks/useSwipe";
@@ -73,23 +78,6 @@ const auraFor = (rarity?: string) => (rarity && RARITY_AURA[rarity]) || null;
  * llegan del localStorage de un invitado: de ahí el `unknown` en utils/tipos.ts
  * y la comprobación de forma antes de pintar nada.
  */
-function estadoDeCopia(carta: {
-  desperfectos?: unknown;
-  marcas?: unknown;
-}): { desperfectos: Desperfectos; marcas: MarcasDeCarta } | null {
-  const desperfectos = carta?.desperfectos as Desperfectos | undefined;
-  const marcas = carta?.marcas as MarcasDeCarta | undefined;
-  if (!desperfectos || !marcas) return null;
-  if (
-    !Array.isArray(marcas.piques) ||
-    !Array.isArray(marcas.aranazos) ||
-    !Array.isArray(marcas.manchas)
-  ) {
-    return null;
-  }
-  if (desgasteEnPalabras(desperfectos).length === 0) return null;
-  return { desperfectos, marcas };
-}
 
 /**
  * El desgaste en palabras. QUÉ HAY, NUNCA CUÁNTO.
@@ -102,16 +90,6 @@ function estadoDeCopia(carta: {
  * más grueso que un tramo. El 1,5 % del descentrado es el mismo umbral que usa
  * `firmaVisible` para llamar "torcida" a una copia.
  */
-function desgasteEnPalabras(d: Desperfectos): string[] {
-  const partes: string[] = [];
-  if (d.piques > 0) partes.push("piques en los cantos");
-  if (d.aranazos > 0) partes.push("arañazos");
-  if (d.manchas > 0) partes.push("manchas");
-  if (d.palidez > 0) partes.push("decoloración por el sol");
-  const desvio = Math.abs(d.descentrado?.x ?? 0) + Math.abs(d.descentrado?.y ?? 0);
-  if (desvio > 1.5) partes.push("mal centrada");
-  return partes;
-}
 
 export default function CardDetailModal({
   card,
@@ -376,7 +354,29 @@ export default function CardDetailModal({
    */
   const estado = c ? estadoDeCopia(c) : null;
 
-  const getMarketPrice = () => SELL_PRICES[c?.rarity as keyof typeof SELL_PRICES] || 10;
+  /* ==================================================================== *
+   * EL VALOR DE VENTA, Y POR QUE ANTES MENTIA CON LAS GRADUADAS
+   * ====================================================================
+   *
+   * Esto devolvia `SELL_PRICES[rareza]` a pelo, o sea la tarifa plana de la
+   * rareza. Consecuencia: una carta graduada seguia diciendo 150 aunque le
+   * hubiera salido un diez y valiera casi el doble. El jugador pagaba por
+   * graduarla, veia la nota en la insignia... y el precio no se movia.
+   *
+   * Ahora salen las tres cosas que de verdad deciden lo que paga la tienda:
+   *   · la tarifa de la rareza,
+   *   · el ajuste por el precio real de Cardmarket, si el cron ya lo trajo,
+   *   · y el multiplicador de la nota, si la carta esta graduada.
+   *
+   * `mejor_nota` la sirve getFullCollection (la nota mas alta de las copias
+   * graduadas), y llega en snake_case porque esa consulta hace {...row}. */
+  const notaGraduada = (() => {
+    const n = Number((c as { mejor_nota?: unknown } | null)?.mejor_nota);
+    return Number.isInteger(n) && n >= 1 && n <= 10 ? n : null;
+  })();
+  const precioBase = () => precioDeCartaSuelta(c?.rarity, (c as { precioEur?: number | null } | null)?.precioEur);
+  const getMarketPrice = () =>
+    notaGraduada ? valorGraduado(precioBase(), notaGraduada) : precioBase();
   const getTcgPrice = (): number | null => {
     const p = c?.tcgplayer?.prices;
     if (!p) return null;
@@ -733,7 +733,12 @@ export default function CardDetailModal({
 
                 {/* PRICES */}
                 <div className="grid grid-cols-2 gap-2">
-                  <PriceTile label="Valor de venta" value={`${getMarketPrice()}`} unit="💰" accent="accent" />
+                  <PriceTile
+                    label={notaGraduada ? `Valor · ${etiquetaNota(notaGraduada)}` : "Valor de venta"}
+                    value={`${getMarketPrice()}`}
+                    unit="💰"
+                    accent="accent"
+                  />
                   {(() => {
                     const tcg = getTcgPrice();
                     return (

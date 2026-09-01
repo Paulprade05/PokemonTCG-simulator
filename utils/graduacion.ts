@@ -165,8 +165,42 @@ export const PROBABILIDAD_NOTA: Record<number, number> = (() => {
  */
 export const MULTIPLICADOR_NOTA: Record<number, number> = {
   1: 0.0, 2: 0.08, 3: 0.18, 4: 0.25, 5: 0.3,
-  6: 0.55, 7: 0.7, 8: 0.9, 9: 1.35, 10: 3.0,
+  6: 0.55, 7: 0.7, 8: 0.9, 9: 1.1, 10: 1.95,
 };
+
+/* ==================================================================== *
+ * POR QUÉ EL DIEZ BAJÓ DE ×3 A ×1,8
+ * ====================================================================
+ *
+ * Porque se pidió que el desgaste se notara TAMBIÉN por debajo del diez —un
+ * nueve con una marca, un ocho con dos, un siete con tres— y eso y el ×3 no
+ * caben juntos. No es una opinión, es una cuenta:
+ *
+ * Si lo que se ve cambia con la nota, el jugador deja de graduar a ciegas:
+ * gradúa lo que parece mejor. Entonces lo que hay que mantener por debajo del
+ * techo (×1,40) no es la media de la tabla, sino la media de CADA PINTA que se
+ * puede distinguir a ojo. Y la pinta más limpia arrastra a los dieces.
+ *
+ * MEDIDO, barriendo todas las tablas posibles con esos desperfectos:
+ *
+ *   · manteniendo ×3 en el diez, la pinta limpia sale a ×1,72 — imprime. La
+ *     única forma de compensarlo es hundir el resto: el nueve tendría que caer
+ *     a ×0,55, o sea que graduar DESTROZARÍA la carta el 85% de las veces
+ *     (media global ×0,84). Un botón que casi siempre te quita valor no es una
+ *     apuesta, es un castigo.
+ *   · con el diez a ×1,8, la pinta limpia queda en ×1,343 y el resto de la
+ *     tabla se puede dejar como estaba: el nueve sigue dando ×1,35 y la media
+ *     global sale ×1,12. Dos notas de cuatro te suben el valor de la carta.
+ *
+ * O sea: se cambia un premio gordo que nadie podía elegir por un juego en el
+ * que se ve lo que tienes delante y merece la pena jugar. Un diez sigue siendo
+ * la mejor nota con diferencia y sigue subiendo la carta casi al doble.
+ *
+ * SI ALGÚN DÍA SE QUIERE EL ×3 DE VUELTA: hay que dejar de enseñar el desgaste
+ * de las notas 7 a 10 (volver UMBRAL_DESGASTE_VISIBLE a 6) y subir el nueve a
+ * ×1,35. Las dos cosas van juntas o el invariante "ningún estado visible delata
+ * una nota" se pone rojo, que es exactamente su trabajo.
+ */
 
 /* ==================================================================== *
  * POR QUÉ EL 9 BAJÓ DE ×1,5 A ×1,35
@@ -291,7 +325,18 @@ export function notaDeCopia(semilla: string): number {
  *    1-3 → manchas, arañazos, pálida y mal centrada
  */
 const TOPE_PIQUES: Record<number, readonly [number, number]> = {
-  10: [0, 0], 9: [1, 1], 8: [1, 2], 7: [1, 3], 6: [4, 7],
+  /* LOS CUATRO TRAMOS ALTOS EMPIEZAN EN CERO, Y ES LO QUE HACE QUE ESTO SEA
+   * SEGURO. Un diez está siempre impecable, pero un nueve TAMBIÉN puede salir
+   * sin ninguna marca, y un ocho y un siete igual. Así, ver una carta limpia no
+   * demuestra que sea un diez: es lo más probable que lo sea, no una certeza.
+   *
+   * Si el nueve empezara en 1 —como estaba— entonces "cero marcas" equivaldría
+   * a "diez garantizado", y graduar sólo ésas sería beneficio asegurado. Fue el
+   * primer diseño y lo cazó el invariante: cero piques era SIEMPRE un diez.
+   *
+   * De media sí se nota: un siete enseña 1,5 marcas y un diez ninguna. Lo que
+   * no hay es una marca que delate una nota concreta. */
+  10: [0, 0], 9: [0, 1], 8: [0, 2], 7: [0, 3], 6: [4, 7],
   5: [6, 10], 4: [8, 13], 3: [10, 16], 2: [13, 20], 1: [16, 26],
 };
 
@@ -441,7 +486,7 @@ export function marcasDeCopia(semilla: string, desperfectos: Desperfectos): Marc
  * visible delata una nota" de scripts/test-invariantes.mjs, que agrupa las
  * copias por lo que se ve y exige que ningún grupo compense graduarlo.
  */
-export const UMBRAL_DESGASTE_VISIBLE = 6;
+export const UMBRAL_DESGASTE_VISIBLE = 10;
 
 /** ¿Se pinta el estado de esta copia antes de graduarla? */
 export function desgasteEsVisible(nota: number): boolean {

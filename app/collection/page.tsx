@@ -21,6 +21,12 @@ import Sheet from "../../components/ui/Sheet";
 import { RARITY_RANK, valorDeVenta } from "../../utils/constanst";
 import { formatNumber } from "../../utils/format";
 import PokemonCard from "../../components/PokemonCard";
+// El estado físico de la copia. Se pinta también en la rejilla: sin esto, una
+// carta que en su detalle decía «ESTADO: DAÑADA» salía impecable aquí.
+import DesperfectosCarta, {
+  estadoDeCopia,
+  estiloDescentrado,
+} from "../../components/DesperfectosCarta";
 import InsigniaNota, { notaDeCarta } from "../../components/vitrina/InsigniaNota";
 import PageHeader from "../../components/PageHeader";
 import Loader from "../../components/Loader";
@@ -943,8 +949,37 @@ export default function CollectionPage() {
                     }
                   }}
                 >
+                  {/* EL ESTADO FÍSICO TAMBIÉN AQUÍ.
+                   *
+                   * Faltaba, y se notaba: una carta que en su detalle decía
+                   * «ESTADO: DAÑADA» aparecía impecable en la rejilla. La misma
+                   * copia contando dos cosas distintas según dónde la mires es
+                   * peor que no enseñar el desgaste en ningún sitio.
+                   *
+                   * El montaje es el mismo de las otras tres pantallas: marco
+                   * con overflow-hidden, la carta desplazada por el descentrado
+                   * y las marcas por encima. `estadoDeCopia` devuelve null en el
+                   * caso normal, y entonces esto es exactamente el árbol de
+                   * antes — la rejilla monta 24 cartas y no puede pagar dos
+                   * nodos de más por cada una que está bien. */}
                   <div className="transition transform group-hover:-translate-y-1 duration-300 pointer-events-none">
-                    <PokemonCard card={card} reveal={true} interactive={false} />
+                    {(() => {
+                      const estado = estadoDeCopia(card);
+                      if (!estado) {
+                        return <PokemonCard card={card} reveal={true} interactive={false} />;
+                      }
+                      return (
+                        <div className="relative overflow-hidden rounded-[4.5%]">
+                          <div style={estiloDescentrado(estado.desperfectos)}>
+                            <PokemonCard card={card} reveal={true} interactive={false} />
+                          </div>
+                          <DesperfectosCarta
+                            desperfectos={estado.desperfectos}
+                            marcas={estado.marcas}
+                          />
+                        </div>
+                      );
+                    })()}
                   </div>
                 </button>
                 {/* LA NOTA — abajo a la izquierda, la única esquina libre: las

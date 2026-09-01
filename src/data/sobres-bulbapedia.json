@@ -1,0 +1,51 @@
+{
+  "manual": {
+    "ex3": {
+      "pagina": "EX Dragon (TCG)",
+      "motivo": "\"Dragon (TCG)\" existe y es otra cosa, así que no hay redirección que salve esto"
+    },
+    "ex8": {
+      "pagina": "EX Deoxys (TCG)",
+      "motivo": "igual que ex3: \"Deoxys (TCG)\" es una página distinta y sin sobres"
+    },
+    "ex11": {
+      "pagina": "EX Delta Species (TCG)",
+      "motivo": "\"Delta Species (TCG)\" redirige a \"Δ Delta Species (TCG)\", que no lleva los sobres"
+    },
+    "ecard1": { "prefijos": ["E1"], "motivo": "Bulbapedia numera la era e-Card E1/E2/E3" },
+    "ecard2": { "prefijos": ["E2"], "motivo": "ídem" },
+    "ecard3": { "prefijos": ["E3"], "motivo": "ídem" },
+    "hgss1": { "prefijos": ["HS1"], "motivo": "el código de Bulbapedia es HS1, no HGSS1" },
+    "hgss2": {
+      "pagina": "Unleashed (TCG)",
+      "prefijos": ["HS2"],
+      "motivo": "la página no lleva el prefijo \"HS—\" del nombre oficial"
+    },
+    "hgss3": { "pagina": "Undaunted (TCG)", "prefijos": ["HS3"], "motivo": "ídem" },
+    "hgss4": { "pagina": "Triumphant (TCG)", "prefijos": ["HS4"], "motivo": "ídem" },
+    "col1": { "prefijos": ["CL"], "motivo": "Call of Legends se abrevia CL" },
+    "swsh35": {
+      "prefijos": ["Champion Path"],
+      "motivo": "los ficheros se llaman \"Champion Path\", sin el apóstrofo ni la s de \"Champion's\""
+    },
+    "zsv10pt5": {
+      "prefijos": ["SV10.5 BLK"],
+      "motivo": "Rayo Negro y Llama Blanca comparten página; el fichero es lo único que las separa"
+    },
+    "rsv10pt5": {
+      "prefijos": ["SV10.5 WHT"],
+      "motivo": "ídem, y por eso NO vale emparejar por el título de la página"
+    },
+
+    "sma": { "omitir": true, "motivo": "subset de Destinos Ocultos: no tuvo sobre propio, se abría el de swsh115" },
+    "swsh45sv": { "omitir": true, "motivo": "subset de Destinos Brillantes: sin sobre propio" },
+    "swsh9tg": { "omitir": true, "motivo": "Trainer Gallery: cartas dentro del sobre de swsh9, no un producto aparte" },
+    "swsh10tg": { "omitir": true, "motivo": "ídem con swsh10" },
+    "swsh11tg": { "omitir": true, "motivo": "ídem con swsh11" },
+    "swsh12tg": { "omitir": true, "motivo": "ídem con swsh12" },
+    "swsh12pt5gg": { "omitir": true, "motivo": "Galarian Gallery: subset de Zenit Supremo, sin sobre propio" },
+    "cel25c": { "omitir": true, "motivo": "Classic Collection: va dentro de las cajas de Celebraciones" },
+    "sve": { "omitir": true, "motivo": "las energías de Escarlata y Púrpura no se venden en sobre" }
+  },
+  "generado": {}
+}

@@ -3,7 +3,11 @@
 import { motion } from "framer-motion";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type MutableRefObject, type RefObject } from "react";
 import PokemonCard from "./PokemonCard";
-import DesperfectosCarta, { estiloDescentrado } from "./DesperfectosCarta";
+import DesperfectosCarta, {
+  desgasteEnPalabras,
+  estadoDeCopia,
+  estiloDescentrado,
+} from "./DesperfectosCarta";
 import { useHaptics } from "../hooks/useHaptics";
 import { useSwipe } from "../hooks/useSwipe";
 import type { Desperfectos, MarcasDeCarta } from "../utils/graduacion";
@@ -255,23 +259,6 @@ type EstadoCopia = { desperfectos: Desperfectos; marcas: MarcasDeCarta };
  * puede nombrar un defecto tampoco se puede rotular la carta como dañada, y un
  * rótulo sin marcas debajo se lee como un fallo de pintado.
  */
-function estadoDeCopia(carta: {
-  desperfectos?: unknown;
-  marcas?: unknown;
-}): EstadoCopia | null {
-  const desperfectos = carta?.desperfectos as Desperfectos | undefined;
-  const marcas = carta?.marcas as MarcasDeCarta | undefined;
-  if (!desperfectos || !marcas) return null;
-  if (
-    !Array.isArray(marcas.piques) ||
-    !Array.isArray(marcas.aranazos) ||
-    !Array.isArray(marcas.manchas)
-  ) {
-    return null;
-  }
-  if (desgasteEnPalabras(desperfectos).length === 0) return null;
-  return { desperfectos, marcas };
-}
 
 /**
  * El desgaste en palabras, para quien no puede verlo.
@@ -291,16 +278,6 @@ function estadoDeCopia(carta: {
  * decidir si una copia está "torcida", por la misma razón: los dos tienen que
  * describir lo mismo o el invariante deja de proteger lo que cree proteger.
  */
-function desgasteEnPalabras(d: Desperfectos): string[] {
-  const partes: string[] = [];
-  if (d.piques > 0) partes.push("piques en los cantos");
-  if (d.aranazos > 0) partes.push("arañazos");
-  if (d.manchas > 0) partes.push("manchas");
-  if (d.palidez > 0) partes.push("decoloración por el sol");
-  const desvio = Math.abs(d.descentrado?.x ?? 0) + Math.abs(d.descentrado?.y ?? 0);
-  if (desvio > 1.5) partes.push("mal centrada");
-  return partes;
-}
 
 type Pose = { x: number; g: number; o: number };
 

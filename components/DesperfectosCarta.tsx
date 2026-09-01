@@ -44,6 +44,71 @@
 
 import type { Desperfectos, MarcasDeCarta } from "../utils/graduacion";
 
+/* ==================================================================== *
+ * LEER EL ESTADO DE UNA CARTA — EL SITIO ÚNICO
+ * ====================================================================
+ *
+ * Estas dos funciones vivían COPIADAS en cuatro pantallas (la apertura, el
+ * detalle, la funda del archivador y la rejilla de la colección) porque cada
+ * una se escribió por separado. Son la misma regla y tienen que cambiar juntas,
+ * así que viven aquí, al lado del componente que las consume.
+ *
+ * QUE VIVAN JUNTAS NO ES ORDEN, ES SEGURIDAD: `desgasteEnPalabras` describe lo
+ * que el jugador puede saber de una copia sin graduarla, y eso está atado al
+ * invariante «ningún estado visible delata una nota» de
+ * scripts/test-invariantes.mjs, que agrupa las copias por `firmaVisible`
+ * (utils/graduacion.ts). Con cuatro copias sueltas, cualquiera podía añadir un
+ * detalle en una pantalla y dejar el invariante comprobando algo que ya no era
+ * cierto.
+ */
+
+/**
+ * El estado físico de una carta, si trae uno que se pueda pintar.
+ *
+ * Devuelve `null` en el caso normal —la mayoría de las copias están bien— y
+ * también cuando el dato llega con mala forma. Eso último no es paranoia: las
+ * cartas llegan del servidor, de los JSON del repositorio o del localStorage de
+ * un invitado, y una excepción aquí se lleva por delante la pantalla entera.
+ */
+export function estadoDeCopia(carta: {
+  desperfectos?: unknown;
+  marcas?: unknown;
+} | null | undefined): { desperfectos: Desperfectos; marcas: MarcasDeCarta } | null {
+  const desperfectos = carta?.desperfectos as Desperfectos | undefined;
+  const marcas = carta?.marcas as MarcasDeCarta | undefined;
+  if (!desperfectos || !marcas) return null;
+  if (
+    !Array.isArray(marcas.piques) ||
+    !Array.isArray(marcas.aranazos) ||
+    !Array.isArray(marcas.manchas)
+  ) {
+    return null;
+  }
+  // Sin nada que nombrar no se rotula: un "ESTADO: DAÑADA" sin defectos debajo
+  // se lee como un fallo de pintado, que es lo contrario de lo que se busca.
+  if (desgasteEnPalabras(desperfectos).length === 0) return null;
+  return { desperfectos, marcas };
+}
+
+/**
+ * El desgaste en palabras. QUÉ HAY, NUNCA CUÁNTO.
+ *
+ * Decir "6 piques" enseñaría MÁS de lo que protege el invariante —allí los
+ * recuentos van por tramos— y lo dejaría comprobando una descripción que ya no
+ * es la que ve el jugador. El 1,5 % del descentrado es el mismo umbral con el
+ * que `firmaVisible` llama "torcida" a una copia.
+ */
+export function desgasteEnPalabras(d: Desperfectos): string[] {
+  const partes: string[] = [];
+  if (d.piques > 0) partes.push("piques en los cantos");
+  if (d.aranazos > 0) partes.push("arañazos");
+  if (d.manchas > 0) partes.push("manchas");
+  if (d.palidez > 0) partes.push("decoloración por el sol");
+  const desvio = Math.abs(d.descentrado?.x ?? 0) + Math.abs(d.descentrado?.y ?? 0);
+  if (desvio > 1.5) partes.push("mal centrada");
+  return partes;
+}
+
 interface Props {
   /**
    * El estado de la copia, YA CALCULADO POR EL SERVIDOR.
