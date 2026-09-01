@@ -1,11 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion, type Variants } from "framer-motion";
+import { useReducedMotion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
 import Link from "next/link";
-import { getFullCollection, getSetsFromDB } from "../app/action";
+import {
+  getArchivador,
+  getFullCollection,
+  getSetsFromDB,
+  ponerEnRanura,
+  quitarDeRanura,
+} from "../app/action";
 import { getCollection } from "../utils/storage";
+import {
+  guardarArchivadorLocal,
+  leerArchivadorLocal,
+  ponerEnRanuraLocal,
+  quitarDeRanuraLocal,
+  type FundaLocal,
+} from "../utils/archivadorLocal";
 import { RARITY_RANK } from "../utils/constanst";
 import { formatNumber } from "../utils/format";
 import { useHaptics } from "../hooks/useHaptics";
@@ -13,84 +26,93 @@ import { useSwipe, touchActionFor } from "../hooks/useSwipe";
 import PageHeader from "./PageHeader";
 import Loader from "./Loader";
 import CardDetailModal from "./CardDetailModal";
+import { useToast } from "./ui/Toast";
+import LibroArchivador, {
+  DURACION_PASE_MS,
+  type LibroHandle,
+} from "./vitrina/LibroArchivador";
 import PaginaArchivador from "./vitrina/PaginaArchivador";
 import AnillasArchivador from "./vitrina/AnillasArchivador";
+import SelectorCarta from "./vitrina/SelectorCarta";
+import AccionesFunda from "./vitrina/AccionesFunda";
+import {
+  MAX_HOJAS,
+  RANURAS_POR_HOJA,
+  claveFunda,
+  colocadasPorCarta,
+  enOrdenDeLectura,
+  fundasDelInvitado,
+  fundasDelServidor,
+  hojasMontadas,
+  huecosDeHoja,
+  mapaDeFundas,
+  type Destino,
+  type FundaVitrina,
+} from "./vitrina/modelo";
 import type { CartaEnColeccion, Expansion } from "../utils/tipos";
 
 /**
- * LA VITRINA — la colección vista como el archivador que se tiene en la mesa.
+ * LA VITRINA — el archivador que el jugador monta a mano, funda a funda.
  *
- * NO ES OTRA REJILLA. /collection y /album ya pintan la colección con scroll y
- * paginación de 24; esto es deliberadamente lo contrario: nueve fundas por
- * hoja, ni una más, y se pasa de hoja. La diferencia no es estética. Con
- * scroll el jugador nunca sabe "dónde" está una carta; con hojas fijas de
- * nueve, la carta vive en un sitio —hoja 4, fila 2, tercera— y eso es lo que
- * convierte una lista en una colección. Por eso la última hoja se ve a medias,
- * con sus fundas vacías: rellenarlas o encoger la hoja rompería justamente lo
- * que se está imitando.
+ * NACE VACÍO, Y ESO ES EL ENCARGO ENTERO. La versión anterior rellenaba las
+ * hojas sola con la colección ordenada por rareza: quien tenía 441 cartas se
+ * encontraba 49 hojas que no había montado nadie, y eso no es un archivador
+ * sino otra vista de /collection. Ahora la rejilla de nueve sale vacía y cada
+ * funda se rellena tocándola y eligiendo una carta. La diferencia no es
+ * estética: en un archivador de verdad el sitio de cada carta lo decide su
+ * dueño, y ese acto de decidir es la pantalla.
+ *
+ * De ahí que aquí NO haya filtro por expansión ni orden por rareza (eso vive en
+ * el selector, que es donde sirve para encontrar una carta) ni paginación
+ * calculada a partir de la colección: las hojas son las que hagan falta para lo
+ * que se ha colocado, más una vacía siempre al final (ver `hojasMontadas` en
+ * components/vitrina/modelo.ts).
  *
  * ---------------------------------------------------------------------------
- * TRES TRAMPAS DEL REPOSITORIO QUE MANDAN SOBRE EL DISEÑO DE ESTA PANTALLA
+ * CUATRO TRAMPAS DEL REPOSITORIO QUE MANDAN SOBRE EL DISEÑO DE ESTA PANTALLA
  *
  * 1. NITIDEZ EN iPHONE. Las cartas se pintan con el camino rápido de
  *    PokemonCard (`interactive={false}` + `reveal`), que evita una capa
  *    compositada por carta. Ese camino se anula desde cualquier ancestro, así
  *    que en TODO el árbol de la vitrina no hay `filter`, `drop-shadow`,
- *    `backdrop-filter`, `mix-blend-mode`, `perspective`, `preserve-3d` ni un
- *    solo `transform` con `scale`. WebKit rasteriza esa capa a escala fija y
- *    la ilustración sale borrosa (PokemonCard.tsx:140-163 y 255-266).
- *    De ahí que el pase de hoja sea un DESPLAZAMIENTO con fundido y no un giro
- *    3D: un giro necesita `perspective` + `preserve-3d`, y aunque se pudiera
- *    salir del contexto 3D en reposo (el patrón `settled`/`flat` de
- *    PokemonCard), aquí no hay una carta en una capa sino nueve, y el reposo
- *    de una vitrina es el 99% del tiempo que se pasa en ella. El coste de la
- *    apuesta no compensa el rédito.
+ *    `backdrop-filter`, `mix-blend-mode`, ni un solo `transform` con `scale`.
+ *    WebKit rasteriza esa capa a escala fija y la ilustración sale borrosa
+ *    (PokemonCard.tsx:140-163 y 255-266).
+ *    La perspectiva del pase de página es la ÚNICA excepción, y está acotada:
+ *    components/vitrina/LibroArchivador.tsx monta el escenario 3D al empezar el
+ *    giro y lo desmonta al acabarlo, así que en reposo —el 99% del tiempo que
+ *    se pasa aquí— no queda nada promocionado. Por eso esta pantalla no puede
+ *    añadir perspectivas por su cuenta: rompería esa cuenta.
  *
- * 2. `will-change` SÓLO MIENTRAS DURA EL MOVIMIENTO. Un `will-change`
- *    permanente deja la textura rasterizada a una escala y emborrona igual.
- *    Lo lleva la bandera `pasando`, que se apaga sola con un temporizador
- *    (no con `onAnimationComplete`: si la pestaña se va a segundo plano a
- *    mitad del pase, esa llamada puede no llegar nunca y la propiedad se
- *    quedaría puesta para siempre. Es el mismo respaldo que usa PokemonCard
- *    para su `settled`).
+ * 2. EL ESTADO DEL PASE NO SE TOCA A MANO. `hoja` NO se cambia con setHoja
+ *    desde un botón: todo pasa por `libroRef.pasar()`, y la hoja se fija sola
+ *    en `onCambio`, cuando el giro TERMINA. Cambiarla a mano deja la animación
+ *    fuera y la hoja aparece de golpe.
  *
- * 3. EL GESTO DEL BORDE. `components/ui/EdgeBackGesture.tsx` se lleva
- *    cualquier arrastre que empiece a menos de 26px del borde izquierdo
- *    cuando la app está instalada. La solución está en el lomo: ver la
- *    cabecera de components/vitrina/AnillasArchivador.tsx.
+ * 3. EL GESTO DEL BORDE. `components/ui/EdgeBackGesture.tsx` se lleva cualquier
+ *    arrastre que empiece a menos de 26px del borde izquierdo cuando la app
+ *    está instalada. La solución es geométrica y vive en el lomo: ver la
+ *    cabecera de components/vitrina/AnillasArchivador.tsx. Se conserva intacta
+ *    —la ventana que escucha el arrastre sigue empezando a la derecha de las
+ *    anillas, sobre los ~50px— y además, mientras hay una hoja modal abierta
+ *    (selector, menú de funda o detalle) ese oyente se rinde solo, porque
+ *    comprueba si existe un `[role="dialog"]` en el DOM.
+ *
+ * 4. LAS ESCRITURAS SE SERIALIZAN. Colocar y quitar escriben en el servidor (o
+ *    en localStorage). Dos toques rápidos cruzarían dos peticiones cuyo orden
+ *    de respuesta decide qué acaba en la funda, así que hay un cerrojo de ref
+ *    —el patrón `saleLockRef` de app/collection/page.tsx— y no un booleano de
+ *    estado: setState no se ve hasta el siguiente render y los dos toques
+ *    entrarían igual.
  *
  * ---------------------------------------------------------------------------
  * Y UNA MÁS, DE MAQUETACIÓN: `app/template.tsx` envuelve cada ruta en un
  * `motion.div` CON TRANSFORM, y un ancestro transformado se convierte en el
  * bloque contenedor de sus descendientes `position: fixed`. Aquí no hay
- * ninguna capa a pantalla completa propia justamente por eso; la única que
- * aparece es la de CardDetailModal, que ya se cuelga de <body> con
+ * ninguna capa a pantalla completa propia justamente por eso; las que aparecen
+ * —Sheet y CardDetailModal— ya se cuelgan de <body> con
  * components/ui/Portal.tsx.
  */
-
-/** Nueve fundas por hoja. Es el formato del archivador real de 3×3. */
-const POR_HOJA = 9;
-
-/** Duración del pase, en segundos. La comparte el temporizador de will-change. */
-const DURACION_PASE = 0.42;
-
-/**
- * Recorrido del pase, en porcentaje del ancho de la hoja.
- *
- * NO es 100%. Una hoja que entra desde fuera del todo deja la ventana vacía a
- * mitad de animación y el pase se siente lento aunque dure lo mismo; con un
- * tercio y fundido cruzado, las dos hojas se solapan y la transición se lee
- * como papel deslizándose, no como un carrusel. Son porcentajes y no píxeles
- * para que el pase mida igual en un iPhone que en un monitor.
- */
-const ENTRA = 38;
-const SALE = 24;
-
-const VARIANTES: Variants = {
-  entra: (dir: number) => ({ x: `${dir > 0 ? ENTRA : -ENTRA}%`, opacity: 0 }),
-  centro: { x: "0%", opacity: 1 },
-  sale: (dir: number) => ({ x: `${dir > 0 ? -SALE : SALE}%`, opacity: 0 }),
-};
 
 /** Tapa del archivador: cartón/piel a partir de los tokens del tema. */
 const TAPA: React.CSSProperties = {
@@ -109,22 +131,22 @@ const CANTO: React.CSSProperties = {
   border: "1px solid var(--border)",
 };
 
-/** El id de una carta es `set-numero`: el set es todo lo anterior al ÚLTIMO guion. */
-function setDeCarta(id: string): string {
-  const guion = String(id).lastIndexOf("-");
-  return guion > 0 ? String(id).slice(0, guion) : "";
-}
+/** Hoja fuera de rango: nueve huecos y ninguna interacción. Ver `renderHoja`. */
+const HOJA_FANTASMA: (CartaEnColeccion | null)[] = Array.from(
+  { length: RANURAS_POR_HOJA },
+  () => null,
+);
 
 /**
- * Orden del archivador para el invitado: favoritas, rareza y nombre.
+ * Orden de la colección del invitado: favoritas, rareza y nombre.
  *
- * `getFullCollection` ya devuelve exactamente este orden hecho en SQL, así que
- * la lista del usuario con sesión NO se vuelve a ordenar: repetirlo aquí con
- * `localeCompare` cambiaría el desempate por nombre respecto a la colación de
- * Postgres y las cartas se moverían de funda entre una carga y otra, que en
- * una vitrina —donde el sitio de cada carta es el sentido de la pantalla— es
- * peor que cualquier orden. Al invitado sí hay que ordenarlo: su colección
- * vive en localStorage en el orden en que fue abriendo sobres.
+ * Es el orden en el que el SELECTOR ofrece las cartas, y por eso importa que
+ * sea el mismo que el del usuario con sesión: `getFullCollection` ya devuelve
+ * exactamente este orden hecho en SQL, así que esa lista NO se vuelve a
+ * ordenar —repetirlo aquí con `localeCompare` cambiaría el desempate por
+ * nombre respecto a la colación de Postgres y las cartas bailarían de sitio
+ * entre una carga y otra—. Al invitado sí hay que ordenarlo: su colección vive
+ * en localStorage en el orden en que fue abriendo sobres.
  */
 function ordenarComoElServidor(cartas: CartaEnColeccion[]): CartaEnColeccion[] {
   return [...cartas].sort((a, b) => {
@@ -138,30 +160,95 @@ function ordenarComoElServidor(cartas: CartaEnColeccion[]): CartaEnColeccion[] {
   });
 }
 
+/**
+ * Qué decirle al jugador cuando `ponerEnRanura` dice que no.
+ *
+ * Los errores de la acción se traducen uno a uno y no a un "algo ha fallado":
+ * `sin-copias-libres` trae los dos números justamente para poder decir "ya
+ * tienes tus 2 copias colocadas", que es una frase que explica y no una que
+ * culpa. El selector ya evita ese camino, pero dos pestañas abiertas a la vez
+ * sí pueden llegar hasta aquí.
+ */
+function porQueNoSePudo(
+  fallo: Awaited<ReturnType<typeof ponerEnRanura>>,
+): string {
+  if (fallo.ok) return "";
+  switch (fallo.error) {
+    case "sin-copias-libres":
+      return `Ya tienes ${fallo.copias === 1 ? "tu única copia" : `tus ${fallo.copias} copias`} de esa carta en el archivador.`;
+    case "no-la-tienes":
+      return "Esa carta ya no está en tu colección.";
+    case "no-autorizado":
+      return "Vuelve a iniciar sesión para tocar tu archivador.";
+    case "hoja-invalida":
+    case "ranura-invalida":
+    case "peticion":
+      return "Esa funda no existe en tu archivador.";
+    default:
+      return "No se pudo colocar la carta. Inténtalo otra vez.";
+  }
+}
+
 export default function Vitrina() {
   const { isSignedIn, isLoaded } = useUser();
   const haptic = useHaptics();
+  const toast = useToast();
+  const reducido = useReducedMotion();
 
+  /** La colección: sólo se usa para OFRECER cartas en el selector. */
   const [cartas, setCartas] = useState<CartaEnColeccion[]>([]);
   const [sets, setSets] = useState<Expansion[]>([]);
+  /** Las fundas OCUPADAS. Las vacías no existen como dato: ver modelo.ts. */
+  const [fundas, setFundas] = useState<FundaVitrina[]>([]);
+  const [maxHojas, setMaxHojas] = useState(MAX_HOJAS);
   const [cargando, setCargando] = useState(true);
   const [errorCarga, setErrorCarga] = useState(false);
 
-  const [filtroSet, setFiltroSet] = useState("todas");
   const [hoja, setHoja] = useState(0);
-  /** +1 avanza, -1 retrocede. Decide por dónde entra y por dónde sale la hoja. */
-  const [direccion, setDireccion] = useState(1);
-  /** Verdadero SÓLO mientras el pase está en marcha: gobierna will-change. */
+  /** Funda cuyo menú está abierto. */
+  const [menu, setMenu] = useState<Destino | null>(null);
+  /** Funda que se está rellenando desde el selector. */
+  const [eligiendo, setEligiendo] = useState<Destino | null>(null);
+  /**
+   * Carta abierta en el detalle, por POSICIÓN en el archivador y no por id.
+   * La misma carta puede ocupar varias fundas, así que un id no identifica una
+   * posición: buscar por id haría que deslizar en el detalle saltara siempre a
+   * la primera funda que la tuviera.
+   */
+  const [detalleIdx, setDetalleIdx] = useState<number | null>(null);
+
+  /* Cerrojo de escritura. El ref es el cerrojo REAL (se lee y se toma en el
+   * mismo tick); el estado sólo existe para apagar los botones. Es el patrón de
+   * `saleLockRef` en app/collection/page.tsx. */
+  const escrituraRef = useRef(false);
+  const [guardando, setGuardando] = useState(false);
+
+  const libroRef = useRef<LibroHandle | null>(null);
+  /**
+   * Pase en curso: hacia dónde gira y en qué hoja hay que acabar.
+   *
+   * Vive en un REF y no en estado por dos motivos, los dos medidos:
+   *  · `renderHoja` lo lee mientras el LIBRO se pinta, y el libro se re-pinta
+   *    por su cuenta (su `girando` es estado suyo) sin que esta pantalla vuelva
+   *    a renderizar: un valor de estado se quedaría congelado en el closure.
+   *  · Con movimiento reducido, `pasar()` llama a `onCambio` en el MISMO tick,
+   *    y ahí un setState todavía no se ve.
+   */
+  const paseRef = useRef<{ dir: 1 | -1; hasta: number } | null>(null);
+  /** Espejo del anterior, sólo para deshabilitar los mandos mientras gira. */
   const [pasando, setPasando] = useState(false);
-  /** Carta abierta en el detalle. Se guarda el id, no el objeto: ver más abajo. */
-  const [detalleId, setDetalleId] = useState<string | null>(null);
+
+  /* ---------------------------------------------------------------- */
+  /* CARGA                                                             */
+  /* ---------------------------------------------------------------- */
 
   /**
-   * Carga. Mismo patrón que app/collection/page.tsx, y por el mismo motivo:
-   * todo dentro de un try, para que una server action caída (PWA sin cobertura,
-   * 500, despliegue caducado) o un localStorage corrupto acaben en "reintentar"
-   * y no en una vitrina vacía que le diga a quien tiene 300 cartas que no tiene
-   * ninguna.
+   * Todo dentro de un try, igual que app/collection/page.tsx y por lo mismo:
+   * una server action caída (PWA sin cobertura, 500, despliegue caducado) o un
+   * localStorage corrupto tienen que acabar en "reintentar" y no en un
+   * archivador en blanco, que aquí sería especialmente cruel — el archivador
+   * vacío es un estado LEGÍTIMO, así que un fallo silencioso sería
+   * indistinguible de "todavía no has colocado nada".
    */
   const cargar = useCallback(async () => {
     if (!isLoaded) return;
@@ -170,11 +257,28 @@ export default function Vitrina() {
     try {
       const expansiones = await getSetsFromDB();
       setSets(expansiones);
+
       if (isSignedIn) {
+        // En paralelo: son dos lecturas independientes y encadenarlas duplica
+        // la espera de la primera pantalla.
+        const [coleccion, archivador] = await Promise.all([
+          getFullCollection(),
+          getArchivador(),
+        ]);
         // Ya viene traducida y ordenada desde el servidor.
-        setCartas(await getFullCollection());
+        setCartas(coleccion);
+        if (!archivador.ok) throw new Error(archivador.error);
+        setMaxHojas(archivador.maxHojas);
+        setFundas(fundasDelServidor(archivador.fundas, archivador.maxHojas));
       } else {
-        setCartas(ordenarComoElServidor(getCollection()));
+        const coleccion = ordenarComoElServidor(getCollection());
+        setCartas(coleccion);
+        setMaxHojas(MAX_HOJAS);
+        // El archivador del invitado guarda sólo ids: el resto se cruza con su
+        // colección de localStorage (ver `fundasDelInvitado`).
+        setFundas(
+          fundasDelInvitado(leerArchivadorLocal(), coleccion, MAX_HOJAS),
+        );
       }
     } catch (error) {
       console.error("Error cargando la vitrina:", error);
@@ -188,120 +292,117 @@ export default function Vitrina() {
     cargar();
   }, [cargar]);
 
-  /** Cuántas cartas distintas hay de cada expansión. */
-  const conteoPorSet = useMemo(() => {
-    const mapa = new Map<string, number>();
-    for (const c of cartas) {
-      const sid = setDeCarta(c.id);
-      if (!sid) continue;
-      mapa.set(sid, (mapa.get(sid) ?? 0) + 1);
-    }
-    return mapa;
-  }, [cartas]);
+  /* ---------------------------------------------------------------- */
+  /* LO QUE SE DERIVA DE LAS FUNDAS                                    */
+  /* ---------------------------------------------------------------- */
 
-  /**
-   * El desplegable sólo lista expansiones EN LAS QUE HAY ALGO. Con la base
-   * sincronizada por el cron son más de ciento cincuenta sets, y ofrecer
-   * ciento cuarenta archivadores vacíos no es filtrar, es un catálogo. El
-   * orden es el que trae getSetsFromDB (lanzamiento descendente), que es el
-   * que ya conoce el jugador de la pantalla de colección.
-   */
-  const opcionesSet = useMemo(
-    () => sets.filter((s) => (conteoPorSet.get(s.id) ?? 0) > 0),
-    [sets, conteoPorSet],
+  const mapa = useMemo(() => mapaDeFundas(fundas), [fundas]);
+  const colocadas = useMemo(() => colocadasPorCarta(fundas), [fundas]);
+  const ordenadas = useMemo(() => enOrdenDeLectura(fundas), [fundas]);
+  const totalHojas = useMemo(
+    () => hojasMontadas(fundas, maxHojas),
+    [fundas, maxHojas],
   );
 
-  const cartasFiltradas = useMemo(() => {
-    if (filtroSet === "todas") return cartas;
-    // Con el guion: los ids son `set-numero` y sin él "sv8" se llevaría también
-    // las de "sv8pt5" (y "swsh1" las de swsh10/11/12).
-    return cartas.filter((c) => c.id.startsWith(filtroSet + "-"));
-  }, [cartas, filtroSet]);
-
-  const totalHojas = Math.max(1, Math.ceil(cartasFiltradas.length / POR_HOJA));
   /**
    * El recorte va aquí y no en un efecto porque un efecto corre DESPUÉS de
-   * pintar: al recargar con menos cartas de las que había, quedaría un
-   * fotograma con la hoja 12 vacía y el rótulo diciendo "12 de 4".
+   * pintar: al quitar la última carta de la última hoja, quedaría un fotograma
+   * con una hoja que ya no existe y el rótulo diciendo "5 de 3".
    */
   const hojaSegura = Math.min(hoja, totalHojas - 1);
 
-  /** Devuelve el estado real al rango cuando la colección encoge (una venta). */
+  /** Devuelve el estado real al rango cuando el archivador encoge. */
   useEffect(() => {
     setHoja((h) => Math.min(h, totalHojas - 1));
   }, [totalHojas]);
 
-  /**
-   * Las nueve posiciones de la hoja, rellenando con `null`. Ver la cabecera de
-   * PaginaArchivador: la hoja monta siempre nueve casillas.
-   */
-  const huecos = useMemo(() => {
-    const inicio = hojaSegura * POR_HOJA;
-    return Array.from(
-      { length: POR_HOJA },
-      (_, i) => cartasFiltradas[inicio + i] ?? null,
-    );
-  }, [cartasFiltradas, hojaSegura]);
+  /* ---------------------------------------------------------------- */
+  /* PASE DE PÁGINA                                                    */
+  /* ---------------------------------------------------------------- */
 
+  /**
+   * Ir a una hoja cualquiera CON UN SOLO GIRO.
+   *
+   * `LibroArchivador.pasar()` sólo sabe moverse una hoja, que es lo que quiere
+   * decir girar una página. Para "primera" y "última" se apunta el destino en
+   * `paseRef` y se dispara un giro normal; `renderHoja` sustituye entonces la
+   * hoja VECINA por la de destino, así que lo que aparece bajo la hoja que gira
+   * ya es el sitio al que se va. Encadenar giros de uno en uno era la
+   * alternativa y está descartada: sesenta hojas serían medio minuto de
+   * animación para llegar al final.
+   */
   const irAHoja = useCallback(
     (destino: number) => {
+      const libro = libroRef.current;
+      if (!libro || libro.girando || paseRef.current) return;
       const limpio = Math.max(0, Math.min(destino, totalHojas - 1));
       if (limpio === hojaSegura) return;
-      setDireccion(limpio > hojaSegura ? 1 : -1);
+      const dir: 1 | -1 = limpio > hojaSegura ? 1 : -1;
+      paseRef.current = { dir, hasta: limpio };
       setPasando(true);
-      setHoja(limpio);
       haptic("tap");
+      libro.pasar(dir);
     },
     [hojaSegura, totalHojas, haptic],
   );
 
   /**
-   * Apagado de `will-change` por temporizador y no por `onAnimationComplete`.
-   * Ver el punto 2 de la cabecera. Se reinicia también con `hojaSegura` para
-   * que pasar tres hojas seguidas no lo apague en mitad del tercer pase.
+   * Red de seguridad del cerrojo del pase.
+   *
+   * `LibroArchivador` confirma el giro con un temporizador propio y eso ya es
+   * a prueba de pestañas en segundo plano, pero si alguna vez `pasar()` se
+   * volviera atrás sin avisar, `paseRef` se quedaría puesto y el archivador
+   * entero se volvería intocable. Es el mismo respaldo por reloj que usa
+   * PokemonCard para su `settled`: cuesta cuatro líneas y evita una pantalla
+   * muerta.
    */
   useEffect(() => {
     if (!pasando) return;
-    const t = window.setTimeout(
-      () => setPasando(false),
-      DURACION_PASE * 1000 + 140,
-    );
+    const t = window.setTimeout(() => {
+      paseRef.current = null;
+      setPasando(false);
+    }, DURACION_PASE_MS + 240);
     return () => window.clearTimeout(t);
-  }, [pasando, hojaSegura]);
+  }, [pasando]);
 
   /* ---------------------------------------------------------------- */
   /* GESTOS                                                            */
   /* ---------------------------------------------------------------- */
 
-  /** Escucha el arrastre y recorta la hoja que se va. */
+  /** Escucha el arrastre. Empieza a la derecha del lomo: ver el punto 3. */
   const ventanaRef = useRef<HTMLDivElement>(null);
-  /** Recibe el transform del dedo. Ver por qué son dos elementos, abajo. */
-  const pilaRef = useRef<HTMLDivElement>(null);
+
+  /** Hay una capa modal encima: el archivador de detrás no escucha nada. */
+  const hayCapa = menu !== null || eligiendo !== null || detalleIdx !== null;
 
   /**
-   * El gesto se escucha en la VENTANA pero el transform va a la PILA.
+   * EL ARRASTRE SÓLO DECIDE LA DIRECCIÓN. `follow: false` a propósito.
    *
-   * Si el elemento que sigue al dedo fuera el mismo que recorta, se movería el
-   * recorte con él y la hoja no llegaría a asomar por el borde: se vería
-   * arrastrar el marco entero, no el papel dentro del archivador. Con
-   * `followTarget` el marco se queda quieto y lo que viaja es la pila de
-   * hojas, que es lo que hace un archivador.
+   * Antes la hoja acompañaba al dedo con un `translate` y el pase era un
+   * desplazamiento lateral, así que seguir el dedo y la animación eran lo
+   * mismo. Con el giro 3D ya no: el papel gira sobre el lomo, y arrastrarlo
+   * lateralmente mientras tanto son dos movimientos distintos peleándose por el
+   * mismo elemento (y encima useSwipe escribe el transform a mano, que es justo
+   * lo que LibroArchivador anima). El gesto se queda con lo único que aporta:
+   * decir hacia dónde. El giro lo hace el libro entero.
    *
-   * Además evita que useSwipe y framer se peleen por el mismo `style.transform`:
-   * useSwipe escribe en la pila y framer en la hoja de dentro, y los dos
-   * transforms se componen sin pisarse.
+   * Sin manejador en un extremo, useSwipe no dispara nada — y como aquí no hay
+   * `follow`, tampoco hay tope elástico que enseñar: el rótulo "Hoja 1 de 3" y
+   * los botones apagados son los que dicen dónde acaba el archivador.
    *
-   * Los manejadores se pasan como `undefined` en los extremos a propósito: sin
-   * manejador en esa dirección, useSwipe aplica resistencia al arrastre en vez
-   * de moverse en balde, así que la primera y la última hoja se notan topes.
+   * `enabled` NO mira si se está girando, aunque un arrastre a mitad de giro no
+   * deba hacer nada. De eso se encarga `irAHoja`, que se desentiende solo. El
+   * motivo es que useSwipe se suscribe y se desuscribe según esta bandera, y
+   * apagarla a media animación arrancaría los oyentes por debajo de un gesto
+   * que ya está en marcha: el hook limpia el transform al desmontar, pero no
+   * el `will-change` que puso al empezar el arrastre — y un `will-change`
+   * permanente sobre un ancestro de las cartas es exactamente lo que las deja
+   * borrosas en iPhone.
    */
-  useSwipe(ventanaRef, {
+  const arrastroRef = useSwipe(ventanaRef, {
     axis: "x",
-    follow: true,
-    followTarget: pilaRef,
-    // El detalle se abre en un diálogo propio con su propio gesto lateral
-    // (navega entre cartas): mientras está abierto, el archivador no escucha.
-    enabled: !detalleId,
+    follow: false,
+    enabled: !hayCapa,
     onSwipeLeft:
       hojaSegura < totalHojas - 1 ? () => irAHoja(hojaSegura + 1) : undefined,
     onSwipeRight: hojaSegura > 0 ? () => irAHoja(hojaSegura - 1) : undefined,
@@ -313,11 +414,12 @@ export default function Vitrina() {
    *
    * Tres exclusiones, y las tres han sido un fallo real en alguna app:
    *  · Campos de texto y desplegables — las flechas son suyas (mover el cursor,
-   *    cambiar de opción); robárselas rompe el filtro de expansión.
+   *    cambiar de opción); robárselas rompería el buscador del selector.
    *  · Modificadores — ⌘←/Alt← es "atrás" del navegador.
    *  · Con un `[role="dialog"]` montado, las flechas pertenecen al diálogo
-   *    (CardDetailModal navega entre cartas con ellas). Es la misma condición
-   *    que usa EdgeBackGesture para rendirse, y se comprueba igual.
+   *    (CardDetailModal navega entre cartas con ellas, y el selector es una
+   *    hoja modal). Es la misma condición que usa EdgeBackGesture para
+   *    rendirse, y se comprueba igual.
    */
   useEffect(() => {
     const alPulsar = (e: KeyboardEvent) => {
@@ -342,35 +444,253 @@ export default function Vitrina() {
   }, [irAHoja, hojaSegura]);
 
   /* ---------------------------------------------------------------- */
+  /* TOCAR UNA FUNDA                                                   */
+  /* ---------------------------------------------------------------- */
+
+  const abrirFunda = useCallback(
+    (h: number, r: number) => {
+      /**
+       * EL ARRASTRE NO ABRE FUNDAS. Las nueve fundas son botones DENTRO de la
+       * ventana que escucha el gesto, así que un arrastre para pasar de hoja
+       * empieza y acaba encima de una: el navegador emite después su `click`
+       * sintético y, sin este guardia, pasar la página abriría además el menú
+       * de la funda que quedó bajo el dedo. `useSwipe` marca ese instante
+       * durante 120 ms justamente para esto (su `didSwipeRef`), y también
+       * cuenta como arrastre cualquier recorrido de más de 24px aunque no
+       * llegue a disparar el pase — el dedo que resbala sobre el cristal.
+       */
+      if (arrastroRef.current) return;
+      // Con una escritura en vuelo el contenido de la funda todavía no es
+      // firme: abrir su menú enseñaría la carta vieja.
+      if (escrituraRef.current) return;
+      haptic("select");
+      if (mapa.has(claveFunda(h, r))) setMenu({ hoja: h, ranura: r });
+      else setEligiendo({ hoja: h, ranura: r });
+    },
+    [mapa, haptic, arrastroRef],
+  );
+
+  /**
+   * Pinta una hoja para el libro.
+   *
+   * Dos avisos que vienen de LibroArchivador y que no se pueden ignorar:
+   *  · Se llama con números FUERA DE RANGO durante el giro (hoja−1 o hoja+1),
+   *    así que hay que devolver una hoja vacía y no reventar.
+   *  · Se llama DOS VECES mientras dura el giro (la hoja que gira y la de
+   *    debajo). Por eso, mientras hay pase, NINGUNA de las dos es interactiva:
+   *    sin manejador, PaginaArchivador se retira del árbol de accesibilidad y
+   *    no se puede colocar una carta en una hoja que está de perfil.
+   */
+  const renderHoja = useCallback(
+    (n: number) => {
+      const pase = paseRef.current;
+      // La hoja vecina hacia la que se gira es, en un salto de varias, la de
+      // destino: así el giro descubre ya el sitio al que se va.
+      const numero = pase && n === hojaSegura + pase.dir ? pase.hasta : n;
+      const fuera = numero < 0 || numero >= totalHojas;
+      const viva = !pase && !fuera;
+      return (
+        <PaginaArchivador
+          huecos={fuera ? HOJA_FANTASMA : huecosDeHoja(mapa, numero)}
+          numero={numero + 1}
+          total={totalHojas}
+          /* La invitación escrita sólo en la primera funda de la primera hoja
+             y sólo con el archivador entero vacío: es la frase que evita que
+             una vitrina en blanco parezca una pantalla rota. */
+          invitacion={viva && fundas.length === 0 && numero === 0 ? 0 : -1}
+          onFunda={viva ? (r) => abrirFunda(numero, r) : undefined}
+        />
+      );
+    },
+    [hojaSegura, totalHojas, mapa, fundas.length, abrirFunda],
+  );
+
+  /* ---------------------------------------------------------------- */
+  /* ESCRITURAS                                                        */
+  /* ---------------------------------------------------------------- */
+
+  /** Toma el cerrojo; devuelve false si ya hay una escritura en curso. */
+  const tomarCerrojo = () => {
+    if (escrituraRef.current) return false;
+    escrituraRef.current = true;
+    setGuardando(true);
+    return true;
+  };
+  const soltarCerrojo = () => {
+    escrituraRef.current = false;
+    setGuardando(false);
+  };
+
+  /** Las fundas en la forma que espera utils/archivadorLocal.ts. */
+  const aLocales = (lista: FundaVitrina[]): FundaLocal[] =>
+    lista.map((f) => ({ hoja: f.hoja, ranura: f.ranura, cardId: f.carta.id }));
+
+  const colocar = useCallback(
+    async (destino: Destino, carta: CartaEnColeccion) => {
+      if (!tomarCerrojo()) return;
+      try {
+        if (isSignedIn) {
+          const r = await ponerEnRanura(destino.hoja, destino.ranura, carta.id);
+          if (!r.ok) {
+            haptic("warning");
+            toast(porQueNoSePudo(r), "error");
+            return;
+          }
+        } else {
+          const res = ponerEnRanuraLocal(
+            aLocales(fundas),
+            destino.hoja,
+            destino.ranura,
+            carta.id,
+            carta.quantity,
+          );
+          if (!res.ok) {
+            haptic("warning");
+            toast(
+              `Ya tienes ${carta.quantity === 1 ? "tu única copia" : `tus ${carta.quantity} copias`} de esa carta en el archivador.`,
+              "error",
+            );
+            return;
+          }
+          if (!guardarArchivadorLocal(res.fundas)) {
+            haptic("warning");
+            toast(
+              "No hay sitio para guardar el archivador en este navegador.",
+              "error",
+            );
+            return;
+          }
+        }
+
+        /* Estado local en vez de volver a leer el archivador entero: la
+         * respuesta ya confirma que la fila está escrita, y una relectura
+         * completa por cada carta colocada convertiría montar una hoja en
+         * nueve viajes de ida y vuelta. */
+        setFundas((prev) => [
+          ...prev.filter(
+            (f) => !(f.hoja === destino.hoja && f.ranura === destino.ranura),
+          ),
+          { hoja: destino.hoja, ranura: destino.ranura, carta },
+        ]);
+        haptic("success");
+        setEligiendo(null);
+        setMenu(null);
+      } catch (error) {
+        console.error("Error colocando en la funda:", error);
+        toast("No se pudo colocar la carta. Inténtalo otra vez.", "error");
+      } finally {
+        soltarCerrojo();
+      }
+    },
+    [isSignedIn, fundas, haptic, toast],
+  );
+
+  const quitar = useCallback(
+    async (destino: Destino) => {
+      if (!tomarCerrojo()) return;
+      try {
+        if (isSignedIn) {
+          const r = await quitarDeRanura(destino.hoja, destino.ranura);
+          /* "vacia" no es un error que merezca un aviso: significa que la funda
+           * ya estaba libre (otra pestaña se adelantó), y el resultado que el
+           * jugador quería —que no haya nada ahí— es exactamente el que hay. */
+          if (!r.ok && r.error !== "vacia") {
+            haptic("warning");
+            toast("No se pudo vaciar la funda. Inténtalo otra vez.", "error");
+            return;
+          }
+        } else {
+          const restantes = quitarDeRanuraLocal(
+            aLocales(fundas),
+            destino.hoja,
+            destino.ranura,
+          );
+          if (!guardarArchivadorLocal(restantes)) {
+            haptic("warning");
+            toast(
+              "No se pudo guardar el archivador en este navegador.",
+              "error",
+            );
+            return;
+          }
+        }
+
+        setFundas((prev) =>
+          prev.filter(
+            (f) => !(f.hoja === destino.hoja && f.ranura === destino.ranura),
+          ),
+        );
+        haptic("tap");
+        setMenu(null);
+      } catch (error) {
+        console.error("Error vaciando la funda:", error);
+        toast("No se pudo vaciar la funda. Inténtalo otra vez.", "error");
+      } finally {
+        soltarCerrojo();
+      }
+    },
+    [isSignedIn, fundas, haptic, toast],
+  );
+
+  /* ---------------------------------------------------------------- */
   /* DETALLE                                                           */
   /* ---------------------------------------------------------------- */
 
-  /**
-   * Se guarda el ID y la carta se re-lee de la lista viva en cada render.
-   * Guardar el objeto congelaría la copia: si el jugador vende una repetida
-   * desde otra pestaña o cambia un favorito, el detalle seguiría enseñando el
-   * número viejo. Es el mismo criterio que `actionCardLive` en la colección.
-   */
   const idsNavegables = useMemo(
-    () => cartasFiltradas.map((c) => c.id),
-    [cartasFiltradas],
+    () => ordenadas.map((f) => f.carta.id),
+    [ordenadas],
   );
-  const detalle = detalleId
-    ? cartasFiltradas.find((c) => c.id === detalleId) ?? null
-    : null;
-  const indiceDetalle = detalleId ? idsNavegables.indexOf(detalleId) : -1;
+  const detalle =
+    detalleIdx !== null ? (ordenadas[detalleIdx]?.carta ?? null) : null;
+
+  /**
+   * La carta que se le pasa al detalle, con una corrección pequeña y necesaria.
+   *
+   * CardDetailModal escribe "Copia única" en cuanto `quantity` no es nula, y
+   * una carta con CERO copias no es una copia única: es una que ya no está en
+   * la colección (se vendió después de colocarla). Quitando el campo, el modal
+   * se salta esa línea en vez de mentir. Va memoizado porque un objeto nuevo en
+   * cada render volvería a montar los oyentes de teclado del diálogo.
+   */
+  const cartaDelDetalle = useMemo(() => {
+    if (!detalle) return null;
+    return detalle.quantity > 0 ? detalle : { ...detalle, quantity: undefined };
+  }, [detalle]);
 
   /**
    * Al deslizar dentro del detalle, el archivador de detrás pasa a la hoja de
-   * esa carta. Así, al cerrar, el jugador se queda MIRANDO la funda de la que
+   * esa funda. Así, al cerrar, el jugador se queda MIRANDO la funda de la que
    * acaba de salir en vez de volver a donde estaba hace diez cartas.
+   *
+   * Si el giro anterior todavía no ha terminado, `irAHoja` se desentiende: el
+   * detalle sigue avanzando y el archivador se queda en la hoja anterior. Es
+   * preferible a encolar giros, que dejaría el archivador dando vueltas solo
+   * un buen rato después de cerrar el detalle.
    */
   const irACartaDelDetalle = (i: number) => {
-    const id = idsNavegables[i];
-    if (!id) return;
-    setDetalleId(id);
-    irAHoja(Math.floor(i / POR_HOJA));
+    const funda = ordenadas[i];
+    if (!funda) return;
+    setDetalleIdx(i);
+    irAHoja(funda.hoja);
   };
+
+  /** "Ver la carta" desde el menú de la funda. */
+  const verDesdeElMenu = () => {
+    if (!menu) return;
+    const i = ordenadas.findIndex(
+      (f) => f.hoja === menu.hoja && f.ranura === menu.ranura,
+    );
+    setMenu(null);
+    if (i >= 0) setDetalleIdx(i);
+  };
+
+  const fundaDelMenu = menu
+    ? (mapa.get(claveFunda(menu.hoja, menu.ranura)) ?? null)
+    : null;
+  /** Carta que ocupa la funda que el selector va a rellenar, si la hay. */
+  const cartaEnDestino = eligiendo
+    ? (mapa.get(claveFunda(eligiendo.hoja, eligiendo.ranura))?.carta.id ?? null)
+    : null;
 
   /* ---------------------------------------------------------------- */
   /* RENDER                                                            */
@@ -383,7 +703,7 @@ export default function Vitrina() {
       <div className="w-full">
         <PageHeader
           title="Vitrina"
-          subtitle="Tu colección en un archivador de nueve"
+          subtitle="El archivador que montas tú, funda a funda"
           back="/collection"
         />
         <div className="surface flex flex-col items-center gap-4 rounded-2xl px-6 py-16 text-center md:py-20">
@@ -419,13 +739,14 @@ export default function Vitrina() {
     );
   }
 
-  const vacia = cartasFiltradas.length === 0;
+  const sinCartas = cartas.length === 0;
+  const sinFundas = fundas.length === 0;
 
   return (
     <div className="w-full select-none">
       <PageHeader
         title="Vitrina"
-        subtitle="Tu colección en un archivador de nueve"
+        subtitle="El archivador que montas tú, funda a funda"
         back="/collection"
       />
 
@@ -437,264 +758,240 @@ export default function Vitrina() {
           archivador. A 672px las cartas salen a ~180px (algo mayores que en la
           rejilla de la colección) y la hoja entera se abarca de un vistazo. */}
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
-        {/* BARRA — filtro de expansión y de cuánto hay dentro. No se queda
-            pegada al hacer scroll, al contrario que la de la colección: aquí
-            el archivador entero cabe en pantalla y una barra flotante sólo
-            robaría alto a las cartas. */}
-        <div className="surface flex flex-col gap-2 rounded-2xl px-3 py-3 sm:flex-row sm:items-center">
-          <select
-            value={filtroSet}
-            onChange={(e) => {
-              haptic("select");
-              setFiltroSet(e.target.value);
-              // La hoja se reinicia AQUÍ y no en un efecto: hacerlo después
-              // dejaría un pase de página fantasma (de la hoja 7 del set viejo
-              // a la hoja 7 del nuevo, y de ésa a la 1) en cada cambio de
-              // filtro.
-              setDireccion(1);
-              setPasando(true);
-              setHoja(0);
-            }}
-            aria-label="Ver el archivador de una expansión"
-            className="input-field w-full min-w-0 cursor-pointer truncate rounded-xl px-3 py-2.5 text-xs sm:w-auto sm:flex-1"
-          >
-            <option value="todas">
-              Archivador completo · {formatNumber(cartas.length)} cartas
-            </option>
-            {opcionesSet.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name} · {formatNumber(conteoPorSet.get(s.id) ?? 0)}
-              </option>
-            ))}
-          </select>
-
-          <span className="chip ink-soft tnum shrink-0 px-3 py-2 text-center text-[11px] font-medium">
-            {formatNumber(cartasFiltradas.length)} cartas ·{" "}
-            {formatNumber(totalHojas)} {totalHojas === 1 ? "hoja" : "hojas"}
-          </span>
-        </div>
-
-        {vacia ? (
-          <div className="surface flex flex-col items-center gap-4 rounded-2xl px-6 py-16 text-center md:py-20">
-            <div className="surface-2 flex h-14 w-14 items-center justify-center rounded-2xl">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                className="ink-faint h-7 w-7"
-              >
-                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-              </svg>
-            </div>
-            <div>
-              <p className="ink font-medium">El archivador está vacío</p>
-              <p className="ink-soft mt-1 text-sm">
-                Abre tu primer sobre y las fundas se irán llenando de nueve en
-                nueve.
-              </p>
-            </div>
+        {/* LA BARRA DICE QUÉ HACER, no qué hay: un archivador vacío es un
+            estado legítimo y sin una frase que lo explique parece una pantalla
+            que no ha cargado. Es el aviso más importante de la pantalla la
+            primera vez que se entra. */}
+        <div className="surface flex flex-col gap-2 rounded-2xl px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="ink-soft text-[12px] leading-relaxed">
+            {sinCartas
+              ? "Todavía no tienes cartas que colocar. Abre un sobre y vuelve."
+              : sinFundas
+                ? "Tu archivador está vacío. Toca una funda y elige la carta que quieres enseñar."
+                : "Toca una funda para colocar, cambiar o quitar su carta."}
+          </p>
+          {sinCartas ? (
             <Link
               href="/"
-              className="btn-primary press rounded-xl px-5 py-2.5 text-sm font-medium"
+              className="btn-primary press shrink-0 rounded-xl px-4 py-2 text-center text-[12px] font-medium"
             >
               Abrir sobres
             </Link>
-          </div>
-        ) : (
-          <>
-            {/* ARCHIVADOR */}
-            <div className="rounded-3xl p-2.5 sm:p-4" style={TAPA}>
-              <div className="flex items-stretch">
-                <AnillasArchivador />
+          ) : (
+            <span className="chip ink-soft tnum shrink-0 px-3 py-2 text-center text-[11px] font-medium">
+              {formatNumber(fundas.length)}{" "}
+              {fundas.length === 1 ? "funda ocupada" : "fundas ocupadas"}
+            </span>
+          )}
+        </div>
 
-                {/* Bloque de hojas. `relative` y `min-w-0` (sin el segundo, un
-                    hijo de flex no baja de su ancho de contenido y la rejilla
-                    de tres columnas desbordaría en pantallas estrechas). */}
-                <div className="relative min-w-0 flex-1">
-                  {/* GROSOR — cantos de las hojas que quedan debajo. Son
-                      hermanos decorativos, nunca ancestros de una carta, así
-                      que su `translate` no afecta a la nitidez. */}
-                  <div
-                    aria-hidden="true"
-                    className="absolute inset-0 rounded-2xl"
-                    style={{ ...CANTO, transform: "translate(6px, 7px)" }}
-                  />
-                  <div
-                    aria-hidden="true"
-                    className="absolute inset-0 rounded-2xl"
-                    style={{ ...CANTO, transform: "translate(3px, 3.5px)" }}
-                  />
+        {/* ARCHIVADOR */}
+        <div className="rounded-3xl p-2.5 sm:p-4" style={TAPA}>
+          <div className="flex items-stretch">
+            <AnillasArchivador />
 
-                  {/* VENTANA — recorta la hoja que entra y la que sale, y es el
-                      ÚNICO elemento que escucha el arrastre (ver el punto 3 de
-                      la cabecera). `touch-action: pan-y` le devuelve al
-                      navegador el desplazamiento vertical de la página: sin
-                      esto, arrastrar hacia abajo sobre el archivador no haría
-                      scroll. */}
-                  <div
-                    ref={ventanaRef}
-                    className="relative z-10 overflow-hidden rounded-2xl"
-                    style={{ touchAction: touchActionFor("x") }}
-                  >
-                    {/* `grid-cols-1` y no `grid` a secas: una pista implícita
-                        mide `auto`, cuyo mínimo es el `min-content` del
-                        contenido, y el mínimo de una <img> es su ANCHO
-                        INTRÍNSECO (245px por carta). Tres columnas de eso son
-                        735px de mínimo y la hoja desbordaba en cualquier
-                        móvil. `grid-cols-1` es `minmax(0, 1fr)`, que sí puede
-                        encoger. Es la misma razón por la que la rejilla de la
-                        hoja usa `grid-cols-3` de Tailwind y no un template a
-                        mano. */}
-                    <div ref={pilaRef} className="grid grid-cols-1">
-                      <AnimatePresence initial={false} custom={direccion}>
-                        <motion.div
-                          /* La clave incluye el filtro: cambiar de expansión
-                             es cambiar de archivador, no de hoja, y sin esto
-                             React reutilizaría las mismas nueve fundas y las
-                             cartas cambiarían de golpe sin pase. */
-                          key={`${filtroSet}:${hojaSegura}`}
-                          custom={direccion}
-                          variants={VARIANTES}
-                          initial="entra"
-                          animate="centro"
-                          exit="sale"
-                          transition={{
-                            duration: DURACION_PASE,
-                            ease: [0.16, 1, 0.3, 1],
-                          }}
-                          /* Las dos hojas comparten celda de rejilla en vez de
-                             apilarse en absoluto: así el bloque conserva alto
-                             propio (una hoja absoluta no mide) y no hace falta
-                             clavar una altura que dependería del ancho de la
-                             carta. */
-                          className="col-start-1 row-start-1"
-                          style={{
-                            willChange: pasando ? "transform, opacity" : "auto",
-                          }}
-                        >
-                          <PaginaArchivador
-                            huecos={huecos}
-                            numero={hojaSegura + 1}
-                            total={totalHojas}
-                            onAbrir={(c) => {
-                              haptic("select");
-                              setDetalleId(c.id);
-                            }}
-                          />
-                        </motion.div>
-                      </AnimatePresence>
-                    </div>
-                  </div>
-                </div>
+            {/* Bloque de hojas. `relative` y `min-w-0` (sin el segundo, un
+                hijo de flex no baja de su ancho de contenido y la rejilla
+                de tres columnas desbordaría en pantallas estrechas). */}
+            <div className="relative min-w-0 flex-1">
+              {/* GROSOR — cantos de las hojas que quedan debajo. Son
+                  hermanos decorativos, nunca ancestros de una carta, así
+                  que su `translate` no afecta a la nitidez. */}
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 rounded-2xl"
+                style={{ ...CANTO, transform: "translate(6px, 7px)" }}
+              />
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 rounded-2xl"
+                style={{ ...CANTO, transform: "translate(3px, 3.5px)" }}
+              />
+
+              {/* VENTANA — el ÚNICO elemento que escucha el arrastre (ver el
+                  punto 3 de la cabecera). `touch-action: pan-y` le devuelve al
+                  navegador el desplazamiento vertical de la página: sin esto,
+                  arrastrar hacia abajo sobre el archivador no haría scroll.
+
+                  YA NO LLEVA `overflow-hidden`, y no es un descuido: lo tenía
+                  cuando el pase era un desplazamiento lateral y hacía falta
+                  recortar la hoja que entraba. Con el giro, la hoja pasa del
+                  perfil y acaba a la IZQUIERDA del lomo —como el papel de un
+                  archivador de verdad—, así que recortarla aquí la cortaría por
+                  la mitad justo en el fotograma en el que se está mirando. Que
+                  se salga no ensancha la página: `body` lleva
+                  `overflow-x: hidden` (app/globals.css:132). */}
+              <div
+                ref={ventanaRef}
+                className="relative z-10"
+                style={{ touchAction: touchActionFor("x") }}
+              >
+                {/* El libro va en un BLOQUE normal y no en una rejilla: el
+                    mínimo de una <img> es su ancho INTRÍNSECO (245px por
+                    carta), y un contenedor de rejilla con pista implícita
+                    `auto` respeta ese mínimo — tres columnas de eso son 735px
+                    y la hoja desbordaba en cualquier móvil. Un bloque no tiene
+                    ese problema, y dentro la hoja usa `grid-cols-3` de
+                    Tailwind, que es `minmax(0, 1fr)` y sí puede encoger. */}
+                <LibroArchivador
+                  ref={libroRef}
+                  hoja={hojaSegura}
+                  total={totalHojas}
+                  renderHoja={renderHoja}
+                  /* El estado se fija AL TERMINAR el giro. `paseRef` manda
+                     sobre `nueva` porque en un salto de varias hojas la vecina
+                     que el libro conoce no es el destino. */
+                  onCambio={(nueva) => {
+                    const pase = paseRef.current;
+                    paseRef.current = null;
+                    setPasando(false);
+                    setHoja(pase ? pase.hasta : nueva);
+                  }}
+                  efectosApagados={!!reducido}
+                />
               </div>
             </div>
+          </div>
+        </div>
 
-            {/* MANDOS — botones, además del gesto y del teclado. El gesto no
-                puede ser el único camino: en escritorio no hay dedo, y en la
-                PWA el arrastre convive con el gesto de retroceso del sistema. */}
-            <div className="flex items-center justify-center gap-2">
-              <button
-                type="button"
-                onClick={() => irAHoja(0)}
-                disabled={hojaSegura === 0}
-                aria-label="Primera hoja"
-                className="btn-ghost press touch-target flex h-11 w-11 items-center justify-center rounded-xl disabled:cursor-not-allowed disabled:opacity-30"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  className="h-4 w-4"
-                >
-                  <path d="m17 18-6-6 6-6M7 18V6" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                onClick={() => irAHoja(hojaSegura - 1)}
-                disabled={hojaSegura === 0}
-                aria-label="Hoja anterior"
-                className="btn-ghost press touch-target flex h-11 w-11 items-center justify-center rounded-xl disabled:cursor-not-allowed disabled:opacity-30"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  className="h-4 w-4"
-                >
-                  <path d="m15 18-6-6 6-6" />
-                </svg>
-              </button>
-
-              {/* `aria-live` para que el pase de hoja se anuncie: con lector de
-                  pantalla, el gesto y las flechas cambian nueve cartas sin
-                  mover el foco, y sin esto no habría ni rastro de que ha
-                  pasado algo. */}
-              <span
-                aria-live="polite"
-                className="chip ink tnum min-w-[9.5rem] px-4 py-2 text-center text-sm font-medium"
-              >
-                Hoja {hojaSegura + 1} de {totalHojas}
-              </span>
-
-              <button
-                type="button"
-                onClick={() => irAHoja(hojaSegura + 1)}
-                disabled={hojaSegura === totalHojas - 1}
-                aria-label="Hoja siguiente"
-                className="btn-ghost press touch-target flex h-11 w-11 items-center justify-center rounded-xl disabled:cursor-not-allowed disabled:opacity-30"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  className="h-4 w-4"
-                >
-                  <path d="m9 18 6-6-6-6" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                onClick={() => irAHoja(totalHojas - 1)}
-                disabled={hojaSegura === totalHojas - 1}
-                aria-label="Última hoja"
-                className="btn-ghost press touch-target flex h-11 w-11 items-center justify-center rounded-xl disabled:cursor-not-allowed disabled:opacity-30"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  className="h-4 w-4"
-                >
-                  <path d="m7 6 6 6-6 6M17 6v12" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Por dónde va el archivador. Decorativo: el dato ya está escrito
-                al lado, en texto, y anunciado por aria-live. */}
-            <div
-              aria-hidden="true"
-              className="surface-2 mx-auto h-1 w-full max-w-sm overflow-hidden rounded-full"
+        {/* MANDOS — botones, además del gesto y del teclado. El gesto no
+            puede ser el único camino: en escritorio no hay dedo, y en la
+            PWA el arrastre convive con el gesto de retroceso del sistema. */}
+        <div className="flex items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => irAHoja(0)}
+            disabled={hojaSegura === 0 || pasando}
+            aria-label="Primera hoja"
+            className="btn-ghost press touch-target flex h-11 w-11 items-center justify-center rounded-xl disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="h-4 w-4"
             >
-              <div
-                className="progress-bar-blue h-full"
-                style={{ width: `${((hojaSegura + 1) / totalHojas) * 100}%` }}
-              />
-            </div>
+              <path d="m17 18-6-6 6-6M7 18V6" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => irAHoja(hojaSegura - 1)}
+            disabled={hojaSegura === 0 || pasando}
+            aria-label="Hoja anterior"
+            className="btn-ghost press touch-target flex h-11 w-11 items-center justify-center rounded-xl disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="h-4 w-4"
+            >
+              <path d="m15 18-6-6 6-6" />
+            </svg>
+          </button>
 
-            <p className="ink-faint text-center text-[11px]">
-              Desliza sobre las hojas o usa las flechas ← → para pasar de página
-            </p>
-          </>
-        )}
+          {/* `aria-live` para que el pase de hoja se anuncie: con lector de
+              pantalla, el gesto y las flechas cambian nueve fundas sin
+              mover el foco, y sin esto no habría ni rastro de que ha
+              pasado algo. */}
+          <span
+            aria-live="polite"
+            className="chip ink tnum min-w-[9.5rem] px-4 py-2 text-center text-sm font-medium"
+          >
+            Hoja {hojaSegura + 1} de {totalHojas}
+          </span>
+
+          <button
+            type="button"
+            onClick={() => irAHoja(hojaSegura + 1)}
+            disabled={hojaSegura === totalHojas - 1 || pasando}
+            aria-label="Hoja siguiente"
+            className="btn-ghost press touch-target flex h-11 w-11 items-center justify-center rounded-xl disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="h-4 w-4"
+            >
+              <path d="m9 18 6-6-6-6" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => irAHoja(totalHojas - 1)}
+            disabled={hojaSegura === totalHojas - 1 || pasando}
+            aria-label="Última hoja"
+            className="btn-ghost press touch-target flex h-11 w-11 items-center justify-center rounded-xl disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="h-4 w-4"
+            >
+              <path d="m7 6 6 6-6 6M17 6v12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Por dónde va el archivador. Decorativo: el dato ya está escrito
+            al lado, en texto, y anunciado por aria-live. */}
+        <div
+          aria-hidden="true"
+          className="surface-2 mx-auto h-1 w-full max-w-sm overflow-hidden rounded-full"
+        >
+          <div
+            className="progress-bar-blue h-full"
+            style={{ width: `${((hojaSegura + 1) / totalHojas) * 100}%` }}
+          />
+        </div>
+
+        <p className="ink-faint text-center text-[11px]">
+          Desliza sobre las hojas o usa las flechas ← → para pasar de página.
+          Siempre queda una hoja libre al final para seguir montando.
+        </p>
       </div>
+
+      {/* El selector escribe en el servidor (o en localStorage) y cierra solo
+          al confirmar; si la escritura falla, se queda abierto con el aviso,
+          que es lo que permite volver a intentarlo sin repetir la búsqueda. */}
+      <SelectorCarta
+        destino={eligiendo}
+        onCerrar={() => setEligiendo(null)}
+        cartas={cartas}
+        sets={sets}
+        colocadas={colocadas}
+        actual={cartaEnDestino}
+        guardando={guardando}
+        onElegir={(carta) => {
+          if (eligiendo) colocar(eligiendo, carta);
+        }}
+      />
+
+      <AccionesFunda
+        funda={fundaDelMenu}
+        onCerrar={() => setMenu(null)}
+        guardando={guardando}
+        onVer={verDesdeElMenu}
+        /* Cambiar es el mismo selector: `ponerEnRanura` sustituye lo que
+           hubiera en la funda, así que no hace falta quitar primero (y de
+           hacerlo habría un instante con la funda vacía si la segunda
+           escritura fallara). */
+        onCambiar={() => {
+          if (!menu) return;
+          setEligiendo(menu);
+          setMenu(null);
+        }}
+        onQuitar={() => {
+          if (menu) quitar(menu);
+        }}
+      />
 
       {/* El detalle va en modo lectura: la vitrina enseña la colección, y
           vender o marcar favoritas ya tiene su sitio en /collection. Añadirlo
@@ -702,11 +999,11 @@ export default function Vitrina() {
           posibilidad de que las dos pantallas se desincronicen) a cambio de
           nada que no se pueda hacer a un toque de distancia. */}
       <CardDetailModal
-        card={detalle}
+        card={cartaDelDetalle}
         readOnly
-        onClose={() => setDetalleId(null)}
+        onClose={() => setDetalleIdx(null)}
         cards={idsNavegables}
-        index={indiceDetalle}
+        index={detalleIdx ?? -1}
         onIndexChange={irACartaDelDetalle}
       />
     </div>

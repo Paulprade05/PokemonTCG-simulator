@@ -59,7 +59,11 @@
     precioValido,
   } from "../utils/bazar";
   // Las tablas nuevas. Se aseguran en ensureSchema (ver más abajo el porqué).
-  import { SENTENCIAS_BAZAR, SENTENCIAS_GRADUACION } from "../services/esquemaMejoras";
+  import {
+    SENTENCIAS_ARCHIVADOR,
+    SENTENCIAS_BAZAR,
+    SENTENCIAS_GRADUACION,
+  } from "../services/esquemaMejoras";
   // Precios reales de Cardmarket. Degrada a "sin ajuste" si la tabla no existe
   // o si Postgres no responde: el juego se comporta como antes de que existiera.
   import { preciosEnEuros } from "../services/preciosBD";
@@ -172,7 +176,11 @@
          * la escribe el cron de precios, y el criterio del repositorio
          * (services/idiomaIngest.ts) es que ésa se asegure en su propio módulo.
          */
-        for (const stmt of [...SENTENCIAS_GRADUACION, ...SENTENCIAS_BAZAR]) {
+        for (const stmt of [
+          ...SENTENCIAS_GRADUACION,
+          ...SENTENCIAS_ARCHIVADOR,
+          ...SENTENCIAS_BAZAR,
+        ]) {
           await sql.query(stmt);
         }
       })().catch((e) => {
@@ -4297,6 +4305,209 @@ export async function getMisAnunciosBazar() {
     return { ok: true as const, anuncios: await anunciosEnIdiomaUsuario(anuncios) };
   } catch (e) {
     console.error("getMisAnunciosBazar error:", e);
+    return { ok: false as const, error: "servidor" as const };
+  }
+}
+
+/* ==================================================================== *
+ * EL ARCHIVADOR (la vitrina)
+ * ====================================================================
+ *
+ * Nueve fundas por hoja, y en cada funda va lo que el jugador ponga. Nace
+ * VACÍO: la versión anterior lo rellenaba con la colección entera ordenada por
+ * rareza, y eso no es un archivador — es otra vista de la colección. Quien
+ * tenía 441 cartas se encontraba 49 hojas que no había montado nadie.
+ *
+ * LO QUE EL SERVIDOR NO SE CREE: qué carta va en cada funda lo dice el cliente,
+ * pero que esa carta EXISTA y sea SUYA lo comprueba aquí. Es la misma regla que
+ * el resto del fichero, y aquí hace falta igual aunque no se mueva dinero:
+ * `getArchivador` devuelve nombre e ilustración de lo que haya guardado, así
+ * que sin la comprobación cualquiera podría meter en su archivador una carta
+ * que no tiene y enseñarla en su perfil.
+ */
+
+/** Fundas por hoja. Es la rejilla 3x3 de un archivador de verdad. */
+const RANURAS_POR_HOJA = 9;
+
+/**
+ * Tope de hojas. 60 hojas son 540 fundas, más que la colección de casi nadie.
+ *
+ * Existe por dos motivos y ninguno es estético: el archivador se lee ENTERO en
+ * una consulta (no está paginado en el servidor), y sin tope una petición
+ * repetida con hoja = 2.000.000 llenaría la tabla de filas que nadie va a mirar.
+ */
+const MAX_HOJAS = 60;
+
+/**
+ * El archivador entero: qué carta hay en cada funda.
+ *
+ * Devuelve las fundas OCUPADAS, no la rejilla completa. Las vacías no se
+ * guardan ni se transmiten; la pantalla dibuja la rejilla y coloca en ella lo
+ * que reciba. Con el archivador recién estrenado esto devuelve una lista vacía,
+ * que es exactamente lo que tiene que pasar.
+ */
+export async function getArchivador() {
+  const { userId } = await auth();
+  if (!userId) return { ok: false as const, error: "no-autorizado" as const };
+
+  try {
+    await ensureSchema();
+    const { rows } = await sql`
+      SELECT b.hoja, b.ranura, b.card_id,
+             c.name, c.rarity, c.images, c.set_id,
+             COALESCE(uc.quantity, 0) AS quantity
+      FROM binder_slots b
+      JOIN cards c ON c.id = b.card_id
+      LEFT JOIN user_collection uc
+        ON uc.user_id = b.user_id AND uc.card_id = b.card_id
+      WHERE b.user_id = ${userId}
+      ORDER BY b.hoja ASC, b.ranura ASC
+    `;
+
+    const fundas = rows.map((r: any) => ({
+      hoja: Number(r.hoja),
+      ranura: Number(r.ranura),
+      id: String(r.card_id),
+      name: String(r.name ?? ""),
+      rarity: String(r.rarity ?? "Common"),
+      images: aImagenes(r.images),
+      setId: String(r.set_id ?? ""),
+      /* Copias que se tienen HOY. Puede ser 0 si la carta se vendió después de
+       * colocarla: la funda no se vacía sola —sería borrarle al jugador algo
+       * que él puso— pero la pantalla la marca para que se entienda por qué
+       * está ahí una carta que ya no está en la colección. */
+      copias: Number(r.quantity ?? 0),
+    }));
+
+    return {
+      ok: true as const,
+      fundas: await enIdiomaUsuario(fundas),
+      maxHojas: MAX_HOJAS,
+    };
+  } catch (e) {
+    console.error("getArchivador error:", e);
+    return { ok: false as const, error: "servidor" as const };
+  }
+}
+
+/**
+ * Pone una carta en una funda. Si la funda ya tenía otra, la sustituye.
+ *
+ * EL GUARD DE COPIAS, que es lo único con miga: la misma carta puede aparecer
+ * en varias fundas —quien tiene tres Pikachu puede enseñar los tres— pero nunca
+ * más veces que copias tenga. Se comprueba DENTRO de la sentencia y contando
+ * las fundas que quedarán DESPUÉS, no las que hay: sin eso, dos pestañas
+ * colocando la última copia en dos fundas distintas pasarían las dos.
+ *
+ * El `ON CONFLICT ... DO UPDATE` sobre la clave primaria (usuario, hoja, ranura)
+ * es lo que hace que colocar sobre una funda ocupada sustituya en vez de
+ * fallar, que es lo que uno espera de un archivador de verdad.
+ */
+export async function ponerEnRanura(hoja: number, ranura: number, cardId: string) {
+  const { userId } = await auth();
+  if (!userId) return { ok: false as const, error: "no-autorizado" as const };
+
+  const h = Math.floor(Number(hoja));
+  const r = Math.floor(Number(ranura));
+  if (!Number.isInteger(h) || h < 0 || h >= MAX_HOJAS) {
+    return { ok: false as const, error: "hoja-invalida" as const };
+  }
+  if (!Number.isInteger(r) || r < 0 || r >= RANURAS_POR_HOJA) {
+    return { ok: false as const, error: "ranura-invalida" as const };
+  }
+  if (typeof cardId !== "string" || !ID_CARTA.test(cardId)) {
+    return { ok: false as const, error: "peticion" as const };
+  }
+
+  try {
+    await ensureSchema();
+
+    const { rows } = await sql`
+      WITH mia AS (
+        /* La carta tiene que existir y ser suya. Se comprueba con un JOIN
+         * contra la tabla cards —igual que hace el abono de comprarSobreAction—
+         * para que un id inventado no llegue nunca a la tabla del archivador. */
+        SELECT uc.card_id, uc.quantity
+        FROM user_collection uc
+        JOIN cards c ON c.id = uc.card_id
+        WHERE uc.user_id = ${userId} AND uc.card_id = ${cardId} AND uc.quantity > 0
+      ),
+      /* Fundas que ya tienen ESTA carta, SIN CONTAR la que se está tocando: si
+       * se está sustituyendo la misma carta por sí misma, no debe contarse dos
+       * veces y bloquear una colocación que en realidad no cambia nada. */
+      puestas AS (
+        SELECT count(*)::int AS n
+        FROM binder_slots
+        WHERE user_id = ${userId} AND card_id = ${cardId}
+          AND NOT (hoja = ${h} AND ranura = ${r})
+      )
+      INSERT INTO binder_slots (user_id, hoja, ranura, card_id)
+      SELECT ${userId}, ${h}, ${r}, ${cardId}
+      WHERE EXISTS (SELECT 1 FROM mia)
+        AND (SELECT n FROM puestas) < (SELECT quantity FROM mia)
+      ON CONFLICT (user_id, hoja, ranura)
+        DO UPDATE SET card_id = EXCLUDED.card_id, placed_at = NOW()
+      RETURNING card_id
+    `;
+
+    if (rows.length === 0) {
+      /* Sin fila puede ser por dos motivos y merecen mensajes distintos: o no
+       * tiene la carta, o la tiene toda ya colocada. Se distingue con una
+       * consulta de más SÓLO en el camino de error, que es el raro. */
+      const { rows: diag } = await sql`
+        SELECT COALESCE((SELECT quantity FROM user_collection
+                          WHERE user_id = ${userId} AND card_id = ${cardId}), 0) AS copias,
+               (SELECT count(*)::int FROM binder_slots
+                 WHERE user_id = ${userId} AND card_id = ${cardId}) AS puestas
+      `;
+      const copias = Number(diag[0]?.copias ?? 0);
+      const puestas = Number(diag[0]?.puestas ?? 0);
+      if (copias === 0) return { ok: false as const, error: "no-la-tienes" as const };
+      return {
+        ok: false as const,
+        error: "sin-copias-libres" as const,
+        copias,
+        puestas,
+      };
+    }
+
+    revalidatePath("/vitrina");
+    return { ok: true as const };
+  } catch (e) {
+    console.error("ponerEnRanura error:", e);
+    return { ok: false as const, error: "servidor" as const };
+  }
+}
+
+/**
+ * Vacía una funda. La carta no se toca: sigue en la colección, sólo deja de
+ * estar expuesta.
+ */
+export async function quitarDeRanura(hoja: number, ranura: number) {
+  const { userId } = await auth();
+  if (!userId) return { ok: false as const, error: "no-autorizado" as const };
+
+  const h = Math.floor(Number(hoja));
+  const r = Math.floor(Number(ranura));
+  if (!Number.isInteger(h) || h < 0 || !Number.isInteger(r) || r < 0) {
+    return { ok: false as const, error: "peticion" as const };
+  }
+
+  try {
+    await ensureSchema();
+    /* AQUÍ SÍ SE BORRA LA FILA, y no contradice la regla de graded_cards: allí
+     * la fila se conserva porque su ÍNDICE de copia decide una nota y reciclarlo
+     * sería una fuga. Una funda vacía no decide nada; conservarla sólo sería
+     * basura que habría que filtrar en cada lectura. */
+    const { rowCount } = await sql`
+      DELETE FROM binder_slots
+      WHERE user_id = ${userId} AND hoja = ${h} AND ranura = ${r}
+    `;
+    if (!rowCount) return { ok: false as const, error: "vacia" as const };
+    revalidatePath("/vitrina");
+    return { ok: true as const };
+  } catch (e) {
+    console.error("quitarDeRanura error:", e);
     return { ok: false as const, error: "servidor" as const };
   }
 }

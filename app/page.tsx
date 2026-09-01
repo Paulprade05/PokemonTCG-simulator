@@ -14,6 +14,9 @@ import {
   getWishlistIds,
 } from "./action";
 import { getCardsFromSet } from "../services/pokemon";
+// La ilustración real del sobre, para precargarla en cuanto se elige la
+// expansión (ver el efecto de más abajo).
+import { ilustracionDeSobre } from "../utils/sobreArte";
 import {
   openStandardPack,
   openPremiumPack,
@@ -368,6 +371,49 @@ export default function Home() {
     !efectosApagados && fase !== "cartas" ? (T_FANFARRIA - T_CARTA) / 1000 : 0;
 
   const currentSetObj = dbSets.find((s) => s.id === selectedSet);
+
+  /* ==================================================================== *
+   * LA ILUSTRACIÓN DEL SOBRE SE PIDE EN CUANTO SE ELIGE LA EXPANSIÓN
+   * ====================================================================
+   *
+   * BoosterPack ya precarga la suya al montarse, pero eso es TARDE: se monta
+   * al entrar en la vista de apertura, a un toque del rasgado. Con red lenta,
+   * el primer sobre se rompe todavía con el dibujo de respaldo y la foto entra
+   * a mitad de animación — que es exactamente el fotograma en el que se nota.
+   *
+   * Aquí, en cambio, sabemos la expansión desde que el jugador la selecciona en
+   * la tienda, mucho antes de comprar nada. Con eso hay tiempo de sobra.
+   *
+   * NO SE GUARDA NADA NI SE MIRA EL RESULTADO: sólo se toca la caché del
+   * navegador. Cuando BoosterPack pida la misma URL, ya estará ahí. Por eso
+   * tampoco hace falta cancelarlo al cambiar de expansión: una descarga de
+   * ~130 KB que no se llega a usar no molesta a nadie, y abortarla obligaría a
+   * llevar un AbortController para nada.
+   *
+   * La semilla de la variante no importa aquí: se precargan TODAS las variantes
+   * de la expansión, que son cuatro y pesan medio mega entre las cuatro. Así da
+   * igual qué número saque el sobre cuando se compre.
+   */
+  useEffect(() => {
+    const id = currentSetObj?.id;
+    if (!id) return;
+    // Sin conexión, o con "ahorro de datos" activado, no se precarga nada: el
+    // sobre dibujado es un respaldo perfectamente digno y no vale gastarle los
+    // datos a nadie por una animación.
+    const conexion = (navigator as unknown as {
+      connection?: { saveData?: boolean };
+    }).connection;
+    if (conexion?.saveData) return;
+
+    const vistas = new Set<string>();
+    for (let variante = 0; variante < 8; variante++) {
+      const url = ilustracionDeSobre(id, variante);
+      if (!url || vistas.has(url)) continue;
+      vistas.add(url);
+      const img = new Image();
+      img.src = url;
+    }
+  }, [currentSetObj?.id]);
 
   /**
    * Catálogo del set indexado por id. El sobre llega del servidor con lo justo
@@ -1996,6 +2042,17 @@ export default function Home() {
                 anchoCarta={CARD_WIDTH}
                 logo={currentSetObj?.images?.logo}
                 nombreSet={currentSetObj?.name}
+                /* EL ID VA EXPLÍCITO Y NO SE DEDUCE DE LA URL DEL LOGO.
+                 *
+                 * BoosterPack sabe sacar la expansión de esa URL —lo necesita
+                 * para el invitado, que a veces no tiene ficha— pero esa URL es
+                 * de terceros y YA CAMBIÓ DE FORMA UNA VEZ: images.pokemontcg.io,
+                 * assets.tcgdex.net en español y ahora images.scrydex.com en
+                 * algunas. Cada formato nuevo es una expansión que se queda sin
+                 * su ilustración de sobre en silencio, que es el peor fallo:
+                 * nadie lo mira dos veces. Aquí el id es el bueno y lo tenemos
+                 * delante, así que se pasa. */
+                setId={currentSetObj?.id}
                 cartas={cartasDelSobre}
                 gestoRef={tearSwipeRef}
                 semilla={semillaSobre}

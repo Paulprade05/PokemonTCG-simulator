@@ -25,6 +25,23 @@
 
 /* === LIGHT: papel crema, tinta sepia oscura === */
 :root, html[data-theme="light"] {
+  /* LOS DESPLEGABLES NATIVOS NO SE PINTAN CON NUESTRO CSS.
+   *
+   * La lista que abre un <select> la dibuja el SISTEMA, no la página: ni el
+   * fondo ni el texto de sus <option> pasan por nuestras variables. Lo único
+   * que el navegador escucha para decidir con qué paleta la pinta es
+   * `color-scheme`, y aquí no estaba declarado en ningún sitio.
+   *
+   * Consecuencia, que es la que se veía en la colección: con el tema oscuro
+   * puesto, el sistema seguía creyendo que la página era clara y abría la lista
+   * en claro, mientras el texto de las opciones sí heredaba nuestra tinta
+   * marfil. Marfil sobre blanco: los filtros no se podían leer.
+   *
+   * Con esto el sistema pinta la lista con la paleta que toca. Y como no todos
+   * los navegadores respetan `color-scheme` dentro del popup, más abajo hay
+   * además un estilo explícito de <option>: cinturón y tirantes, porque un
+   * desplegable ilegible deja la colección sin filtros. */
+  color-scheme: light;
   --bg: #f4efe4;
   --bg-2: #ece5d4;
   --ink: #2b241a;
@@ -61,6 +78,10 @@ html[data-theme="light"] body {
 
 /* === DARK: carbón/kraft cálido, tinta marfil === */
 html[data-theme="dark"] {
+  /* Ver la nota larga de la sección clara: sin esto el sistema abría la lista
+   * de los <select> con la paleta equivocada y el texto de las opciones acababa
+   * del mismo color que su fondo. */
+  color-scheme: dark;
   --bg: #14120c;
   --bg-2: #1a1710;
   --ink: #efe9db;
@@ -324,6 +345,28 @@ html[data-keyboard="open"] {
    en @layer utilities. Consecuencia: un text-xs sobre un input o un select no
    pinta nada, no lo pongas esperando 12px. */
 input, select, textarea { font-size: 16px; }
+
+/* EL SEGUNDO CINTURÓN DE LOS DESPLEGABLES.
+ *
+ * `color-scheme` (arriba, en cada tema) es lo que de verdad arregla la lista
+ * nativa, pero no todos los navegadores lo respetan dentro del popup: Chrome en
+ * Android y algún Firefox siguen pintando los <option> con lo que herede el
+ * <select>. Como el <select> lleva nuestra clase `input-field`, heredaban una
+ * tinta pensada para un fondo que en el popup no existe.
+ *
+ * Aquí se les da fondo y tinta PROPIOS y opacos. Se usan --surface y
+ * --surface-text porque son el par que el repositorio garantiza legible entre
+ * sí (14,5:1 en oscuro, 14,4:1 en claro), no --bg/--ink, que se miden contra
+ * otra cosa.
+ *
+ * Va sin capa, fuera de @layer, por el mismo motivo que la regla del anillo de
+ * foco: una utilidad de Tailwind sobre el <select> ganaría a una regla dentro
+ * de @layer utilities y volveríamos al desplegable ilegible. */
+select option,
+select optgroup {
+  background-color: var(--surface);
+  color: var(--surface-text);
+}
 
 /* Comportamiento de app nativa sólo cuando está instalada: en el navegador
    se respeta el pull-to-refresh y el rebote que el usuario espera. */

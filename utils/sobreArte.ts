@@ -53,7 +53,18 @@
  * `normalizarId` existe por esas dos formas: el mismo set se llama "sv3pt5"
  * en inglés y "sv03.5" en español, y sin normalizar, cambiar de idioma
  * cambiaría el color del sobre. Con ella las dos caen en "sv3.5".
+ *
+ * LO QUE SÍ HAY EN DISCO. Desde que existe scripts/preparar-sobres.mjs hay un
+ * puñado de sobres FOTOGRAFIADOS en public/sobres, y este fichero también
+ * contesta a "¿tiene foto esta expansión?" (sección 6). No contradice nada de
+ * lo de arriba: son 1 de 171 y el dibujo sigue siendo lo que se ve casi
+ * siempre, así que la función total sigue siendo el suelo de todo esto.
  */
+
+// El manifiesto de las fotos. Se importa —no se pide por red— para que la
+// pregunta "¿esta expansión tiene foto?" se pueda contestar en el primer
+// render; el porqué largo está en la sección 6.
+import manifiestoSobres from "../src/data/sobres.json";
 
 /* ------------------------------------------------------------------ */
 /* 1. ERAS: el PERFIL DE IMPRESIÓN, que no es el color                 */
@@ -463,6 +474,101 @@ export function arteDeSobre(logo?: string, nombreSet?: string, setId?: string): 
   };
 
   return { vars, sello: ident?.simbolo ?? null, id };
+}
+
+/* ------------------------------------------------------------------ */
+/* 6. LA ILUSTRACIÓN REAL, CUANDO LA HAY                               */
+/*                                                                     */
+/* Todo lo de arriba DIBUJA el sobre. Esto de aquí dice cuándo hay una  */
+/* FOTO del sobre de verdad con la que sustituir el dibujo.             */
+/*                                                                     */
+/* Las dos cosas conviven y van a seguir conviviendo: hoy hay foto de   */
+/* UNA expansión de ~171, así que el sobre CSS no es el caso degradado  */
+/* sino el NORMAL, y las cuatro secciones anteriores —color, era,       */
+/* sello, respaldo por hash— siguen siendo lo que se ve casi siempre.   */
+/* Ojo con la tentación de "ya que hay fotos, quitemos el dibujo": las  */
+/* ilustraciones no salen de ninguna API, las trae una persona a mano   */
+/* (scripts/preparar-sobres.mjs lo explica), mientras que expansiones   */
+/* las mete el cron cada noche él solo. La distancia entre las dos      */
+/* listas se ensancha, no se estrecha.                                  */
+/*                                                                     */
+/* EL MANIFIESTO SE IMPORTA, NO SE PIDE (el import va arriba del todo). */
+/* src/data/sobres.json lo genera el script y se commitea; importarlo   */
+/* lo mete en el bundle (hoy son 38 bytes) y, sobre todo, hace que la    */
+/* respuesta sea SÍNCRONA: en el primer render ya se sabe si esta        */
+/* expansión tiene foto. Con un fetch habría que pintar el sobre sin     */
+/* saberlo y cambiarle la cara después, que es justo lo que no puede     */
+/* pasar en esta pantalla.                                               */
+/* ------------------------------------------------------------------ */
+
+interface Ilustracion {
+  /** Nombre de la carpeta en public/sobres, que es el id TAL CUAL lo escribió el script. */
+  carpeta: string;
+  /** Cuántos ficheros hay: 1.webp .. N.webp. */
+  variantes: number;
+}
+
+/**
+ * El manifiesto reindexado por id NORMALIZADO.
+ *
+ * LOS DOS ESPACIOS DE IDS, OTRA VEZ (ver `normalizarId`). Las claves del
+ * manifiesto son las carpetas de public/sobres, y ésas son ids de
+ * pokemontcg.io: "me5", pero también "me2pt5". Aquí, en cambio, se busca con
+ * el id normalizado ("me5", "me2.5"), que es el único que vale para las dos
+ * formas de nombrar la misma expansión y por tanto para los dos idiomas.
+ * Comparar el normalizado contra la clave cruda funciona de chiripa con "me5"
+ * y falla en silencio con "me2pt5": la expansión tendría foto en el disco y no
+ * se vería nunca. Por eso la tabla se reconstruye al cargar el módulo con la
+ * clave NORMALIZADA y la carpeta CRUDA guardada aparte: se busca por una y se
+ * construye la ruta con la otra.
+ *
+ * Sin prototipo (`Object.create(null)`): la clave viene de un id de expansión,
+ * y un id que se llamase "constructor" o "toString" devolvería una función en
+ * vez de undefined y reventaría dos líneas más abajo. Cuesta cero evitarlo.
+ */
+const ILUSTRACIONES: Record<string, Ilustracion> = (() => {
+  const tabla: Record<string, Ilustracion> = Object.create(null);
+  const crudo = manifiestoSobres as Record<string, { variantes?: number } | undefined>;
+  for (const carpeta of Object.keys(crudo)) {
+    const variantes = Math.floor(crudo[carpeta]?.variantes ?? 0);
+    // ID_SANO no es paranoia repetida: esta carpeta acaba dentro de un `url()`
+    // en un atributo style, igual que el sello, y además es un trozo de ruta.
+    // Un manifiesto mal generado no puede convertirse en CSS.
+    if (variantes > 0 && ID_SANO.test(carpeta)) {
+      tabla[normalizarId(carpeta)] = { carpeta, variantes };
+    }
+  }
+  return tabla;
+})();
+
+/**
+ * La foto que le toca a ESTE sobre, o null si su expansión no tiene ninguna
+ * (el caso de ~170 de 171: quien llama tiene que seguir pintando el sobre CSS).
+ *
+ * LA VARIANTE NO SE SORTEA CON Math.random(). El sobre se re-renderiza tres
+ * veces mientras está en pantalla (los setFase de la coreografía) y una
+ * variante al azar cambiaría de dibujo A MITAD DEL RASGADO. Sale del mismo
+ * hash de cadena que usa el respaldo de color, alimentado con la semilla del
+ * sobre, que es estable para un sobre concreto y distinta en el siguiente:
+ * dos sobres seguidos de la misma expansión salen con dibujos distintos, que
+ * es lo que pasa al abrir una caja de verdad.
+ *
+ * El resto (`%`) reparte bien pese a que 4 sea potencia de dos, que es cuando
+ * los bits bajos de un FNV suelen delatarse: medido sobre 2000 aperturas
+ * seguidas de me5 sale 505/495/483/517, un 3,4% de desvío máximo. En una
+ * tirada corta sí se agrupa —diez unos en las veinte primeras—, pero eso es
+ * el azar, no el hash: desplazar los bits altos antes del resto da la misma
+ * foto a lo largo y no arregla la racha.
+ *
+ * La ruta se compone con una carpeta que ya pasó ID_SANO y con un entero, así
+ * que no hay forma de que traiga un carácter que se coma el `url()`.
+ */
+export function ilustracionDeSobre(id: string | null | undefined, semilla: number): string | null {
+  if (!id) return null;
+  const entrada = ILUSTRACIONES[id];
+  if (!entrada) return null;
+  const variante = hashDeClave(`${entrada.carpeta}#${semilla}`) % entrada.variantes;
+  return `/sobres/${entrada.carpeta}/${variante + 1}.webp`;
 }
 
 /**

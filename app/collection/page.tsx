@@ -746,10 +746,34 @@ export default function CollectionPage() {
           </AnimatePresence>
         </div>
 
-        {/* TOOLBAR — se queda pegada bajo la TopBar (y bajo el notch) al hacer scroll */}
+        {/* TOOLBAR — se queda pegada bajo la TopBar (y bajo el notch) al hacer scroll.
+         *
+         * POR QUÉ HAY UN ENVOLTORIO Y NO SÓLO `sticky` EN LA BARRA: la barra ya
+         * era pegajosa, pero se quedaba 8px por debajo de la TopBar y ese hueco
+         * dejaba ver las cartas pasando por detrás. Peor: la TopBar es de
+         * cristal (`.glass`, 78% de opacidad con blur), así que las cartas se
+         * veían TAMBIÉN a través de ella. Al bajar por la colección, el bloque
+         * de búsqueda y filtros parecía flotar sobre un desfile de cartas
+         * medio borrosas y daba la sensación de que se movía con el scroll.
+         *
+         * El envoltorio es quien se pega ahora, va a SANGRE —los márgenes
+         * negativos cancelan el `px-4 md:px-8` del <main>— y lleva el fondo de
+         * la página, opaco. Así, entre la TopBar y los filtros no pasa nada:
+         * las cartas desaparecen debajo y la barra se lee como parte de la
+         * cabecera y no como una tarjeta suelta a la deriva.
+         *
+         * `top` sin los 8px de antes: pegada a la TopBar, sin franja. El
+         * relleno vertical lo pone el envoltorio, que es opaco, en vez del
+         * hueco, que era transparente. */}
         <div
-          className="surface rounded-2xl px-3 py-3 flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:items-center sticky z-40"
-          style={{ top: "calc(var(--sat) + var(--topbar-h) + 8px)" }}
+          className="sticky z-40 -mx-4 px-4 pt-2 pb-3 md:-mx-8 md:px-8"
+          style={{
+            top: "calc(var(--sat) + var(--topbar-h))",
+            background: "var(--bg)",
+          }}
+        >
+        <div
+          className="surface rounded-2xl px-3 py-3 flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:items-center"
         >
           {/* Etiqueta y no contenedor neutro: así tocar el icono o el relleno
               enfoca el campo. min-h-11 son los 44px mínimos de zona táctil. */}
@@ -823,6 +847,7 @@ export default function CollectionPage() {
               <option value="name_asc">Nombre</option>
             </select>
           </div>
+        </div>
         </div>
 
         {/* GRID */}

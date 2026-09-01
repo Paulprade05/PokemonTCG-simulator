@@ -27,14 +27,36 @@ import type { CartaEnColeccion } from "../../utils/tipos";
  *    colección hace exactamente lo mismo y por el mismo motivo; la clase
  *    `press` del tema, que sí escala, queda descartada para cualquier cosa que
  *    envuelva una carta.
+ *
+ * ---------------------------------------------------------------------------
+ * LA FUNDA VACÍA ES LA MITAD DE ESTA PANTALLA
+ *
+ * El archivador nace vacío y se monta a mano, así que el hueco NO es el resto
+ * que sobra al final: es el botón con el que se construye la vitrina entera.
+ * Por eso la funda vacía es interactiva, se anuncia al lector de pantalla y
+ * lleva un "+" visible. Cuando NO se le pasa `onTocar` vuelve a ser el hueco
+ * decorativo de antes, y eso tiene un uso concreto: la hoja que gira durante el
+ * pase de página se pinta dos veces (la que gira y la de debajo), y sus fundas
+ * no deben poder tocarse ni duplicar nada en el árbol de accesibilidad.
  */
 
 interface FundaCartaProps {
   /** `null` es un hueco: en un archivador de verdad la funda vacía se ve. */
   carta: CartaEnColeccion | null;
-  onAbrir?: (carta: CartaEnColeccion) => void;
-  /** Posición 1..9 dentro de la hoja. Sólo para el rótulo del lector. */
+  /**
+   * Toque sobre la funda. Vacía, abre el selector de carta; ocupada, el menú
+   * de la funda. Sin él la funda es DECORATIVA (la hoja que gira).
+   */
+  onTocar?: () => void;
+  /** Posición 1..9 dentro de la hoja. Para el rótulo del lector. */
   posicion: number;
+  /**
+   * Escribe la invitación entera ("Coloca tu primera carta") dentro del hueco.
+   * La pone sólo una funda de todo el archivador —la primera de la primera hoja
+   * cuando aún no hay nada— porque nueve veces la misma frase por hoja es ruido
+   * y una sola es una instrucción.
+   */
+  invita?: boolean;
 }
 
 /* El bolsillo: papel de la hoja visto a través del plástico. El `inset` de
@@ -57,60 +79,154 @@ const BRILLO: React.CSSProperties = {
     "linear-gradient(118deg, rgba(255,255,255,0.20) 0%, rgba(255,255,255,0.07) 17%, rgba(255,255,255,0) 34%)",
 };
 
-export default function FundaCarta({ carta, onAbrir, posicion }: FundaCartaProps) {
+/* El interior del hueco: el rectángulo de papel que se ve por el plástico
+ * cuando no hay carta. Mantiene el mismo `aspect-[2.5/3.5]` que tendría la
+ * carta para que una fila entera de huecos —en un archivador recién estrenado,
+ * las nueve— mida exactamente igual que una fila llena y la hoja no cambie de
+ * alto al pasar de página.
+ *
+ * El BORDE no está aquí sino en clases, aunque el resto del fichero pinte con
+ * `style`: un `border` en línea gana siempre a cualquier clase, y el realce al
+ * pasar el ratón sobre el hueco es justamente cambiarle el color al borde. */
+const HUECO: React.CSSProperties = {
+  background:
+    "linear-gradient(150deg, color-mix(in srgb, var(--ink) 3%, transparent), transparent 60%)",
+};
+
+export default function FundaCarta({
+  carta,
+  onTocar,
+  posicion,
+  invita = false,
+}: FundaCartaProps) {
+  /* ---------------------------------------------------------------- */
+  /* FUNDA VACÍA                                                       */
+  /* ---------------------------------------------------------------- */
   if (!carta) {
-    return (
-      /**
-       * Hueco. `aria-hidden` porque para un lector de pantalla no hay nada que
-       * anunciar: la hoja ya declara cuántas cartas lleva, y nueve "funda
-       * vacía" seguidos son ruido. El interior mantiene el mismo
-       * `aspect-[2.5/3.5]` que tendría la carta para que una fila entera de
-       * huecos (la última página casi siempre lo es) mida exactamente igual
-       * que una fila llena y la hoja no cambie de alto al pasar de página.
-       */
-      <div aria-hidden="true" className="rounded-[6%] p-[4%]" style={FUNDA}>
-        <div
-          className="w-full aspect-[2.5/3.5] rounded-[4.5%]"
+    const dentro = (
+      <div
+        className="flex w-full aspect-[2.5/3.5] flex-col items-center justify-center gap-1 rounded-[4.5%] border border-dashed border-[var(--border-strong)] p-[6%] text-center transition-colors md:group-hover/funda:border-[var(--accent)]"
+        style={HUECO}
+      >
+        {/* El "+" va en un círculo con borde y no como signo suelto: sobre el
+            papel tramado un glifo fino a 12px se pierde, y el círculo además
+            marca dónde hay que tocar. */}
+        <span
+          aria-hidden="true"
+          className="flex h-6 w-6 items-center justify-center rounded-full sm:h-7 sm:w-7"
           style={{
-            border: "1px dashed var(--border-strong)",
-            background:
-              "linear-gradient(150deg, color-mix(in srgb, var(--ink) 3%, transparent), transparent 60%)",
+            border: "1px solid var(--border-strong)",
+            color: "var(--ink-soft)",
           }}
-        />
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            className="h-3.5 w-3.5"
+          >
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </span>
+        {invita && (
+          <span className="ink-soft text-[9px] leading-tight sm:text-[11px]">
+            Coloca aquí tu primera carta
+          </span>
+        )}
+      </div>
+    );
+
+    /* Sin manejador el hueco es decoración pura (la hoja que gira). Se oculta
+     * al lector: la hoja de debajo ya anuncia lo mismo y duplicarlo durante
+     * medio segundo de animación sólo confundiría. */
+    if (!onTocar) {
+      return (
+        <div aria-hidden="true" className="rounded-[6%] p-[4%]" style={FUNDA}>
+          {dentro}
+        </div>
+      );
+    }
+
+    return (
+      <div className="group/funda rounded-[6%] p-[4%]" style={FUNDA}>
+        <button
+          type="button"
+          onClick={onTocar}
+          aria-label={`Funda ${posicion} de 9, vacía. Colocar una carta`}
+          /* Nada de `press`: esa clase escala, y aunque en el hueco no haya
+             ilustración, la funda de al lado sí la tiene y el realce no puede
+             comportarse distinto según lo que le hayan puesto dentro. El
+             realce es el borde del hueco, como en el selector. */
+          className="block w-full cursor-pointer rounded-[4.5%] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+        >
+          {dentro}
+        </button>
       </div>
     );
   }
 
-  const copias = carta.quantity ?? 1;
+  /* ---------------------------------------------------------------- */
+  /* FUNDA OCUPADA                                                     */
+  /* ---------------------------------------------------------------- */
+
+  const copias = carta.quantity;
+  /**
+   * La carta está puesta pero ya no se tiene: se vendió (o se cambió) DESPUÉS
+   * de colocarla. Ni el servidor ni el archivador local vacían la funda solos
+   * —sería borrarle al jugador algo que él puso— así que hay que explicar por
+   * qué sigue ahí, y hacerlo sin apagar la carta: `opacity` sobre un ancestro
+   * de la ilustración crea contexto de apilamiento y nos devuelve al problema
+   * de la capa compositada. Se marca con una insignia y con el rótulo.
+   */
+  const huerfana = copias <= 0;
+  const nombre = carta.name || "carta sin datos";
+
+  /* El realce va en un div interior y no en el <button> para que el transform
+   * no arrastre el anillo de foco fuera de sitio. Sólo translate: ver la
+   * cabecera. */
+  const contenido = (
+    <div className="transition-transform duration-300 md:group-hover/funda:-translate-y-1 pointer-events-none">
+      <PokemonCard card={carta} reveal={true} interactive={false} />
+    </div>
+  );
 
   return (
     /* `group/funda` con nombre y no `group` a secas: la hoja y la vitrina
        también son contenedores, y un grupo anónimo dentro de otro engancha el
        hover al ancestro equivocado. */
     <div className="group/funda relative rounded-[6%] p-[4%]" style={FUNDA}>
-      <button
-        type="button"
-        onClick={() => onAbrir?.(carta)}
-        /* El rótulo dice las copias porque la insignia que las pinta es
-         * decorativa: quien navega con lector no ve el "×3" de la esquina. */
-        aria-label={
-          copias > 1
-            ? `Ver ${carta.name}, ${copias} copias, funda ${posicion} de 9`
-            : `Ver ${carta.name}, funda ${posicion} de 9`
-        }
-        className="block w-full cursor-zoom-in rounded-[4.5%] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
-      >
-        {/* El realce va en un div interior y no en el <button> para que el
-            transform no arrastre el anillo de foco fuera de sitio. Sólo
-            translate: ver la cabecera. */}
-        <div className="transition-transform duration-300 md:group-hover/funda:-translate-y-1 pointer-events-none">
-          <PokemonCard card={carta} reveal={true} interactive={false} />
-        </div>
-      </button>
+      {onTocar ? (
+        <button
+          type="button"
+          onClick={onTocar}
+          /* El rótulo dice las copias y el aviso de huérfana porque las dos
+           * insignias que los pintan son decorativas: quien navega con lector
+           * no ve ni el "×3" ni el aviso de la esquina. Y dice "opciones" y no
+           * "ver" porque el toque ya no abre la carta: abre el menú de la
+           * funda (ver, cambiar o quitar). */
+          aria-label={
+            `Funda ${posicion} de 9, ${nombre}` +
+            (huerfana
+              ? ", ya no la tienes en la colección"
+              : copias > 1
+                ? `, ${copias} copias`
+                : "") +
+            ". Abrir opciones"
+          }
+          className="block w-full cursor-pointer rounded-[4.5%] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+        >
+          {contenido}
+        </button>
+      ) : (
+        // Hoja que gira: se ve, no se toca ni se anuncia.
+        <div aria-hidden="true">{contenido}</div>
+      )}
 
       {/* Reflejo del plástico. Va POR ENCIMA de la carta (si no, no es un
           reflejo) y por debajo de las insignias, y con pointer-events-none
-          para no tragarse el toque que abre el detalle. */}
+          para no tragarse el toque que abre el menú. */}
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 z-10 rounded-[6%]"
@@ -131,9 +247,33 @@ export default function FundaCarta({ carta, onAbrir, posicion }: FundaCartaProps
         </div>
       )}
 
+      {/* YA NO LA TIENES — arriba a la derecha, el único rincón que no se pelea
+          con la favorita (izquierda) ni con las copias (abajo). Discreto a
+          propósito: no es un error del jugador ni hay nada que arreglar, sólo
+          hay que poder entender por qué está ahí una carta que ya no está en la
+          colección. */}
+      {huerfana && (
+        <div
+          aria-hidden="true"
+          title="Ya no tienes esta carta"
+          className="absolute right-[6%] top-[5%] z-20 flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold leading-none"
+          style={{
+            background: "var(--surface)",
+            color: "var(--warn-ink)",
+            border: "1px solid var(--border-strong)",
+            boxShadow: "var(--shadow-sm)",
+          }}
+        >
+          !
+        </div>
+      )}
+
       {/* COPIAS — abajo a la derecha, encima del número impreso, que es la
           esquina de la carta con menos ilustración que tapar. Sólo si hay
-          repetidas: un "×1" en las 258 fundas sería ruido puro. */}
+          repetidas: un "×1" en las fundas de todo el archivador sería ruido
+          puro. Cuentan las que se TIENEN, no las que hay en esta funda (en una
+          funda cabe una); es el mismo número que gobierna cuántas veces se
+          puede colocar la misma carta. */}
       {copias > 1 && (
         <div
           aria-hidden="true"

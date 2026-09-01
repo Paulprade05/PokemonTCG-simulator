@@ -52,7 +52,7 @@ Las rutas van en este orden y **todas** piden `Authorization: Bearer $ADMIN_SECR
 | 1 | `/migrate-core` | Crea las cinco tablas base (`users`, `sets`, `cards`, `user_collection`, `friendships`) más `set_translations`, con sus claves e índices. |
 | 2 | `/migrate-schema` | Añade a `cards` las columnas ricas (ataques, legalidades, precios…) e índices. |
 | 3 | `/migrate-social` | Crea `trade_offers` y los índices de usuario. |
-| 4 | `/migrate-mejoras` | Crea `graded_cards` (graduación), `card_prices` (precios reales de Cardmarket) y `bazar_listings` (bazar entre jugadores). |
+| 4 | `/migrate-mejoras` | Crea `graded_cards` (graduación), `binder_slots` (el archivador de la vitrina), `card_prices` (precios reales de Cardmarket) y `bazar_listings` (bazar entre jugadores). |
 | 5 | `/seed-database` | Siembra las expansiones de `src/data`. Con `?force=true` reescribe las que ya estén. |
 
 Las tablas auxiliares (`wishlist`, `set_rewards`, `market_claims`,
@@ -218,9 +218,41 @@ Las cuatro defensas, que van juntas o no van:
 
 ## Vitrina
 
-La colección como un archivador de anillas de verdad: hojas de 3×3 que se pasan
-con botones, con las flechas o arrastrando, con filtro por expansión. Es donde
-acaban las cartas graduadas.
+Un archivador de anillas de verdad: hojas de nueve fundas en 3×3 que se pasan
+**girando el papel sobre el lomo**, con botones, con las flechas o arrastrando.
+
+**Nace VACÍO y se monta a mano.** La primera versión lo rellenaba solo con la
+colección entera ordenada por rareza, y eso no es un archivador: es otra vista
+de la colección. Quien tenía 441 cartas se encontraba 49 hojas que no había
+montado nadie. Ahora cada funda guarda lo que el jugador ponga en ella —tabla
+`binder_slots`, o `localStorage` si juega sin cuenta— y la misma carta puede ir
+en varias fundas, pero nunca más veces que copias tenga.
+
+**El giro monta el 3D y lo desmonta.** `perspective` y `preserve-3d` están
+prohibidos en este repositorio sobre cualquier ancestro de una carta: WebKit
+rasteriza esa capa a escala fija y la ilustración sale borrosa en iPhone. La
+salida es la que ya usaba `PokemonCard` para su propio giro — volumen mientras
+se mueve, plano en reposo—, así que fuera del pase de página no queda ni una
+perspectiva, ni un `preserve-3d`, ni un `will-change`. Comprobado en el
+navegador: durante el giro hay dos hojas y `perspective: 1800px`; 520 ms
+después, una hoja y `perspective: none`.
+
+## Ilustraciones reales de sobre
+
+Al abrir un sobre de una expansión que tenga foto, se ve el sobre de verdad; el
+resto sigue con el sobre compuesto en CSS, que es el caso normal (hoy 1 de 171).
+Las fotos se dejan en una carpeta por expansión y se preparan con:
+
+```bash
+node scripts/preparar-sobres.mjs
+```
+
+Eso las convierte a WebP del tamaño al que se pintan y escribe
+`src/data/sobres.json`, el manifiesto que la aplicación consulta. Las cuatro de
+Pitch Black pasaron de 6,01 MB a 0,52 MB (91% menos), que importa porque se
+descargan justo en el momento de abrir el sobre. El mapa carpeta → id de
+expansión vive dentro del propio script y es lo único que hay que tocar para
+añadir una expansión nueva.
 
 
 ---

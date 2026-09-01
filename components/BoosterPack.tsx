@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { touchActionFor } from "../hooks/useSwipe";
 import { formatNumber } from "../utils/format";
-import { arteDeSobre, selloCss } from "../utils/sobreArte";
+import { arteDeSobre, ilustracionDeSobre, selloCss } from "../utils/sobreArte";
 
 export type FaseSobre = "sellado" | "rasgando" | "abriendo" | "cartas";
 
@@ -134,6 +134,76 @@ function derivarSobre(semilla: number): Record<string, string> {
   return vars;
 }
 
+/* ------------------------------------------------------------------ */
+/* LA FOTO DEL SOBRE: DÓNDE SE RASGA Y CÓMO ENCAJA                     */
+/*                                                                     */
+/* Estas tres constantes son TODO lo que hay que mover si un día las    */
+/* ilustraciones cambian de proporción o de encuadre. Están juntas y    */
+/* con nombre a propósito: repartidas por el CSS, la línea de rasgado   */
+/* acabaría escrita en dos sitios que un día no cuadran.                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * DÓNDE SE RASGA. Es el alto de la tapa en modo foto, o sea la línea por la
+ * que se parte la ilustración: lo de arriba vuela y lo de abajo cae.
+ *
+ * El número sale de MIRAR la imagen (public/sobres/me5/1.webp, 780x1426), no
+ * de copiar los 48px del sobre dibujado:
+ *
+ *     0,0% -  1,3%   franja negra del sellado
+ *     1,3% -  4,7%   crimpado: la banda estriada, en relieve
+ *     5,4% -  9,5%   la insignia "6+"
+ *    11,9%           empiezan las letras amarillas de POKÉMON
+ *
+ * O sea que la única franja limpia del sobre está entre el crimpado y la
+ * insignia, y ahí es donde se corta: 5,2% cae a 74px del borde, siete píxeles
+ * por debajo del crimpado y tres por encima de la insignia. Es además donde se
+ * rasga un sobre de verdad —por el sellado, no por la mitad del logo—, y por
+ * eso generaliza a las expansiones que vengan: el crimpado está en el mismo
+ * sitio en todos los sobres de Pokémon, mientras que la insignia y la posición
+ * del logo cambian por época.
+ *
+ * OJO: los 48px del sobre dibujado (11,4% del alto) caen EN MITAD del logo. No
+ * es un descuido de aquel diseño —allí no hay logo impreso, el logo es un <img>
+ * centrado más abajo—, pero copiarlos aquí partiría POKÉMON por la mitad.
+ *
+ * Va en porcentaje y no en px porque el alto del sobre depende del viewport:
+ * con 48px fijos la tapa se lleva el 9,5% de la ilustración en una tablet y el
+ * 13% en un móvil estrecho, y la línea de rasgado se pasearía por encima del
+ * dibujo. `--tapa-h` admite porcentaje sin tocar nada: sus dos usos
+ * (`.sobre__tapa` y `.sobre__boca`) cuelgan de cajas con alto definido.
+ */
+const CORTE_ARTE = "5.2%";
+
+/**
+ * Proporción de las ilustraciones (780x1426 = 1,83 de alto por ancho). Se le
+ * da al CONTENEDOR para que el hueco y la foto sean la misma caja: así no hay
+ * ni bandas vacías a los lados ni recorte por abajo.
+ */
+const RATIO_ARTE = "780 / 1426";
+
+/**
+ * Y el ancho, en unidades de `anchoCarta`.
+ *
+ * EL CRITERIO: SE CONSERVA EL ALTO Y SE CEDE EL ANCHO. El sobre dibujado mide
+ * 0,93 de ancho con proporción 2,5/3,76, o sea 1,3987 de alto, que es
+ * EXACTAMENTE el alto de la carta (2,5/3,5). Ese alto no se puede tocar: la
+ * ranura vertical está calculada en app/page.tsx (CARD_WIDTH descuenta
+ * cabecera, pie y aire) y un sobre más alto se saldría por arriba y por abajo
+ * de la zona central, encima de la cabecera y del pie. Así que se despeja el
+ * ancho: 1,3987 / 1,8282 = 0,7651.
+ *
+ * Lo que se paga: el sobre con foto es más ESTRECHO que la carta (0,765 contra
+ * 1,0), y mientras la carta emerge se le ven los bordes por los lados del
+ * sobre. Ya pasaba con el sobre dibujado —0,93 contra 1,0— sólo que menos.
+ * Es el menor de los tres males posibles: estirar la foto la deforma, y
+ * recortarla para llenar la caja de la carta se come el 17,7% del alto, que es
+ * justo donde están el título de la expansión y la banda de "10 ADDITIONAL
+ * GAME CARDS". Y es lo que pasa de verdad: un sobre es más estrecho y más
+ * largo que la carta que lleva dentro.
+ */
+const ANCHO_ARTE = ((0.93 * 3.76) / 2.5 / (1426 / 780)).toFixed(4);
+
 interface BoosterPackProps {
   fase: FaseSobre;
   /** +1 rasgado hacia la derecha, -1 hacia la izquierda: elige el arco de caída. */
@@ -194,8 +264,10 @@ interface BoosterPackProps {
  * al de SU expansión (utils/sobreArte.ts), pero eso entra entero por custom
  * properties inline en el elemento: `--sb-a`/`--sb-b` (los dos colores),
  * `--sb-ang`/`--sb-rayado`/`--sb-paso` (el rayado de su era),
- * `--sb-lustre` (cuánta luz devuelve el film) y `--sb-sello` (el símbolo del
- * set). Generar CSS distinto por expansión significaría una cadena nueva —y
+ * `--sb-lustre` (cuánta luz devuelve el film), `--sb-sello` (el símbolo del
+ * set) y `--sb-arte` (la foto del sobre real, si la hay: las reglas que la
+ * usan están abajo y son también las mismas para todas, encendidas con
+ * data-arte). Generar CSS distinto por expansión significaría una cadena nueva —y
  * un `<style>` nuevo que parsear— en cada apertura, con 171 expansiones y
  * subiendo. Si necesitas que algo varíe por set, añade una variable, no una
  * regla.
@@ -438,6 +510,102 @@ html[data-theme="dark"] .sobre__pliegues { opacity: .66; }
   box-shadow: inset 0 1px 0 rgba(255,255,255,.2);
 }
 
+/* ==================================================================
+   LA FOTO DEL SOBRE
+
+   Cuando la expansión tiene ilustración de verdad, estas reglas cambian
+   el DIBUJO por la FOTO. No sustituyen a lo de arriba: lo apagan por
+   encima. Se encienden con data-arte="si", que el componente sólo pone
+   cuando la imagen ya está descargada y descomprimida, así que hasta
+   ese momento —y en las ~170 expansiones que no tienen foto, que son el
+   caso normal— no se aplica ni una sola de ellas.
+
+   EL RASGADO ES EL PROBLEMA. La tapa vuela y el cuerpo cae, o sea que
+   la ilustración tiene que vivir en DOS elementos que se separan. Se
+   pinta la MISMA imagen en los dos, con la misma regla de tamaño
+   (100% auto: el ancho es el del sobre y el alto el que le toque por su
+   proporción) y anclada arriba en los dos (50% 0). Como la tapa y el
+   cuerpo miden lo mismo de ancho y los dos arrancan en el borde de
+   arriba del sobre, los dos trozos de imagen caen EN EL MISMO SITIO: la
+   tapa enseña la tira de arriba, el cuerpo enseña la imagen entera y de
+   ella sólo se ve lo que la tapa no tapa. Sellado se lee como una sola
+   imagen; al rasgar, cada mitad se lleva su trozo.
+
+   POR QUÉ auto Y NO UN PORCENTAJE en vertical: un porcentaje se
+   calcularía contra el alto de CADA elemento, y el de la tapa (--tapa-h)
+   no es el del cuerpo (el sobre entero), así que habría que escribir dos
+   números distintos y mantenerlos a mano. Con auto manda la proporción
+   del fichero, que es la misma imagen en los dos: si mañana una
+   expansión trae una foto más alta, los dos elementos la escalan igual
+   y la costura sigue sin verse.
+
+   DÓNDE CORTA: en --tapa-h, que en modo foto vale CORTE_ARTE (la
+   constante de arriba, con las mediciones). No hay una segunda constante
+   de corte porque la línea de rasgado y el alto de la tapa SON la misma
+   cosa; tenerlas separadas sería garantizar que un día no cuadran.
+   ================================================================== */
+.sobre[data-arte="si"] .sobre__cuerpo {
+  /* Sin borde. background-origin es padding-box, así que 1px de borde
+     mete la imagen 1px hacia dentro mientras la tapa —que no tiene
+     borde— la pinta desde el 0: un píxel basta para que se vea la
+     costura entre las dos mitades. */
+  border: 0;
+  background: var(--sb-arte) 50% 0 / 100% auto no-repeat;
+  /* Se queda la sombra propia (la que sigue a la luz del sorteo) y se
+     van las interiores: las costuras laterales del envoltorio ya están
+     FOTOGRAFIADAS, y pintarlas encima las duplica. */
+  box-shadow:
+    calc(var(--luz,0) * -7px) 16px 26px -14px rgba(0,0,0,.42),
+    var(--shadow-lg);
+}
+.sobre[data-arte="si"] .sobre__tapa-dedo {
+  background: var(--sb-arte) 50% 0 / 100% auto no-repeat;
+  /* El .touch-target de la tira reserva 44px de alto para el dedo, y la
+     tapa en modo foto mide bastante menos (5,2% del sobre: unos 21px).
+     Sin esto el dedo sobresale por debajo de la línea de rasgado y se
+     lleva la perforación y las flechas con él, dibujadas donde el sobre
+     NO se va a romper. Se puede quitar sin perder el gesto porque el
+     arrastre no lo escucha la tira sino el sobre entero (ver el style
+     inline de .sobre, touchAction): la tira es la PISTA de dónde se
+     rasga, no el sitio al que hay que apuntar. */
+  min-height: 0;
+}
+/* El crimpado plateado se pliega a cero en vez de apagarse: el de la
+   foto es el de SU expansión y está en su sitio, y estos 7px sólo
+   servían para reservarle hueco al dibujado. Con la tapa a 21px, dejarlo
+   ocupando sitio dejaba la tira sin alto para las flechas. */
+.sobre[data-arte="si"] .sobre__crimpado { height: 0; }
+/* La tira deja de ser una banda impresa y pasa a ser SOMBRA: el film
+   levantándose por el sellado. Así se ve la foto por debajo, y las
+   flechas se leen encima de cualquier ilustración —clara u oscura, en
+   los dos temas— porque van en blanco sobre ese velo. --ink-faint no
+   sirve aquí: en tema claro es gris oscuro, y estas fotos también.
+   La perforación se queda, y en modo foto es lo único que dice por
+   dónde se va a romper. */
+.sobre[data-arte="si"] .sobre__tira {
+  background: linear-gradient(180deg, rgba(0,0,0,.38), rgba(0,0,0,.06));
+  border-bottom-color: rgba(255,255,255,.5);
+  box-shadow: none;
+  color: rgba(255,255,255,.92);
+}
+/* La boca —el interior que asoma en cuanto la tira despega— se pinta con
+   el fondo de la aplicación, y encima de una foto eso no vale: en tema
+   claro --bg es crema y el sobre se quedaría con una franja CLARA justo
+   donde acaba de romperse. El agujero de un envoltorio roto es una
+   sombra, y una sombra es negra en los dos temas: el mismo argumento por
+   el que los valles de .sobre__pliegues van en rgba y no en var(--ink).
+   La sombra interior de abajo no se toca; sigue haciendo el pliegue. */
+.sobre[data-arte="si"] .sobre__boca {
+  background: linear-gradient(180deg, rgba(0,0,0,.82) 0%, rgba(0,0,0,.34) 100%);
+}
+/* Arrugas, reflejos y barrido SE QUEDAN: son lo que convierte una foto
+   pegada en un envoltorio de plástico manoseado, y son justo lo que a
+   una foto de catálogo le falta. Las arrugas sí pesan menos, porque
+   debajo ya no hay un degradado liso sino un dibujo que compite. Esta
+   regla gana a las dos de opacity de arriba —la de tema claro y la de
+   oscuro— por especificidad: clase + atributo + clase. */
+.sobre[data-arte="si"] .sobre__pliegues { opacity: .26; }
+
 @keyframes sobre-entra  { from { opacity:0; transform: translate3d(0,16px,0) scale(.94); } to { opacity:1; transform:none; } }
 @keyframes sobre-flota  { 0%,100% { transform: translate3d(0,0,0); } 50% { transform: translate3d(0,-5px,0); } }
 /* El recorrido sale del ancho de la tira (--br-x0/x1 ya vienen calculados):
@@ -520,6 +688,82 @@ export default function BoosterPack({
    * esquina del sobre sin símbolo dentro.
    */
   const sello = useMemo(() => selloCss(simbolo ?? arte.sello), [simbolo, arte.sello]);
+
+  /*
+   * LA FOTO DEL SOBRE, EN TRES PASOS SEPARADOS A PROPÓSITO.
+   *
+   * 1. QUÉ FOTO TOCA. Es SÍNCRONO: el manifiesto viaja en el bundle
+   *    (utils/sobreArte.ts), así que en el primer render ya se sabe si esta
+   *    expansión tiene ilustración y cuál de sus variantes le toca a ESTE
+   *    sobre. Depende del id de la expansión y de la semilla, las dos estables
+   *    mientras el sobre está en pantalla: la variante no puede cambiar a
+   *    mitad del rasgado, que es lo mismo que se cuida en los otros dos
+   *    useMemo de aquí arriba.
+   */
+  const urlArte = useMemo(() => ilustracionDeSobre(arte.id, semilla), [arte.id, semilla]);
+
+  /*
+   * 2. SI YA ESTÁ CARGADA. La foto no puede llegar a medias: se pinta en el
+   *    instante exacto del rasgado y un hueco a medio rellenar se ve. Se
+   *    precarga AL MONTAR —el sobre se pasa un rato sellado esperando el
+   *    toque— y no al rasgar, que es el único momento de la aplicación con
+   *    presupuesto en milisegundos. Hasta que no esté, se enseña el sobre
+   *    dibujado, que para eso está.
+   *
+   *    Es el mismo criterio que ya rige para el sello (utils/sobreArte.ts):
+   *    las imágenes del sobre van como background y NUNCA como <img>, porque
+   *    un <img> roto pinta el icono de imagen partida en mitad del sobre. La
+   *    diferencia con el sello —que es un adorno de 40px y con no aparecer ya
+   *    cumple— es que la foto ES el sobre: aquí no basta con que no falle,
+   *    tiene que estar entera antes de enseñarse. De ahí la precarga.
+   *
+   *    Se guarda la URL puesta y no un booleano: con un `true` heredado, si
+   *    cambiase la expansión se daría por buena una foto que aún no está.
+   *
+   * 3. Y SÓLO SE PONE SI EL SOBRE SIGUE SELLADO. Si llegara tarde —red lenta
+   *    y toque rápido— cambiarle la cara al sobre a mitad del rasgado sería
+   *    peor que no enseñarla nunca: la tapa ya está volando con su trozo de
+   *    dibujo y se le cambiaría el suelo debajo. La condición se mira DENTRO
+   *    de la descarga, cuando termina, y por eso la fase viaja en un ref: la
+   *    fase que capturó el efecto al montar es "sellado" para siempre, y
+   *    volver a lanzar la descarga en cada fase serían tres descodificaciones
+   *    del WebP justo durante la coreografía. Una vez puesta ya no se quita:
+   *    nadie vuelve a tocar este estado hasta que cambie la expansión.
+   */
+  const faseRef = useRef(fase);
+  useEffect(() => {
+    faseRef.current = fase;
+  }, [fase]);
+
+  const [arteEnUso, setArteEnUso] = useState<string | null>(null);
+  useEffect(() => {
+    if (!urlArte) return;
+    let vivo = true;
+    const img = new Image();
+    // onerror NO hace nada, y es deliberado: sin foto se queda el sobre
+    // dibujado para siempre, que es exactamente lo que ven las otras ~170
+    // expansiones. Un 404 aquí no es un fallo que haya que contar.
+    img.onerror = () => {};
+    img.onload = () => {
+      // decode() descomprime el WebP (780x1426) FUERA del hilo de pintado. Sin
+      // él la descompresión cae en el primer fotograma que use la imagen, que
+      // es justo el del rasgado. Si el navegador no lo trae o lo rechaza, se
+      // sigue adelante: los bytes ya están, que es lo que preguntaba el onload.
+      const decodificando = typeof img.decode === "function" ? img.decode() : null;
+      const poner = () => {
+        if (vivo && faseRef.current === "sellado") setArteEnUso(urlArte);
+      };
+      if (decodificando) decodificando.then(poner, poner);
+      else poner();
+    };
+    img.src = urlArte;
+    return () => {
+      vivo = false;
+    };
+  }, [urlArte]);
+
+  const conArte = urlArte !== null && arteEnUso === urlArte;
+
   return (
     <div
       // z-50 SIEMPRE (la carta va a z-40): durante la emergencia el sobre
@@ -563,6 +807,9 @@ export default function BoosterPack({
         className="sobre cursor-pointer select-none"
         data-fase={fase}
         data-quieto={efectosApagados ? "si" : undefined}
+        // El interruptor de todas las reglas de la foto. Va aquí y no en el
+        // cuerpo porque la tapa también tiene que enterarse, y son hermanas.
+        data-arte={conArte ? "si" : undefined}
         style={{
           // El sorteo va PRIMERO: son custom properties que heredan todas las
           // capas del sobre, nunca propiedades de caja.
@@ -574,10 +821,25 @@ export default function BoosterPack({
           // una constante, la misma cadena para las 171.
           ...arte.vars,
           ...(sello ? { "--sb-sello": sello } : null),
-          // 0.93 con 2.5/3.76 da 1.399·W de alto = el alto exacto de la carta:
-          // el sobre ocupa su misma ranura y la carta sale del mismo hueco.
-          width: `calc(${anchoCarta} * 0.93)`,
-          aspectRatio: "2.5 / 3.76",
+          // La foto y su línea de rasgado entran por variable, como todo lo
+          // demás: las reglas de arriba siguen siendo una cadena constante.
+          // La URL sale de una carpeta validada más un entero, así que no hay
+          // manera de que se cuele un carácter que cierre el url().
+          ...(conArte && urlArte
+            ? { "--sb-arte": `url("${urlArte}")`, "--tapa-h": CORTE_ARTE }
+            : null),
+          // GEOMETRÍA. El alto es el mismo en los dos modos: 1,399·W, el alto
+          // exacto de la carta, para que el sobre ocupe su misma ranura y la
+          // carta salga del mismo hueco. Lo que cambia es el ancho, porque la
+          // foto es más estrecha y alargada que la carta (ver ANCHO_ARTE).
+          //
+          // Y depende de `urlArte`, que se sabe SIN RED, no de `conArte`, que
+          // espera a la descarga: así el sobre nace ya con la caja que va a
+          // tener y cuando la foto llega sólo cambia lo pintado. Con `conArte`
+          // el sobre daría un salto de ancho a mitad de espera, delante de los
+          // ojos de quien está a punto de tocarlo.
+          width: `calc(${anchoCarta} * ${urlArte ? ANCHO_ARTE : "0.93"})`,
+          aspectRatio: urlArte ? RATIO_ARTE : "2.5 / 3.76",
           // El arrastre vale en TODO el sobre, no sólo en la tira: apuntar a
           // una franja de 48px con el dedo es puntería fina.
           touchAction: touchActionFor("x"),
@@ -585,11 +847,20 @@ export default function BoosterPack({
       >
         {/* CUERPO — aquí vive el overflow-hidden, no en .sobre */}
         <div className="sobre__cuerpo">
-          <div className="sobre__rayas" aria-hidden="true" />
+          {/* RAYADO Y SELLO SON TINTA, y con foto la tinta ya está impresa: el
+              rayado lenticular de esa expansión y su símbolo salen en la
+              fotografía, en su sitio y con su tamaño. Pintar los nuestros
+              encima los duplica y delata el montaje. No se montan en vez de
+              apagarse por CSS porque no hay nada que apagar: son dos capas de
+              gradientes que ya no dibujan nada útil.
+              Lo que sí sigue montado son pliegues, reflejos y barrido: eso no
+              es tinta, es el film por encima, y es justo lo que a una foto de
+              catálogo le falta para parecer un sobre que alguien sostiene. */}
+          {!conArte && <div className="sobre__rayas" aria-hidden="true" />}
           {/* El sello va pegado al rayado y por DEBAJO de pliegues y reflejos:
               es tinta impresa, no un adorno encima del film. Sólo se monta si
               hay símbolo con el que pintarlo (ver `sello` arriba). */}
-          {sello && <div className="sobre__sello" aria-hidden="true" />}
+          {!conArte && sello && <div className="sobre__sello" aria-hidden="true" />}
           {/* Pliegues y reflejos NO se mueven: reducir efectos no es reducir
               detalle, así que se pintan también con efectosApagados. Se
               rasterizan una vez al montar y no cuestan nada después. */}
@@ -600,24 +871,39 @@ export default function BoosterPack({
               Pintada siempre; mientras arrastras se va destapando por el borde. */}
           <div className="sobre__boca" aria-hidden="true" />
 
-          <div className="absolute inset-x-0 top-12 bottom-9 flex flex-col items-center justify-center gap-3 px-6">
-            {logo ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={logo}
-                alt=""
-                decoding="async"
-                className="max-h-[46%] max-w-[86%] object-contain"
-              />
-            ) : (
-              <span className="text-lg font-bold text-center">{nombreSet}</span>
-            )}
-            {logo && (
-              <span className="text-xs font-semibold ink-soft text-center">{nombreSet}</span>
-            )}
-          </div>
+          {/* LA CARA DEL SOBRE DIBUJADO: logo del set, nombre y banda de
+              cartas. Con foto no se monta NADA de esto, y no es por ahorrar
+              sino porque la fotografía ya lo trae impreso —el logo, el nombre
+              de la expansión y su propia banda de "10 ADDITIONAL GAME
+              CARDS"—, en su tipografía y en su sitio. Superponerle nuestro
+              logo encima del suyo es la diferencia entre un sobre y una
+              pegatina sobre un sobre.
+              Lo que se pierde es el número de cartas de ESTE sobre cuando no
+              coincide con el que trae impreso el sobre real (los premium no
+              llevan diez). Se acepta: en cuanto se rasga, la vista enseña
+              "1 / N" en la cabecera. */}
+          {!conArte && (
+            <>
+              <div className="absolute inset-x-0 top-12 bottom-9 flex flex-col items-center justify-center gap-3 px-6">
+                {logo ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={logo}
+                    alt=""
+                    decoding="async"
+                    className="max-h-[46%] max-w-[86%] object-contain"
+                  />
+                ) : (
+                  <span className="text-lg font-bold text-center">{nombreSet}</span>
+                )}
+                {logo && (
+                  <span className="text-xs font-semibold ink-soft text-center">{nombreSet}</span>
+                )}
+              </div>
 
-          <div className="sobre__banda">{formatNumber(cartas)} cartas</div>
+              <div className="sobre__banda">{formatNumber(cartas)} cartas</div>
+            </>
+          )}
         </div>
 
         {/* TAPA — HERMANA del cuerpo. El vuelo va en .sobre__tapa (keyframe) y
@@ -626,11 +912,17 @@ export default function BoosterPack({
         <div className={`sobre__tapa ${tearDir < 0 ? "sobre__tapa--izq" : "sobre__tapa--der"}`}>
           <div ref={tiraRef} className="sobre__tapa-dedo touch-target">
             <div className="sobre__crimpado" aria-hidden="true" />
+            {/* Las flechas van con currentColor: con dibujo heredan
+                --ink-faint de la clase, y con foto se quita la clase para que
+                hereden el blanco que .sobre[data-arte] le pone a la tira. Es
+                la única forma de que se lean sobre una ilustración cualquiera
+                sin usar un mix-blend-mode, que está prohibido en esta
+                pantalla. */}
             <div className="sobre__tira">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-3.5 h-3.5 ink-faint shrink-0">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={`w-3.5 h-3.5 shrink-0${conArte ? "" : " ink-faint"}`}>
                 <path d="m11 17-5-5 5-5M18 17l-5-5 5-5" />
               </svg>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-3.5 h-3.5 ink-faint shrink-0">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={`w-3.5 h-3.5 shrink-0${conArte ? "" : " ink-faint"}`}>
                 <path d="m6 17 5-5-5-5M13 17l5-5-5-5" />
               </svg>
             </div>

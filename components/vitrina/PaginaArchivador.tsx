@@ -8,11 +8,16 @@ import type { CartaEnColeccion } from "../../utils/tipos";
  *
  * POR QUÉ RECIBE HUECOS Y NO UNA LISTA CORTA: la hoja SIEMPRE monta nueve
  * casillas, aunque sólo haya dos cartas. Es lo que distingue un archivador de
- * una rejilla con scroll —la última hoja se ve a medio llenar, igual que en la
- * mesa— y además es lo que mantiene el alto constante entre hojas: con una
- * rejilla de longitud variable, pasar de una hoja llena a la última con dos
- * cartas encogería el bloque a un tercio a mitad de animación y el pase de
- * página daría un salto. Quien llama rellena con `null` hasta nueve.
+ * una rejilla con scroll —la hoja se ve a medio llenar, igual que en la mesa— y
+ * además es lo que mantiene el alto constante entre hojas: con una rejilla de
+ * longitud variable, pasar de una hoja llena a otra con dos cartas encogería el
+ * bloque a un tercio a mitad de animación y el pase de página daría un salto.
+ * Quien llama rellena con `null` hasta nueve.
+ *
+ * Y ahora eso importa el doble: el archivador NACE VACÍO y se monta funda a
+ * funda, así que la hoja de nueve huecos no es el caso raro del final sino la
+ * primera pantalla que ve todo el mundo. Cada hueco es el botón con el que se
+ * coloca una carta (ver components/vitrina/FundaCarta.tsx).
  *
  * La lámina lleva su propia sombra interior en el canto izquierdo: es el
  * doblez contra las anillas, y es lo que hace que la hoja parezca sujeta por
@@ -24,10 +29,25 @@ import type { CartaEnColeccion } from "../../utils/tipos";
 interface PaginaArchivadorProps {
   /** Exactamente nueve posiciones; `null` es funda vacía. */
   huecos: (CartaEnColeccion | null)[];
-  onAbrir: (carta: CartaEnColeccion) => void;
+  /**
+   * Toque en una funda, con su ranura 0..8.
+   *
+   * OPCIONAL, y no por comodidad: LibroArchivador pinta DOS hojas mientras dura
+   * el giro (la que gira y la de debajo), y la que gira es una copia en
+   * movimiento. Sin manejador, la hoja entera se vuelve decorativa —ni se toca
+   * ni se anuncia— y así el lector de pantalla no ve dos archivadores ni el
+   * dedo puede colocar una carta en una hoja que está de perfil.
+   */
+  onFunda?: (ranura: number) => void;
   /** Para el rótulo del lector de pantalla: "Hoja 3 de 12". */
   numero: number;
   total: number;
+  /**
+   * Ranura que escribe la invitación completa dentro del hueco, o -1. La usa
+   * la vitrina sólo en el archivador recién estrenado: ver `invita` en
+   * FundaCarta.
+   */
+  invitacion?: number;
 }
 
 /* Papel de la hoja. El grano es el mismo del tema (utilidad `.surface`), pero
@@ -43,34 +63,47 @@ const HOJA: React.CSSProperties = {
 
 export default function PaginaArchivador({
   huecos,
-  onAbrir,
+  onFunda,
   numero,
   total,
+  invitacion = -1,
 }: PaginaArchivadorProps) {
   const cartasEnHoja = huecos.filter(Boolean).length;
+  const viva = !!onFunda;
 
   return (
     <div
-      role="group"
-      /* El rótulo dice también cuántas cartas trae porque las fundas vacías
-       * están ocultas al lector: sin esto, una hoja con dos cartas y una hoja
-       * llena sonarían igual salvo por el número de elementos. */
-      aria-label={`Hoja ${numero} de ${total}, ${cartasEnHoja} de 9 fundas ocupadas`}
+      /* Sin manejador esto es la hoja que gira: se ve y nada más. `aria-hidden`
+       * la retira entera del árbol de accesibilidad, que es lo correcto durante
+       * el medio segundo en que hay dos hojas montadas a la vez. */
+      {...(viva
+        ? {
+            role: "group" as const,
+            /* El rótulo dice también cuántas cartas trae porque las fundas
+             * vacías se anuncian una a una como "vacía, colocar una carta": sin
+             * el resumen habría que recorrer las nueve para saber si la hoja
+             * está llena. */
+            "aria-label": `Hoja ${numero} de ${total}, ${cartasEnHoja} de 9 fundas ocupadas`,
+          }
+        : { "aria-hidden": true as const })}
       /* pl mayor que el resto del relleno: es el margen que se comen las
        * anillas, que se dibujan montadas sobre el canto de la hoja. */
       className="grid grid-cols-3 gap-1.5 rounded-2xl py-2 pl-3 pr-2 sm:gap-3 sm:py-4 sm:pl-6 sm:pr-4"
       style={HOJA}
     >
       {huecos.map((carta, i) => (
-        /* La clave lleva la posición y no sólo el id: dos hojas distintas
-         * pueden compartir carta cuando se cambia de filtro a mitad de
-         * animación, y `hueco-${i}` sin más colisionaría entre las dos hojas
-         * que AnimatePresence tiene vivas a la vez. */
+        /* LA CLAVE ES LA RANURA, nunca el id de la carta. En este archivador la
+         * misma carta puede ocupar VARIAS fundas de la misma hoja (quien tiene
+         * tres Pikachu puede enseñar los tres), así que una clave por id se
+         * repetiría dentro de la propia hoja y React tiraría la advertencia —y
+         * lo que es peor, reutilizaría el nodo equivocado al quitar una de las
+         * dos. La posición sí es única: nueve fundas, nueve claves. */
         <FundaCarta
-          key={carta ? `c:${carta.id}` : `h:${i}`}
+          key={i}
           carta={carta}
           posicion={i + 1}
-          onAbrir={onAbrir}
+          invita={i === invitacion}
+          onTocar={onFunda ? () => onFunda(i) : undefined}
         />
       ))}
     </div>

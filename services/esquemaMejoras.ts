@@ -96,6 +96,56 @@ export const SENTENCIAS_GRADUACION: readonly string[] = [
 ];
 
 /* ==================================================================== *
+ * EL ARCHIVADOR (la vitrina)
+ * ====================================================================
+ *
+ * QUÉ CAMBIA RESPECTO A LA PRIMERA VERSIÓN: la vitrina se llenaba sola con la
+ * colección entera, ordenada como la ordena el servidor. Eso no es un
+ * archivador, es otra vista de la colección — y quien tiene 441 cartas se
+ * encontraba 49 hojas montadas por nadie.
+ *
+ * Ahora nace VACÍO y cada funda guarda lo que el jugador ponga en ella. Esta
+ * tabla es esa decisión: una fila por funda ocupada, y nada más.
+ *
+ * LA CLAVE PRIMARIA ES (usuario, hoja, ranura) Y NO INCLUYE LA CARTA. Es lo que
+ * hace que una funda tenga UNA carta: poner otra encima sustituye, no apila.
+ * Sin eso, dos toques seguidos dejarían dos cartas en la misma funda y la hoja
+ * pintaría una de las dos según el orden en que Postgres las devolviera.
+ *
+ * NO HAY TOPE DE HOJAS EN EL ESQUEMA, a propósito: el límite es del código,
+ * que es donde se puede cambiar sin migrar. Lo que sí hay es un CHECK de que la
+ * ranura cae dentro de la rejilla de nueve, porque una ranura fuera de rango
+ * sería una carta invisible: guardada y sin pintar nunca.
+ *
+ * LA MISMA CARTA PUEDE ESTAR EN VARIAS FUNDAS, pero nunca más veces que copias
+ * se tengan. Eso lo comprueba la acción que escribe y no la tabla, porque el
+ * número de copias vive en user_collection y una constraint no puede mirar otra
+ * tabla.
+ */
+export const SENTENCIAS_ARCHIVADOR: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS binder_slots (
+     user_id   TEXT NOT NULL,
+     hoja      INT  NOT NULL,
+     ranura    INT  NOT NULL,
+     card_id   TEXT NOT NULL,
+     placed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+     PRIMARY KEY (user_id, hoja, ranura),
+     CONSTRAINT binder_slots_hoja_valida CHECK (hoja >= 0),
+     CONSTRAINT binder_slots_ranura_valida CHECK (ranura BETWEEN 0 AND 8)
+   )`,
+
+  // "el archivador de este usuario": la única consulta que hace la pantalla.
+  // Se lee entero de una vez y se pagina en el cliente, que es barato — son
+  // como mucho unos cientos de filas y caben de sobra en una respuesta.
+  `CREATE INDEX IF NOT EXISTS idx_binder_slots_user
+     ON binder_slots (user_id, hoja, ranura)`,
+
+  // "¿en cuántas fundas está ya esta carta?", que es el guard de las copias.
+  `CREATE INDEX IF NOT EXISTS idx_binder_slots_carta
+     ON binder_slots (user_id, card_id)`,
+];
+
+/* ==================================================================== *
  * PRECIOS REALES DE CARDMARKET
  * ====================================================================
  *
@@ -221,7 +271,7 @@ export const ESTADOS_PRECIO = {
  * que sólo usa un cron se asegura en el módulo del cron, y una tabla que usa la
  * aplicación se asegura en `ensureSchema`. Por eso:
  *
- *   SENTENCIAS_GRADUACION + SENTENCIAS_BAZAR  ->  ensureSchema (app/action.ts),
+ *   GRADUACION + ARCHIVADOR + BAZAR           ->  ensureSchema (app/action.ts),
  *       porque las tocan acciones del jugador y tienen que existir sí o sí.
  *   SENTENCIAS_PRECIOS                        ->  el propio cron de precios,
  *       porque nadie más escribe ahí y `ensureSchema` se espera antes de CADA
@@ -231,6 +281,7 @@ export const ESTADOS_PRECIO = {
  */
 export const SENTENCIAS_MEJORAS: readonly string[] = [
   ...SENTENCIAS_GRADUACION,
+  ...SENTENCIAS_ARCHIVADOR,
   ...SENTENCIAS_PRECIOS,
   ...SENTENCIAS_BAZAR,
 ];
