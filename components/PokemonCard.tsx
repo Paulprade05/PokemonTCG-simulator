@@ -53,7 +53,32 @@ function CardFace({
         // debe esperar al observer de lazy-loading.
         loading={loading}
         decoding="async"
-        className="w-full h-full object-contain"
+        /* `cover` Y NO `contain`, QUE ES DE DONDE SALÍA EL MARCO DE UNOS PÍXELES.
+           El hueco es `aspect-[2.5/3.5]` = 0,71429, que es la proporción FÍSICA
+           de una carta. Los escaneos que sirve la API no la tienen: las modernas
+           son 734x1024 (0,71680) y las de 1999-2009 son 600x825 (0,72727). Todas
+           salen MÁS ANCHAS de proporción que el hueco, así que con `contain` la
+           imagen encajaba por ancho y dejaba banda arriba y abajo — y por esa
+           banda asomaba el `bg-[var(--surface-2)]` del contenedor, que es el
+           marco que se veía. En una carta moderna era medio píxel; en una Base,
+           tres por lado.
+
+           SE PUEDE RECORTAR SIN MIEDO, y está medido carta a carta en catorce
+           expansiones de todas las eras: NINGUNA imagen es de proporción más
+           estrecha que 0,71429, así que `cover` recorta SIEMPRE por los lados y
+           NUNCA por arriba o por abajo. El nombre, los PS y el número no pueden
+           perderse por aquí. Lo que se va es como mucho el 1,79% de los cantos
+           en las cartas de 600x825, que es borde impreso.
+
+           No se arregla cambiando el hueco a 734/1024: eso cuadraría las
+           modernas pero dejaría las de 600x825 igual de descuadradas, y encima
+           las de 733x1024 (Escarlata y Púrpura tardío) pasarían a recortar por
+           ARRIBA, que es justo la dirección peligrosa.
+
+           El reverso de la carta ya usaba `cover` desde siempre (ver CARD_BACK,
+           más abajo): esto lo único que hace es que las dos caras se comporten
+           igual. */
+        className="w-full h-full object-cover"
       />
     );
   }

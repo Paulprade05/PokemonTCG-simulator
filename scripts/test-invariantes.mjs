@@ -1024,6 +1024,84 @@ comprueba(
 }
 
 /* ------------------------------------------------------------------ */
+/* EL ESTADO FÍSICO NO SE PIERDE POR EL CAMINO                         */
+/* ------------------------------------------------------------------ */
+/*
+ * ESTE INVARIANTE EXISTE PORQUE EL FALLO YA HA PASADO DOS VECES, en dos
+ * pantallas distintas y con dos meses de diferencia:
+ *
+ *   · en la rejilla de la colección, donde `hidratarCartas` sustituía la carta
+ *     del servidor por la del catálogo y se llevaba por delante el desgaste;
+ *   · en el archivador, donde `fundasDelServidor` reconstruía la carta con
+ *     cinco campos exactos y dejaba fuera `desperfectos` y `marcas`.
+ *
+ * Las dos veces el síntoma fue el mismo y es de los que no se ven revisando
+ * código: la MISMA copia salía dañada en una pantalla e impecable en otra. No
+ * falla nada, no hay excepción, no hay hueco. Simplemente una pantalla miente,
+ * y el jugador lo descubre antes que nosotros.
+ *
+ * Que haya pasado dos veces dice que el riesgo no es el despiste sino la FORMA:
+ * cada vez que alguien escribe un objeto carta campo a campo —y hay motivos
+ * buenos para hacerlo, la normalización defensiva es uno— se está decidiendo en
+ * silencio qué se queda fuera. Por eso esto se comprueba y no se confía.
+ */
+{
+  seccion("Estado físico: lo que calcula el servidor tiene que llegar a la pantalla");
+
+  await cargarModulo("utils/archivadorLocal.ts");
+  const modeloVitrina = await cargarModulo("components/vitrina/modelo.ts");
+
+  // Una copia bien fea, para que no haya duda de que hay algo que perder.
+  const desperfectos = {
+    piques: 7, aranazos: 3, manchas: 2, palidez: 0.4,
+    descentrado: { x: 2.2, y: -1.4 },
+  };
+  const marcas = {
+    piques: [{ x: 4, y: 9, tam: 2.5, fuerza: 0.8 }],
+    aranazos: [{ x: 50, y: 30, tam: 18, giro: 24, fuerza: 0.5 }],
+    manchas: [{ x: 70, y: 60, tam: 9, fuerza: 0.35 }],
+  };
+
+  const fundas = modeloVitrina.fundasDelServidor(
+    [{
+      hoja: 0, ranura: 0, id: "sv8-1", name: "Goldeen", rarity: "Common",
+      images: { small: "s.png", large: "l.png" }, copias: 3,
+      desperfectos, marcas,
+    }],
+    4,
+  );
+  const carta = fundas[0] && fundas[0].carta;
+
+  comprueba(
+    !!carta && carta.desperfectos === desperfectos && carta.marcas === marcas,
+    "el archivador no pierde el estado físico al normalizar",
+    "fundasDelServidor ha devuelto una carta sin `desperfectos` o sin `marcas`." +
+      " El servidor los calcula (app/action.ts, estadoDeLaMejorCopia) y" +
+      " FundaCarta sabe pintarlos, así que perderlos aquí no rompe nada: hace" +
+      " que la MISMA copia salga dañada en la colección e impecable en la" +
+      " funda. Campos que llegaron: " + (carta ? Object.keys(carta).join(", ") : "(ninguna carta)"),
+  );
+
+  // Y la otra mitad del trato: si el servidor NO manda estado —que es el caso
+  // normal, la mayoría de las copias están bien— no puede aparecer uno de la
+  // nada. Un `desperfectos: {}` vacío haría que estadoDeCopia se pusiera a
+  // mirar dentro y que una carta sana se rotulara como dañada.
+  const limpia = modeloVitrina.fundasDelServidor(
+    [{
+      hoja: 0, ranura: 1, id: "sv8-2", name: "Seaking", rarity: "Common",
+      images: { small: "s.png", large: "l.png" }, copias: 1,
+    }],
+    4,
+  );
+  const sana = limpia[0] && limpia[0].carta;
+  comprueba(
+    !!sana && sana.desperfectos === undefined && sana.marcas === undefined,
+    "una copia sana sigue llegando sin estado, y no con uno vacío",
+    "fundasDelServidor se ha inventado un estado para una carta que no lo traía.",
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* VEREDICTO                                                           */
 /* ------------------------------------------------------------------ */
 

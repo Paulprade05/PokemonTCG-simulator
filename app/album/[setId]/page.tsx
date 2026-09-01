@@ -586,7 +586,7 @@ export default function SetAlbumPage() {
                   // Mismo radio que PokemonCard y que los huecos de la
                   // rejilla (4.5% del ancho), para que abrir la ficha no
                   // cambie la silueta de la carta.
-                  className="absolute inset-0 h-full w-full cursor-zoom-in rounded-[4.5%] object-contain"
+                  className="absolute inset-0 h-full w-full cursor-zoom-in rounded-[4.5%] object-cover"
                   style={{ boxShadow: "var(--shadow-lg)" }}
                 />
               )}

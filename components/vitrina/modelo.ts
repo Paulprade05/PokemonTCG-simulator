@@ -175,6 +175,16 @@ type FundaCruda = {
   rarity?: unknown;
   images?: unknown;
   copias?: unknown;
+  /* --- El estado físico de la copia, que `getArchivador` sí manda --- *
+   *
+   * Van como `unknown` igual que los demás, y aquí eso NO es formalismo: son
+   * los dos únicos campos que este fichero deja pasar SIN mirar por dentro
+   * (ver `fundasDelServidor`), así que este tipo es lo único que dice que
+   * existen. Quien los consume es `estadoDeCopia`
+   * (components/DesperfectosCarta.tsx), que comprueba la forma él mismo y
+   * devuelve null ante cualquier cosa rara. */
+  desperfectos?: unknown;
+  marcas?: unknown;
 };
 
 /** Las dos variantes de ilustración, siempre como cadenas. */
@@ -221,6 +231,34 @@ export function fundasDelServidor(
         rarity: typeof c.rarity === "string" ? c.rarity : "",
         images: aImagenes(c.images),
         quantity: Math.max(0, Math.floor(Number(c.copias) || 0)),
+        /* EL ESTADO FÍSICO PASA TAL CUAL, Y ES LA ÚNICA EXCEPCIÓN A LA REGLA
+           DE ESTA FUNCIÓN.
+
+           Todo lo demás se coerciona campo a campo porque un undefined donde
+           se espera un número revienta la rejilla. Estos dos no se pueden
+           coercionar aquí: son objetos con forma propia —recuentos de piques,
+           coordenadas de cada marca— y copiar esa forma en este fichero sería
+           tener DOS definiciones de la misma cosa, que es justo como se acaba
+           pintando una carta con las marcas de otra. La comprobación vive
+           donde se usa, en `estadoDeCopia`
+           (components/DesperfectosCarta.tsx), que valida y devuelve null ante
+           cualquier cosa que no cuadre.
+
+           SIN ESTAS DOS LÍNEAS EL ARCHIVADOR MIENTE, y así estaba:
+           `getArchivador` calcula el estado y lo manda (app/action.ts,
+           `estadoDeLaMejorCopia`), `FundaCarta` sabe pintarlo desde el primer
+           día... y esta función, que va en medio, reconstruía la carta con
+           cinco campos y se lo comía. La misma copia salía dañada en la
+           colección e impecable en la funda.
+
+           Es el MISMO fallo que ya tuvo la rejilla de la colección con
+           `hidratarCartas`: normalizar de más y perder por el camino lo que el
+           servidor se había molestado en calcular. Que haya pasado dos veces
+           en dos sitios distintos dice que el riesgo es de la forma, no del
+           despiste: cada vez que alguien escriba aquí un objeto carta campo a
+           campo, hay que preguntarse qué se está quedando fuera. */
+        desperfectos: c.desperfectos,
+        marcas: c.marcas,
       },
     });
   }
