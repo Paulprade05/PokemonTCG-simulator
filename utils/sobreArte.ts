@@ -54,11 +54,20 @@
  * en inglés y "sv03.5" en español, y sin normalizar, cambiar de idioma
  * cambiaría el color del sobre. Con ella las dos caen en "sv3.5".
  *
- * LO QUE SÍ HAY EN DISCO. Desde que existe scripts/preparar-sobres.mjs hay un
- * puñado de sobres FOTOGRAFIADOS en public/sobres, y este fichero también
- * contesta a "¿tiene foto esta expansión?" (sección 6). No contradice nada de
- * lo de arriba: son 1 de 171 y el dibujo sigue siendo lo que se ve casi
- * siempre, así que la función total sigue siendo el suelo de todo esto.
+ * LO QUE SÍ HAY EN DISCO, Y QUE YA ES LA MAYORÍA. En public/sobres hay sobres
+ * FOTOGRAFIADOS, y este fichero también contesta a "¿tiene foto esta
+ * expansión?" (sección 6). Eso SÍ contradice lo que decía aquí antes: eran 1 de
+ * 171 y hoy son 130, así que la foto pasa a ser lo normal y el dibujo, lo que
+ * se ve en las 41 restantes.
+ *
+ * Y aun así nada de lo de arriba sobra, por dos motivos que no se ven en el
+ * recuento. El primero es que esas 41 no son un pendiente: casi todas son
+ * promos, Trainer Gallery, Shiny Vault, kits y energías, productos que NUNCA
+ * tuvieron sobre suelto que fotografiar. El segundo importa más: las
+ * expansiones las mete el cron cada noche él solo, y las fotos las trae un
+ * script que alguien tiene que ejecutar. O sea que una expansión recién salida
+ * llega SIEMPRE sin foto, y lo que la viste hasta que alguien pase el script es
+ * exactamente lo de aquí arriba.
  */
 
 // El manifiesto de las fotos. Se importa —no se pide por red— para que la
@@ -428,7 +437,7 @@ export interface ArteSobre {
 }
 
 /**
- * El arte del sobre de UNA expansión.
+ * El arte del sobre de una expansión.
  *
  * Es una función total y determinista: la misma expansión da el mismo sobre en
  * cualquier recarga, en cualquier dispositivo y en los dos idiomas, y una
@@ -482,19 +491,30 @@ export function arteDeSobre(logo?: string, nombreSet?: string, setId?: string): 
 /* Todo lo de arriba DIBUJA el sobre. Esto de aquí dice cuándo hay una  */
 /* FOTO del sobre de verdad con la que sustituir el dibujo.             */
 /*                                                                     */
-/* Las dos cosas conviven y van a seguir conviviendo: hoy hay foto de   */
-/* UNA expansión de ~171, así que el sobre CSS no es el caso degradado  */
-/* sino el NORMAL, y las cuatro secciones anteriores —color, era,       */
-/* sello, respaldo por hash— siguen siendo lo que se ve casi siempre.   */
-/* Ojo con la tentación de "ya que hay fotos, quitemos el dibujo": las  */
-/* ilustraciones no salen de ninguna API, las trae una persona a mano   */
-/* (scripts/preparar-sobres.mjs lo explica), mientras que expansiones   */
-/* las mete el cron cada noche él solo. La distancia entre las dos      */
-/* listas se ensancha, no se estrecha.                                  */
+/* LA RELACIÓN ENTRE LAS DOS SE HA DADO LA VUELTA, y conviene saberlo  */
+/* antes de tocar nada: aquí ponía "hoy hay foto de UNA expansión de    */
+/* ~171, así que el sobre CSS es el caso NORMAL". Ya no. Son 130 de     */
+/* 171, y el dibujo es lo que se ve en las 41 que quedan.               */
+/*                                                                     */
+/* Ojo con la tentación que eso invita: "ya que casi todas tienen foto, */
+/* quitemos el dibujo". Sigue siendo un error, y por dos motivos.       */
+/*                                                                     */
+/* Uno: de esas 41, la inmensa mayoría no son un pendiente que alguien  */
+/* vaya a completar. Son promos, Trainer Gallery, Shiny Vault, kits y   */
+/* energías: productos que nunca se vendieron en sobre, así que no hay  */
+/* foto que buscar. La lista no va a bajar mucho de 41.                 */
+/*                                                                     */
+/* Dos, y es el que de verdad manda: las expansiones las mete el cron   */
+/* cada noche él solo, y las fotos las baja un script que alguien tiene */
+/* que lanzar (scripts/bajar-sobres-bulbapedia.mjs, y                   */
+/* scripts/preparar-sobres.mjs para las que se traen a mano). Una       */
+/* expansión recién salida llega SIEMPRE sin foto. Quitar el dibujo     */
+/* sería dejar sin sobre justamente a la expansión más nueva, que es la */
+/* que más se abre.                                                     */
 /*                                                                     */
 /* EL MANIFIESTO SE IMPORTA, NO SE PIDE (el import va arriba del todo). */
 /* src/data/sobres.json lo genera el script y se commitea; importarlo   */
-/* lo mete en el bundle (hoy son 38 bytes) y, sobre todo, hace que la    */
+/* lo mete en el bundle (hoy son 4,6 KB) y, sobre todo, hace que la      */
 /* respuesta sea SÍNCRONA: en el primer render ya se sabe si esta        */
 /* expansión tiene foto. Con un fetch habría que pintar el sobre sin     */
 /* saberlo y cambiarle la cara después, que es justo lo que no puede     */

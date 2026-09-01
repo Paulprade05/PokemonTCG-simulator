@@ -1,5 +1,395 @@
 {
+  "base1": {
+    "variantes": 3
+  },
+  "base2": {
+    "variantes": 3
+  },
+  "base3": {
+    "variantes": 3
+  },
+  "base4": {
+    "variantes": 3
+  },
+  "base5": {
+    "variantes": 3
+  },
+  "base6": {
+    "variantes": 3
+  },
+  "bw1": {
+    "variantes": 3
+  },
+  "bw10": {
+    "variantes": 3
+  },
+  "bw11": {
+    "variantes": 3
+  },
+  "bw2": {
+    "variantes": 3
+  },
+  "bw3": {
+    "variantes": 3
+  },
+  "bw4": {
+    "variantes": 3
+  },
+  "bw5": {
+    "variantes": 3
+  },
+  "bw6": {
+    "variantes": 3
+  },
+  "bw7": {
+    "variantes": 3
+  },
+  "bw8": {
+    "variantes": 3
+  },
+  "bw9": {
+    "variantes": 3
+  },
+  "cel25": {
+    "variantes": 1
+  },
+  "col1": {
+    "variantes": 3
+  },
+  "dc1": {
+    "variantes": 2
+  },
+  "det1": {
+    "variantes": 1
+  },
+  "dp1": {
+    "variantes": 3
+  },
+  "dp2": {
+    "variantes": 3
+  },
+  "dp3": {
+    "variantes": 3
+  },
+  "dp4": {
+    "variantes": 3
+  },
+  "dp5": {
+    "variantes": 3
+  },
+  "dp6": {
+    "variantes": 3
+  },
+  "dp7": {
+    "variantes": 3
+  },
+  "dv1": {
+    "variantes": 3
+  },
+  "ecard1": {
+    "variantes": 3
+  },
+  "ecard2": {
+    "variantes": 3
+  },
+  "ecard3": {
+    "variantes": 3
+  },
+  "ex1": {
+    "variantes": 3
+  },
+  "ex10": {
+    "variantes": 3
+  },
+  "ex11": {
+    "variantes": 3
+  },
+  "ex12": {
+    "variantes": 3
+  },
+  "ex13": {
+    "variantes": 3
+  },
+  "ex14": {
+    "variantes": 3
+  },
+  "ex15": {
+    "variantes": 3
+  },
+  "ex16": {
+    "variantes": 3
+  },
+  "ex2": {
+    "variantes": 3
+  },
+  "ex3": {
+    "variantes": 3
+  },
+  "ex4": {
+    "variantes": 3
+  },
+  "ex5": {
+    "variantes": 3
+  },
+  "ex6": {
+    "variantes": 3
+  },
+  "ex7": {
+    "variantes": 3
+  },
+  "ex8": {
+    "variantes": 3
+  },
+  "ex9": {
+    "variantes": 3
+  },
+  "g1": {
+    "variantes": 3
+  },
+  "gym1": {
+    "variantes": 3
+  },
+  "gym2": {
+    "variantes": 3
+  },
+  "hgss1": {
+    "variantes": 3
+  },
+  "hgss2": {
+    "variantes": 3
+  },
+  "hgss3": {
+    "variantes": 3
+  },
+  "hgss4": {
+    "variantes": 3
+  },
+  "mcd21": {
+    "variantes": 1
+  },
+  "mcd22": {
+    "variantes": 1
+  },
+  "me1": {
+    "variantes": 3
+  },
+  "me2": {
+    "variantes": 3
+  },
+  "me2pt5": {
+    "variantes": 1
+  },
   "me5": {
     "variantes": 4
+  },
+  "neo1": {
+    "variantes": 3
+  },
+  "neo2": {
+    "variantes": 3
+  },
+  "neo3": {
+    "variantes": 3
+  },
+  "neo4": {
+    "variantes": 3
+  },
+  "pgo": {
+    "variantes": 1
+  },
+  "pl1": {
+    "variantes": 3
+  },
+  "pl2": {
+    "variantes": 3
+  },
+  "pl3": {
+    "variantes": 3
+  },
+  "pl4": {
+    "variantes": 3
+  },
+  "pop1": {
+    "variantes": 1
+  },
+  "pop8": {
+    "variantes": 1
+  },
+  "pop9": {
+    "variantes": 1
+  },
+  "rsv10pt5": {
+    "variantes": 1
+  },
+  "sm1": {
+    "variantes": 3
+  },
+  "sm10": {
+    "variantes": 3
+  },
+  "sm11": {
+    "variantes": 3
+  },
+  "sm115": {
+    "variantes": 3
+  },
+  "sm12": {
+    "variantes": 3
+  },
+  "sm2": {
+    "variantes": 3
+  },
+  "sm3": {
+    "variantes": 3
+  },
+  "sm35": {
+    "variantes": 3
+  },
+  "sm4": {
+    "variantes": 3
+  },
+  "sm5": {
+    "variantes": 3
+  },
+  "sm6": {
+    "variantes": 3
+  },
+  "sm7": {
+    "variantes": 3
+  },
+  "sm75": {
+    "variantes": 3
+  },
+  "sm8": {
+    "variantes": 3
+  },
+  "sm9": {
+    "variantes": 3
+  },
+  "sv1": {
+    "variantes": 3
+  },
+  "sv10": {
+    "variantes": 3
+  },
+  "sv2": {
+    "variantes": 3
+  },
+  "sv3": {
+    "variantes": 3
+  },
+  "sv3pt5": {
+    "variantes": 1
+  },
+  "sv4": {
+    "variantes": 3
+  },
+  "sv4pt5": {
+    "variantes": 3
+  },
+  "sv5": {
+    "variantes": 3
+  },
+  "sv6": {
+    "variantes": 3
+  },
+  "sv6pt5": {
+    "variantes": 3
+  },
+  "sv7": {
+    "variantes": 3
+  },
+  "sv8": {
+    "variantes": 3
+  },
+  "sv8pt5": {
+    "variantes": 3
+  },
+  "sv9": {
+    "variantes": 3
+  },
+  "swsh1": {
+    "variantes": 3
+  },
+  "swsh10": {
+    "variantes": 3
+  },
+  "swsh11": {
+    "variantes": 3
+  },
+  "swsh12": {
+    "variantes": 3
+  },
+  "swsh12pt5": {
+    "variantes": 1
+  },
+  "swsh2": {
+    "variantes": 3
+  },
+  "swsh3": {
+    "variantes": 3
+  },
+  "swsh35": {
+    "variantes": 3
+  },
+  "swsh4": {
+    "variantes": 3
+  },
+  "swsh45": {
+    "variantes": 3
+  },
+  "swsh5": {
+    "variantes": 3
+  },
+  "swsh6": {
+    "variantes": 3
+  },
+  "swsh7": {
+    "variantes": 3
+  },
+  "swsh8": {
+    "variantes": 3
+  },
+  "swsh9": {
+    "variantes": 3
+  },
+  "xy1": {
+    "variantes": 3
+  },
+  "xy10": {
+    "variantes": 3
+  },
+  "xy11": {
+    "variantes": 3
+  },
+  "xy12": {
+    "variantes": 3
+  },
+  "xy2": {
+    "variantes": 3
+  },
+  "xy3": {
+    "variantes": 3
+  },
+  "xy4": {
+    "variantes": 3
+  },
+  "xy5": {
+    "variantes": 3
+  },
+  "xy6": {
+    "variantes": 3
+  },
+  "xy7": {
+    "variantes": 3
+  },
+  "xy8": {
+    "variantes": 3
+  },
+  "xy9": {
+    "variantes": 3
+  },
+  "zsv10pt5": {
+    "variantes": 1
   }
 }

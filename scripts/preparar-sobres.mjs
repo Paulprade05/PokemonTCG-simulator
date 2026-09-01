@@ -19,6 +19,14 @@
  * el resultado se commitea: en producción no hay ni carpeta de originales ni
  * sharp instalado, sólo los WebP de public/ y el manifiesto.
  *
+ * HAY UN SEGUNDO SCRIPT, y no lo sustituye: scripts/bajar-sobres-bulbapedia.mjs
+ * saca de Bulbapedia el sobre de las expansiones que lo tengan publicado (hoy
+ * 129 de 171). Éste sigue siendo el bueno para lo que se traiga a mano: una
+ * imagen mejor que la de la wiki, una expansión que la wiki no tiene todavía
+ * —las nuevas tardan— o una que se llame distinto en los dos sitios. Los dos
+ * escriben en public/sobres y en el mismo manifiesto, y por eso el manifiesto
+ * se cuenta del disco al final de este fichero. Léelo antes de tocar nada.
+ *
  * ============================================================================
  * POR QUÉ WEBP Y NO LOS PNG TAL CUAL
  * ============================================================================
@@ -149,21 +157,59 @@ if (sinMapear.length > 0) {
   );
 }
 
+/* ------------------------------------------------------------------ *
+ * EL MANIFIESTO SE CUENTA DEL DISCO, NO DE LO QUE ACABO DE CONVERTIR
+ *
+ * Desde que existe scripts/bajar-sobres-bulbapedia.mjs hay DOS scripts
+ * escribiendo en public/sobres: éste, con lo que trae una persona a mano, y
+ * aquél, con lo que baja de Bulbapedia para las 171 expansiones. Si cada uno
+ * escribiese el manifiesto con las suyas, el último en ejecutarse borraría del
+ * manifiesto el trabajo del otro. Y sería un fallo de los malos: las imágenes
+ * seguirían en el disco, la aplicación no volvería a mirarlas y no lo notaría
+ * nadie, porque un sobre sin foto no es un hueco, es el sobre dibujado.
+ *
+ * Contando lo que HAY en la carpeta, los dos scripts conmutan: da igual el
+ * orden en que se ejecuten y da igual cuántos sean mañana.
+ *
+ * OJO al añadir aquí una expansión que ya hubiera bajado el otro: quítala
+ * también de la sección "generado" de src/data/sobres-bulbapedia.json, o su
+ * próxima ejecución te volverá a pisar la carpeta. Lo que trae una persona
+ * manda sobre lo que baja un script, pero eso hay que decírselo.
+ * ------------------------------------------------------------------ */
+const enDisco = {};
+if (existsSync(DESTINO)) {
+  for (const carpeta of readdirSync(DESTINO, { withFileTypes: true })) {
+    if (!carpeta.isDirectory()) continue;
+    // Las variantes van SEGUIDAS desde 1.webp: es el contrato que da por hecho
+    // utils/sobreArte.ts al sortear cuál le toca a cada sobre.
+    let n = 0;
+    while (existsSync(join(DESTINO, carpeta.name, `${n + 1}.webp`))) n++;
+    if (n > 0) enDisco[carpeta.name] = { variantes: n };
+  }
+}
+
 /* El manifiesto va ORDENADO por id para que el fichero no cambie de orden entre
  * ejecuciones y el diff de git sea legible. */
 const ordenado = {};
-for (const id of Object.keys(manifiesto).sort()) ordenado[id] = manifiesto[id];
+for (const id of Object.keys(enDisco).sort()) ordenado[id] = enDisco[id];
 writeFileSync(MANIFIESTO, JSON.stringify(ordenado, null, 2) + "\n");
 
+if (totalEntrada > 0) {
+  console.log(
+    "\n" +
+      Object.keys(manifiesto).length +
+      " expansión(es) convertida(s) aquí  ·  " +
+      (totalEntrada / 1024 / 1024).toFixed(2) +
+      " MB -> " +
+      (totalSalida / 1024 / 1024).toFixed(2) +
+      " MB  (" +
+      (100 - (100 * totalSalida) / totalEntrada).toFixed(0) +
+      "% menos)",
+  );
+} else {
+  console.log("\nNo se ha convertido nada: ninguna carpeta de origen estaba mapeada.");
+}
 console.log(
-  "\n" +
-    Object.keys(ordenado).length +
-    " expansión(es) con sobre propio  ·  " +
-    (totalEntrada / 1024 / 1024).toFixed(2) +
-    " MB -> " +
-    (totalSalida / 1024 / 1024).toFixed(2) +
-    " MB  (" +
-    (100 - (100 * totalSalida) / totalEntrada).toFixed(0) +
-    "% menos)",
+  Object.keys(ordenado).length + " expansión(es) con sobre propio en total (contando public/sobres)",
 );
 console.log("Manifiesto: " + MANIFIESTO);

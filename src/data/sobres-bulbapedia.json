@@ -12,40 +12,1132 @@
       "pagina": "EX Delta Species (TCG)",
       "motivo": "\"Delta Species (TCG)\" redirige a \"Δ Delta Species (TCG)\", que no lleva los sobres"
     },
-    "ecard1": { "prefijos": ["E1"], "motivo": "Bulbapedia numera la era e-Card E1/E2/E3" },
-    "ecard2": { "prefijos": ["E2"], "motivo": "ídem" },
-    "ecard3": { "prefijos": ["E3"], "motivo": "ídem" },
-    "hgss1": { "prefijos": ["HS1"], "motivo": "el código de Bulbapedia es HS1, no HGSS1" },
+    "ecard1": {
+      "prefijos": [
+        "E1"
+      ],
+      "motivo": "Bulbapedia numera la era e-Card E1/E2/E3"
+    },
+    "ecard2": {
+      "prefijos": [
+        "E2"
+      ],
+      "motivo": "ídem"
+    },
+    "ecard3": {
+      "prefijos": [
+        "E3"
+      ],
+      "motivo": "ídem"
+    },
+    "hgss1": {
+      "prefijos": [
+        "HS1"
+      ],
+      "motivo": "el código de Bulbapedia es HS1, no HGSS1"
+    },
     "hgss2": {
       "pagina": "Unleashed (TCG)",
-      "prefijos": ["HS2"],
+      "prefijos": [
+        "HS2"
+      ],
       "motivo": "la página no lleva el prefijo \"HS—\" del nombre oficial"
     },
-    "hgss3": { "pagina": "Undaunted (TCG)", "prefijos": ["HS3"], "motivo": "ídem" },
-    "hgss4": { "pagina": "Triumphant (TCG)", "prefijos": ["HS4"], "motivo": "ídem" },
-    "col1": { "prefijos": ["CL"], "motivo": "Call of Legends se abrevia CL" },
+    "hgss3": {
+      "pagina": "Undaunted (TCG)",
+      "prefijos": [
+        "HS3"
+      ],
+      "motivo": "ídem"
+    },
+    "hgss4": {
+      "pagina": "Triumphant (TCG)",
+      "prefijos": [
+        "HS4"
+      ],
+      "motivo": "ídem"
+    },
+    "col1": {
+      "prefijos": [
+        "CL"
+      ],
+      "motivo": "Call of Legends se abrevia CL"
+    },
     "swsh35": {
-      "prefijos": ["Champion Path"],
+      "prefijos": [
+        "Champion Path"
+      ],
       "motivo": "los ficheros se llaman \"Champion Path\", sin el apóstrofo ni la s de \"Champion's\""
     },
     "zsv10pt5": {
-      "prefijos": ["SV10.5 BLK"],
+      "prefijos": [
+        "SV10.5 BLK"
+      ],
       "motivo": "Rayo Negro y Llama Blanca comparten página; el fichero es lo único que las separa"
     },
     "rsv10pt5": {
-      "prefijos": ["SV10.5 WHT"],
+      "prefijos": [
+        "SV10.5 WHT"
+      ],
       "motivo": "ídem, y por eso NO vale emparejar por el título de la página"
     },
-
-    "sma": { "omitir": true, "motivo": "subset de Destinos Ocultos: no tuvo sobre propio, se abría el de swsh115" },
-    "swsh45sv": { "omitir": true, "motivo": "subset de Destinos Brillantes: sin sobre propio" },
-    "swsh9tg": { "omitir": true, "motivo": "Trainer Gallery: cartas dentro del sobre de swsh9, no un producto aparte" },
-    "swsh10tg": { "omitir": true, "motivo": "ídem con swsh10" },
-    "swsh11tg": { "omitir": true, "motivo": "ídem con swsh11" },
-    "swsh12tg": { "omitir": true, "motivo": "ídem con swsh12" },
-    "swsh12pt5gg": { "omitir": true, "motivo": "Galarian Gallery: subset de Zenit Supremo, sin sobre propio" },
-    "cel25c": { "omitir": true, "motivo": "Classic Collection: va dentro de las cajas de Celebraciones" },
-    "sve": { "omitir": true, "motivo": "las energías de Escarlata y Púrpura no se venden en sobre" }
+    "sma": {
+      "omitir": true,
+      "motivo": "subset de Destinos Ocultos: no tuvo sobre propio, se abría el de swsh115"
+    },
+    "swsh45sv": {
+      "omitir": true,
+      "motivo": "subset de Destinos Brillantes: sin sobre propio"
+    },
+    "swsh9tg": {
+      "omitir": true,
+      "motivo": "Trainer Gallery: cartas dentro del sobre de swsh9, no un producto aparte"
+    },
+    "swsh10tg": {
+      "omitir": true,
+      "motivo": "ídem con swsh10"
+    },
+    "swsh11tg": {
+      "omitir": true,
+      "motivo": "ídem con swsh11"
+    },
+    "swsh12tg": {
+      "omitir": true,
+      "motivo": "ídem con swsh12"
+    },
+    "swsh12pt5gg": {
+      "omitir": true,
+      "motivo": "Galarian Gallery: subset de Zenit Supremo, sin sobre propio"
+    },
+    "cel25c": {
+      "omitir": true,
+      "motivo": "Classic Collection: va dentro de las cajas de Celebraciones"
+    },
+    "sve": {
+      "omitir": true,
+      "motivo": "las energías de Escarlata y Púrpura no se venden en sobre"
+    },
+    "pl4": {
+      "pagina": "Platinum: Arceus (TCG)",
+      "prefijos": [
+        "PL4"
+      ],
+      "motivo": "\"Arceus (TCG)\" existe y es la página del POKÉMON, con sus 60 cartas y ni un sobre. La expansión se llama \"Platinum: Arceus (TCG)\" y tiene sus cuatro variantes (PL4 Booster Arceus Grass/Water, Salamence, Zapdos). Es el mismo caso que ex3 y ex8, pero peor: allí la página equivocada no traía nada y aquí trae 60 ficheros, así que el informe decía \"no tiene ninguno que parezca su sobre\" en vez de \"no existe la página\", y eso se lee como \"la wiki no lo tiene\"."
+    }
   },
-  "generado": {}
+  "generado": {
+    "base1": {
+      "pagina": "Base Set (TCG)",
+      "ficheros": [
+        "File:Base Set Booster Blastoise Long.jpg",
+        "File:Base Set Booster Charizard Long.jpg",
+        "File:Base Set Booster Venusaur Long.jpg"
+      ]
+    },
+    "base2": {
+      "pagina": "Jungle (TCG)",
+      "ficheros": [
+        "File:Jungle Booster Flareon.jpg",
+        "File:Jungle Booster Scyther.jpg",
+        "File:Jungle Booster Wigglytuff.jpg"
+      ]
+    },
+    "base3": {
+      "pagina": "Fossil (TCG)",
+      "ficheros": [
+        "File:Fossil Booster Aerodactyl.jpg",
+        "File:Fossil Booster Lapras.jpg",
+        "File:Fossil Booster Zapdos.jpg"
+      ]
+    },
+    "base4": {
+      "pagina": "Base Set 2 (TCG)",
+      "ficheros": [
+        "File:Base Set 2 Booster Gyarados.jpg",
+        "File:Base Set 2 Booster Mewtwo.jpg",
+        "File:Base Set 2 Booster Pidgeot.jpg"
+      ]
+    },
+    "base5": {
+      "pagina": "Team Rocket (TCG)",
+      "ficheros": [
+        "File:Team Rocket Booster Giovanni.jpg",
+        "File:Team Rocket Booster Gyarados.jpg",
+        "File:Team Rocket Booster Jessie James.jpg"
+      ]
+    },
+    "base6": {
+      "pagina": "Legendary Collection (TCG)",
+      "ficheros": [
+        "File:Legendary Collection Booster Eeveelution.jpg",
+        "File:Legendary Collection Booster Mewtwo.jpg",
+        "File:Legendary Collection Booster Starters.jpg"
+      ]
+    },
+    "bw1": {
+      "pagina": "Black & White (TCG)",
+      "ficheros": [
+        "File:BW1 Booster Reshiram.jpg",
+        "File:BW1 Booster Zebstrika.jpg",
+        "File:BW1 Booster Zekrom.jpg"
+      ]
+    },
+    "bw10": {
+      "pagina": "Plasma Blast (TCG)",
+      "ficheros": [
+        "File:BW10 Booster Dialga.jpg",
+        "File:BW10 Booster Genesect.jpg",
+        "File:BW10 Booster Palkia.jpg"
+      ]
+    },
+    "bw11": {
+      "pagina": "Legendary Treasures (TCG)",
+      "ficheros": [
+        "File:BW11 Booster Genesect.jpg",
+        "File:BW11 Booster Mewtwo.jpg",
+        "File:BW11 Booster Reshiram.jpg"
+      ]
+    },
+    "bw2": {
+      "pagina": "Emerging Powers (TCG)",
+      "ficheros": [
+        "File:BW2 Booster Braviary.jpg",
+        "File:BW2 Booster Cobalion.jpg",
+        "File:BW2 Booster Darmanitan.jpg"
+      ]
+    },
+    "bw3": {
+      "pagina": "Noble Victories (TCG)",
+      "ficheros": [
+        "File:BW3 Booster Hydreigon.jpg",
+        "File:BW3 Booster Kyurem.jpg",
+        "File:BW3 Booster Victini.jpg"
+      ]
+    },
+    "bw4": {
+      "pagina": "Next Destinies (TCG)",
+      "ficheros": [
+        "File:BW4 Booster Mewtwo.jpg",
+        "File:BW4 Booster Regigigas.jpg",
+        "File:BW4 Booster Reshiram.jpg"
+      ]
+    },
+    "bw5": {
+      "pagina": "Dark Explorers (TCG)",
+      "ficheros": [
+        "File:BW5 Booster Darkrai.jpg",
+        "File:BW5 Booster Excadrill.jpg",
+        "File:BW5 Booster Scrafty.jpg"
+      ]
+    },
+    "bw6": {
+      "pagina": "Dragons Exalted (TCG)",
+      "ficheros": [
+        "File:BW6 Booster Giratina.jpg",
+        "File:BW6 Booster Gyarados.jpg",
+        "File:BW6 Booster Rayquaza.jpg"
+      ]
+    },
+    "bw7": {
+      "pagina": "Boundaries Crossed (TCG)",
+      "ficheros": [
+        "File:BW7 Booster Keldeo.jpg",
+        "File:BW7 Booster Landorus.jpg",
+        "File:BW7 Booster Black Kyurem.jpg"
+      ]
+    },
+    "bw8": {
+      "pagina": "Plasma Storm (TCG)",
+      "ficheros": [
+        "File:BW8 Booster Articuno.jpg",
+        "File:BW8 Booster Infernape.jpg",
+        "File:BW8 Booster Liepard.jpg"
+      ]
+    },
+    "bw9": {
+      "pagina": "Plasma Freeze (TCG)",
+      "ficheros": [
+        "File:BW9 Booster Absol.jpg",
+        "File:BW9 Booster Bisharp.jpg",
+        "File:BW9 Booster Deoxys.jpg"
+      ]
+    },
+    "cel25": {
+      "pagina": "Celebrations (TCG)",
+      "ficheros": [
+        "File:Celebrations Booster.jpg"
+      ]
+    },
+    "col1": {
+      "pagina": "Call of Legends (TCG)",
+      "ficheros": [
+        "File:CL Booster Deoxys.jpg",
+        "File:CL Booster Groudon.jpg",
+        "File:CL Booster Kyogre.jpg"
+      ]
+    },
+    "dc1": {
+      "pagina": "Double Crisis (TCG)",
+      "ficheros": [
+        "File:Double Crisis Booster Groudon Courtney.jpg",
+        "File:Double Crisis Booster Kyogre Shelly.jpg"
+      ]
+    },
+    "det1": {
+      "pagina": "Detective Pikachu (TCG)",
+      "ficheros": [
+        "File:Detective Pikachu Booster.jpg"
+      ]
+    },
+    "dp1": {
+      "pagina": "Diamond & Pearl (TCG)",
+      "ficheros": [
+        "File:DP1 Booster Dialga.jpg",
+        "File:DP1 Booster Electivire.jpg",
+        "File:DP1 Booster Lucario.jpg"
+      ]
+    },
+    "dp2": {
+      "pagina": "Mysterious Treasures (TCG)",
+      "ficheros": [
+        "File:DP2 Booster Garchomp.jpg",
+        "File:DP2 Booster Magmortar.jpg",
+        "File:DP2 Booster Toxicroak.jpg"
+      ]
+    },
+    "dp3": {
+      "pagina": "Secret Wonders (TCG)",
+      "ficheros": [
+        "File:DP3 Booster Gallade.jpg",
+        "File:DP3 Booster Honchkrow.jpg",
+        "File:DP3 Booster Roserade.jpg"
+      ]
+    },
+    "dp4": {
+      "pagina": "Great Encounters (TCG)",
+      "ficheros": [
+        "File:DP4 Booster Cresselia.jpg",
+        "File:DP4 Booster Darkrai.jpg",
+        "File:DP4 Booster Dialga.jpg"
+      ]
+    },
+    "dp5": {
+      "pagina": "Majestic Dawn (TCG)",
+      "ficheros": [
+        "File:DP5 Booster Darkrai.jpg",
+        "File:DP5 Booster Empoleon.jpg",
+        "File:DP5 Booster Garchomp.jpg"
+      ]
+    },
+    "dp6": {
+      "pagina": "Legends Awakened (TCG)",
+      "ficheros": [
+        "File:DP6 Booster Giratina.jpg",
+        "File:DP6 Booster Lucario.jpg",
+        "File:DP6 Booster Luxray.jpg"
+      ]
+    },
+    "dp7": {
+      "pagina": "Stormfront (TCG)",
+      "ficheros": [
+        "File:DP7 Booster Dusknoir.jpg",
+        "File:DP7 Booster Infernape.jpg",
+        "File:DP7 Booster Regigigas.jpg"
+      ]
+    },
+    "dv1": {
+      "pagina": "Dragon Vault (TCG)",
+      "ficheros": [
+        "File:Dragon Vault Booster Dragonite.jpg",
+        "File:Dragon Vault Booster Haxorus.jpg",
+        "File:Dragon Vault Booster Rayquaza.jpg"
+      ]
+    },
+    "ecard1": {
+      "pagina": "Expedition Base Set (TCG)",
+      "ficheros": [
+        "File:E1 Booster Blastoise.jpg",
+        "File:E1 Booster Feraligatr.jpg",
+        "File:E1 Booster Venusaur.jpg"
+      ]
+    },
+    "ecard2": {
+      "pagina": "Aquapolis (TCG)",
+      "ficheros": [
+        "File:E2 Booster Arcanine.jpg",
+        "File:E2 Booster Entei.jpg",
+        "File:E2 Booster Scizor.jpg"
+      ]
+    },
+    "ecard3": {
+      "pagina": "Skyridge (TCG)",
+      "ficheros": [
+        "File:E3 Booster Kabutops.jpg",
+        "File:E3 Booster Poliwrath.jpg",
+        "File:E3 Booster Vaporeon.jpg"
+      ]
+    },
+    "ex1": {
+      "pagina": "EX Ruby & Sapphire (TCG)",
+      "ficheros": [
+        "File:EX1 Booster Lairon.jpg",
+        "File:EX1 Booster Manectric.jpg",
+        "File:EX1 Booster Mightyena.jpg"
+      ]
+    },
+    "ex10": {
+      "pagina": "EX Unseen Forces (TCG)",
+      "ficheros": [
+        "File:EX10 Booster Raikou.jpg",
+        "File:EX10 Booster Steelix.jpg",
+        "File:EX10 Booster Typhlosion.jpg"
+      ]
+    },
+    "ex11": {
+      "pagina": "EX Delta Species (TCG)",
+      "ficheros": [
+        "File:EX11 Booster Dragonite.jpg",
+        "File:EX11 Booster Flareon.jpg",
+        "File:EX11 Booster Metagross.jpg"
+      ]
+    },
+    "ex12": {
+      "pagina": "EX Legend Maker (TCG)",
+      "ficheros": [
+        "File:EX12 Booster Aerodactyl.jpg",
+        "File:EX12 Booster Arcanine.jpg",
+        "File:EX12 Booster Banette.jpg"
+      ]
+    },
+    "ex13": {
+      "pagina": "EX Holon Phantoms (TCG)",
+      "ficheros": [
+        "File:EX13 Booster Gyarados.jpg",
+        "File:EX13 Booster Kabutops.jpg",
+        "File:EX13 Booster Mewtwo.jpg"
+      ]
+    },
+    "ex14": {
+      "pagina": "EX Crystal Guardians (TCG)",
+      "ficheros": [
+        "File:EX14 Booster Blaziken.jpg",
+        "File:EX14 Booster Charizard.jpg",
+        "File:EX14 Booster Delcatty.jpg"
+      ]
+    },
+    "ex15": {
+      "pagina": "EX Dragon Frontiers (TCG)",
+      "ficheros": [
+        "File:EX15 Booster Latias.jpg",
+        "File:EX15 Booster Nidoking.jpg",
+        "File:EX15 Booster Salamence.jpg"
+      ]
+    },
+    "ex16": {
+      "pagina": "EX Power Keepers (TCG)",
+      "ficheros": [
+        "File:EX16 Booster Absol.jpg",
+        "File:EX16 Booster Aggron.jpg",
+        "File:EX16 Booster Raichu.jpg"
+      ]
+    },
+    "ex2": {
+      "pagina": "EX Sandstorm (TCG)",
+      "ficheros": [
+        "File:EX2 Booster Dusclops.jpg",
+        "File:EX2 Booster Seviper.jpg",
+        "File:EX2 Booster Shiftry.jpg"
+      ]
+    },
+    "ex3": {
+      "pagina": "EX Dragon (TCG)",
+      "ficheros": [
+        "File:EX3 Booster Absol.jpg",
+        "File:EX3 Booster Latias.jpg",
+        "File:EX3 Booster Latios.jpg"
+      ]
+    },
+    "ex4": {
+      "pagina": "EX Team Magma vs Team Aqua (TCG)",
+      "ficheros": [
+        "File:EX4 Booster Aggron.jpg",
+        "File:EX4 Booster Houndoom.jpg",
+        "File:EX4 Booster Sharpedo.jpg"
+      ]
+    },
+    "ex5": {
+      "pagina": "EX Hidden Legends (TCG)",
+      "ficheros": [
+        "File:EX5 Booster Metagross.jpg",
+        "File:EX5 Booster Regice.jpg",
+        "File:EX5 Booster Regirock.jpg"
+      ]
+    },
+    "ex6": {
+      "pagina": "EX FireRed & LeafGreen (TCG)",
+      "ficheros": [
+        "File:EX6 Booster Blastoise.jpg",
+        "File:EX6 Booster Charizard.jpg",
+        "File:EX6 Booster Pikachu.jpg"
+      ]
+    },
+    "ex7": {
+      "pagina": "EX Team Rocket Returns (TCG)",
+      "ficheros": [
+        "File:EX7 Booster Gyarados.jpg",
+        "File:EX7 Booster Mewtwo.jpg",
+        "File:EX7 Booster Scyther.jpg"
+      ]
+    },
+    "ex8": {
+      "pagina": "EX Deoxys (TCG)",
+      "ficheros": [
+        "File:EX8 Booster Rayquaza.jpg",
+        "File:EX8 Booster Deoxys Attack.jpg",
+        "File:EX8 Booster Deoxys Defense.jpg"
+      ]
+    },
+    "ex9": {
+      "pagina": "EX Emerald (TCG)",
+      "ficheros": [
+        "File:EX9 Booster Groudon.jpg",
+        "File:EX9 Booster Kyogre.jpg",
+        "File:EX9 Booster Rayquaza.jpg"
+      ]
+    },
+    "g1": {
+      "pagina": "Generations (TCG)",
+      "ficheros": [
+        "File:Generations Booster Blastoise.jpg",
+        "File:Generations Booster Charizard.jpg",
+        "File:Generations Booster Pikachu.jpg"
+      ]
+    },
+    "gym1": {
+      "pagina": "Gym Heroes (TCG)",
+      "ficheros": [
+        "File:Gym Heroes Booster Brock.jpg",
+        "File:Gym Heroes Booster Erika.jpg",
+        "File:Gym Heroes Booster Misty.jpg"
+      ]
+    },
+    "gym2": {
+      "pagina": "Gym Challenge (TCG)",
+      "ficheros": [
+        "File:Gym Challenge Booster Blaine.jpg",
+        "File:Gym Challenge Booster Giovanni.jpg",
+        "File:Gym Challenge Booster Koga.jpg"
+      ]
+    },
+    "hgss1": {
+      "pagina": "HeartGold & SoulSilver (TCG)",
+      "ficheros": [
+        "File:HS1 Booster Ampharos.jpg",
+        "File:HS1 Booster Donphan.jpg",
+        "File:HS1 Booster Lugia.jpg"
+      ]
+    },
+    "hgss2": {
+      "pagina": "Unleashed (TCG)",
+      "ficheros": [
+        "File:HS2 Booster Crobat.jpg",
+        "File:HS2 Booster Entei.jpg",
+        "File:HS2 Booster Raikou.jpg"
+      ]
+    },
+    "hgss3": {
+      "pagina": "Undaunted (TCG)",
+      "ficheros": [
+        "File:HS3 Booster Houndoom.jpg",
+        "File:HS3 Booster Jolteon.jpg",
+        "File:HS3 Booster Rayquaza.jpg"
+      ]
+    },
+    "hgss4": {
+      "pagina": "Triumphant (TCG)",
+      "ficheros": [
+        "File:HS4 Booster Dialga.jpg",
+        "File:HS4 Booster Electivire.jpg",
+        "File:HS4 Booster Magmortar.jpg"
+      ]
+    },
+    "mcd21": {
+      "pagina": "McDonald's Collection 2021 (TCG)",
+      "ficheros": [
+        "File:McDonalds Collection 2021 Booster.jpg"
+      ]
+    },
+    "mcd22": {
+      "pagina": "McDonald's Collection 2022 (TCG)",
+      "ficheros": [
+        "File:McDonalds Collection 2022 Booster.jpg"
+      ]
+    },
+    "me1": {
+      "pagina": "Mega Evolution (TCG)",
+      "ficheros": [
+        "File:ME1 Booster Mega Gardevoir.png",
+        "File:ME1 Booster Mega Kangaskhan.png",
+        "File:ME1 Booster Mega Lucario.png"
+      ]
+    },
+    "me2": {
+      "pagina": "Phantasmal Flames (TCG)",
+      "ficheros": [
+        "File:ME2 Booster Mega Gengar.png",
+        "File:ME2 Booster Mega Heracross.png",
+        "File:ME2 Booster Mega Lopunny.png"
+      ]
+    },
+    "me2pt5": {
+      "pagina": "Ascended Heroes (TCG)",
+      "ficheros": [
+        "File:Ascended Heroes Booster.png"
+      ]
+    },
+    "neo1": {
+      "pagina": "Neo Genesis (TCG)",
+      "ficheros": [
+        "File:Neo Genesis Booster Feraligatr.jpg",
+        "File:Neo Genesis Booster Lugia.jpg",
+        "File:Neo Genesis Booster Meganium.jpg"
+      ]
+    },
+    "neo2": {
+      "pagina": "Neo Discovery (TCG)",
+      "ficheros": [
+        "File:Neo Discovery Booster Scizor.jpg",
+        "File:Neo Discovery Booster Smeargle.jpg",
+        "File:Neo Discovery Booster Umbreon.jpg"
+      ]
+    },
+    "neo3": {
+      "pagina": "Neo Revelation (TCG)",
+      "ficheros": [
+        "File:Neo Revelation Booster Entei.jpg",
+        "File:Neo Revelation Booster Misdreavus.jpg",
+        "File:Neo Revelation Booster Raikou.jpg"
+      ]
+    },
+    "neo4": {
+      "pagina": "Neo Destiny (TCG)",
+      "ficheros": [
+        "File:Neo Destiny Booster Celebi.jpg",
+        "File:Neo Destiny Booster Noctowl.jpg",
+        "File:Neo Destiny Booster Togetic.jpg"
+      ]
+    },
+    "pgo": {
+      "pagina": "Pokémon GO (TCG)",
+      "ficheros": [
+        "File:Pokémon GO Booster.jpg"
+      ]
+    },
+    "pl1": {
+      "pagina": "Platinum (TCG)",
+      "ficheros": [
+        "File:PL1 Booster Dialga.jpg",
+        "File:PL1 Booster Giratina.jpg",
+        "File:PL1 Booster Palkia.jpg"
+      ]
+    },
+    "pl2": {
+      "pagina": "Rising Rivals (TCG)",
+      "ficheros": [
+        "File:PL2 Booster Houndoom.jpg",
+        "File:PL2 Booster Leafeon.jpg",
+        "File:PL2 Booster Rotom.jpg"
+      ]
+    },
+    "pl3": {
+      "pagina": "Supreme Victors (TCG)",
+      "ficheros": [
+        "File:PL3 Booster Absol.jpg",
+        "File:PL3 Booster Charizard.jpg",
+        "File:PL3 Booster Garchomp.jpg"
+      ]
+    },
+    "pl4": {
+      "pagina": "Platinum: Arceus (TCG)",
+      "ficheros": [
+        "File:PL4 Booster Salamence.jpg",
+        "File:PL4 Booster Zapdos.jpg",
+        "File:PL4 Booster Arceus Grass.jpg"
+      ]
+    },
+    "pop1": {
+      "pagina": "POP Series 1 (TCG)",
+      "ficheros": [
+        "File:POP Series 1 pack.png"
+      ]
+    },
+    "pop8": {
+      "pagina": "POP Series 8 (TCG)",
+      "ficheros": [
+        "File:POP Series 8 pack.jpg"
+      ]
+    },
+    "pop9": {
+      "pagina": "POP Series 9 (TCG)",
+      "ficheros": [
+        "File:POP Series 9 pack.jpg"
+      ]
+    },
+    "rsv10pt5": {
+      "pagina": "Black Bolt & White Flare (TCG)",
+      "ficheros": [
+        "File:SV10.5 WHT Booster EN.png"
+      ]
+    },
+    "sm1": {
+      "pagina": "Sun & Moon (TCG)",
+      "ficheros": [
+        "File:SM1 Booster Decidueye.jpg",
+        "File:SM1 Booster Incineroar.jpg",
+        "File:SM1 Booster Lunala.jpg"
+      ]
+    },
+    "sm10": {
+      "pagina": "Unbroken Bonds (TCG)",
+      "ficheros": [
+        "File:SM10 Booster Charizard Reshiram.jpg",
+        "File:SM10 Booster Gardevoir Sylveon.jpg",
+        "File:SM10 Booster Lucario Melmetal.jpg"
+      ]
+    },
+    "sm11": {
+      "pagina": "Unified Minds (TCG)",
+      "ficheros": [
+        "File:SM11 Booster Espeon Deoxys.jpg",
+        "File:SM11 Booster Garchomp Giratina.jpg",
+        "File:SM11 Booster Mewtwo Mew.jpg"
+      ]
+    },
+    "sm115": {
+      "pagina": "Hidden Fates (TCG)",
+      "ficheros": [
+        "File:Hidden Fates Booster Charizard.jpg",
+        "File:Hidden Fates Booster Mew.jpg",
+        "File:Hidden Fates Booster Mewtwo.jpg"
+      ]
+    },
+    "sm12": {
+      "pagina": "Cosmic Eclipse (TCG)",
+      "ficheros": [
+        "File:SM12 Booster Blastoise Piplup.jpg",
+        "File:SM12 Booster Solgaleo Lunala.jpg",
+        "File:SM12 Booster Cleffa Igglybuff Togepi.jpg"
+      ]
+    },
+    "sm2": {
+      "pagina": "Guardians Rising (TCG)",
+      "ficheros": [
+        "File:SM2 Booster Lycanroc.jpg",
+        "File:SM2 Booster Ninetales.jpg",
+        "File:SM2 Booster Kommo-o.jpg"
+      ]
+    },
+    "sm3": {
+      "pagina": "Burning Shadows (TCG)",
+      "ficheros": [
+        "File:SM3 Booster Marshadow.jpg",
+        "File:SM3 Booster Necrozma.jpg",
+        "File:SM3 Booster Ho-Oh.jpg"
+      ]
+    },
+    "sm35": {
+      "pagina": "Shining Legends (TCG)",
+      "ficheros": [
+        "File:Shining Legends Booster Genesect.jpg",
+        "File:Shining Legends Booster Mew.jpg",
+        "File:Shining Legends Booster Mewtwo.jpg"
+      ]
+    },
+    "sm4": {
+      "pagina": "Crimson Invasion (TCG)",
+      "ficheros": [
+        "File:SM4 Booster Buzzwole.jpg",
+        "File:SM4 Booster Guzzlord.jpg",
+        "File:SM4 Booster Kartana.jpg"
+      ]
+    },
+    "sm5": {
+      "pagina": "Ultra Prism (TCG)",
+      "ficheros": [
+        "File:SM5 Booster Giratina.jpg",
+        "File:SM5 Booster Leafeon.jpg",
+        "File:SM5 Booster Dawn Wings Necrozma.jpg"
+      ]
+    },
+    "sm6": {
+      "pagina": "Forbidden Light (TCG)",
+      "ficheros": [
+        "File:SM6 Booster Greninja.jpg",
+        "File:SM6 Booster Naganadel.jpg",
+        "File:SM6 Booster Necrozma.jpg"
+      ]
+    },
+    "sm7": {
+      "pagina": "Celestial Storm (TCG)",
+      "ficheros": [
+        "File:SM7 Booster Blaziken.jpg",
+        "File:SM7 Booster Jirachi.jpg",
+        "File:SM7 Booster Rayquaza.jpg"
+      ]
+    },
+    "sm75": {
+      "pagina": "Dragon Majesty (TCG)",
+      "ficheros": [
+        "File:Dragon Majesty Booster Charizard.jpg",
+        "File:Dragon Majesty Booster Dragonite.jpg",
+        "File:Dragon Majesty Booster Reshiram.jpg"
+      ]
+    },
+    "sm8": {
+      "pagina": "Lost Thunder (TCG)",
+      "ficheros": [
+        "File:SM8 Booster Blacephalon.jpg",
+        "File:SM8 Booster Celebi.jpg",
+        "File:SM8 Booster Lugia.jpg"
+      ]
+    },
+    "sm9": {
+      "pagina": "Team Up (TCG)",
+      "ficheros": [
+        "File:SM9 Booster Eevee Snorlax.jpg",
+        "File:SM9 Booster Gengar Mimikyu.jpg",
+        "File:SM9 Booster Pikachu Zekrom.jpg"
+      ]
+    },
+    "sv1": {
+      "pagina": "Scarlet & Violet (TCG)",
+      "ficheros": [
+        "File:SV1 Booster Gyarados.png",
+        "File:SV1 Booster Koraidon.png",
+        "File:SV1 Booster Miraidon.png"
+      ]
+    },
+    "sv10": {
+      "pagina": "Destined Rivals (TCG)",
+      "ficheros": [
+        "File:SV10 Booster Cynthia Garchomp.png",
+        "File:SV10 Booster Giovanni Mewtwo.png",
+        "File:SV10 Booster Team Rocket.png"
+      ]
+    },
+    "sv2": {
+      "pagina": "Paldea Evolved (TCG)",
+      "ficheros": [
+        "File:SV2 Booster Meowscarada.png",
+        "File:SV2 Booster Quaquaval.png",
+        "File:SV2 Booster Skeledirge.png"
+      ]
+    },
+    "sv3": {
+      "pagina": "Obsidian Flames (TCG)",
+      "ficheros": [
+        "File:SV3 Booster Charizard.png",
+        "File:SV3 Booster Dragonite.png",
+        "File:SV3 Booster Revavroom.png"
+      ]
+    },
+    "sv3pt5": {
+      "pagina": "151 (TCG)",
+      "ficheros": [
+        "File:151 Booster.png"
+      ]
+    },
+    "sv4": {
+      "pagina": "Paradox Rift (TCG)",
+      "ficheros": [
+        "File:SV4 Booster Armarouge.png",
+        "File:SV4 Booster Garchomp.png",
+        "File:SV4 Booster Iron Valiant.png"
+      ]
+    },
+    "sv4pt5": {
+      "pagina": "Paldean Fates (TCG)",
+      "ficheros": [
+        "File:Paldean Fates Booster Ceruledge.png",
+        "File:Paldean Fates Booster Dondozo.png",
+        "File:Paldean Fates Booster Pikachu.png"
+      ]
+    },
+    "sv5": {
+      "pagina": "Temporal Forces (TCG)",
+      "ficheros": [
+        "File:SV5 Booster Iron Crown.png",
+        "File:SV5 Booster Iron Leaves.png",
+        "File:SV5 Booster Raging Bolt.png"
+      ]
+    },
+    "sv6": {
+      "pagina": "Twilight Masquerade (TCG)",
+      "ficheros": [
+        "File:SV6 Booster Dragapult.png",
+        "File:SV6 Booster Ogerpon.png",
+        "File:SV6 Booster Sinistcha.png"
+      ]
+    },
+    "sv6pt5": {
+      "pagina": "Shrouded Fable (TCG)",
+      "ficheros": [
+        "File:Shrouded Fable Booster Fezandipiti.png",
+        "File:Shrouded Fable Booster Munkidori.png",
+        "File:Shrouded Fable Booster Okidogi.png"
+      ]
+    },
+    "sv7": {
+      "pagina": "Stellar Crown (TCG)",
+      "ficheros": [
+        "File:SV7 Booster Cinderace.png",
+        "File:SV7 Booster Galvantula.png",
+        "File:SV7 Booster Lapras.png"
+      ]
+    },
+    "sv8": {
+      "pagina": "Surging Sparks (TCG)",
+      "ficheros": [
+        "File:SV8 Booster Archaludon.png",
+        "File:SV8 Booster Latias.png",
+        "File:SV8 Booster Pikachu.png"
+      ]
+    },
+    "sv8pt5": {
+      "pagina": "Prismatic Evolutions (TCG)",
+      "ficheros": [
+        "File:Prismatic Evolutions Booster Eevee Sylveon.png",
+        "File:Prismatic Evolutions Booster Espeon Umbreon.png",
+        "File:Prismatic Evolutions Booster Leafeon Glaceon.png"
+      ]
+    },
+    "sv9": {
+      "pagina": "Journey Together (TCG)",
+      "ficheros": [
+        "File:SV9 Booster Hop Zacian.png",
+        "File:SV9 Booster Iono Bellibolt.png",
+        "File:SV9 Booster Lillie Clefairy.png"
+      ]
+    },
+    "swsh1": {
+      "pagina": "Sword & Shield (TCG)",
+      "ficheros": [
+        "File:SWSH1 Booster Zacian.jpg",
+        "File:SWSH1 Booster Zamazenta.jpg",
+        "File:SWSH1 Booster Gigantamax Lapras.jpg"
+      ]
+    },
+    "swsh10": {
+      "pagina": "Astral Radiance (TCG)",
+      "ficheros": [
+        "File:SWSH10 Booster Hisuian Decidueye.jpg",
+        "File:SWSH10 Booster Hisuian Samurott.jpg",
+        "File:SWSH10 Booster Hisuian Typhlosion.jpg"
+      ]
+    },
+    "swsh11": {
+      "pagina": "Lost Origin (TCG)",
+      "ficheros": [
+        "File:SWSH11 Booster Enamorus.jpg",
+        "File:SWSH11 Booster Hisuian Zoroark.jpg",
+        "File:SWSH11 Booster Radiant Gardevoir.jpg"
+      ]
+    },
+    "swsh12": {
+      "pagina": "Silver Tempest (TCG)",
+      "ficheros": [
+        "File:SWSH12 Booster Lugia.jpg",
+        "File:SWSH12 Booster Regidrago.jpg",
+        "File:SWSH12 Booster Regieleki.jpg"
+      ]
+    },
+    "swsh12pt5": {
+      "pagina": "Crown Zenith (TCG)",
+      "ficheros": [
+        "File:Crown Zenith Booster.jpg"
+      ]
+    },
+    "swsh2": {
+      "pagina": "Rebel Clash (TCG)",
+      "ficheros": [
+        "File:SWSH2 Booster Cinderace.jpg",
+        "File:SWSH2 Booster Inteleon.jpg",
+        "File:SWSH2 Booster Rillaboom.jpg"
+      ]
+    },
+    "swsh3": {
+      "pagina": "Darkness Ablaze (TCG)",
+      "ficheros": [
+        "File:SWSH3 Booster Eternamax Eternatus.jpg",
+        "File:SWSH3 Booster Gigantamax Centiskorch.jpg",
+        "File:SWSH3 Booster Gigantamax Charizard.jpg"
+      ]
+    },
+    "swsh35": {
+      "pagina": "Champion's Path (TCG)",
+      "ficheros": [
+        "File:Champion Path Booster Gardevoir.jpg",
+        "File:Champion Path Booster Obstagoon.jpg",
+        "File:Champion Path Booster Gigantamax Alcremie.jpg"
+      ]
+    },
+    "swsh4": {
+      "pagina": "Vivid Voltage (TCG)",
+      "ficheros": [
+        "File:SWSH4 Booster Celebi.jpg",
+        "File:SWSH4 Booster Zarude.jpg",
+        "File:SWSH4 Booster Gigantamax Orbeetle.jpg"
+      ]
+    },
+    "swsh45": {
+      "pagina": "Shining Fates (TCG)",
+      "ficheros": [
+        "File:Shining Fates Booster Shiny Charizard.jpg",
+        "File:Shining Fates Booster Shiny Corviknight.jpg",
+        "File:Shining Fates Booster Shiny Dragapult.jpg"
+      ]
+    },
+    "swsh5": {
+      "pagina": "Battle Styles (TCG)",
+      "ficheros": [
+        "File:SWSH5 Booster Empoleon.jpg",
+        "File:SWSH5 Booster Tyranitar.jpg",
+        "File:SWSH5 Booster Rapid Strike Urshifu.jpg"
+      ]
+    },
+    "swsh6": {
+      "pagina": "Chilling Reign (TCG)",
+      "ficheros": [
+        "File:SWSH6 Booster Galarian Articuno copy.jpg",
+        "File:SWSH6 Booster Galarian Moltres copy.jpg",
+        "File:SWSH6 Booster Galarian Zapdos copy.jpg"
+      ]
+    },
+    "swsh7": {
+      "pagina": "Evolving Skies (TCG)",
+      "ficheros": [
+        "File:SWSH7 Booster Rayquaza.jpg",
+        "File:SWSH7 Booster Sylveon.jpg",
+        "File:SWSH7 Booster Umbreon.jpg"
+      ]
+    },
+    "swsh8": {
+      "pagina": "Fusion Strike (TCG)",
+      "ficheros": [
+        "File:SWSH8 Booster Boltund.jpg",
+        "File:SWSH8 Booster Genesect.jpg",
+        "File:SWSH8 Booster Mew.jpg"
+      ]
+    },
+    "swsh9": {
+      "pagina": "Brilliant Stars (TCG)",
+      "ficheros": [
+        "File:SWSH9 Booster Arceus.jpg",
+        "File:SWSH9 Booster Charizard.jpg",
+        "File:SWSH9 Booster Shaymin.jpg"
+      ]
+    },
+    "xy1": {
+      "pagina": "XY (TCG)",
+      "ficheros": [
+        "File:XY1 Booster Blastoise.jpg",
+        "File:XY1 Booster Venusaur.jpg",
+        "File:XY1 Booster Xerneas.jpg"
+      ]
+    },
+    "xy10": {
+      "pagina": "Fates Collide (TCG)",
+      "ficheros": [
+        "File:XY10 Booster Alakazam.jpg",
+        "File:XY10 Booster Delphox.jpg",
+        "File:XY10 Booster Lugia.jpg"
+      ]
+    },
+    "xy11": {
+      "pagina": "Steam Siege (TCG)",
+      "ficheros": [
+        "File:XY11 Booster Gardevoir.jpg",
+        "File:XY11 Booster Volcanion.jpg",
+        "File:XY11 Booster Xerneas.jpg"
+      ]
+    },
+    "xy12": {
+      "pagina": "Evolutions (TCG)",
+      "ficheros": [
+        "File:XY12 Booster Blastoise.jpg",
+        "File:XY12 Booster Charizard.jpg",
+        "File:XY12 Booster Raichu.jpg"
+      ]
+    },
+    "xy2": {
+      "pagina": "Flashfire (TCG)",
+      "ficheros": [
+        "File:XY2 Booster Kangaskhan.jpg",
+        "File:XY2 Booster Pyroar.jpg",
+        "File:XY2 Booster Charizard X.jpg"
+      ]
+    },
+    "xy3": {
+      "pagina": "Furious Fists (TCG)",
+      "ficheros": [
+        "File:XY3 Booster Hawlucha.jpg",
+        "File:XY3 Booster Heracross.jpg",
+        "File:XY3 Booster Lucario.jpg"
+      ]
+    },
+    "xy4": {
+      "pagina": "Phantom Forces (TCG)",
+      "ficheros": [
+        "File:XY4 Booster Aegislash.jpg",
+        "File:XY4 Booster Diancie.jpg",
+        "File:XY4 Booster Gengar.jpg"
+      ]
+    },
+    "xy5": {
+      "pagina": "Primal Clash (TCG)",
+      "ficheros": [
+        "File:XY5 Booster Aggron.jpg",
+        "File:XY5 Booster Gardevoir.jpg",
+        "File:XY5 Booster Groudon.jpg"
+      ]
+    },
+    "xy6": {
+      "pagina": "Roaring Skies (TCG)",
+      "ficheros": [
+        "File:XY6 Booster Deoxys.jpg",
+        "File:XY6 Booster Gallade.jpg",
+        "File:XY6 Booster Latios.jpg"
+      ]
+    },
+    "xy7": {
+      "pagina": "Ancient Origins (TCG)",
+      "ficheros": [
+        "File:XY7 Booster Groudon.jpg",
+        "File:XY7 Booster Hoopa.jpg",
+        "File:XY7 Booster Rayquaza.jpg"
+      ]
+    },
+    "xy8": {
+      "pagina": "BREAKthrough (TCG)",
+      "ficheros": [
+        "File:XY8 Booster Houndoom.jpg",
+        "File:XY8 Booster Zoroark.jpg",
+        "File:XY8 Booster Mewtwo X.jpg"
+      ]
+    },
+    "xy9": {
+      "pagina": "BREAKpoint (TCG)",
+      "ficheros": [
+        "File:XY9 Booster Greninja.jpg",
+        "File:XY9 Booster Gyarados.jpg",
+        "File:XY9 Booster Luxray.jpg"
+      ]
+    },
+    "zsv10pt5": {
+      "pagina": "Black Bolt & White Flare (TCG)",
+      "ficheros": [
+        "File:SV10.5 BLK Booster EN.png"
+      ]
+    }
+  }
 }
