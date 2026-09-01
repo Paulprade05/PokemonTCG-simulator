@@ -209,13 +209,49 @@ export const eraDeSerie = (serie?: string | null): Era => {
  * es 0,65 y quien lo comprueba es el invariante de eras de
  * scripts/test-invariantes.mjs. */
 const PREMIO_ESTANDAR_POR_ERA: Record<Era, readonly RamaDePremio[]> = {
+  /* ==================================================================== *
+   * LAS TRES ERAS REPARTEN IGUAL EN EL SOBRE ESTÁNDAR, Y NO ES UN OLVIDO
+   * ====================================================================
+   *
+   * ESTO YA SE INTENTÓ Y SE TUVO QUE DESHACER. La primera versión daba a
+   * 'moderna' un reparto mejor (Hyper 0,8 · SIR 2,8 · Ultra 5,5 · Ilustración
+   * 11 · Doble 20,5) y el resultado en producción fue que TRECE expansiones
+   * modernas pasaron de repartir 10 cartas a repartir 8. No es un fallo de
+   * cálculo, es aritmética, y conviene dejarla escrita:
+   *
+   *   · el sobre estándar cuesta 50 y YA devuelve 49,67 de media (medido en
+   *     sv8): quedan 0,33 monedas de margen, no más;
+   *   · subir el premio sube el valor esperado del sobre;
+   *   · `calibrar` no puede dejar que un sobre pase de su precio —sería una
+   *     imprenta de monedas—, así que compensa RETIRANDO huecos de relleno;
+   *   · con el reparto de arriba, el sobre entero valdría 53,34, así que
+   *     retiraba dos huecos y el jugador recibía ocho cartas.
+   *
+   * Mejores tiradas y diez cartas NO CABEN A LA VEZ en un sobre de 50. Es una
+   * elección de tres, no un problema que se pueda resolver afinando números:
+   *
+   *   (a) 10 cartas, reparto de siempre, 50 monedas   <- lo que hay ahora
+   *   (b)  8 cartas, mejores tiradas,    50 monedas   <- lo que se probó
+   *   (c) 10 cartas, mejores tiradas,    54 monedas   <- pide subir el precio
+   *
+   * SI ALGÚN DÍA SE ELIGE (c): subir PACK_PRICES.STANDARD a 54 o más y volver
+   * a poner en 'moderna' el reparto de arriba. El invariante de tamaño de sobre
+   * de scripts/test-invariantes.mjs avisará si el número no da.
+   *
+   * LO QUE SÍ SIGUE VARIANDO POR ERA es el sobre PREMIUM (ver más abajo): ahí
+   * el margen sí existe y la mejora sale gratis, sin perder ni una carta.
+   *
+   * Y 'clasica' tampoco baja: rebajar las tiradas de las expansiones viejas
+   * sería un recorte que nadie pidió, y el objetivo era mejorarlas, no
+   * empeorar la mitad del catálogo.
+   */
   moderna: [
-    { prob:  0.8, pool: 'hyperRare',               respaldo: 'ultraRare'  },
-    { prob:  2.8, pool: 'specialIllustrationRare', respaldo: 'ultraRare'  },
-    { prob:  5.5, pool: 'ultraRare',               respaldo: 'doubleRare' },
-    { prob: 11.0, pool: 'illustrationRare',        respaldo: 'rare'       },
-    { prob: 20.5, pool: 'doubleRare',              respaldo: 'rare'       },
-    { prob: 59.4, pool: 'rare',                    respaldo: 'uncommon'   },
+    { prob:  0.5, pool: 'hyperRare',               respaldo: 'ultraRare'  },
+    { prob:  2.0, pool: 'specialIllustrationRare', respaldo: 'ultraRare'  },
+    { prob:  4.0, pool: 'ultraRare',               respaldo: 'doubleRare' },
+    { prob:  8.0, pool: 'illustrationRare',        respaldo: 'rare'       },
+    { prob: 15.5, pool: 'doubleRare',              respaldo: 'rare'       },
+    { prob: 70.0, pool: 'rare',                    respaldo: 'uncommon'   },
   ],
   media: [
     { prob:  0.5, pool: 'hyperRare',               respaldo: 'ultraRare'  },
@@ -226,12 +262,12 @@ const PREMIO_ESTANDAR_POR_ERA: Record<Era, readonly RamaDePremio[]> = {
     { prob: 70.0, pool: 'rare',                    respaldo: 'uncommon'   },
   ],
   clasica: [
-    { prob:  0.3, pool: 'hyperRare',               respaldo: 'ultraRare'  },
-    { prob:  1.2, pool: 'specialIllustrationRare', respaldo: 'ultraRare'  },
-    { prob:  2.5, pool: 'ultraRare',               respaldo: 'doubleRare' },
-    { prob:  5.0, pool: 'illustrationRare',        respaldo: 'rare'       },
-    { prob: 11.0, pool: 'doubleRare',              respaldo: 'rare'       },
-    { prob: 80.0, pool: 'rare',                    respaldo: 'uncommon'   },
+    { prob:  0.5, pool: 'hyperRare',               respaldo: 'ultraRare'  },
+    { prob:  2.0, pool: 'specialIllustrationRare', respaldo: 'ultraRare'  },
+    { prob:  4.0, pool: 'ultraRare',               respaldo: 'doubleRare' },
+    { prob:  8.0, pool: 'illustrationRare',        respaldo: 'rare'       },
+    { prob: 15.5, pool: 'doubleRare',              respaldo: 'rare'       },
+    { prob: 70.0, pool: 'rare',                    respaldo: 'uncommon'   },
   ],
 };
 

@@ -62,6 +62,7 @@ const {
   openStandardPack, openPremiumPack, openGoldenPack,
   composicionDelSobre, cartasDelSobre,
   admiteSobreEstandar, admiteSobrePremium,
+  RELLENO_ESTANDAR, eraDeSerie,
   valorEsperadoEstandar, valorEsperadoPremium,
 } = packLogic;
 const { generarOfertas, OFERTAS_ACTIVAS, COPIAS_RESERVADAS } = mercado;
@@ -859,6 +860,69 @@ comprueba(
     "subir las probabilidades por era no tira ninguna expansión fuera de la tienda",
     caidas.slice(0, 6).join(", "),
   );
+
+  /* ------------------------------------------------------------------ *
+   * UN SOBRE A LA VENTA REPARTE TODAS SUS CARTAS
+   * ------------------------------------------------------------------
+   *
+   * ESTE INVARIANTE EXISTE POR UN FALLO QUE LLEGÓ A PRODUCCIÓN, y es el
+   * ejemplo perfecto de por qué comprobar lo que se anuncia no basta.
+   *
+   * Al subir las probabilidades de premio de las expansiones modernas, el
+   * sobre pasó a valer más de lo que cuesta, y `calibrar` compensó como tiene
+   * que compensar: RETIRANDO huecos de relleno. Trece expansiones pasaron de
+   * repartir diez cartas a repartir OCHO.
+   *
+   * Y no lo cazó nadie. El invariante de arriba —"lo que se anuncia es lo que
+   * se reparte"— seguía en verde, porque la tienda anunciaba ocho y el
+   * generador entregaba ocho: eran coherentes entre sí y las dos estaban mal.
+   * El de "ningún sobre por encima de su precio" también, porque quitar cartas
+   * es justo lo que lo mantiene. Y el de "no se cae de la tienda" también,
+   * porque TOLERANCIA_RELLENO permite perder hasta dos huecos.
+   *
+   * Faltaba comprobar el número en sí. Un sobre estándar son seis comunes,
+   * tres infrecuentes y un premio: DIEZ. Si un cambio lo baja, se entera aquí
+   * y no el jugador.
+   *
+   * SI ALGÚN DÍA SE SUBE EL PRECIO DEL SOBRE para pagar mejores tiradas, esto
+   * sigue valiendo tal cual: lo que exige es que el sobre reparta lo que su
+   * relleno declara, sea cual sea el precio.
+   */
+  {
+    /* SE MIDE CONTRA EL REPARTO DE SIEMPRE, NO CONTRA UN NÚMERO FIJO.
+     *
+     * La primera versión de esto exigía diez cartas clavadas y se puso roja con
+     * swsh35, que reparte NUEVE — y ese caso es CORRECTO y anterior a todo
+     * esto: Champion's Path es la única expansión del repositorio cuyo escalón
+     * de rara no tiene ni una 'Rare' barata, devolvía el 101,8% de su precio y
+     * el calibrado le quita un hueco a propósito (está contado entero en el
+     * comentario largo de utils/packLogic.ts).
+     *
+     * Lo que hay que impedir no es que un sobre tenga menos de diez cartas por
+     * un motivo medido y documentado. Es que un cambio de PROBABILIDADES le
+     * quite cartas al jugador de tapadillo. Por eso la referencia es el mismo
+     * sobre con el reparto de siempre: la era puede cambiar QUÉ sale, nunca
+     * CUÁNTAS salen. */
+    const cortos = [];
+    for (const [setId, cartas] of CARTAS) {
+      const era = eraDeSerie(serieDe.get(setId));
+      if (!admiteSobreEstandar(cartas, era)) continue;
+      const conSuEra = cartasDelSobre(cartas, "STANDARD", era);
+      const deSiempre = cartasDelSobre(cartas, "STANDARD");
+      if (conSuEra < deSiempre) {
+        cortos.push(setId + " (" + era + "): " + deSiempre + " -> " + conSuEra);
+      }
+    }
+    comprueba(
+      cortos.length === 0,
+      "las probabilidades por era no le quitan ni una carta al sobre",
+      cortos.length +
+        " expansiones reparten de menos: " + cortos.slice(0, 6).join(", ") +
+        ". Alguien ha subido las probabilidades de premio sin subir el precio del" +
+        " sobre, y calibrar lo está pagando con cartas del jugador. El sobre" +
+        " estándar sólo tiene 0,33 monedas de margen sobre sus 50.",
+    );
+  }
 
   // Una serie desconocida —una expansión recién ingerida por el cron, o el
   // respaldo local sin ficha— tiene que caer en el reparto de SIEMPRE. Si no,
