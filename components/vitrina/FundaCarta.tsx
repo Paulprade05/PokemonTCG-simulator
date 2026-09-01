@@ -1,6 +1,8 @@
 "use client";
 
 import PokemonCard from "../PokemonCard";
+import DesperfectosCarta, { estiloDescentrado } from "../DesperfectosCarta";
+import type { Desperfectos, MarcasDeCarta } from "../../utils/graduacion";
 import type { CartaEnColeccion } from "../../utils/tipos";
 
 /**
@@ -27,6 +29,10 @@ import type { CartaEnColeccion } from "../../utils/tipos";
  *    colección hace exactamente lo mismo y por el mismo motivo; la clase
  *    `press` del tema, que sí escala, queda descartada para cualquier cosa que
  *    envuelva una carta.
+ *  · Cuando la copia está dañada aparece un CUARTO ancestro (el marco que
+ *    recorta el descentrado), y por eso su desplazamiento también es un
+ *    `translate` puro. Ese marco no se monta si la copia se ve limpia, que es
+ *    el caso de ~19 de cada 20.
  *
  * ---------------------------------------------------------------------------
  * LA FUNDA VACÍA ES LA MITAD DE ESTA PANTALLA
@@ -57,6 +63,63 @@ interface FundaCartaProps {
    * y una sola es una instrucción.
    */
   invita?: boolean;
+}
+
+/* ------------------------------------------------------------------ */
+/* ESTADO FÍSICO DE LA COPIA                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * El estado de la copia colocada en la funda, y SÓLO si viene con ella.
+ *
+ * La nota larga está sobre la función gemela de components/MazoCartas.tsx. El
+ * resumen, que es lo que no se puede olvidar: el desgaste es coherente con la
+ * nota de graduación, así que el servidor sólo lo manda en las copias que de
+ * verdad se ven mal. AQUÍ NO SE DEDUCE NADA — nada de `desperfectosDeCopia` ni
+ * de `notaDeCopia`—, y la ausencia del dato significa "se ve limpia".
+ *
+ * El archivador se guarda en el navegador y lo puede haber montado un invitado,
+ * así que lo que llegue puede ser de una versión anterior: por eso `unknown` en
+ * utils/tipos.ts y por eso se comprueba la forma antes de pintar. Una funda que
+ * revienta se lleva por delante la hoja entera.
+ */
+function estadoDeCopia(carta: {
+  desperfectos?: unknown;
+  marcas?: unknown;
+}): { desperfectos: Desperfectos; marcas: MarcasDeCarta } | null {
+  const desperfectos = carta?.desperfectos as Desperfectos | undefined;
+  const marcas = carta?.marcas as MarcasDeCarta | undefined;
+  if (!desperfectos || !marcas) return null;
+  if (
+    !Array.isArray(marcas.piques) ||
+    !Array.isArray(marcas.aranazos) ||
+    !Array.isArray(marcas.manchas)
+  ) {
+    return null;
+  }
+  if (desgasteEnPalabras(desperfectos).length === 0) return null;
+  return { desperfectos, marcas };
+}
+
+/**
+ * El desgaste en palabras. QUÉ HAY, NUNCA CUÁNTO.
+ *
+ * `firmaVisible` (utils/graduacion.ts) describe lo que el jugador puede
+ * distinguir de una copia sin graduarla, y el invariante de
+ * scripts/test-invariantes.mjs agrupa por esa descripción para exigir que
+ * ningún estado visible compense graduarlo. Allí los recuentos van por tramos,
+ * así que escribir "6 piques" enseñaría más de lo que el invariante protege.
+ * El 1,5 % del descentrado es su mismo umbral para llamar "torcida" a una copia.
+ */
+function desgasteEnPalabras(d: Desperfectos): string[] {
+  const partes: string[] = [];
+  if (d.piques > 0) partes.push("piques en los cantos");
+  if (d.aranazos > 0) partes.push("arañazos");
+  if (d.manchas > 0) partes.push("manchas");
+  if (d.palidez > 0) partes.push("decoloración por el sol");
+  const desvio = Math.abs(d.descentrado?.x ?? 0) + Math.abs(d.descentrado?.y ?? 0);
+  if (desvio > 1.5) partes.push("mal centrada");
+  return partes;
 }
 
 /* El bolsillo: papel de la hoja visto a través del plástico. El `inset` de
@@ -182,30 +245,75 @@ export default function FundaCarta({
    */
   const huerfana = copias <= 0;
   const nombre = carta.name || "carta sin datos";
+  /* La copia que hay EN ESTA FUNDA se ve como está: si salió machacada del
+   * sobre, en el archivador sigue machacada. Sólo llega en el ~5% de las
+   * copias; en el resto es null y la funda se pinta exactamente como siempre. */
+  const estado = estadoDeCopia(carta);
+  const desgaste = estado ? desgasteEnPalabras(estado.desperfectos).join(", ") : "";
 
   /* El realce va en un div interior y no en el <button> para que el transform
    * no arrastre el anillo de foco fuera de sitio. Sólo translate: ver la
    * cabecera. */
   const contenido = (
     <div className="transition-transform duration-300 md:group-hover/funda:-translate-y-1 pointer-events-none">
-      <PokemonCard card={carta} reveal={true} interactive={false} />
+      {estado ? (
+        /* Marco + tira, el mismo montaje que
+           components/graduacion/CartaConDesperfectos.tsx: el descentrado de una
+           carta mal cortada no se pinta, se MUEVE la ilustración dentro del
+           marco y el marco recorta; por el lado del que se retira asoma el
+           papel del cartón, que es el fondo. El marco es además el `relative` +
+           `overflow-hidden` que DesperfectosCarta exige a su contenedor.
+
+           El desplazamiento es `translate` y NUNCA `scale`, como el realce del
+           ratón y por lo mismo: aquí hay tres ancestros muy cerca (la funda, la
+           hoja y la ventana del pase de página) y basta que uno promocione la
+           capa para que la ilustración salga borrosa en iPhone. Ver la
+           cabecera. */
+        <div
+          className="relative w-full overflow-hidden rounded-[4.5%]"
+          style={{ background: "var(--surface-2)" }}
+        >
+          <div style={estiloDescentrado(estado.desperfectos)}>
+            <PokemonCard card={carta} reveal={true} interactive={false} />
+          </div>
+          <DesperfectosCarta
+            desperfectos={estado.desperfectos}
+            marcas={estado.marcas}
+          />
+        </div>
+      ) : (
+        <PokemonCard card={carta} reveal={true} interactive={false} />
+      )}
     </div>
   );
 
   return (
     /* `group/funda` con nombre y no `group` a secas: la hoja y la vitrina
        también son contenedores, y un grupo anónimo dentro de otro engancha el
-       hover al ancestro equivocado. */
-    <div className="group/funda relative rounded-[6%] p-[4%]" style={FUNDA}>
+       hover al ancestro equivocado.
+
+       EL DESGASTE NO LLEVA INSIGNIA, y es la única de las tres pantallas donde
+       no la lleva. Las esquinas de la funda ya están repartidas entre la
+       favorita, el aviso de huérfana y el contador de copias, y a nueve cartas
+       por hoja una pastilla más taparía justo la ilustración que la vitrina
+       existe para enseñar. Aquí las marcas SE VEN de sobra; lo que faltaba era
+       poder preguntar por qué, y eso lo dan el `title` (puntero) y el rótulo
+       del botón (lector de pantalla). */
+    <div
+      className="group/funda relative rounded-[6%] p-[4%]"
+      style={FUNDA}
+      title={estado ? `Copia dañada: se le ven ${desgaste}` : undefined}
+    >
       {onTocar ? (
         <button
           type="button"
           onClick={onTocar}
-          /* El rótulo dice las copias y el aviso de huérfana porque las dos
-           * insignias que los pintan son decorativas: quien navega con lector
-           * no ve ni el "×3" ni el aviso de la esquina. Y dice "opciones" y no
-           * "ver" porque el toque ya no abre la carta: abre el menú de la
-           * funda (ver, cambiar o quitar). */
+          /* El rótulo dice las copias, el aviso de huérfana y el estado de la
+           * copia porque las tres cosas se pintan de forma decorativa: quien
+           * navega con lector no ve ni el "×3", ni el aviso de la esquina, ni
+           * los piques de los cantos. Y dice "opciones" y no "ver" porque el
+           * toque ya no abre la carta: abre el menú de la funda (ver, cambiar
+           * o quitar). */
           aria-label={
             `Funda ${posicion} de 9, ${nombre}` +
             (huerfana
@@ -213,6 +321,7 @@ export default function FundaCarta({
               : copias > 1
                 ? `, ${copias} copias`
                 : "") +
+            (estado ? `, dañada: se le ven ${desgaste}` : "") +
             ". Abrir opciones"
           }
           className="block w-full cursor-pointer rounded-[4.5%] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"

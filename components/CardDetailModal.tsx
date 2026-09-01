@@ -4,6 +4,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import TypeBadge, { EnergyCost } from "./TypeBadge";
+import DesperfectosCarta, { estiloDescentrado } from "./DesperfectosCarta";
+import type { Desperfectos, MarcasDeCarta } from "../utils/graduacion";
 import { SELL_PRICES, valorDeVenta } from "../utils/constanst";
 import { getCardFromDB, toggleWishlist, getWishlistIds } from "../app/action";
 import { useHaptics } from "../hooks/useHaptics";
@@ -52,6 +54,64 @@ const RARITY_AURA: Record<string, { halo: string; chip: string }> = {
   "Radiant Rare":             { halo: "rgba(251,146,60,0.4)",   chip: "bg-orange-500/20 text-orange-300 border-orange-500/30" },
 };
 const auraFor = (rarity?: string) => (rarity && RARITY_AURA[rarity]) || null;
+
+/* ------------------------------------------------------------------ */
+/* ESTADO FÍSICO DE LA COPIA                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * El estado de la copia, y SÓLO si viene con la carta.
+ *
+ * La nota larga —por qué el cliente pinta lo que le llega y NO lo deduce, y por
+ * qué eso es una regla de economía y no de estilo— está sobre la función
+ * gemela de components/MazoCartas.tsx. El resumen: el desgaste es coherente con
+ * la nota de graduación, así que enseñarlo en las copias buenas la delataría y
+ * graduar dejaría de ser una apuesta. El servidor decide qué manda; aquí no se
+ * llama nunca a `desperfectosDeCopia` ni a `notaDeCopia`.
+ *
+ * Este modal recibe cartas de la colección, del álbum y del bazar, y algunas
+ * llegan del localStorage de un invitado: de ahí el `unknown` en utils/tipos.ts
+ * y la comprobación de forma antes de pintar nada.
+ */
+function estadoDeCopia(carta: {
+  desperfectos?: unknown;
+  marcas?: unknown;
+}): { desperfectos: Desperfectos; marcas: MarcasDeCarta } | null {
+  const desperfectos = carta?.desperfectos as Desperfectos | undefined;
+  const marcas = carta?.marcas as MarcasDeCarta | undefined;
+  if (!desperfectos || !marcas) return null;
+  if (
+    !Array.isArray(marcas.piques) ||
+    !Array.isArray(marcas.aranazos) ||
+    !Array.isArray(marcas.manchas)
+  ) {
+    return null;
+  }
+  if (desgasteEnPalabras(desperfectos).length === 0) return null;
+  return { desperfectos, marcas };
+}
+
+/**
+ * El desgaste en palabras. QUÉ HAY, NUNCA CUÁNTO.
+ *
+ * `firmaVisible` (utils/graduacion.ts) describe lo que el jugador puede
+ * distinguir sin graduar, y el invariante de scripts/test-invariantes.mjs
+ * agrupa las copias por esa descripción para exigir que ningún grupo compense
+ * graduarlo. Allí los recuentos van por tramos, así que decir "6 piques" sería
+ * enseñar más de lo que el invariante protege. Nombrar la clase de defecto es
+ * más grueso que un tramo. El 1,5 % del descentrado es el mismo umbral que usa
+ * `firmaVisible` para llamar "torcida" a una copia.
+ */
+function desgasteEnPalabras(d: Desperfectos): string[] {
+  const partes: string[] = [];
+  if (d.piques > 0) partes.push("piques en los cantos");
+  if (d.aranazos > 0) partes.push("arañazos");
+  if (d.manchas > 0) partes.push("manchas");
+  if (d.palidez > 0) partes.push("decoloración por el sol");
+  const desvio = Math.abs(d.descentrado?.x ?? 0) + Math.abs(d.descentrado?.y ?? 0);
+  if (desvio > 1.5) partes.push("mal centrada");
+  return partes;
+}
 
 export default function CardDetailModal({
   card,
@@ -307,6 +367,14 @@ export default function CardDetailModal({
 
   const c = card ? mergeCard(card, enriched) : null;
   const aura = auraFor(c?.rarity);
+  /**
+   * El estado sale de `c` y no de `card` porque `mergeCard` es quien decide qué
+   * gana: la carta local manda sobre la enriquecida, así que el estado de LA
+   * COPIA nunca lo pisa el modelo de la carta que devuelve la base de datos
+   * (que no tiene copias, sólo cartas). No es un hook: es un objeto pequeño y
+   * el modal pinta una carta, no una rejilla de trescientas.
+   */
+  const estado = c ? estadoDeCopia(c) : null;
 
   const getMarketPrice = () => SELL_PRICES[c?.rarity as keyof typeof SELL_PRICES] || 10;
   const getTcgPrice = (): number | null => {
@@ -485,26 +553,83 @@ export default function CardDetailModal({
                   />
                 )}
                 <div ref={tiltRef} className="relative w-full aspect-[2.5/3.5]">
-                  <motion.img
-                    key={c.id}
-                    initial={{ scale: 0.96, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                    src={c.images?.large}
-                    alt={c.name}
-                    loading="eager"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      // Un arrastre acaba en click sintético: no abrir el zoom.
-                      if (imageSwipedRef.current) return;
-                      haptic("tap");
-                      setZoomed(true);
-                    }}
-                    // Sombra con box-shadow y no drop-shadow: un filter dentro
-                    // del contexto 3D del balanceo rasterizaría la carta.
-                    style={{ borderRadius: "4.5%", boxShadow: "var(--shadow-lg)" }}
-                    className={`absolute inset-0 h-full w-full cursor-zoom-in object-contain ${c.owned === false ? "grayscale opacity-70" : ""}`}
-                  />
+                  {(() => {
+                    const imagen = (
+                      <motion.img
+                        key={c.id}
+                        initial={{ scale: 0.96, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                        src={c.images?.large}
+                        alt={c.name}
+                        loading="eager"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          // Un arrastre acaba en click sintético: no abrir el zoom.
+                          if (imageSwipedRef.current) return;
+                          haptic("tap");
+                          setZoomed(true);
+                        }}
+                        // Sombra con box-shadow y no drop-shadow: un filter dentro
+                        // del contexto 3D del balanceo rasterizaría la carta.
+                        style={{ borderRadius: "4.5%", boxShadow: "var(--shadow-lg)" }}
+                        className={`absolute inset-0 h-full w-full cursor-zoom-in object-contain ${c.owned === false ? "grayscale opacity-70" : ""}`}
+                      />
+                    );
+                    // Copia limpia: el árbol se queda EXACTAMENTE como estaba.
+                    // La rama de abajo mete dos divs entre el balanceo y la
+                    // imagen, y no hay razón para que los pague el 95% de las
+                    // cartas que no tienen nada que enseñar.
+                    if (!estado) return imagen;
+                    return (
+                      /* Marco + tira, el mismo montaje que
+                         components/graduacion/CartaConDesperfectos.tsx: el
+                         descentrado no se pinta, se MUEVE la ilustración dentro
+                         del marco y el marco recorta; por el lado del que se
+                         retira asoma el cartón, que es el fondo. `translate` y
+                         nunca `scale`, que rasterizaría la capa (y aquí, dentro
+                         del contexto 3D del balanceo, se notaría el doble).
+                         La sombra sube al marco: la de la imagen queda dentro
+                         del overflow-hidden y no se vería. */
+                      <div
+                        className="absolute inset-0 overflow-hidden rounded-[4.5%]"
+                        style={{
+                          background: "var(--surface-2)",
+                          boxShadow: "var(--shadow-lg)",
+                        }}
+                      >
+                        <div
+                          className="absolute inset-0"
+                          style={estiloDescentrado(estado.desperfectos)}
+                        >
+                          {imagen}
+                        </div>
+                        <DesperfectosCarta
+                          desperfectos={estado.desperfectos}
+                          marcas={estado.marcas}
+                        />
+                      </div>
+                    );
+                  })()}
+
+                  {/* El rótulo sobre la propia carta: las marcas sin nada que
+                      las nombre se leen como una imagen rota. Aquí es sólo la
+                      etiqueta corta —aria-hidden— porque el porqué entero está
+                      escrito en la ficha de al lado, en texto de verdad. */}
+                  {estado && (
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute bottom-[4%] left-[5%] z-40 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
+                      style={{
+                        background: "var(--surface)",
+                        color: "var(--warn-ink)",
+                        border: "1px solid var(--border-strong)",
+                        boxShadow: "var(--shadow-sm)",
+                      }}
+                    >
+                      Estado: dañada
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -581,6 +706,30 @@ export default function CardDetailModal({
                     </div>
                   )}
                 </div>
+
+                {/* ESTADO DE LA COPIA.
+                    Va aquí arriba, pegado a la cabecera, porque es lo que
+                    explica las marcas que se acaban de ver en la ilustración y
+                    porque más abajo quedaría por debajo del pliegue en móvil.
+                    Es texto de verdad y no el `title` de la insignia: en la
+                    columna de la carta el rótulo va aria-hidden, así que ésta
+                    es la única forma de que un lector de pantalla se entere.
+                    Nombra las clases de defecto y ningún recuento; el porqué
+                    está sobre desgasteEnPalabras. */}
+                {estado && (
+                  <div className="surface-2 rounded-2xl px-3 py-2.5">
+                    <p className="text-[9px] uppercase tracking-wider ink-faint font-semibold">
+                      Estado de la copia
+                    </p>
+                    <p
+                      className="text-[12px] leading-snug mt-0.5 font-medium"
+                      style={{ color: "var(--warn-ink)" }}
+                    >
+                      Dañada. Se le ven{" "}
+                      {desgasteEnPalabras(estado.desperfectos).join(", ")}.
+                    </p>
+                  </div>
+                )}
 
                 {/* PRICES */}
                 <div className="grid grid-cols-2 gap-2">

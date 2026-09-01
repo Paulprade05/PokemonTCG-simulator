@@ -427,9 +427,28 @@ export default function Home() {
     return m;
   }, [allCards]);
 
-  /** Cambia las cartas mínimas del servidor por las completas del catálogo. */
+  /**
+   * Completa las cartas mínimas del servidor con las del catálogo.
+   *
+   * MEZCLA, NO SUSTITUYE, y la diferencia importa. Antes esto devolvía la carta
+   * del catálogo tal cual (`catalogoPorId.get(c.id) ?? c`), que es lo correcto
+   * mientras lo único que traiga el servidor sea id, nombre, rareza e imagen:
+   * la del catálogo trae además tipos, ataques y precios.
+   *
+   * Pero la respuesta de la compra dejó de ser sólo eso. Ahora cada carta puede
+   * venir con el ESTADO FÍSICO de la copia que acaba de tocar —`desperfectos` y
+   * `marcas`—, y eso NO está en el catálogo ni puede estarlo: el catálogo es la
+   * carta como objeto de colección, y esto es la copia concreta que salió del
+   * sobre. Sustituir la borraba, y la carta machacada se pintaba impecable.
+   *
+   * El orden del `spread` es el que hace falta: primero la del catálogo (que
+   * aporta lo rico) y encima la del servidor (que manda sobre lo suyo). Al
+   * revés, un campo vacío del catálogo pisaría el bueno. */
   const hidratarCartas = (cartas: Carta[]): Carta[] =>
-    (cartas ?? []).map((c) => catalogoPorId.get(c.id) ?? c);
+    (cartas ?? []).map((c) => {
+      const rica = catalogoPorId.get(c.id);
+      return rica ? { ...rica, ...c } : c;
+    });
 
   /** Deseados como Set: el resumen de un ×10 son 100 cartas y un `includes`
    *  contra una lista de cientos es O(n·m) en pleno render. */

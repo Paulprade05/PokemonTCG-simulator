@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { motion } from "framer-motion";
 import { ReactNode } from "react";
 
 interface PageHeaderProps {
@@ -12,14 +11,24 @@ interface PageHeaderProps {
   actions?: ReactNode;
 }
 
+/**
+ * UNA PANTALLA, UNA ENTRADA.
+ *
+ * Esta cabecera tenía su propia animación de entrada (fundido con 8px de bajada
+ * en 0,4 s) ADEMÁS de la de la ruta, que ya mueve la pantalla completa desde
+ * app/template.tsx. Dos animaciones anidadas se multiplican: el título recorría
+ * un camino distinto al del contenido que tiene debajo, salían de sitios
+ * distintos y llegaban en momentos distintos. Eso es exactamente lo que hace
+ * que una app parezca "de web": las piezas de una misma pantalla se mueven cada
+ * una por su cuenta.
+ *
+ * Quitarla no resta movimiento —la cabecera sigue entrando, empujada por la
+ * transición de ruta— y además ahorra el envoltorio de framer en TODAS las
+ * pantallas, porque esto lo monta casi cada página de la app.
+ */
 export default function PageHeader({ title, subtitle, back, logo, actions }: PageHeaderProps) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: -8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-      className="flex items-center justify-between gap-3 mb-6 md:mb-8"
-    >
+    <div className="flex items-center justify-between gap-3 mb-6 md:mb-8">
       <div className="flex items-center gap-3 min-w-0">
         {back && (
           <Link
@@ -47,6 +56,6 @@ export default function PageHeader({ title, subtitle, back, logo, actions }: Pag
         )}
       </div>
       {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
-    </motion.div>
+    </div>
   );
 }

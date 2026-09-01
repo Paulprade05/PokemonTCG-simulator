@@ -72,7 +72,15 @@ export default function AppShell({ children }: { children: ReactNode }) {
             {/* Content column offset by sidebar on desktop */}
             <div className="md:pl-60">
               <TopBar />
-              <main className="px-4 md:px-8 pt-6 pb-nav md:pb-12 max-w-7xl mx-auto w-full">
+              {/* El hueco inferior lo pone SÓLO `pb-nav`. Llevaba además un
+                  `md:pb-12` que nunca ha pintado nada: globals.css declara
+                  .pb-nav después de las utilidades de Tailwind y dentro de la
+                  misma capa, así que gana por orden de cascada y cualquier
+                  md:pb-* encima es letra muerta —está explicado allí, junto a la
+                  media query que baja --content-bottom en escritorio, que es
+                  donde de verdad se corrige—. Se quita para que nadie lo lea
+                  como que en escritorio manda otra cosa. */}
+              <main className="px-4 md:px-8 pt-6 pb-nav max-w-7xl mx-auto w-full">
                 {children}
               </main>
             </div>

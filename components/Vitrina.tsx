@@ -35,6 +35,7 @@ import PaginaArchivador from "./vitrina/PaginaArchivador";
 import AnillasArchivador from "./vitrina/AnillasArchivador";
 import SelectorCarta from "./vitrina/SelectorCarta";
 import AccionesFunda from "./vitrina/AccionesFunda";
+import { notaDeCarta, type NotasDeCarta } from "./vitrina/InsigniaNota";
 import {
   MAX_HOJAS,
   RANURAS_POR_HOJA,
@@ -161,6 +162,49 @@ function ordenarComoElServidor(cartas: CartaEnColeccion[]): CartaEnColeccion[] {
 }
 
 /**
+ * LA NOTA DE GRADUACIÓN, PEGADA A LAS CARTAS DEL ARCHIVADOR.
+ *
+ * `getArchivador()` no la trae, y hace bien: esa consulta responde a "qué hay en
+ * cada funda" y cruzarle además las copias graduadas sería otro agregado por
+ * lectura para un dato que esta pantalla YA TIENE — la colección se carga aquí
+ * al lado, en el mismo `Promise.all`, y viene con `graduadas` y `mejor_nota` por
+ * carta desde que se pidió que graduar quedara reflejado fuera de /graduacion.
+ * Así que el cruce se hace en memoria, con un índice por id, y cuesta un barrido
+ * de la colección y otro de las fundas.
+ *
+ * SE PEGA A LA CARTA Y NO SE GUARDA APARTE porque `FundaCarta` recibe la carta y
+ * nada más: un mapa paralelo habría que ir pasándolo por `PaginaArchivador`
+ * hasta abajo, y esas dos piezas no tendrían por qué enterarse de que existe la
+ * graduación. Los campos van con su nombre de columna (ver `NotasDeCarta`), que
+ * es el mismo con el que la colección los pinta, así que abajo se leen con la
+ * MISMA función en las dos pantallas y no hay dos formas del mismo dato.
+ *
+ * `fundasDelServidor` los quitaría —normaliza campo a campo, a propósito—, así
+ * que este paso va SIEMPRE DESPUÉS de la normalización, nunca antes.
+ */
+function conNotas(
+  fundas: FundaVitrina[],
+  cartas: readonly CartaEnColeccion[],
+): FundaVitrina[] {
+  const porId = new Map<string, CartaEnColeccion>();
+  for (const c of cartas) porId.set(c.id, c);
+
+  return fundas.map((f) => {
+    const graduada = notaDeCarta(porId.get(f.carta.id));
+    // Sin copias graduadas se devuelve la MISMA funda y no una copia: son
+    // casi todas, y clonar 531 objetos para no cambiar nada sería tirar
+    // igualdades por referencia que a React le sirven.
+    if (!graduada) return f;
+    const carta: CartaEnColeccion & NotasDeCarta = {
+      ...f.carta,
+      graduadas: graduada.copias,
+      mejor_nota: graduada.nota,
+    };
+    return { ...f, carta };
+  });
+}
+
+/**
  * Qué decirle al jugador cuando `ponerEnRanura` dice que no.
  *
  * Los errores de la acción se traducen uno a uno y no a un "algo ha fallado":
@@ -269,15 +313,30 @@ export default function Vitrina() {
         setCartas(coleccion);
         if (!archivador.ok) throw new Error(archivador.error);
         setMaxHojas(archivador.maxHojas);
-        setFundas(fundasDelServidor(archivador.fundas, archivador.maxHojas));
+        setFundas(
+          conNotas(
+            fundasDelServidor(archivador.fundas, archivador.maxHojas),
+            coleccion,
+          ),
+        );
       } else {
         const coleccion = ordenarComoElServidor(getCollection());
         setCartas(coleccion);
         setMaxHojas(MAX_HOJAS);
         // El archivador del invitado guarda sólo ids: el resto se cruza con su
         // colección de localStorage (ver `fundasDelInvitado`).
+        //
+        // `conNotas` también aquí, aunque HOY sea un no-op —graduar exige
+        // cuenta, así que la colección de localStorage nunca trae notas—:
+        // la regla de esta pantalla es que las dos rutas produzcan exactamente
+        // la misma forma (ver la cabecera de components/vitrina/modelo.ts), y
+        // ese es el motivo por el que nada de lo que hay debajo tiene que
+        // preguntar si hay sesión.
         setFundas(
-          fundasDelInvitado(leerArchivadorLocal(), coleccion, MAX_HOJAS),
+          conNotas(
+            fundasDelInvitado(leerArchivadorLocal(), coleccion, MAX_HOJAS),
+            coleccion,
+          ),
         );
       }
     } catch (error) {
@@ -565,7 +624,12 @@ export default function Vitrina() {
         /* Estado local en vez de volver a leer el archivador entero: la
          * respuesta ya confirma que la fila está escrita, y una relectura
          * completa por cada carta colocada convertiría montar una hoja en
-         * nueve viajes de ida y vuelta. */
+         * nueve viajes de ida y vuelta.
+         *
+         * NO HACE FALTA PASAR ESTA CARTA POR `conNotas`: viene del selector, o
+         * sea de `cartas`, o sea de `getFullCollection`, así que ya trae sus
+         * `graduadas` y `mejor_nota` puestos. Una carta graduada enseña su nota
+         * en cuanto se coloca, sin recargar la vitrina. */
         setFundas((prev) => [
           ...prev.filter(
             (f) => !(f.hoja === destino.hoja && f.ranura === destino.ranura),

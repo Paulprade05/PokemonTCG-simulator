@@ -1,10 +1,12 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { useCallback, useEffect, useLayoutEffect, useRef, type MutableRefObject, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type MutableRefObject, type RefObject } from "react";
 import PokemonCard from "./PokemonCard";
+import DesperfectosCarta, { estiloDescentrado } from "./DesperfectosCarta";
 import { useHaptics } from "../hooks/useHaptics";
 import { useSwipe } from "../hooks/useSwipe";
+import type { Desperfectos, MarcasDeCarta } from "../utils/graduacion";
 
 /**
  * MAZO DE LA APERTURA (app/page.tsx, VIEW 3).
@@ -70,6 +72,17 @@ import { useSwipe } from "../hooks/useSwipe";
  *
  * Las tres comparten el mismo reloj: el will-change vive exactamente lo que
  * dura la llegada (duración + margen) y se limpia.
+ *
+ * ---------------------------------------------------------------------------
+ * EL ESTADO FÍSICO DE LA COPIA.
+ *
+ * Una copia que salió machacada del sobre se ve machacada AQUÍ, en la apertura,
+ * y no sólo al graduarla. Lo pinta DesperfectosCarta sobre la ilustración; el
+ * descentrado lo aplica el marco de la ranura moviendo la imagen dentro de él.
+ * Lo importante es de dónde sale el dato: viene YA CALCULADO del servidor y
+ * sólo en las copias que de verdad se ven mal. Aquí no se deriva nada — el
+ * porqué está entero sobre `estadoDeCopia`, unas líneas más abajo, y es una
+ * regla de economía, no de estilo.
  */
 
 /* ------------------------------------------------------------------ */
@@ -211,6 +224,84 @@ const duracionCierre = (recorrido: number) =>
       (T_CIERRE_MAX - T_CIERRE_MIN) * Math.min(1, Math.abs(recorrido) / D_REF_CIERRE),
   );
 
+/* ------------------------------------------------------------------ */
+/* ESTADO FÍSICO DE LA COPIA                                           */
+/* ------------------------------------------------------------------ */
+
+/** Lo que hace falta para pintar el desgaste de UNA copia. */
+type EstadoCopia = { desperfectos: Desperfectos; marcas: MarcasDeCarta };
+
+/**
+ * El estado de una copia, Y SÓLO SI EL SERVIDOR LO HA MANDADO.
+ *
+ * AQUÍ NO SE DERIVA NADA: ni de la semilla, ni de la rareza, ni de la nota. El
+ * desgaste está construido para ser coherente con la nota de graduación, así
+ * que enseñarlo entero la DELATA — medido sobre 60.000 copias, una carta sin un
+ * solo pique era SIEMPRE un 10, y quien lo supiera graduaría sólo ésas y se
+ * llevaría el ×3 garantizado, convirtiendo la graduación en beneficio seguro.
+ * Por eso el filtro vive en el servidor (app/action.ts, conEstadoFisico: de
+ * nota 7 en adelante no viaja nada) y el cliente se limita a pintar lo que le
+ * llega. LA AUSENCIA DEL DATO SIGNIFICA "SE VE LIMPIA", nunca "no se sabe": en
+ * cuanto esta función llamara a `desperfectosDeCopia` o a `notaDeCopia`, el
+ * agujero quedaría reabierto.
+ *
+ * Los dos campos llegan tipados como `unknown` (utils/tipos.ts) a propósito: la
+ * misma carta puede venir del servidor, de un JSON del repositorio o del
+ * localStorage de un invitado. Se comprueba la forma mínima que va a leerse
+ * para que un dato viejo o a medias no reviente la apertura, que es el momento
+ * de la app en el que menos se puede permitir una excepción.
+ *
+ * Devuelve null también cuando el estado no tiene NADA que enseñar: si no se
+ * puede nombrar un defecto tampoco se puede rotular la carta como dañada, y un
+ * rótulo sin marcas debajo se lee como un fallo de pintado.
+ */
+function estadoDeCopia(carta: {
+  desperfectos?: unknown;
+  marcas?: unknown;
+}): EstadoCopia | null {
+  const desperfectos = carta?.desperfectos as Desperfectos | undefined;
+  const marcas = carta?.marcas as MarcasDeCarta | undefined;
+  if (!desperfectos || !marcas) return null;
+  if (
+    !Array.isArray(marcas.piques) ||
+    !Array.isArray(marcas.aranazos) ||
+    !Array.isArray(marcas.manchas)
+  ) {
+    return null;
+  }
+  if (desgasteEnPalabras(desperfectos).length === 0) return null;
+  return { desperfectos, marcas };
+}
+
+/**
+ * El desgaste en palabras, para quien no puede verlo.
+ *
+ * DICE QUÉ HAY Y NUNCA CUÁNTO, y esa parte no es cosmética. `firmaVisible`
+ * (utils/graduacion.ts) define qué puede distinguir el jugador de una copia sin
+ * graduarla, y el invariante "ningún estado visible delata una nota" de
+ * scripts/test-invariantes.mjs agrupa las copias POR ESA DESCRIPCIÓN para
+ * exigir que ningún grupo compense graduarlo. Allí los recuentos van por tramos
+ * ("pocos", "varios", "muchos") porque nadie cuenta diecisiete piques de un
+ * vistazo; escribir aquí "6 piques" enseñaría más detalle del que el invariante
+ * protege y lo dejaría comprobando algo que ya no es cierto. Nombrar las clases
+ * de defecto es estrictamente MÁS GRUESO que un tramo: sólo separa "hay piques"
+ * de "no hay", que es exactamente lo que ya se ve en la ilustración.
+ *
+ * El umbral del descentrado es el mismo 1,5 % que usa `firmaVisible` para
+ * decidir si una copia está "torcida", por la misma razón: los dos tienen que
+ * describir lo mismo o el invariante deja de proteger lo que cree proteger.
+ */
+function desgasteEnPalabras(d: Desperfectos): string[] {
+  const partes: string[] = [];
+  if (d.piques > 0) partes.push("piques en los cantos");
+  if (d.aranazos > 0) partes.push("arañazos");
+  if (d.manchas > 0) partes.push("manchas");
+  if (d.palidez > 0) partes.push("decoloración por el sol");
+  const desvio = Math.abs(d.descentrado?.x ?? 0) + Math.abs(d.descentrado?.y ?? 0);
+  if (desvio > 1.5) partes.push("mal centrada");
+  return partes;
+}
+
 type Pose = { x: number; g: number; o: number };
 
 /**
@@ -276,6 +367,8 @@ export default function MazoCartas({
   const haptic = useHaptics();
   const marcoRef = useRef<HTMLDivElement>(null);
   const ranurasRef = useRef<(HTMLDivElement | null)[]>([]);
+  /** Región viva que dicta el estado de la copia que se está mirando. */
+  const avisoRef = useRef<HTMLParagraphElement>(null);
   /** Ancho de la carta frontal: se lee una vez por gesto, nunca por fotograma. */
   const anchoRef = useRef(0);
   /** Selección continua bajo el dedo. Se lleva la cuenta pero NO se pinta: sólo
@@ -318,6 +411,18 @@ export default function MazoCartas({
   /** Tope de selección: sólo se avanza UNA carta por gesto, porque maxRevealed
    *  no sube hasta que la carta llega. Hacia atrás no hay tope. */
   const tope = Math.max(0, Math.min(maxRevealed, n - 1));
+
+  /**
+   * El estado de las diez, resuelto UNA vez por sobre.
+   *
+   * Se memoiza contra `cartas` y no contra `indice` porque este componente se
+   * vuelve a renderizar en cada cambio de carta —y la apertura es el momento de
+   * la app con presupuesto en milisegundos—: sin esto se recorrerían las diez
+   * copias en cada paso para sacar siempre exactamente el mismo resultado. Con
+   * el sobre entero limpio (lo normal: el estado sólo viaja en ~1 de cada 20
+   * copias) el array es de nulls y no se monta un solo nodo de más.
+   */
+  const estados = useMemo(() => cartas.map((c) => estadoDeCopia(c)), [cartas]);
 
   const medir = useCallback(() => {
     const w = marcoRef.current?.offsetWidth || zonaRef.current?.offsetWidth || 0;
@@ -427,6 +532,30 @@ export default function MazoCartas({
     // y reescribir el mazo cuando sube el fondo molestaría a una llegada en
     // curso.
   }, [indice, escribirMazo, medir]);
+
+  /**
+   * EL DESGASTE, DICHO. Sin esto, una copia machacada sólo existe para quien la
+   * ve: el rótulo de la esquina es una imagen más dentro de la carta.
+   *
+   * Se escribe a mano sobre el nodo en vez de pintarlo como texto de React por
+   * dos motivos que se refuerzan. El primero es el presupuesto: un `useState`
+   * aquí añadiría un render entero de las diez ranuras JUSTO en el fotograma
+   * del relevo, que es el que tiene que salir limpio. El segundo es que una
+   * región viva sólo anuncia los CAMBIOS de su contenido, así que escribirla
+   * después del montaje es además lo que garantiza que se oiga.
+   *
+   * Es hermana de las ranuras y no hija de ninguna: las nueve que no se ven
+   * llevan aria-hidden, y dentro de una de ellas el aviso quedaría mudo en
+   * cuanto pasaras de carta.
+   */
+  useEffect(() => {
+    const el = avisoRef.current;
+    if (!el) return;
+    const e = estados[indice];
+    el.textContent = e
+      ? `Estado de la copia: dañada. Se le ven ${desgasteEnPalabras(e.desperfectos).join(", ")}.`
+      : "";
+  }, [indice, estados]);
 
   /**
    * La barra dinámica de Safari mueve --app-height y con ella CARD_WIDTH: sin
@@ -731,7 +860,17 @@ export default function MazoCartas({
       }
       className="relative w-full aspect-[2.5/3.5]"
     >
-      {cartas.map((carta, j) => (
+      {/* AVISO DE ESTADO. Va fuera de las ranuras (ver el efecto que lo
+          escribe) y nace vacío: su contenido lo pone el efecto, que es lo que
+          hace que la región viva de verdad anuncie algo. */}
+      <p ref={avisoRef} className="sr-only" aria-live="polite" />
+
+      {cartas.map((carta, j) => {
+        // En una constante y no leído tres veces del array: así el compilador
+        // estrecha el tipo una sola vez y el JSX de abajo no necesita repetir
+        // que no es null.
+        const estado = estados[j];
+        return (
         <div
           key={j}
           ref={(el) => {
@@ -767,14 +906,81 @@ export default function MazoCartas({
               Grande sólo la frontal y sus dos vecinas: tener ya decodificada la
               imagen de la que entra es la mitad de la fluidez del relevo; al
               resto la variante pequeña le sobra. */}
-          <PokemonCard
-            card={carta}
-            reveal
-            interactive={false}
-            useHighRes={Math.abs(j - indice) <= 1}
-          />
+          {estado ? (
+            /* COPIA EN MAL ESTADO. Dos envoltorios y no uno, igual que en
+               components/graduacion/CartaConDesperfectos.tsx: el descentrado de
+               una carta mal cortada no se pinta, se MUEVE la ilustración dentro
+               de su marco y se deja que el marco recorte. Por el lado del que
+               se retira asoma el fondo, que por eso es el color del cartón.
+               El marco es además el `relative` + `overflow-hidden` que exige
+               DesperfectosCarta, así que sirve para las dos cosas.
+
+               El desplazamiento es `translate` y JAMÁS `scale`: WebKit rasteriza
+               a escala fija la capa de todo lo que lleve scale, filter,
+               drop-shadow, backdrop-filter o mix-blend-mode, y la ilustración
+               sale borrosa en un iPhone (cabecera de este fichero, punto 3).
+
+               Se monta desde el primer fotograma y no cuando la carta entra:
+               montar y desmontar nodos en el relevo es exactamente lo que este
+               componente lleva diez ranuras evitando. */
+            <div
+              className="relative w-full overflow-hidden rounded-[4.5%]"
+              style={{ background: "var(--surface-2)" }}
+            >
+              <div style={estiloDescentrado(estado.desperfectos)}>
+                <PokemonCard
+                  card={carta}
+                  reveal
+                  interactive={false}
+                  useHighRes={Math.abs(j - indice) <= 1}
+                />
+              </div>
+              <DesperfectosCarta
+                desperfectos={estado.desperfectos}
+                marcas={estado.marcas}
+              />
+            </div>
+          ) : (
+            <PokemonCard
+              card={carta}
+              reveal
+              interactive={false}
+              useHighRes={Math.abs(j - indice) <= 1}
+            />
+          )}
+
+          {/* EL RÓTULO. Sin él las marcas se leen como un fallo de pintado, no
+              como una copia en mal estado, y es la primera vez que el jugador
+              las ve. Dice "dañada" y nada más: el detalle lo dicta la región
+              viva de arriba, y ampliarlo aquí con recuentos enseñaría más de lo
+              que el invariante de la economía protege (ver desgasteEnPalabras).
+
+              Va DENTRO de la ranura porque es una propiedad de esta copia y no
+              de la posición: al pasar de carta tiene que irse con ella, al
+              revés que la insignia de "Nueva", que es de la posición y por eso
+              vive fuera del mazo (app/page.tsx).
+
+              aria-hidden porque ya lo dice la región viva; duplicarlo haría que
+              el lector recitara el estado dos veces por carta. Abajo a la
+              izquierda: es el único rincón que no se pelea ni con "Nueva"
+              (arriba a la izquierda) ni con "Carta garantizada" (arriba). */}
+          {estado && (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute bottom-[4%] left-[5%] z-40 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
+              style={{
+                background: "var(--surface)",
+                color: "var(--warn-ink)",
+                border: "1px solid var(--border-strong)",
+                boxShadow: "var(--shadow-sm)",
+              }}
+            >
+              Estado: dañada
+            </span>
+          )}
         </div>
-      ))}
+        );
+      })}
     </motion.div>
   );
 }

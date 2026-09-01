@@ -54,6 +54,35 @@ export interface Carta extends CartaBase {
   /** Copias en propiedad. Ausente en el catálogo de un set. */
   quantity?: number;
   is_favorite?: boolean;
+
+  /* --- Sólo cuando la carta es una COPIA CONCRETA, no el modelo --- *
+   *
+   * Estos tres separan "la carta" de "esta copia mía de la carta", y por eso
+   * viven aquí y no en el catálogo: dos copias de la misma carta tienen el
+   * mismo `id`, la misma ilustración y la misma rareza, pero su estado y su
+   * nota son suyos.
+   */
+
+  /**
+   * Estado físico de la copia: piques en los cantos, arañazos, manchas,
+   * descentrado y decoloración. Lo pinta components/DesperfectosCarta.tsx.
+   *
+   * SÓLO LLEGA EN LAS COPIAS QUE DE VERDAD SE VEN MAL —aproximadamente el 5%—
+   * y su ausencia significa "se ve limpia", nunca "no se sabe". Es una decisión
+   * económica y está medida: el desgaste es coherente con la nota de
+   * graduación, así que mandarlo siempre la delataría (una copia sin ni un
+   * pique era SIEMPRE un 10, y graduar sólo ésas es beneficio garantizado). El
+   * servidor filtra qué manda; el cliente pinta lo que le llega y NO lo deduce.
+   */
+  desperfectos?: unknown;
+  /** Dónde va cada marca del desgaste. Viaja o falta junto a `desperfectos`. */
+  marcas?: unknown;
+
+  /* --- Sólo cuando la carta se ha graduado --- */
+  /** Copias graduadas de esta carta que siguen en la vitrina. */
+  graduadas?: number;
+  /** La nota más alta entre ellas: la que se enseña. */
+  mejor_nota?: number | null;
 }
 
 /**

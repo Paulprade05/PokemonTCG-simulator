@@ -3,7 +3,7 @@
 import { SignedIn, SignedOut, SignInButton, UserButton } from "@clerk/nextjs";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useCurrency } from "../hooks/useGameCurrency";
 import GlobalSearch from "./GlobalSearch";
 import DailyReward from "./DailyReward";
@@ -16,11 +16,36 @@ export default function TopBar() {
   const { coins, loaded } = useCurrency();
   const [ajustesAbiertos, setAjustesAbiertos] = useState(false);
 
+  /* LA BARRA SÓLO SE DESPEGA CUANDO HAY ALGO DEBAJO.
+   *
+   * Antes llevaba siempre borde y sombra, así que en lo alto de la página
+   * dibujaba una línea que no separaba nada: la barra parecía una franja pegada
+   * encima del contenido en vez de la propia cabecera de la página. Con esto,
+   * arriba del todo se funde con el fondo y la sombra sólo aparece cuando hay
+   * contenido pasando por debajo, que es cuando de verdad hay dos planos que
+   * separar. Es el gesto que hace iOS con sus barras grandes y cuesta un
+   * booleano.
+   *
+   * El listener va en `window` y no en un contenedor: aquí el scroll es el de
+   * la página (Lenis mueve el scroll real de la ventana, no un transform), así
+   * que scrollY es el dato bueno. React descarta el re-render cuando el
+   * booleano no cambia, o sea que el 99% de los eventos no cuestan nada. */
+  const [desplazado, setDesplazado] = useState(false);
+  useEffect(() => {
+    const alDesplazar = () => setDesplazado(window.scrollY > 4);
+    alDesplazar(); // La página puede montarse ya desplazada (volver atrás).
+    window.addEventListener("scroll", alDesplazar, { passive: true });
+    return () => window.removeEventListener("scroll", alDesplazar);
+  }, []);
+
   return (
     <motion.header
       initial={{ y: -16, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
-      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+      // --d-slow y --ease-out de globals.css. Antes eran 0,5 s, el valor más
+      // largo de toda la app y sin motivo: la cabecera no tiene que tardar más
+      // que la pantalla que la acompaña.
+      transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1] }}
       // Los insets laterales van DENTRO del padding, igual que en BottomNav:
       // con el móvil en apaisado el notch se va a un lado y con `px-4` fijo el
       // saldo y el botón de ajustes quedaban debajo del recorte. El max()
@@ -33,6 +58,14 @@ export default function TopBar() {
       style={{
         paddingTop: "env(safe-area-inset-top)",
         height: "calc(4rem + env(safe-area-inset-top))",
+        // Estos dos pisan lo que trae `glass` (sombra fija) y la clase de borde.
+        // La transición sólo nombra sombra y borde: el transform lo lleva
+        // framer fotograma a fotograma y una transición de CSS encima lo
+        // arrastraría medio segundo por detrás.
+        boxShadow: desplazado ? "var(--shadow-md)" : "none",
+        borderBottomColor: desplazado ? "var(--border)" : "transparent",
+        transition:
+          "box-shadow var(--d-base) var(--ease-out), border-color var(--d-base) var(--ease-out)",
       }}
     >
       {/* Misma rejilla que <main> (max-w-7xl y el mismo padding lateral): en

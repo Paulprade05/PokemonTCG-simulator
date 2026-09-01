@@ -165,8 +165,33 @@ export const PROBABILIDAD_NOTA: Record<number, number> = (() => {
  */
 export const MULTIPLICADOR_NOTA: Record<number, number> = {
   1: 0.0, 2: 0.08, 3: 0.18, 4: 0.25, 5: 0.3,
-  6: 0.55, 7: 0.7, 8: 0.9, 9: 1.5, 10: 3.0,
+  6: 0.55, 7: 0.7, 8: 0.9, 9: 1.35, 10: 3.0,
 };
+
+/* ==================================================================== *
+ * POR QUÉ EL 9 BAJÓ DE ×1,5 A ×1,35
+ * ====================================================================
+ *
+ * Porque el desgaste pasó a VERSE al abrir el sobre, y eso cambia la cuenta.
+ *
+ * Mientras la carta llegaba sin marcas, el jugador no sabía nada y el
+ * multiplicador que importaba era el medio de TODA la tabla (×1,29). Enseñando
+ * el estado físico, en cambio, ya no gradúa a ciegas: gradúa lo que se ve bien.
+ * Así que lo que hay que mantener por debajo del techo no es la media global,
+ * es la media DEL GRUPO QUE SE VE BIEN.
+ *
+ * MEDIDO sobre 60.000 copias: el 95% sale sin marcas —son las notas 7 a 10— y
+ * ese grupo daba ×1,4065 con el 9 a ×1,5. El techo es ×1,40, así que graduar
+ * todo lo que pareciera limpio salía a cuenta por 0,0065. Poco, pero infinito:
+ * cada copia repetida es otra tirada.
+ *
+ * Con el 9 a ×1,35 el grupo limpio baja a ×1,345 y queda con margen. El 10
+ * sigue valiendo ×3, que es lo que hace que merezca la pena intentarlo.
+ *
+ * LO COMPRUEBA scripts/test-invariantes.mjs agrupando por lo que el jugador VE,
+ * no por la nota: si alguien sube un multiplicador o hace visible una marca que
+ * hoy no lo es, ese invariante se pone rojo.
+ */
 
 /** Fracción del valor de la carta que cuesta graduarla por encima del suelo. */
 export const COSTE_FRACCION = 0.4;
@@ -392,6 +417,59 @@ export function marcasDeCopia(semilla: string, desperfectos: Desperfectos): Marc
   }
 
   return { piques, aranazos, manchas };
+}
+
+/* ==================================================================== *
+ * QUÉ SE VE ANTES DE PAGAR
+ * ====================================================================
+ *
+ * La carta llega del sobre con su estado físico a la vista: una copia
+ * machacada se ve machacada desde el primer momento, en la apertura y en la
+ * colección. Lo que NO se ve es la nota, que es justo lo que se paga por saber.
+ *
+ * PERO NO SE PUEDE ENSEÑAR TODO, y esto es lo que cuesta entender: el desgaste
+ * está construido para ser coherente con la nota, así que enseñarlo entero la
+ * DELATA. Medido sobre 60.000 copias, una carta con cero piques era SIEMPRE un
+ * 10; quien lo supiera graduaría sólo ésas y se llevaría el ×3 garantizado.
+ *
+ * De ahí este umbral: se pinta el desgaste de las notas 1 a 6 —el 5% de las
+ * copias, las que de verdad se ven mal— y de 7 en adelante no se pinta nada.
+ * Todo lo que sale limpio puede ser un 7 o un 10 y no hay forma de saberlo, que
+ * es exactamente lo que hace que graduar siga siendo una apuesta.
+ *
+ * SUBIR ESTE NÚMERO REABRE LA FUGA. Lo comprueba el invariante "ningún estado
+ * visible delata una nota" de scripts/test-invariantes.mjs, que agrupa las
+ * copias por lo que se ve y exige que ningún grupo compense graduarlo.
+ */
+export const UMBRAL_DESGASTE_VISIBLE = 6;
+
+/** ¿Se pinta el estado de esta copia antes de graduarla? */
+export function desgasteEsVisible(nota: number): boolean {
+  return nota <= UMBRAL_DESGASTE_VISIBLE;
+}
+
+/**
+ * Lo que el jugador puede DISTINGUIR de una copia sin graduarla.
+ *
+ * Existe para el invariante, no para la interfaz: agrupa las copias por lo que
+ * se ve, de modo que se pueda comprobar que ningún grupo delata la nota. Si
+ * algún día la pantalla enseña más detalle del que describe esta función, el
+ * invariante dejará de proteger lo que cree proteger — así que las dos cosas se
+ * cambian juntas.
+ *
+ * Los recuentos se agrupan en tramos ("pocos", "varios", "muchos") porque nadie
+ * cuenta diecisiete piques de un vistazo: lo que se percibe es el tramo.
+ */
+export function firmaVisible(d: Desperfectos, nota: number): string {
+  if (!desgasteEsVisible(nota)) return "limpia";
+  const tramo = (n: number) => (n === 0 ? "0" : n <= 3 ? "pocos" : n <= 8 ? "varios" : "muchos");
+  return [
+    "p" + tramo(d.piques),
+    "a" + tramo(d.aranazos),
+    "m" + tramo(d.manchas),
+    d.palidez > 0 ? "palida" : "color",
+    Math.abs(d.descentrado.x) + Math.abs(d.descentrado.y) > 1.5 ? "torcida" : "recta",
+  ].join("|");
 }
 
 /**

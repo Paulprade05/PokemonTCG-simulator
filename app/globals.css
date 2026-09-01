@@ -15,6 +15,42 @@
   --warn: #f59e0b;
   --radius: 18px;
 
+  /* ============================================================
+     ESCALA DE MOVIMIENTO — una sola para toda la aplicación.
+     ============================================================
+     Antes cada pantalla elegía su duración a ojo (0,15 / 0,2 / 0,25 / 0,4 /
+     0,45 / 0,5 s) y dos curvas distintas sin criterio. Eso no se ve, se NOTA:
+     la app parece hecha a trozos aunque nadie sepa señalar por qué. Cuatro
+     escalones cubren todo lo que hace esta app, y cada uno tiene un porqué:
+
+     --d-tap   RESPUESTA AL DEDO. Por encima de ~100 ms el cerebro deja de
+               leerlo como respuesta al toque y lo lee como una animación que
+               llega tarde. Es el único valor que NO se puede subir.
+     --d-fast  Cambios de estado sin recorrido: color, borde, sombra, y la
+               VUELTA de un :active (soltar puede permitirse ser más lento que
+               pulsar; es el eco, no la respuesta).
+     --d-base  Recorridos cortos: un aviso que entra, una hoja que se va.
+     --d-slow  Recorrido largo y visible: el cambio de pantalla.
+
+     Curvas. Sólo dos, y cada una tiene su trabajo:
+     --ease-out  la de siempre en este tema. Arranca disparada y frena mucho:
+                 va bien para lo que APARECE (llega y se posa).
+     --ease-ios  la que ya usaban BottomNav y useSwipe para el retorno de un
+                 arrastre. Sale con más cuerpo y frena antes: es la de iOS para
+                 todo lo que el dedo puede empujar, y por eso es la de las
+                 hojas y la de las transiciones de ruta.
+     --ease-in   para lo que SE VA: acelera al final y desaparece.
+
+     Los muelles de framer-motion no caben en una variable CSS; viven en cada
+     componente con un comentario que apunta aquí. */
+  --d-tap: 80ms;
+  --d-fast: 140ms;
+  --d-base: 220ms;
+  --d-slow: 340ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-ios: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+
   /* Grano de papel: ruido SVG inline (sin assets remotos, la CSP los bloquea).
      Va como CAPA DE FONDO en body y superficies, nunca como overlay fijo:
      un overlay taparía las imágenes de las cartas y ensuciaría el texto.
@@ -184,7 +220,7 @@ input, textarea, [contenteditable="true"] {
     border: 1px solid var(--border);
   }
   .surface-hover {
-    transition: transform .25s cubic-bezier(0.16,1,0.3,1), box-shadow .25s ease, border-color .25s ease;
+    transition: transform var(--d-base) var(--ease-out), box-shadow var(--d-base) var(--ease-out), border-color var(--d-base) var(--ease-out);
   }
   .surface-hover:hover {
     border-color: var(--border-strong);
@@ -201,34 +237,69 @@ input, textarea, [contenteditable="true"] {
     box-shadow: var(--shadow-sm);
   }
 
-  /* BUTTONS */
+  /* BUTTONS
+     LA REGLA DE LOS DOS TIEMPOS, y aplica a los cuatro de aquí abajo:
+     la transición declarada en la clase base es la de SOLTAR, y dentro de
+     :active se acorta a --d-tap para la de PULSAR. Antes había una sola
+     duración (0,15 s) para las dos mitades, así que hundir el botón tardaba
+     150 ms: lo justo para que el dedo ya se estuviera levantando cuando el
+     botón empezaba a moverse, y para que el toque se sintiera flojo. Bajar el
+     hundido a 80 ms y dejar el retorno en 140 lo convierte en respuesta
+     (pulsa duro, vuelve suave), que es lo que hace un botón físico. */
   .btn-accent {
     background: linear-gradient(135deg, var(--accent), var(--accent-2));
     color: #04110c;
     font-weight: 600;
-    transition: transform .15s cubic-bezier(0.16,1,0.3,1), box-shadow .2s ease, filter .2s ease;
+    transition: transform var(--d-fast) var(--ease-out), box-shadow var(--d-base) var(--ease-out), filter var(--d-base) var(--ease-out);
   }
   .btn-accent:hover { box-shadow: 0 10px 30px -8px rgba(16,185,129,0.5); filter: brightness(1.05); }
-  .btn-accent:active { transform: scale(0.96); }
+  .btn-accent:active { transition-duration: var(--d-tap); transform: scale(0.96); }
 
   .btn-primary {
     background: var(--ink); color: var(--bg);
-    transition: transform .15s cubic-bezier(0.16,1,0.3,1), filter .2s ease;
+    transition: transform var(--d-fast) var(--ease-out), filter var(--d-base) var(--ease-out);
   }
   .btn-primary:hover { filter: brightness(1.1); }
-  .btn-primary:active { transform: scale(0.96); }
+  .btn-primary:active { transition-duration: var(--d-tap); transform: scale(0.96); }
 
   .btn-ghost {
     background: color-mix(in srgb, var(--ink) 7%, transparent);
     border: 1px solid var(--border);
     color: inherit;
-    transition: background-color .2s ease, transform .15s cubic-bezier(0.16,1,0.3,1), border-color .2s ease;
+    transition: background-color var(--d-fast) var(--ease-out), transform var(--d-fast) var(--ease-out), border-color var(--d-fast) var(--ease-out);
   }
   .btn-ghost:hover { background: color-mix(in srgb, var(--ink) 12%, transparent); border-color: var(--border-strong); }
-  .btn-ghost:active { transform: scale(0.96); }
+  /* El fondo también responde al toque, no sólo la escala: en un botón
+     fantasma de 44px el 4% de escala casi no se ve, y en un móvil el dedo tapa
+     justo la zona donde habría que verlo. El cambio de relleno se lee por el
+     borde, que es lo que queda fuera del dedo. */
+  .btn-ghost:active {
+    transition-duration: var(--d-tap);
+    transform: scale(0.96);
+    background: color-mix(in srgb, var(--ink) 15%, transparent);
+  }
 
-  .press { transition: transform .15s cubic-bezier(0.16,1,0.3,1); }
-  .press:active { transform: scale(0.97); }
+  .press { transition: transform var(--d-fast) var(--ease-out); }
+  .press:active { transition-duration: var(--d-tap); transform: scale(0.97); }
+
+  /* PRESS SIN ESCALA — la versión que se puede poner encima de una carta.
+     `.press` escala, y escalar (o cualquier ancestro que escale) es la trampa
+     documentada en PokemonCard.tsx:140-163: WebKit promociona la capa, la
+     rasteriza a una escala fija y la ilustración sale borrosa en el iPhone.
+     Ese es el motivo de que media aplicación no pueda usar `.press` y se quede
+     sin respuesta al toque. Esta variante da el mismo acuse de recibo sólo con
+     desplazamiento —hundir el papel 2px—, que es inofensivo para la nitidez
+     porque no cambia la escala a la que se rasteriza nada. Úsala en cualquier
+     cosa que envuelva una carta
+     y en los objetivos grandes (pestañas, filas de lista), donde el 3% de
+     escala no se ve pero el hundimiento sí.
+
+     Sólo desplazamiento, sin tocar la sombra: la mayoría de los sitios donde va
+     esto (pestañas, enlaces del menú) no tienen sombra, y darles una al pulsar
+     los levantaría en vez de hundirlos. Quien la use sobre algo elevado puede
+     recogerle la sombra en su propio :active. */
+  .press-flat { transition: transform var(--d-fast) var(--ease-out); }
+  .press-flat:active { transition-duration: var(--d-tap); transform: translateY(2px); }
 
   .chip {
     background: color-mix(in srgb, var(--ink) 6%, transparent);
@@ -244,7 +315,7 @@ input, textarea, [contenteditable="true"] {
     background: color-mix(in srgb, var(--ink) 5%, transparent);
     border: 1px solid var(--border);
     color: inherit;
-    transition: border-color .2s ease, background-color .2s ease, box-shadow .2s ease;
+    transition: border-color var(--d-fast) var(--ease-out), background-color var(--d-fast) var(--ease-out), box-shadow var(--d-fast) var(--ease-out);
   }
   .input-field:focus-within {
     border-color: var(--accent);
@@ -282,15 +353,47 @@ input, textarea, [contenteditable="true"] {
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { scrollbar-width: none; }
 
-  /* PROGRESS */
-  .progress-bar { background: linear-gradient(90deg, var(--accent), var(--accent-3)); transition: width .7s cubic-bezier(0.16,1,0.3,1); }
-  .progress-bar-blue { background: linear-gradient(90deg, var(--accent-2), #38bdf8); transition: width .7s cubic-bezier(0.16,1,0.3,1); }
+  /* PROGRESS. Los 0,7 s se quedan fuera de la escala a propósito: una barra que
+     crece no es una respuesta a un toque, es un DATO contándose a sí mismo, y
+     ahí el recorrido largo es la gracia. La curva sí es la común. */
+  .progress-bar { background: linear-gradient(90deg, var(--accent), var(--accent-3)); transition: width .7s var(--ease-out); }
+  .progress-bar-blue { background: linear-gradient(90deg, var(--accent-2), #38bdf8); transition: width .7s var(--ease-out); }
 
   /* GLOW ring for accent elements */
   .ring-accent { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent), 0 8px 28px -8px color-mix(in srgb, var(--accent) 35%, transparent); }
+
+  /* ESQUELETOS DE CARGA.
+     Un bloque con la FORMA del contenido que va a llegar se percibe más rápido
+     que un círculo girando aunque la espera dure exactamente lo mismo: el ojo
+     ya sabe dónde va a estar cada cosa y la llegada no reordena la pantalla.
+     Lo usa Loader.tsx.
+     El brillo que recorre el bloque es un degradado que se mueve por
+     background-position: no lleva filtro, ni escala, ni capa promovida, así
+     que es inofensivo para la nitidez aunque haya cartas cerca. Con
+     "reducir movimiento" el bloque se queda quieto y liso (la regla global
+     recorta la animación) y sigue cumpliendo su función, que es ocupar sitio. */
+  .skeleton {
+    background-color: color-mix(in srgb, var(--ink) 7%, transparent);
+    background-image: linear-gradient(
+      90deg,
+      transparent 20%,
+      color-mix(in srgb, var(--ink) 6%, transparent) 50%,
+      transparent 80%
+    );
+    background-size: 300% 100%;
+    background-repeat: no-repeat;
+    animation: skeleton-sweep 1.5s ease-in-out infinite;
+    border-radius: 10px;
+  }
 }
 
 @keyframes text-shine { to { background-position: 200% center; } }
+/* De derecha a izquierda del contenedor: con background-size al 300%, el 100%
+   deja el degradado alineado por su borde derecho y el 0% por el izquierdo. */
+@keyframes skeleton-sweep {
+  from { background-position: 100% 0; }
+  to { background-position: 0 0; }
+}
 
 /* Lenis */
 html.lenis, html.lenis body { height: auto; }

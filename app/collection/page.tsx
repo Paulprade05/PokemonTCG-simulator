@@ -21,6 +21,7 @@ import Sheet from "../../components/ui/Sheet";
 import { RARITY_RANK, valorDeVenta } from "../../utils/constanst";
 import { formatNumber } from "../../utils/format";
 import PokemonCard from "../../components/PokemonCard";
+import InsigniaNota, { notaDeCarta } from "../../components/vitrina/InsigniaNota";
 import PageHeader from "../../components/PageHeader";
 import Loader from "../../components/Loader";
 import CardDetailModal from "../../components/CardDetailModal";
@@ -552,6 +553,16 @@ export default function CollectionPage() {
     ? cards.find((c) => c.id === actionCard.id) || actionCard
     : null;
 
+  /**
+   * La nota de la carta de la hoja de acciones, si tiene copias graduadas.
+   *
+   * Se calcula aquí y no dentro del JSX porque la hoja se pinta detrás de una
+   * condición y no hay dónde declarar una constante ahí dentro; y se calcula
+   * sobre `actionCardLive` —la carta VIVA— para que, si se gradúa o se vende
+   * mientras la hoja está abierta, lo que diga sea lo que hay.
+   */
+  const notaDeAcciones = notaDeCarta(actionCardLive);
+
   const goToPage = (next: number) => {
     haptic("tap");
     setPage(next);
@@ -866,7 +877,15 @@ export default function CollectionPage() {
           // 3 columnas en móvil: a 2 las cartas salían enormes y apenas cabían
           // dos filas en pantalla.
           <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 md:gap-4 lg:grid-cols-6">
-            {pagedCards.map((card) => (
+            {pagedCards.map((card) => {
+              /* La nota viaja YA con la colección: `getFullCollection` devuelve
+               * por carta cuántas copias tiene graduadas y cuál es la mejor
+               * nota, así que la insignia no cuesta ni una petición más.
+               * Devuelve null cuando no hay ninguna graduada, que es el caso de
+               * casi todas las cartas y el del invitado entero (graduar pide
+               * cuenta). */
+              const graduada = notaDeCarta(card);
+              return (
               <div key={card.id} className="relative group">
                 {card.quantity > 1 && (
                   <div
@@ -888,6 +907,14 @@ export default function CollectionPage() {
                     </svg>
                   </div>
                 )}
+                {/* ENVOLTORIO SÓLO PARA ANCLAR LA INSIGNIA DE LA NOTA.
+                    El contenedor de fuera llega hasta el botón de vender, así
+                    que un `bottom-0` colgado de él caería debajo de la carta y
+                    no sobre ella. Este div mide exactamente lo que la carta.
+                    Es `relative` a secas —sin transform, sin filtro y sin
+                    opacidad—: cualquiera de esas tres promocionaría la capa y
+                    devolvería la ilustración borrosa en iPhone. */}
+                <div className="relative">
                 {/* <button> y no un <div tabIndex>: aria-label no se anuncia en
                     un elemento de rol genérico, y así Enter y Espacio abren el
                     detalle por el mismo camino que el toque (que es quien
@@ -920,6 +947,22 @@ export default function CollectionPage() {
                     <PokemonCard card={card} reveal={true} interactive={false} />
                   </div>
                 </button>
+                {/* LA NOTA — abajo a la izquierda, la única esquina libre: las
+                    copias van arriba a la derecha y la favorita arriba a la
+                    izquierda (y en la funda del archivador, igual). Además es
+                    la zona de la carta que menos ilustración tapa, porque ahí
+                    va el texto impreso.
+                    FUERA del <button> a propósito: dentro, su `aria-label`
+                    quedaría tapado por el del botón ("Ver Pikachu") y el lector
+                    no diría la nota en ninguna parte. */}
+                {graduada && (
+                  <InsigniaNota
+                    nota={graduada.nota}
+                    copias={graduada.copias}
+                    className="absolute bottom-1.5 left-1.5 z-30"
+                  />
+                )}
+                </div>
                 {/* En táctil no hay hover: la acción se muestra siempre en móvil */}
                 <div className="mt-2 flex justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity duration-300">
                   {card.quantity > 1 ? (
@@ -939,7 +982,8 @@ export default function CollectionPage() {
                   )}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -1011,6 +1055,19 @@ export default function CollectionPage() {
                   {actionCardLive.quantity > 1 ? ` · ${actionCardLive.quantity} copias` : " · copia única"}
                 </p>
               </div>
+              {/* La nota, también aquí. Va como insignia y NO como un tercer
+                  trozo de la línea de rareza: esa línea lleva `truncate`, así
+                  que en un móvil estrecho la nota sería justo lo que se
+                  recortaría — desaparecería precisamente donde hay menos sitio
+                  para verla en la rejilla. */}
+              {notaDeAcciones && (
+                <InsigniaNota
+                  nota={notaDeAcciones.nota}
+                  copias={notaDeAcciones.copias}
+                  tamano="md"
+                  className="ml-auto shrink-0"
+                />
+              )}
             </div>
 
             <div className="mt-5 flex flex-col gap-2.5">

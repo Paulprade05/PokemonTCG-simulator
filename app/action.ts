@@ -39,12 +39,15 @@
   import {
     costeDeGraduar,
     descuentoPorVolumen,
+    desgasteEsVisible,
     desperfectosDeCopia,
     etiquetaNota,
     marcasDeCopia,
     notaDeCopia,
     semillaDeCopia,
     valorGraduado,
+    type Desperfectos,
+    type MarcasDeCarta,
   } from "../utils/graduacion";
   // Las reglas del bazar entre jugadores: banda de precio, comisión, antigüedad
   // mínima y tope de anuncios. Fichero puro y sin imports para que
@@ -259,6 +262,134 @@
    * mano— no vuelve a cobrar ni a acreditar: devuelve el MISMO sobre.
    */
 
+  /* ==================================================================== *
+   * EL ESTADO FÍSICO DE UNA CARTA QUE YA SE TIENE
+   * ====================================================================
+   *
+   * En la colección, en el álbum y en el archivador se ve UNA miniatura por
+   * carta, pero de esa carta se pueden tener quince copias con quince estados
+   * distintos. ¿Cuál se pinta?
+   *
+   * LA MEJOR. Es lo que hace cualquiera con una carpeta delante: si tienes una
+   * machacada y una impecable, enseñas la impecable y la otra se queda en la
+   * caja. Pintar la peor sería mentir sobre lo que tienes, y pintar "la
+   * primera" sería un número de serie que no significa nada para nadie.
+   *
+   * CONSECUENCIA PRÁCTICA: una carta sólo se ve marcada si TODAS sus copias
+   * están marcadas. Con un 5% de copias en mal estado, eso es el 5% de las
+   * cartas de las que sólo se tiene una, y prácticamente nunca a partir de dos
+   * (0,25%). Es raro a propósito: una colección llena de cartas rotas sería
+   * ruido, y lo que se quería era que de vez en cuando salga una fea.
+   *
+   * EL TOPE DE COPIAS QUE SE MIRAN no es una optimización, es lo mismo dicho de
+   * otra forma: la probabilidad de que sesenta copias seguidas salgan todas del
+   * 6 para abajo es 0,05^60, o sea cero. Mirar más copias no puede cambiar la
+   * respuesta, y sí multiplicaría el trabajo en la colección de quien acumula
+   * cientos de repetidas.
+   */
+  const COPIAS_QUE_SE_MIRAN = 60;
+
+  function estadoDeLaMejorCopia(
+    userId: string,
+    cardId: string,
+    cantidad: number,
+    secreto: string,
+  ): { desperfectos: Desperfectos; marcas: MarcasDeCarta } | null {
+    const tope = Math.min(Math.max(1, Math.floor(cantidad) || 1), COPIAS_QUE_SE_MIRAN);
+    let mejorNota = 0;
+    let mejorSemilla = "";
+    for (let copia = 1; copia <= tope; copia++) {
+      const semilla = semillaDeCopia(userId, cardId, copia, secreto);
+      const nota = notaDeCopia(semilla);
+      // En cuanto aparece una copia sana, la carta se ve sana: no hace falta
+      // seguir mirando ni calcular desgaste de nada.
+      if (!desgasteEsVisible(nota)) return null;
+      if (nota > mejorNota) {
+        mejorNota = nota;
+        mejorSemilla = semilla;
+      }
+    }
+    if (!mejorSemilla) return null;
+    const desperfectos = desperfectosDeCopia(mejorSemilla, mejorNota);
+    return { desperfectos, marcas: marcasDeCopia(mejorSemilla, desperfectos) };
+  }
+
+  /* ==================================================================== *
+   * EL ESTADO FÍSICO DE LO QUE SALE DEL SOBRE
+   * ====================================================================
+   *
+   * Una carta sale del sobre con el estado que tiene esa COPIA concreta: si te
+   * toca una machacada, se ve machacada desde el primer momento. Lo que no se
+   * ve es la nota, que es justo lo que se paga al graduar.
+   *
+   * QUÉ COPIA ES CADA UNA. El desgaste depende del número de copia, así que hay
+   * que saber cuál acaba de tocar. La sentencia de la compra devuelve la
+   * cantidad RESULTANTE de cada carta (ver el RETURNING del CTE abono), y de
+   * ahí se cuenta hacia atrás: si el sobre trae dos Pikachu y acabas con cinco,
+   * son la cuarta y la quinta. Contar hacia atrás y no hacia delante importa
+   * porque lo que se conoce es el final, no el principio.
+   *
+   * POR QUÉ NO SE VUELVE A LEER LA COLECCIÓN: entre la compra y esa lectura
+   * cabe otra compra —el botón ×10, dos pestañas— y el número de copia saldría
+   * movido. La cantidad viene de la MISMA sentencia que la escribió.
+   *
+   * NO SE MANDA NADA DE LO QUE PERMITA DEDUCIR LA NOTA. Sólo viaja el desgaste
+   * de las copias que de verdad se ven mal (utils/graduacion.ts,
+   * UMBRAL_DESGASTE_VISIBLE): el 95% sale limpio y sin distintivo, así que
+   * mirar una carta recién abierta no dice si es un 7 o un 10. Enseñarlo todo
+   * delataría los dieces —medido: cero piques era siempre un 10— y graduar
+   * dejaría de ser una apuesta para ser un negocio.
+   */
+  function conEstadoFisico(
+    userId: string,
+    sobre: CartaDeSobre[],
+    resultantes: unknown,
+  ): CartaDeSobre[] {
+    let finales: Map<string, number>;
+    try {
+      const lista = Array.isArray(resultantes)
+        ? (resultantes as { id?: unknown; cantidad?: unknown }[])
+        : [];
+      finales = new Map(
+        lista
+          .filter((r) => typeof r?.id === "string")
+          .map((r) => [String(r.id), Math.floor(Number(r.cantidad) || 0)]),
+      );
+    } catch {
+      // Sin el dato no se pinta desgaste. La carta se ve limpia, que es lo que
+      // hacía antes de que esto existiera: nunca se rompe la apertura por esto.
+      return sobre;
+    }
+    if (finales.size === 0) return sobre;
+
+    const secreto = secretoDeNotas();
+    /* Se recorre AL REVÉS: la última aparición de una carta en el sobre es la
+     * copia más alta. Recorriendo hacia delante habría que saber de cuántas se
+     * parte, que es justo lo que no se sabe. */
+    const restantes = new Map(finales);
+    const estados = new Map<number, { desperfectos: Desperfectos; marcas: MarcasDeCarta }>();
+    for (let i = sobre.length - 1; i >= 0; i--) {
+      const id = sobre[i].id;
+      const copia = restantes.get(id);
+      if (copia === undefined || copia < 1) continue;
+      restantes.set(id, copia - 1);
+
+      const semilla = semillaDeCopia(userId, id, copia, secreto);
+      const nota = notaDeCopia(semilla);
+      // AQUÍ ESTÁ EL FILTRO QUE PROTEGE LA ECONOMÍA: de 7 para arriba no viaja
+      // nada, así que todas las buenas se ven exactamente igual.
+      if (!desgasteEsVisible(nota)) continue;
+      const desperfectos = desperfectosDeCopia(semilla, nota);
+      estados.set(i, { desperfectos, marcas: marcasDeCopia(semilla, desperfectos) });
+    }
+    if (estados.size === 0) return sobre;
+
+    return sobre.map((c, i) => {
+      const e = estados.get(i);
+      return e ? { ...c, desperfectos: e.desperfectos, marcas: e.marcas } : c;
+    });
+  }
+
   /** Los cuatro sobres de la tienda. El cliente sólo puede pedir uno de éstos. */
   const TIPOS_DE_SOBRE = ["STANDARD", "PREMIUM", "GOLDEN", "SPECIAL"] as const;
   type TipoSobre = (typeof TIPOS_DE_SOBRE)[number];
@@ -280,6 +411,13 @@
      * ajuste podría reabrir la fuga que "calibrar" tiene cerrada.
      */
     precioEur?: number | null;
+    /**
+     * Estado físico de ESTA copia, si se ve mal. Opcional y ausente en el 95%
+     * de las cartas: sólo viaja para las que de verdad salen marcadas, porque
+     * mandarlo siempre delataría la nota (ver conEstadoFisico).
+     */
+    desperfectos?: Desperfectos;
+    marcas?: MarcasDeCarta;
   }
 
   /** La columna `images` es JSONB, pero la ingesta antigua guardó cadenas. */
@@ -661,14 +799,26 @@
             WHERE EXISTS (SELECT 1 FROM cobro)
            ON CONFLICT (user_id, card_id)
            DO UPDATE SET quantity = user_collection.quantity + EXCLUDED.quantity
-           RETURNING 1
+           -- El RETURNING trae ademas la cantidad RESULTANTE de cada carta, que
+           -- es lo que dice que numero de copia acaba de tocar. De ahi sale el
+           -- estado fisico que se pinta al abrir el sobre: la copia numero N de
+           -- una carta tiene su propio desgaste, y sin este dato habria que
+           -- volver a leer la coleccion despues y arriesgarse a que otra
+           -- compra concurrente la hubiera movido entre medias.
+           RETURNING user_collection.card_id AS card_id,
+                     user_collection.quantity AS cantidad
          )
          -- Sin FROM: la sentencia devuelve siempre exactamente una fila, con
          -- coins a NULL si no hubo cobro. Y cobro toca como mucho una fila
          -- (filtra por la clave primaria de users), asi que la subconsulta
          -- escalar no puede reventar por devolver de mas.
          SELECT (SELECT coins FROM cobro)         AS coins,
-                (SELECT count(*)::int FROM abono) AS abonadas`,
+                (SELECT count(*)::int FROM abono) AS abonadas,
+                COALESCE(
+                  (SELECT json_agg(json_build_object(
+                     'id', card_id, 'cantidad', cantidad)) FROM abono),
+                  '[]'::json
+                ) AS resultantes`,
         [userId, clave, precio, cantidad, setId, tipoSobre, JSON.stringify(orden), ids, cuentas],
       );
 
@@ -697,7 +847,7 @@
       revalidatePath('/collection');
       return {
         ok: true as const,
-        cartas: sobre,
+        cartas: conEstadoFisico(userId, sobre, rows[0]?.resultantes),
         coins: Number(saldo),
         precio,
         reenvio: false,
@@ -803,11 +953,34 @@
       const rarezas = Object.keys(RARITY_RANK);
       const rangos = rarezas.map((r) => RARITY_RANK[r]);
       const { rows } = await sql.query(
-        `SELECT c.*, uc.quantity, uc.is_favorite
+        /* LAS NOTAS VIAJAN CON LA COLECCION.
+         *
+         * Se pidio que graduar quedara REFLEJADO en la coleccion y en el
+         * archivador, no solo en la pantalla de graduacion. Van dos datos por
+         * carta: cuantas copias tiene graduadas y cual es la MEJOR nota, que es
+         * la que un coleccionista ensena.
+         *
+         * Con LEFT JOIN a una agregacion y no con subconsultas correlacionadas:
+         * esto lo lee la coleccion entera —cientos de filas— y una subconsulta
+         * por carta seria un escaneo por carta. El indice
+         * idx_graded_cards_user_card existe justo para este agrupado.
+         *
+         * Solo las ACTIVAS: una copia vendida conserva su fila para que su
+         * indice no se recicle (ver services/esquemaMejoras.ts), pero ya no
+         * esta en la coleccion y no debe pintar insignia. */
+        `SELECT c.*, uc.quantity, uc.is_favorite,
+                COALESCE(g.n, 0)::int AS graduadas,
+                g.mejor_nota
            FROM user_collection uc
            JOIN cards c ON uc.card_id = c.id
            LEFT JOIN unnest($2::text[], $3::int[]) AS rk(rareza, rango)
              ON rk.rareza = c.rarity
+           LEFT JOIN (
+             SELECT card_id, count(*)::int AS n, MAX(nota)::int AS mejor_nota
+               FROM graded_cards
+              WHERE user_id = $1 AND estado = 'activa'
+              GROUP BY card_id
+           ) g ON g.card_id = uc.card_id
           WHERE uc.user_id = $1 AND uc.quantity > 0
           ORDER BY
             COALESCE(uc.is_favorite, false) DESC,
@@ -824,17 +997,33 @@
       // e `images` de aquí: traducir en este `return` los pone en español de
       // una vez. `id`, `rarity` y `quantity` salen intactos, que es lo que
       // miran la venta y los bonos de expansión.
+      /* El estado físico de la MEJOR copia de cada carta. Se calcula una vez
+       * aquí y no en cada pantalla: la colección, el álbum y el detalle lo
+       * pintan todos, y derivarlo en el cliente sería devolverle la semilla
+       * —que es lo que delata la nota— justo lo que se acaba de cerrar. */
+      const secretoNotas = secretoDeNotas();
+
       return enIdiomaUsuario(
-        rows.map((row: any) => ({
-          ...row,
-          images: parse(row.images),
-          tcgplayer: parse(row.tcgplayer),
-          types: parse(row.types, []),
-          attacks: parse(row.attacks, []),
-          weaknesses: parse(row.weaknesses, []),
-          retreatCost: parse(row.retreat_cost, []),
-          flavorText: row.flavor_text,
-        })),
+        rows.map((row: any) => {
+          const estado = estadoDeLaMejorCopia(
+            userId,
+            String(row.id),
+            Number(row.quantity) || 1,
+            secretoNotas,
+          );
+          return {
+            ...row,
+            images: parse(row.images),
+            tcgplayer: parse(row.tcgplayer),
+            types: parse(row.types, []),
+            attacks: parse(row.attacks, []),
+            weaknesses: parse(row.weaknesses, []),
+            retreatCost: parse(row.retreat_cost, []),
+            flavorText: row.flavor_text,
+            // Ausente cuando la carta se ve bien, que es lo normal.
+            ...(estado ?? {}),
+          };
+        }),
       );
     } catch (error) {
       console.error("❌ Error cargando colección:", error);
@@ -4410,9 +4599,17 @@ export async function getArchivador() {
       copias: Number(r.quantity ?? 0),
     }));
 
+    /* Mismo estado físico que en la colección, y por el mismo motivo: una
+     * funda enseña una carta y esa carta puede estar machacada. */
+    const secretoNotas = secretoDeNotas();
+    const conEstado = fundas.map((f) => {
+      const estado = estadoDeLaMejorCopia(userId, f.id, Math.max(1, f.copias), secretoNotas);
+      return estado ? { ...f, ...estado } : f;
+    });
+
     return {
       ok: true as const,
-      fundas: await enIdiomaUsuario(fundas),
+      fundas: await enIdiomaUsuario(conEstado),
       maxHojas: MAX_HOJAS,
     };
   } catch (e) {

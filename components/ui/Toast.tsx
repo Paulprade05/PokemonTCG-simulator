@@ -88,9 +88,24 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             <motion.div
               key={id}
               layout
-              initial={{ y: -24, opacity: 0, scale: 0.94 }}
-              animate={{ y: 0, opacity: 1, scale: 1 }}
-              exit={{ y: -16, opacity: 0, scale: 0.96 }}
+              /* SIN `scale`, Y ES IMPORTANTE.
+               *
+               * Antes entraba y salía escalando (0,94 → 1). El aviso lleva la
+               * clase `glass`, que trae backdrop-filter: es justo la
+               * combinación que WebKit promociona a capa propia y rasteriza a
+               * una escala fija (la trampa documentada en
+               * PokemonCard.tsx:140-163). El resultado en iPhone es un rótulo
+               * con el texto ligeramente sucio, y como la capa del
+               * backdrop-filter no se libera, no se recupera del todo al
+               * terminar la animación. Con desplazamiento y opacidad el aviso
+               * entra igual de vivo y el texto se queda nítido.
+               *
+               * El muelle sí conserva un rebote pequeño (amortiguación ~0,79):
+               * el aviso cae desde el borde de arriba y frenar en seco lo haría
+               * parecer un cartel pegado en vez de algo que llega. */
+              initial={{ y: -28, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -16, opacity: 0, transition: { duration: 0.16, ease: "easeIn" } }}
               transition={{ type: "spring", stiffness: 460, damping: 34 }}
               className="glass flex max-w-sm items-center gap-2.5 rounded-full py-2.5 pr-4 pl-3.5"
               style={{ boxShadow: "var(--shadow-md)" }}

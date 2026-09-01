@@ -647,6 +647,95 @@ comprueba(
   comprueba(acotado, "el valor de una carta graduada nunca se sale de su multiplicador");
 
   /* ------------------------------------------------------------------ *
+   * LO QUE SE VE NO PUEDE DELATAR LA NOTA
+   * ------------------------------------------------------------------
+   *
+   * ESTE INVARIANTE NACIÓ AL ENSEÑAR EL DESGASTE AL ABRIR EL SOBRE.
+   *
+   * Mientras la carta llegaba limpia, graduar era a ciegas y lo único que
+   * importaba era el multiplicador medio de toda la tabla. En cuanto el estado
+   * físico se ve ANTES de pagar, el jugador deja de graduar al azar: gradúa lo
+   * que parece bueno. Y entonces lo que hay que mantener por debajo del techo
+   * ya no es la media global, sino la media de CADA GRUPO QUE SE PUEDE
+   * DISTINGUIR A OJO.
+   *
+   * MEDIDO cuando se intentó enseñarlo todo: las copias con CERO piques eran
+   * siempre un 10. Un jugador con dos dedos de frente gradúa sólo ésas y se
+   * lleva ×3 garantizado — +400 monedas por copia en una Hyper Rare, repetible
+   * hasta vaciar el montón. La tabla entera dejaba de significar nada.
+   *
+   * Por eso el desgaste sólo se pinta para las notas de UMBRAL_DESGASTE_VISIBLE
+   * hacia abajo: todo lo que sale limpio (el 95%) es un 7, un 8, un 9 o un 10 y
+   * no hay forma de distinguirlos. Este invariante comprueba justo eso, y lo
+   * hace agrupando por LO QUE SE VE y no por la nota.
+   *
+   * SI ALGÚN DÍA SE QUIERE ENSEÑAR MÁS DETALLE, esto se pondrá rojo y dirá qué
+   * grupo delata la nota. El arreglo entonces no es tapar el invariante: es
+   * bajar el multiplicador de ese grupo hasta que graduarlo deje de compensar.
+   */
+  {
+    const {
+      MULTIPLICADOR_NOTA, COSTE_FRACCION, UMBRAL_DESGASTE_VISIBLE,
+      notaDeCopia, desperfectosDeCopia, semillaDeCopia, firmaVisible,
+    } = graduacion;
+
+    const TECHO = 1 + COSTE_FRACCION;
+    const N = 40000;
+    const SECRETO = "secreto-de-prueba-para-los-invariantes";
+
+    /* Se agrupa por la FIRMA de lo que el jugador ve. Para una nota alta la
+     * firma es "limpia" —no se pinta nada— y para una baja es lo que se puede
+     * contar de un vistazo. */
+    const grupos = new Map();
+    for (let i = 0; i < N; i++) {
+      const s = semillaDeCopia("u", "c", i, SECRETO);
+      const nota = notaDeCopia(s);
+      const firma = firmaVisible(desperfectosDeCopia(s, nota), nota);
+      if (!grupos.has(firma)) grupos.set(firma, []);
+      grupos.get(firma).push(nota);
+    }
+
+    const delatan = [];
+    for (const [firma, notas] of grupos) {
+      // Los grupos minúsculos son ruido de muestreo, no una estrategia: con
+      // menos de cincuenta copias en 40.000 nadie construye nada.
+      if (notas.length < 50) continue;
+      const ev = notas.reduce((a, n) => a + MULTIPLICADOR_NOTA[n], 0) / notas.length;
+      if (ev > TECHO) {
+        const cuales = [...new Set(notas)].sort((a, b) => a - b).join(",");
+        delatan.push(`"${firma}" (${notas.length} copias, notas {${cuales}}) da x${ev.toFixed(3)}`);
+      }
+    }
+
+    comprueba(
+      delatan.length === 0,
+      `ningún estado visible de la carta delata una nota que compense graduar (${grupos.size} estados distintos)`,
+      delatan.slice(0, 3).join(" · ") +
+        ". Enseñar ese detalle deja elegir: el jugador gradúa sólo ese grupo y" +
+        " el multiplicador medio de la tabla deja de proteger nada.",
+    );
+
+    /* Y la otra mitad del trato: lo que se ve tiene que ser SUFICIENTE para que
+     * una carta destrozada se note. Si el umbral se bajara a cero, el
+     * invariante de arriba pasaría siempre —no se ve nada, no se delata nada—
+     * pero la función que pidió el dueño del juego habría desaparecido. */
+    let seVenLasMalas = 0;
+    for (let i = 0; i < 4000; i++) {
+      const s = semillaDeCopia("u", "d", i, SECRETO);
+      const nota = notaDeCopia(s);
+      if (nota > UMBRAL_DESGASTE_VISIBLE) continue;
+      const f = firmaVisible(desperfectosDeCopia(s, nota), nota);
+      if (f !== "limpia") seVenLasMalas++;
+    }
+    comprueba(
+      seVenLasMalas > 0,
+      `las cartas en mal estado se ven marcadas al abrir el sobre (${seVenLasMalas} de la muestra)`,
+      "no se distingue ninguna: el desgaste visible se ha quedado en nada",
+    );
+  }
+
+
+  /* ------------------------------------------------------------------ *
    * GRADUAR NO PUEDE ESQUIVAR LA CURVA DE REPETIDAS
    * ------------------------------------------------------------------
    *
