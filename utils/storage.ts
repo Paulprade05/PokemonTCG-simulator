@@ -2,6 +2,39 @@
 
 const STORAGE_KEY = 'pokemon-tcg-collection';
 
+/**
+ * La clave, expuesta para quien sólo necesita saber SI la colección ha
+ * cambiado sin pagar el JSON.parse de la colección entera (la barra lateral
+ * compara la cadena cruda contra la de la última lectura). Sin esto, ese
+ * consumidor tendría que repetir el literal aquí y quedarse desincronizado el
+ * día que cambie.
+ */
+export const COLLECTION_STORAGE_KEY = STORAGE_KEY;
+
+/**
+ * AVISO DE ESCRITURA PARA QUIEN PINTE LA COLECCIÓN LOCAL.
+ *
+ * El evento `storage` del navegador NO se dispara en la pestaña que escribe:
+ * sólo en las demás. Así que cualquier componente que enseñe el recuento se
+ * quedaba con el número viejo justo en el caso que importa —se abre un sobre
+ * en `/`, la barra lateral está a la vista todo el rato y no hay cambio de ruta
+ * que la obligue a releer—. Un número obsoleto no es un dato: es un dato falso.
+ *
+ * Es puramente ADITIVO: quien no escuche este evento sigue funcionando
+ * exactamente igual que antes.
+ */
+export const COLLECTION_CHANGED_EVENT = 'coleccion-local:cambio';
+
+const avisarDeCambio = () => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.dispatchEvent(new Event(COLLECTION_CHANGED_EVENT));
+  } catch {
+    /* el aviso es un extra: si el entorno no deja despacharlo, guardar ya se
+       ha hecho y nada de lo que había antes deja de funcionar. */
+  }
+};
+
 export interface CollectionCard {
   id: string;
   name: string;
@@ -75,6 +108,7 @@ export const saveToCollection = (newPack: any[]): boolean => {
   //    informa del resultado en vez de propagar la excepción.
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(collection));
+    avisarDeCambio();
     return true;
   } catch (e) {
     console.error('No se pudo guardar la colección local:', e);
@@ -84,10 +118,14 @@ export const saveToCollection = (newPack: any[]): boolean => {
 
 export const saveCollectionRaw = (collection: any[]) => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(collection));
+    // Después del setItem a propósito: si lanza por cuota no ha cambiado nada
+    // y no hay nada de lo que avisar.
+    avisarDeCambio();
 }
 
 export const getCollection = (): CollectionCard[] => leerColeccion();
 
 export const clearCollection = () => {
     localStorage.removeItem(STORAGE_KEY);
+    avisarDeCambio();
 }

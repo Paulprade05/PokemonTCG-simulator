@@ -72,17 +72,44 @@ export default function TopBar() {
           pantallas anchas el buscador y el avatar caen a plomo con el contenido
           en lugar de irse a los bordes de la ventana. */}
       <div className="mx-auto flex h-full w-full max-w-7xl items-center gap-2 md:gap-3">
-        {/* Marca sólo en móvil: en escritorio ya la lleva el menú lateral.
-            Entra entera (icono y nombre) a partir de 420px y por debajo
-            desaparece: con sesión, racha y un saldo de seis cifras el grupo de
-            controles mide 327px, así que hasta ~397 no hay hueco para el icono.
-            Dejarlo antes no lo encogía —el cuadro es shrink-0—: se salía de su
-            caja y se montaba sobre el botón de buscar. Quitarla es lo único que
-            no se echa en falta; el nombre ya lo lleva el menú lateral. */}
+        {/* LA MARCA EN MÓVIL, Y POR QUÉ AHORA APARECE A 375px.
+         *
+         * En escritorio la lleva el menú lateral, así que esto es md:hidden y
+         * no se discute. El problema estaba debajo: el bloque entero era
+         * `min-[420px]:flex`, o sea que por debajo de 420px NO SE PINTABA. Un
+         * iPhone estándar mide 375. Medido en el navegador: la fila útil son
+         * 341px, el grupo de controles ocupaba 229 pegado a la derecha y a la
+         * izquierda quedaban 129px de hueco muerto — la cabecera parecía media
+         * cabecera.
+         *
+         * El motivo de que se quitara era bueno y sigue en pie: con sesión,
+         * racha y un saldo de seis cifras el grupo de controles llega a 327px,
+         * y el cuadro del icono es shrink-0, así que la marca ENTERA (133px) no
+         * cabía y se montaba sobre el botón de buscar. La respuesta de entonces
+         * fue quitarla. La de ahora es hacerla ELÁSTICA, que es lo que había
+         * que hacer:
+         *
+         *  · El ROTULO tiene dos tallas. "Pokémon TCG" (133px con el icono)
+         *    sigue entrando sólo a partir de 420px, que es donde cabía. Entre
+         *    360 y 419 se queda en "TCG": icono + 8px de hueco + tres letras,
+         *    unos 70px, que caben de sobra en los 129 que estaban vacíos. Por
+         *    debajo de 360 desaparece el rótulo y queda el icono solo (40px):
+         *    a 320px la fila útil son 286 y el grupo ya ocupa 197.
+         *
+         *  · Y el bloque puede ENCOGERSE hasta cero (`shrink` + `min-w-0` +
+         *    `overflow-hidden`) en vez de empujar. Ésta es la parte que arregla
+         *    el caso que motivó quitarla: si algún día el grupo crece —racha
+         *    larga, saldo enorme—, lo que cede es la marca, en silencio, y no
+         *    la cabecera entera desbordando por la derecha. Antes no había
+         *    forma de ceder porque no había nada que quitar.
+         *
+         * `press` y no `press-flat` a propósito: aquí no hay ninguna carta ni
+         * ninguna fotografía debajo, así que la escala del toque es inofensiva
+         * y es la que lleva el resto de la barra. */}
         <Link
           href="/"
           aria-label="Ir al inicio"
-          className="press hidden h-11 min-w-0 items-center gap-2 rounded-xl min-[420px]:flex md:hidden"
+          className="press flex h-11 min-w-0 shrink items-center gap-2 overflow-hidden rounded-xl md:hidden"
         >
           <span className="btn-accent flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="h-4 w-4 text-[#04110c]" aria-hidden="true">
@@ -90,8 +117,15 @@ export default function TopBar() {
             </svg>
           </span>
           {/* truncate: es lo primero que cede si el saldo crece, y al llegar a
-              cero deja el icono intacto en lugar de empujar la fila. */}
-          <span className="truncate text-sm font-bold tracking-tight">Pokémon TCG</span>
+              cero deja el icono intacto en lugar de empujar la fila.
+              Las dos tallas del rótulo están LAS DOS en el DOM y sólo se
+              esconde una con CSS; da igual de cara al lector de pantalla
+              porque el nombre accesible del enlace lo fija el aria-label de
+              arriba, y un aria-label gana siempre al contenido. */}
+          <span className="truncate text-sm font-bold tracking-tight">
+            <span className="hidden min-[420px]:inline">Pokémon TCG</span>
+            <span className="hidden min-[360px]:inline min-[420px]:hidden">TCG</span>
+          </span>
         </Link>
 
         {/* El buscador es la herramienta principal de la app: en escritorio se

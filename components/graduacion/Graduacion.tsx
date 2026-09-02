@@ -62,6 +62,7 @@ import { useHaptics } from "../../hooks/useHaptics";
 import { useToast } from "../ui/Toast";
 import PageHeader from "../PageHeader";
 import Loader from "../Loader";
+import HuecoCentrado from "../HuecoCentrado";
 import ListaGraduables from "./ListaGraduables";
 import BarraEnvio from "./BarraEnvio";
 import Revelacion from "./Revelacion";
@@ -537,27 +538,53 @@ export default function Graduacion() {
           subtitle="La nota que tu copia ya tenía"
           back="/collection"
         />
-        <div
-          className="surface rounded-2xl p-5 flex items-start gap-3"
-          style={{ borderColor: "color-mix(in srgb, var(--warn) 40%, transparent)" }}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="w-5 h-5 shrink-0 mt-0.5" style={{ color: "var(--warn)" }} aria-hidden="true">
-            <path d="M12 9v4" />
-            <path d="M12 17h.01" />
-            <circle cx="12" cy="12" r="9" />
-          </svg>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold">Estás jugando como invitado</p>
-            <p className="text-xs ink-soft mt-1 leading-relaxed">
-              La nota de una copia se calcula a partir de tu cuenta y de qué número de copia es, y
-              el cobro se hace en el servidor. Como invitado tus cartas viven sólo en este
-              dispositivo, así que aquí no hay nada que graduar.{" "}
-              <Link href="/" className="accent font-medium underline underline-offset-2">
-                Ir al inicio
-              </Link>
-            </p>
+        {/* EL AVISO, CENTRADO EN EL HUECO Y NO PEGADO ARRIBA.
+         *
+         * Esto era una tira de `p-5` con `items-start` colgada del primer hijo:
+         * medía 164px a 375x812 y dejaba 421px de fondo vacío por debajo hasta
+         * la barra de pestañas (515px a 1280x800). El aviso está bien escrito y
+         * dice justo lo que hay que decir; lo que parecía roto era la página,
+         * no el texto — un callejón sin salida que lo parecía por accidente.
+         *
+         * El arreglo es adoptar el patrón de vacío que ya usa la casa cinco
+         * veces (colección, bazar, mis anuncios, lista de graduables y el
+         * propio estado de error de aquí abajo): caja `surface` centrada, icono
+         * en un cuadrado de 56px, título, frase y salida.
+         *
+         * El centrado y el alto mínimo los pone HuecoCentrado, que lleva la
+         * fórmula explicada y el descuento de la cabecera que va encima.
+         *
+         * El texto y el enlace no se tocan: son los mismos. El enlace sale del
+         * párrafo y se convierte en el botón de salida, que es donde lo pone el
+         * patrón y donde se ve sin tener que leerse el párrafo entero. */}
+        <HuecoCentrado>
+          <div
+            className="surface rounded-2xl w-full py-14 px-6 flex flex-col items-center text-center gap-4"
+            style={{ borderColor: "color-mix(in srgb, var(--warn) 40%, transparent)" }}
+          >
+            <div className="w-14 h-14 rounded-2xl surface-2 flex items-center justify-center">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="w-7 h-7" style={{ color: "var(--warn)" }} aria-hidden="true">
+                <path d="M12 9v4" />
+                <path d="M12 17h.01" />
+                <circle cx="12" cy="12" r="9" />
+              </svg>
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">Estás jugando como invitado</p>
+              <p className="text-xs ink-soft mt-1 leading-relaxed max-w-sm mx-auto">
+                La nota de una copia se calcula a partir de tu cuenta y de qué número de copia es, y
+                el cobro se hace en el servidor. Como invitado tus cartas viven sólo en este
+                dispositivo, así que aquí no hay nada que graduar.
+              </p>
+            </div>
+            <Link
+              href="/"
+              className="btn-primary press touch-target px-5 rounded-xl text-sm font-medium flex items-center justify-center"
+            >
+              Ir al inicio
+            </Link>
           </div>
-        </div>
+        </HuecoCentrado>
       </>
     );
   }
@@ -570,19 +597,24 @@ export default function Graduacion() {
           subtitle="La nota que tu copia ya tenía"
           back="/collection"
         />
-        <div className="surface rounded-2xl py-16 px-6 flex flex-col items-center text-center gap-4">
-          <p className="text-sm ink-soft">No se pudo abrir el graduador.</p>
-          <button
-            type="button"
-            onClick={() => {
-              haptic("tap");
-              cargar();
-            }}
-            className="btn-accent press touch-target px-6 rounded-xl text-sm font-semibold flex items-center justify-center"
-          >
-            Reintentar
-          </button>
-        </div>
+        {/* Mismo tratamiento que el aviso de invitado: es la otra pantalla de
+            esta ruta que no tiene contenido debajo, y pegada arriba dejaba el
+            mismo medio metro de fondo vacío. */}
+        <HuecoCentrado>
+          <div className="surface rounded-2xl w-full py-16 px-6 flex flex-col items-center text-center gap-4">
+            <p className="text-sm ink-soft">No se pudo abrir el graduador.</p>
+            <button
+              type="button"
+              onClick={() => {
+                haptic("tap");
+                cargar();
+              }}
+              className="btn-accent press touch-target px-6 rounded-xl text-sm font-semibold flex items-center justify-center"
+            >
+              Reintentar
+            </button>
+          </div>
+        </HuecoCentrado>
       </>
     );
   }

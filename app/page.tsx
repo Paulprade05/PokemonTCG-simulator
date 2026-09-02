@@ -44,6 +44,7 @@ import { useImmersive } from "../components/AppShell";
 import PokemonCard from "../components/PokemonCard";
 import MazoCartas from "../components/MazoCartas";
 import BoosterPack, { semillaDeSobre, type FaseSobre } from "../components/BoosterPack";
+import SetPackTile from "../components/SetPackTile";
 import { formatNumber } from "../utils/format";
 import Portal from "../components/ui/Portal";
 import type { Carta, Expansion } from "../utils/tipos";
@@ -134,6 +135,122 @@ const rankOf = (rarity?: string): number => {
   return 0;
 };
 
+/* =====================================================================
+ * QUÉ SERIES ESTÁN DESPLEGADAS EN LA PORTADA
+ * =====================================================================
+ *
+ * EL PROBLEMA QUE RESUELVE. `openSeries` nacía como `{}` y nadie lo sembraba:
+ * TODAS las series arrancaban plegadas. Medido en el navegador a 375x812 con
+ * sesión de invitado, la portada enseñaba el titular, dos filas plegadas y
+ * NADA más: el último píxel de contenido caía en y=550 y el documento medía
+ * 812, o sea que ni siquiera había scroll y quedaban 262px de fondo vacío
+ * (unos 190 descontando la barra de pestañas). En un PC de 1280x800, 266px.
+ * Y para llegar a abrir un sobre hacían falta tres toques: desplegar la serie,
+ * elegir la expansión y pulsar el precio.
+ *
+ * Como la portada es la primera pantalla de la aplicación, el coste real no es
+ * el hueco: es que lo primero que ve alguien que entra a abrir sobres es una
+ * lista de dos filas grises que no dice qué hay dentro.
+ *
+ * QUÉ SE SIEMBRA. La serie MÁS RECIENTE, que es la que casi todo el mundo va a
+ * abrir. Y se identifica por POSICIÓN, no por fecha: `dbSets` llega ordenado
+ * por `release_date DESC` desde SQL y se reordena otra vez en cliente, y las
+ * series se agrupan en orden de aparición, así que la primera serie de la lista
+ * es siempre la que contiene la expansión más nueva. Mirar `set.releaseDate`
+ * aquí sería un error silencioso: el respaldo local emite `release_date` y no
+ * `releaseDate`, así que en desarrollo es `undefined` en las 38.
+ *
+ * LO QUE CUESTA SEMBRAR, DICHO CLARO. Antes de esto la portada no pedía NI UNA
+ * imagen de expansión, porque con todo plegado no se monta ninguna tesela.
+ * Ahora paga la serie sembrada: en producción es Mega Evolution, 3 expansiones
+ * y 258,6 KB; con el respaldo local de desarrollo cae en Escarlata y Púrpura,
+ * 16 expansiones y 1 340,9 KB. Es el precio de que la primera pantalla enseñe
+ * sobres en vez de dos filas grises, y es UNA serie, no las diecisiete: el tope
+ * está en `guardarSeriesAbiertas`.
+ *
+ * Y SE RECUERDA UNA, que es la otra mitad del arreglo. El estado vivía sólo en
+ * el componente: volver a Inicio desde Colección o desde Mercado replegaba todo
+ * y había que empezar de cero. Se guarda en localStorage y se lee al sembrar.
+ * Sólo la ÚLTIMA serie desplegada, y el porqué —que es de peso descargado, no
+ * de comodidad— está en `guardarSeriesAbiertas`.
+ *
+ * NO SE LEE EN EL useState. Tiene que ser dentro del efecto que trae las
+ * expansiones y no en el inicializador del estado: este componente se renderiza
+ * también en el servidor, donde no hay localStorage, y un valor distinto en los
+ * dos lados rompe la hidratación. Dentro del efecto, además, coincide con el
+ * render en el que aparecen las series, así que no hay parpadeo de "plegado y
+ * de pronto abierto".
+ * ===================================================================== */
+const CLAVE_SERIES_ABIERTAS = "tcg:series-abiertas";
+
+/**
+ * Lo que el jugador dejó desplegado la última vez, o null si no hay nada
+ * fiable. Todo va en try/catch: en modo privado de iOS localStorage existe pero
+ * lanza al leerlo, y un JSON corrupto no puede tumbar la portada entera.
+ */
+function leerSeriesAbiertas(): Record<string, boolean> | null {
+  try {
+    const crudo = localStorage.getItem(CLAVE_SERIES_ABIERTAS);
+    if (!crudo) return null;
+    const dato: unknown = JSON.parse(crudo);
+    if (!dato || typeof dato !== "object" || Array.isArray(dato)) return null;
+    // Se copian sólo las claves con valor booleano: lo que hay en localStorage
+    // lo puede escribir cualquiera y esto acaba gobernando qué se pinta.
+    const limpio: Record<string, boolean> = {};
+    for (const [k, v] of Object.entries(dato as Record<string, unknown>)) {
+      if (typeof v === "boolean") limpio[k] = v;
+    }
+    return Object.keys(limpio).length > 0 ? limpio : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Se recuerda UNA serie como mucho: la última que el jugador desplegó.
+ *
+ * Y esto es un tope de DATOS, no de gusto. Lo que se recuerda es lo que se
+ * descarga al abrir la aplicación, y la rejilla no está virtualizada: un
+ * jugador que alguna vez hubiera desplegado las diecisiete series se habría
+ * encontrado con las 131 fotografías —9,42 MB medidos en disco, sumando la
+ * variante que le toca a cada expansión con la semilla de la tesela— en la
+ * portada, en CADA visita, en un teléfono con datos. Y no lo salvaba el
+ * `loading="lazy"`: está medido en components/SetPackTile.tsx que el margen de
+ * precarga del navegador es mayor que la rejilla, así que se piden casi todas
+ * aunque no se vea ninguna.
+ *
+ * Con el tope, la portada cuesta como mucho UNA serie, y la más gorda de las
+ * diecisiete —Espada y Escudo, 25 expansiones, 17 con foto— son 1 511 KB.
+ * Encima es una serie que el jugador eligió a mano. DENTRO de la sesión no hay
+ * tope de nada: se pueden abrir las diecisiete a la vez y ninguna se cierra
+ * sola; lo único acotado es lo que sobrevive a cerrar la pestaña.
+ *
+ * Guardar es opcional por definición: si la cuota está llena, no pasa nada.
+ */
+function guardarSeriesAbiertas(estado: Record<string, boolean>, tocada: string): void {
+  try {
+    let recordar: Record<string, boolean> = {};
+    if (estado[tocada]) {
+      // Se acaba de ABRIR: es la última y es la que se recuerda.
+      recordar = { [tocada]: true };
+    } else {
+      /* Se acaba de PLEGAR, y aquí está el detalle que hay que respetar:
+         plegar una serie NO puede hacer olvidar otra. Si lo recordado sigue
+         desplegado en pantalla, se queda; si lo que se acaba de plegar era
+         justo lo recordado, no queda nada y se guarda el mapa vacío, que
+         `leerSeriesAbiertas` trata como "no hay nada recordado" y deja que la
+         próxima visita siembre la serie más reciente. */
+      const previo = leerSeriesAbiertas();
+      const sigueAbierta = previo && Object.keys(previo).find((k) => previo[k] && estado[k]);
+      if (sigueAbierta) recordar = { [sigueAbierta]: true };
+    }
+    localStorage.setItem(CLAVE_SERIES_ABIERTAS, JSON.stringify(recordar));
+  } catch {
+    /* Sin sitio o sin permiso: el despliegue sigue funcionando, sólo no se
+       recuerda al volver. No merece ni un aviso. */
+  }
+}
+
 export default function Home() {
   const { coins, setCoins, spendCoins, addCoins } = useCurrency();
   const { isSignedIn, isLoaded } = useUser();
@@ -145,6 +262,15 @@ export default function Home() {
   // array vacío pasando por donde se esperaba una carta lo que dejó el sobre
   // sellado sin montarse nunca (ver el guard de la VIEW 3).
   const [dbSets, setDbSets] = useState<Expansion[]>([]);
+  /**
+   * La lista de expansiones todavía no ha contestado. Arranca en `true` porque
+   * la petición sale en el primer efecto: sin esto, el hueco entre que se monta
+   * la página y que llega `getSetsFromDB` era la portada VACÍA otra vez —el
+   * mismo defecto que arregla la siembra, sólo que antes en el tiempo. Y no se
+   * puede deducir de `dbSets.length === 0`: eso es también lo que se ve cuando
+   * la petición falla, y ahí lo que toca es el aviso, no un esqueleto eterno.
+   */
+  const [setsCargando, setSetsCargando] = useState(true);
   const [selectedSet, setSelectedSet] = useState<string | null>(null);
   const [allCards, setAllCards] = useState<Carta[]>([]);
   const [userCollectionIds, setUserCollectionIds] = useState<string[]>([]);
@@ -622,11 +748,29 @@ export default function Home() {
           return db - da;
         });
         setDbSets(sets);
+        /* LA PORTADA ARRANCA CON ALGO QUE MIRAR. El porqué largo está en el
+           bloque de `leerSeriesAbiertas`, arriba del componente.
+           El funcional del updater no es adorno: entre que arranca este efecto
+           y que responde el servidor cabe un toque del jugador, y sembrar
+           encima de su elección sería peor que no sembrar. */
+        setOpenSeries((previo) => {
+          if (Object.keys(previo).length > 0) return previo;
+          const recordado = leerSeriesAbiertas();
+          if (recordado) return recordado;
+          // Por POSICIÓN y no por fecha: ver el bloque de arriba.
+          const primera = sets.find((s: Expansion) => s.series)?.series;
+          return primera ? { [primera]: true } : {};
+        });
       } catch (err) {
         // getSetsFromDB rechaza ante fallo de red: sin capturarlo la portada se
         // quedaba sin expansiones y sin aviso (rechazo no manejado).
         console.error("Error cargando las expansiones:", err);
         toast("No se pudieron cargar las expansiones. Revisa tu conexión.", "error");
+      } finally {
+        // En el `finally` y no tras el `setDbSets`: si la petición falla, el
+        // esqueleto tiene que irse igual o se queda barriendo para siempre
+        // detrás del aviso de error.
+        setSetsCargando(false);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -692,8 +836,11 @@ export default function Home() {
     loadAndSync();
   }, [loadAndSync]);
 
+  // `Expansion[]` y no `any[]`: dentro del .map de la rejilla el set era `any`,
+  // así que se le podía leer cualquier campo —incluido uno mal escrito— sin que
+  // tsc dijera nada. Ahora la tesela recibe una expansión de verdad.
   const setsBySeries = useMemo(() => {
-    const groups: Record<string, any[]> = {};
+    const groups: Record<string, Expansion[]> = {};
     dbSets.forEach((set) => {
       const seriesName = set.series || "Otras";
       if (!groups[seriesName]) groups[seriesName] = [];
@@ -701,6 +848,68 @@ export default function Home() {
     });
     return groups;
   }, [dbSets]);
+
+  /**
+   * CUÁNTAS CARTAS DISTINTAS TIENE EL JUGADOR DE CADA EXPANSIÓN.
+   *
+   * Es el único dato que la tesela de la portada añade sobre lo que ya había, y
+   * es REAL en los dos modos: `userCollectionIds` se rellena con la colección
+   * del servidor cuando hay sesión y con la de localStorage cuando se juega de
+   * invitado, así que un invitado que lleve tres sobres abiertos ve su progreso
+   * igual que un jugador registrado. Nada que enseñe esta pantalla sale de una
+   * estimación.
+   *
+   * El corte por el ÚLTIMO guion y no por el primero: el id de una carta es
+   * `<setId>-<numero>` y hay expansiones cuyo id lleva guiones. Es el mismo
+   * cálculo que usa el álbum (app/collection/page.tsx), a propósito: dos sitios
+   * que cuentan lo mismo tienen que contarlo igual o el jugador ve dos cifras
+   * distintas del mismo hecho.
+   *
+   * Llega TARDE, y no es un problema: la sincronización de la colección es
+   * asíncrona, así que el primer pintado de la rejilla no lleva pastillas y
+   * aparecen solas al llegar. Como la pastilla sólo se dibuja cuando hay algo
+   * que contar, lo que se ve no es un "0/199" que cambia, es un hueco que se
+   * llena.
+   *
+   * ================= POR QUÉ SE DEDUPLICA AQUÍ =================
+   *
+   * `userCollectionIds` NO es una lista de cartas distintas: es una lista de
+   * PERTENENCIA, y trae repetidos a propósito. Nace deduplicada (getCollection
+   * y getFullCollection devuelven una fila por carta), pero al abrir un sobre
+   * se le CONCATENAN las cartas del sobre tal cual salen —repetidas incluidas—
+   * en dos sitios (el ×N de `buyMultiple` y el cierre de `finishPack`), y a sus
+   * dos consumidores de siempre eso les da igual: `openGoldenPack` sólo
+   * pregunta si un id está, y `prePackIds` sólo marca qué era nuevo.
+   *
+   * Contar sobre esa lista sin más era un error que se veía enseguida: un
+   * invitado con 52/252 de Chispas Centelleantes compraba «Abrir ×10», volvía a
+   * la portada con un toque (sin recargar) y la pastilla decía 152/252, porque
+   * sumaba las 100 cartas del sobre y no las ~10 nuevas que de verdad había
+   * guardado `saveToCollection`. Con sobres suficientes el `Math.min` de la
+   * tesela lo remataba poniendo 252/252 en un set a medias. Y la pestaña
+   * Colección, que cuenta desde la lista deduplicada, seguía diciendo la cifra
+   * buena: dos cifras distintas del mismo hecho, que es exactamente lo que este
+   * bloque promete que no pasa. Con sesión igual, además, porque
+   * `refreshAfterPack` recarga monedas y bonus pero no la colección.
+   *
+   * El arreglo va AQUÍ y no en quien concatena: los otros dos consumidores
+   * dependen de que la lista siga siendo la que es, y quitarles los repetidos
+   * costaría un Set por sobre abierto para no ganar nada.
+   */
+  const cartasPorSet = useMemo(() => {
+    const conteo = new Map<string, number>();
+    const vistas = new Set<string>();
+    for (const bruto of userCollectionIds) {
+      const id = String(bruto);
+      if (vistas.has(id)) continue;
+      vistas.add(id);
+      const guion = id.lastIndexOf("-");
+      if (guion <= 0) continue;
+      const sid = id.slice(0, guion);
+      conteo.set(sid, (conteo.get(sid) ?? 0) + 1);
+    }
+    return conteo;
+  }, [userCollectionIds]);
 
   /**
    * Gestión del foco del diálogo inmersivo. Con el resto de la app inerte
@@ -1585,7 +1794,13 @@ export default function Home() {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="w-full max-w-6xl flex flex-col gap-4 pt-2 pb-24 relative z-10"
+          /* max-w-7xl, el mismo tope que <main>. Con 6xl (1152px) la lista se
+             quedaba estrecha justo donde había sitio de sobra: medido en una
+             ventana de 1600px, <main> ofrece 1216px de contenido y este
+             contenedor se plantaba en 1152, dejando 64px de fondo vacío a los
+             lados de la rejilla sin ninguna razón. Por debajo de 1152 no cambia
+             nada: manda el ancho disponible, no el tope. */
+          className="w-full max-w-7xl flex flex-col gap-4 pt-2 pb-24 relative z-10"
         >
           {/* Cabecera de sección: al irse el panel de estadísticas a Social, la
               lista necesitaba un ancla visual que abriera la portada. */}
@@ -1599,6 +1814,39 @@ export default function Home() {
               </span>
             </div>
           )}
+
+          {/* EL HUECO DE ANTES DE QUE LLEGUEN LAS EXPANSIONES.
+              La tienda se pinta ENTERA en cliente: el HTML que sirve el
+              servidor son 70 KB sin una sola aparición de "/sobres/" ni la
+              palabra EXPANSIONES, así que entre que se monta la página y
+              contesta `getSetsFromDB` no había absolutamente nada — la misma
+              portada vacía que se vino a arreglar, sólo que unos segundos
+              antes. Un esqueleto con la FORMA de lo que va a llegar (la fila de
+              serie y su rejilla 3:4) ocupa ese hueco sin pedir un byte: es CSS
+              constante, ni una imagen. El razonamiento largo de por qué un
+              esqueleto y no un círculo girando está en components/Loader.tsx,
+              que usa la misma clase.
+              `aria-hidden` + `sr-only`: para un lector de pantalla seis cajas
+              vacías no son información; la frase sí. */}
+          {setsCargando && dbSets.length === 0 && (
+            <>
+              <span className="sr-only" role="status">
+                Cargando las expansiones…
+              </span>
+              <div aria-hidden="true" className="flex flex-col gap-4">
+                <div className="skeleton h-[52px] w-full rounded-2xl md:h-[60px]" />
+                <div className="grid grid-cols-2 gap-2.5 md:gap-4 min-[880px]:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                  {/* Diez es lo que llena una pantalla de escritorio (dos filas
+                      de cinco) sin desbordar la de un móvil (cinco de dos). */}
+                  {Array.from({ length: 10 }, (_, i) => (
+                    <div key={i} className="skeleton aspect-[3/4] w-full rounded-2xl md:rounded-3xl" />
+                  ))}
+                </div>
+                <div className="skeleton h-[52px] w-full rounded-2xl md:h-[60px]" />
+              </div>
+            </>
+          )}
+
           {Object.entries(setsBySeries).map(([seriesName, sets], idx) => (
             <motion.div
               key={seriesName}
@@ -1608,8 +1856,34 @@ export default function Home() {
               className="flex flex-col gap-2"
             >
               <button
-                onClick={() => setOpenSeries((s) => ({ ...s, [seriesName]: !s[seriesName] }))}
-                className="w-full surface surface-hover rounded-2xl px-4 md:px-5 py-3 md:py-4 flex items-center justify-between press"
+                onClick={() => {
+                  const siguiente = { ...openSeries, [seriesName]: !openSeries[seriesName] };
+                  setOpenSeries(siguiente);
+                  /* Se recuerda para la próxima visita: el estado vive en el
+                     componente y volver a Inicio desde otra pestaña lo replegaba
+                     todo, así que el jugador tenía que rehacer el despliegue cada
+                     vez que iba a la colección y volvía.
+                     FUERA DEL UPDATER de setOpenSeries, y no por estilo: un
+                     updater tiene que ser puro. En StrictMode se ejecuta dos
+                     veces (aquí daba igual, es idempotente) y con un render
+                     concurrente descartado se habría escrito en disco un estado
+                     que nunca llegó a pintarse. Aquí `openSeries` es el del
+                     render actual, que es el que el jugador está viendo. */
+                  guardarSeriesAbiertas(siguiente, seriesName);
+                }}
+                /* `press-flat` y no `press`. Que quede claro lo que NO es este
+                   cambio: la rejilla de fotografías no cuelga de este botón —son
+                   HERMANOS, los dos hijos del mismo motion.div de arriba—, así
+                   que el `transform: scale(.97)` de `press` nunca fue un ancestro
+                   de ninguna foto y quitarlo no desborra nada. El motivo es más
+                   simple: esta fila mide el ancho entero (1 216px en escritorio)
+                   y un 3% de escala en una barra tan larga se lee como un
+                   bandazo, no como un botón que se hunde. `press-flat` baja 2px
+                   con translate y da el mismo acuse de recibo. */
+                className="w-full surface surface-hover rounded-2xl px-4 md:px-5 py-3 md:py-4 flex items-center justify-between press-flat"
+                // Es un desplegable: quien navegue con lector de pantalla tiene
+                // que saber si está abierto sin ver girar la flecha.
+                aria-expanded={!!openSeries[seriesName]}
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <span className="text-sm font-bold uppercase tracking-[0.2em] truncate">{seriesName}</span>
@@ -1634,50 +1908,43 @@ export default function Home() {
                     transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                     className="overflow-hidden"
                   >
-                    <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 md:gap-4 lg:grid-cols-4 pt-3">
+                    {/* LA REJILLA DE SOBRES.
+                        LA ESCALERA SE MIDE POR EL ANCHO DE LA TESELA, no por el
+                        de la ventana, porque a partir de `md` aparece el menú
+                        lateral y se come 319px fijos. Medido tesela a tesela con
+                        getBoundingClientRect:
+
+                          375px  2 col  166px   (sin menú lateral)
+                          768px  2 col  216px   (antes: 3 col y 139px)
+                          880px  3 col  176px
+                          1024px 4 col  164px
+                          1280px 5 col  179px
+
+                        La fila de 768 es la que había que arreglar: con
+                        `md:grid-cols-3` la tesela era de 139px, LA MÁS ESTRECHA
+                        de toda la escala —más que en un iPhone de 375— y encima
+                        es justo donde SetPackTile sube el cuerpo del nombre, así
+                        que la caja del texto caía a 109px y se elidían 4 de 16
+                        nombres (en español, peor: "Escarlata y Púrpura Energía"
+                        mide 168px). La tercera columna se retrasa a 880px, que
+                        es donde vuelve a haber sitio para 176px por tesela.
+
+                        Las cifras de 1280 son las MEDIDAS: el contenedor son
+                        961px, no los 1040 que decía este comentario, y con cinco
+                        columnas la tesela sale de 179px, no de 195. Con cuatro
+                        salían 228px.
+                        Ojo: cada tesela es 3:4, así que una columna de más
+                        también acorta el alto de la rejilla; el número de fotos
+                        que se descargan es el mismo. */}
+                    <div className="grid grid-cols-2 gap-2.5 md:gap-4 min-[880px]:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 pt-3">
+
                       {sets.map((set) => (
-                        <motion.button
+                        <SetPackTile
                           key={set.id}
-                          whileHover={{ y: -5 }}
-                          whileTap={{ scale: 0.96 }}
-                          transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-                          onClick={() => handleSelectSet(set.id)}
-                          className="group surface surface-hover p-3.5 md:p-8 rounded-2xl md:rounded-3xl flex flex-col items-center justify-between gap-2 md:gap-4 overflow-hidden relative min-h-[126px] md:min-h-[180px]"
-                        >
-                          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.06),transparent_60%)] pointer-events-none" />
-                          {/* Esta expansión todavía no tiene diccionario español
-                              y se ve en inglés. El aviso existe porque el cron
-                              trae expansiones nuevas y la lista va por fecha
-                              descendente: salen las PRIMERAS, así que sin él
-                              parece que el idioma está roto.
-                              `=== false` y no `!set.tieneEs`: el servidor sólo
-                              añade el campo en español, así que en inglés es
-                              undefined y aquí no se pinta nada.
-                              Va como <span> y no como botón: la tarjeta ya es un
-                              botón y anidarlos es HTML inválido. */}
-                          {set.tieneEs === false && (
-                            <span className="absolute top-2 right-2 md:top-3 md:right-3 z-10 chip ink-soft px-1.5 py-0.5 text-[9px] md:text-[10px] font-semibold uppercase tracking-[0.12em] leading-none">
-                              EN
-                              <span className="sr-only"> · esta expansión todavía no está traducida al español</span>
-                            </span>
-                          )}
-                          <div className="flex-1 flex items-center justify-center w-full relative z-10">
-                            {set.images?.logo ? (
-                              <img
-                                src={set.images.logo}
-                                alt={set.name}
-                                loading="lazy"
-                                decoding="async"
-                                className="max-h-[58px] md:max-h-20 max-w-full object-contain group-hover:scale-110 transition-transform duration-500 opacity-90 group-hover:opacity-100 drop-shadow-lg"
-                              />
-                            ) : (
-                              <div className="ink-faint text-sm text-center">{set.name}</div>
-                            )}
-                          </div>
-                          <span className="font-medium text-[11px] md:text-xs ink-soft group-hover:ink transition-colors text-center tracking-wide truncate w-full relative z-10">
-                            {set.name}
-                          </span>
-                        </motion.button>
+                          set={set}
+                          poseidas={cartasPorSet.get(set.id) ?? 0}
+                          onSelect={handleSelectSet}
+                        />
                       ))}
                     </div>
                   </motion.div>
@@ -1694,7 +1961,15 @@ export default function Home() {
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-          className="w-full max-w-5xl flex flex-col items-center pt-4 relative z-10"
+          /* max-w-6xl y no 5xl. Los tres sobres de la tienda se quedaban en
+             1024px mientras <main> ofrecía 1216: medido en una ventana de
+             1600px, el contenedor pasa de 1004px a 1129px, o sea 125px más de
+             ancho para la única fila de la pantalla, que además es la fila que
+             hay que mirar. Por debajo de 1024 no cambia absolutamente nada, y
+             el carrusel con anclaje de móvil tampoco: vive en el <div> de
+             abajo, que sigue siendo carrusel hasta md y rejilla a partir de
+             ahí. */
+          className="w-full max-w-6xl flex flex-col items-center pt-4 relative z-10"
         >
           <button
             onClick={handleBackToMenu}

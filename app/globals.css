@@ -230,9 +230,29 @@ input, textarea, [contenteditable="true"] {
   .glass {
     background: var(--grain), var(--glass-bg);
     color: var(--ink);
-    /* Menos blur y saturación: acabado mate, más papel que cristal. */
-    backdrop-filter: blur(8px) saturate(112%);
+    /* Menos blur y saturación: acabado mate, más papel que cristal.
+     *
+     * EL ORDEN DE ESTAS DOS LÍNEAS NO ES ESTILO, ES LO QUE HACE QUE FUNCIONE, y
+     * estaba al revés. La prefijada va PRIMERO y la estándar DESPUÉS.
+     *
+     * Escrito al revés —estándar primero, `-webkit-` después— Lightning CSS,
+     * que es quien compila el CSS de Tailwind 4, colapsa las dos en una y se
+     * queda con la ÚLTIMA. Comprobado en el CSS que servía el proyecto: la
+     * regla salía con `-webkit-backdrop-filter` a secas y la estándar
+     * desaparecida.
+     *
+     * Y eso NO es un detalle de compatibilidad antigua: `-webkit-backdrop-filter`
+     * no existe en Chrome, Edge ni Firefox (CSS.supports lo confirma en un
+     * Chrome actual). Así que el esmerilado de la barra superior y de la barra
+     * inferior no se aplicaba en NINGÚN navegador que no fuera Safari: quedaba
+     * el fondo translúcido al 78% sin nada que desenfocara detrás, y el
+     * contenido se leía a través de las barras mezclado con los iconos y con
+     * las etiquetas de navegación. En un iPhone se veía bien y en un PC, no.
+     *
+     * Con la estándar la última, gana ella donde existe y la prefijada sigue
+     * cubriendo a los Safari viejos, que es justo lo que se quería. */
     -webkit-backdrop-filter: blur(8px) saturate(112%);
+    backdrop-filter: blur(8px) saturate(112%);
     border: 1px solid var(--border);
     box-shadow: var(--shadow-sm);
   }
@@ -545,4 +565,102 @@ button, a, [role="button"] { touch-action: manipulation; }
   }
   .scroll-x::-webkit-scrollbar { display: none; }
   .tnum { font-variant-numeric: tabular-nums; }
+}
+
+/* ============================================================
+   LA TESELA DE EXPANSIÓN — las capas del sobre en la portada
+   ============================================================
+   Las usa components/SetPackTile.tsx, que es quien explica el porqué
+   largo. Aquí sólo queda el porqué de que vivan en CSS y no en un
+   `style` inline: son cadenas CONSTANTES, iguales para las 171
+   expansiones. Lo único que cambia de una a otra son las ocho custom
+   properties `--sb-*` que la tesela pone en su `style`, y que estas
+   reglas leen. Así el HTML de una rejilla de 38 teselas no repite 38
+   veces el mismo degradado de 200 caracteres.
+
+   TODO LO DE AQUÍ ES `background` Y `opacity`. Ni un `filter`, ni un
+   `backdrop-filter`, ni un `mix-blend-mode`: encima de estas capas hay
+   una fotografía, y cualquiera de esas tres propiedades promociona la
+   capa y hace que WebKit la rasterice a escala fija, que es la causa
+   —medida y documentada en components/PokemonCard.tsx— de que las
+   ilustraciones salieran borrosas en el iPhone.
+
+   Y NADA DE ESTO DEPENDE DEL TEMA, a propósito. Los colores salen de la
+   expansión (`--sb-a`/`--sb-b`, con saturación y luminosidad fijas), no
+   de la paleta de papel: una tesela con foto tampoco cambiaría de color
+   entre el modo claro y el oscuro, y las dos tienen que verse iguales
+   una al lado de la otra en la misma rejilla. El contraste del texto lo
+   garantiza el velo, no el tema. */
+@layer utilities {
+  /* El sobre DIBUJADO. Luz arriba y sombra abajo sobre el degradado de la
+     expansión, que es lo que separa un sobre de un rectángulo de color.
+     Se pinta en LAS 171, no sólo en las 41 sin fotografía: en las demás queda
+     debajo de la foto y es lo que se ve mientras llega —o si no llega nunca,
+     que es el caso de un 404 o de una primera visita sin cobertura. Cuesta
+     cero peticiones. */
+  .tesela-fondo {
+    background:
+      radial-gradient(120% 62% at 50% 0%, rgba(255, 255, 255, 0.22), transparent 58%),
+      radial-gradient(140% 70% at 50% 112%, rgba(0, 0, 0, 0.3), transparent 62%),
+      linear-gradient(var(--sb-ang, 102deg), var(--sb-a, #10b981), var(--sb-b, #06b6d4));
+  }
+
+  /* El rayado de impresión de su era. Mismo criterio que .sobre__rayado de
+     BoosterPack: el PERIODO se multiplica por --sb-paso para que las bandas
+     mantengan la proporción (un sobre de cartón de 1999 tiene trama gruesa y
+     casi no brilla; uno de Escarlata y Púrpura, lenticular fino y agresivo), y
+     la opacidad de toda la capa es --sb-rayado. */
+  .tesela-rayado {
+    opacity: var(--sb-rayado, 0.55);
+    background: repeating-linear-gradient(var(--sb-ang, 102deg),
+      transparent 0 calc(var(--sb-paso, 1) * 3px),
+      rgba(0, 0, 0, 0.16) calc(var(--sb-paso, 1) * 3px) calc(var(--sb-paso, 1) * 4px),
+      transparent calc(var(--sb-paso, 1) * 4px) calc(var(--sb-paso, 1) * 6px),
+      rgba(255, 255, 255, 0.18) calc(var(--sb-paso, 1) * 6px) calc(var(--sb-paso, 1) * 7px));
+  }
+
+  /* EL VELO DE LEGIBILIDAD. Cubre la mitad inferior y sólo ahí: la
+     ilustración se ve entera y el nombre cae siempre sobre un fondo oscuro
+     CONOCIDO, que es lo que permite fijar el texto en blanco puro sin saber
+     qué hay debajo. Con la foto más clara posible (blanco) el compuesto en el
+     borde inferior es #191918 y el blanco da 17,4:1; a media altura del velo,
+     7,3:1. Los dos por encima de AA para texto pequeño. */
+  .tesela-velo {
+    background: linear-gradient(to top,
+      rgba(6, 5, 3, 0.92) 0%,
+      rgba(6, 5, 3, 0.68) 34%,
+      rgba(6, 5, 3, 0.18) 68%,
+      rgba(6, 5, 3, 0) 100%);
+  }
+
+  /* Realce al pasar el puntero. Es el sustituto del velo radial que llevaba la
+     tesela anterior, y hace el mismo trabajo con una capa que ya está montada:
+     lo único que se anima es la opacidad. */
+  .tesela-lustre {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.15), transparent 45%);
+  }
+
+  /* LA CHAPA DEL SÍMBOLO, en las expansiones que se dibujan por no tener foto.
+     El porqué está medido en components/SetPackTile.tsx: los símbolos de set
+     son gris medio (rgb ~106 de media) y el degradado de la familia también,
+     así que sobre el fondo desnudo daban de 1,04:1 a 1,69:1 y el único rasgo
+     que separa a dos expansiones hermanas era invisible. Compuesta sobre ese
+     mismo fondo, esta chapa queda en rgb(244,240,244) y los cinco símbolos
+     medidos pasan a dar entre 3,82:1 y 6,21:1.
+     No depende del tema, igual que el resto de la tesela: debajo hay el color
+     de la expansión, no la superficie de papel. */
+  .tesela-sello {
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.28), inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+  }
+
+  /* Las pastillas que van ENCIMA de la foto (progreso y aviso de idioma). No
+     pueden usar `.chip`, que se tiñe con la tinta del tema y sobre una
+     fotografía clara desaparece. Blanco sobre este fondo da 6,7:1 en el peor
+     caso imaginable (foto blanca debajo). */
+  .tesela-pastilla {
+    background: rgba(6, 5, 3, 0.66);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: #fff;
+  }
 }

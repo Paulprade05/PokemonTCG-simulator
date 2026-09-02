@@ -18,6 +18,7 @@ import { useToast } from "../../components/ui/Toast";
 import ConfirmSheet from "../../components/ui/ConfirmSheet";
 import PageHeader from "../../components/PageHeader";
 import Loader from "../../components/Loader";
+import HuecoCentrado from "../../components/HuecoCentrado";
 import MisAnuncios from "../../components/bazar/MisAnuncios";
 import PublicarSheet from "../../components/bazar/PublicarSheet";
 import ReglasBazar from "../../components/bazar/ReglasBazar";
@@ -317,16 +318,25 @@ export default function BazarPage() {
     return (
       <>
         <PageHeader title="Bazar" subtitle="Cartas que ponen a la venta otros jugadores" />
-        <div className="surface flex flex-col items-center gap-4 rounded-2xl px-6 py-16 text-center">
-          <p className="ink-soft text-sm">No se pudo cargar el escaparate.</p>
-          <button
-            type="button"
-            onClick={() => cargarEscaparate(pagina)}
-            className="btn-accent press touch-target flex items-center justify-center rounded-xl px-6 text-sm font-semibold"
-          >
-            Reintentar
-          </button>
-        </div>
+        {/* CENTRADO, POR EL MISMO MOTIVO QUE EL AVISO DE INVITADO DE
+            /graduacion. Este `return` es anterior a todo lo demás de la
+            pantalla, así que cuando salta no hay NADA debajo: medido a 375x812,
+            la caja iba de y=168 a y=378 y dejaba 375px de fondo vacío hasta la
+            barra de pestañas. Y es un estado que se ve más de lo que parece:
+            hoy, sin `bazar_listings` en la base, es lo único que ve un invitado
+            que entra aquí —nunca llega a leer por qué no puede vender—. */}
+        <HuecoCentrado>
+          <div className="surface flex w-full flex-col items-center gap-4 rounded-2xl px-6 py-16 text-center">
+            <p className="ink-soft text-sm">No se pudo cargar el escaparate.</p>
+            <button
+              type="button"
+              onClick={() => cargarEscaparate(pagina)}
+              className="btn-accent press touch-target flex items-center justify-center rounded-xl px-6 text-sm font-semibold"
+            >
+              Reintentar
+            </button>
+          </div>
+        </HuecoCentrado>
       </>
     );
   }

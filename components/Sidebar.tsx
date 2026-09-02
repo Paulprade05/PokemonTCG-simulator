@@ -8,6 +8,7 @@ import { useState, useSyncExternalStore } from "react";
 import { NAV_ITEMS } from "./nav-items";
 import { MUELLE_INDICADOR } from "./BottomNav";
 import SettingsSheet from "./ui/SettingsSheet";
+import SidebarExtras from "./SidebarExtras";
 
 /* Nada a lo que suscribirse: el año no cambia mientras la página está abierta.
    Vive fuera del componente porque useSyncExternalStore exige que la función de
@@ -59,10 +60,18 @@ export default function Sidebar() {
             transition={MUELLE_INDICADOR}
           />
         )}
-        <span className={`relative z-10 transition-colors ${active ? "accent" : "ink-faint group-hover:ink"}`}>
+        {/* CLASE CON VALOR ARBITRARIO Y NO `group-hover` sobre `ink`, que es lo
+            que había: .ink y .ink-soft son CSS a mano dentro de @layer
+            utilities de globals.css, NO utilidades de Tailwind, así que
+            Tailwind nunca genera su variante de hover y la clase no pintaba
+            nada. Comprobado en la hoja emitida: 10 reglas de variante de hover
+            de grupo y ninguna de color de tinta. O sea que estos enlaces
+            declaraban un hover que llevaba tiempo sin existir; esto no cambia
+            la navegación, sólo cumple lo que el código ya prometía. */}
+        <span className={`relative z-10 transition-colors ${active ? "accent" : "ink-faint group-hover:text-[var(--ink)]"}`}>
           {it.icon}
         </span>
-        <span className={`relative z-10 text-sm font-medium transition-colors ${active ? "ink" : "ink-soft group-hover:ink"}`}>
+        <span className={`relative z-10 text-sm font-medium transition-colors ${active ? "ink" : "ink-soft group-hover:text-[var(--ink)]"}`}>
           {it.label}
         </span>
       </Link>
@@ -84,25 +93,39 @@ export default function Sidebar() {
         </div>
       </Link>
 
-      {/* Nav */}
-      <nav className="flex flex-col gap-1">
-        {NAV_ITEMS.map((it) =>
-          it.requireAuth ? <SignedIn key={it.href}>{renderItem(it)}</SignedIn> : renderItem(it),
-        )}
-      </nav>
+      {/* Nav + atajos.
+          EL ENVOLTORIO CON SCROLL NO ES DECORATIVO: este <aside> es `fixed`
+          entre top-0 y bottom-0 y no tenía desbordamiento en ninguna parte, así
+          que todo lo que se añadiera entre la navegación y el pie empujaba el
+          bloque de Ajustes fuera del borde inferior en una ventana baja, sin
+          forma de llegar a él. Con `min-h-0 flex-1 overflow-y-auto` el que se
+          desplaza es este trozo y el pie se queda siempre visible.
+          El `flex-1` hace además el trabajo que hacía el `mt-auto` de abajo:
+          este bloque crece y empuja el pie al fondo. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <nav className="flex flex-col gap-1">
+          {NAV_ITEMS.map((it) =>
+            it.requireAuth ? <SignedIn key={it.href}>{renderItem(it)}</SignedIn> : renderItem(it),
+          )}
+        </nav>
 
-      <div className="mt-auto">
+        <SidebarExtras />
+      </div>
+
+      <div className="mt-auto pt-4">
         <button
           onClick={() => setAjustesAbiertos(true)}
           className="press-flat touch-target group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left"
         >
-          <span className="ink-faint transition-colors group-hover:ink">
+          {/* Mismo caso que los enlaces de arriba: la variante de hover sobre
+              .ink no se genera nunca. Ver la nota de renderItem. */}
+          <span className="ink-faint transition-colors group-hover:text-[var(--ink)]">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-[22px] h-[22px]" aria-hidden="true">
               <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
               <circle cx="12" cy="12" r="3" />
             </svg>
           </span>
-          <span className="ink-soft text-sm font-medium transition-colors group-hover:ink">
+          <span className="ink-soft text-sm font-medium transition-colors group-hover:text-[var(--ink)]">
             Ajustes
           </span>
         </button>

@@ -76,6 +76,15 @@ export default function CollectionPage() {
   const [sortBy, setSortBy] = useState("rarity_desc");
   const [filterSet, setFilterSet] = useState("all");
   const [filterRarity, setFilterRarity] = useState("all");
+  /**
+   * Los tres desplegables, plegados de salida por debajo de `xl`.
+   *
+   * Arranca SIEMPRE en false, también en escritorio estrecho: si dependiera del
+   * ancho habría que medirlo, y medir durante el render es exactamente lo que
+   * revienta la hidratación (el servidor no tiene ventana). Por encima de
+   * `xl` el CSS los enseña siempre y este estado deja de pintar nada.
+   */
+  const [filtrosAbiertos, setFiltrosAbiertos] = useState(false);
   const [selectedCard, setSelectedCard] = useState<CartaEnColeccion | null>(null);
   const [actionCard, setActionCard] = useState<CartaEnColeccion | null>(null);
   const [confirmDuplicates, setConfirmDuplicates] = useState(false);
@@ -216,6 +225,35 @@ export default function CollectionPage() {
     () => setStats.filter((s) => s.owned > 0),
     [setStats],
   );
+
+  /**
+   * EL RECUENTO, ARRIBA Y NO A DOS MIL PÍXELES DE SCROLL.
+   *
+   * La única cifra que decía cuántas cartas hay vivía en la paginación, o sea
+   * al final de la rejilla y sólo si había más de 24 resultados: en un iPhone
+   * quedaba a 1.379px por debajo del pliegue. Mientras tanto la cabecera
+   * prometía "progreso y estadísticas" y no daba ni un número.
+   *
+   * Ahora el número lo dice el propio acordeón de progreso, que es donde se
+   * viene a mirar "cómo voy", y no cuesta ni un píxel de alto porque ocupa el
+   * renglón que ya había ("Ver progreso por expansión"). Sale de `cards`, que
+   * es la colección real ya cargada: no hay consulta nueva ni cero inventado.
+   */
+  const resumenCartas = useMemo(() => {
+    let copias = 0;
+    for (const c of cards) copias += Math.max(1, Number(c.quantity) || 1);
+    return { unicas: cards.length, copias };
+  }, [cards]);
+
+  /**
+   * Cuántos controles del panel están tocados. Es lo que lleva la insignia del
+   * botón de filtros: plegados, hay que poder saber DESDE FUERA que la rejilla
+   * está recortada, o el jugador cree que ha perdido cartas.
+   */
+  const filtrosActivos =
+    (filterSet !== "all" ? 1 : 0) +
+    (filterRarity !== "all" ? 1 : 0) +
+    (sortBy !== "rarity_desc" ? 1 : 0);
   /** El resto sólo se monta si se piden expresamente. */
   const [verTodasLasExpansiones, setVerTodasLasExpansiones] = useState(false);
   const setStatsVisibles = verTodasLasExpansiones ? setStats : setStatsEmpezados;
@@ -582,7 +620,13 @@ export default function CollectionPage() {
   if (loadError) {
     return (
       <div className="w-full">
-        <PageHeader title="Mi Colección" subtitle="Tus cartas, progreso y estadísticas" />
+        {/* Sin subtítulo, por lo mismo que el de la rama buena (ver la nota
+            larga de abajo): prometía "progreso y estadísticas" en una pantalla
+            que precisamente no ha podido cargar ninguna de las dos cosas. Aquí
+            no se recortaba —esta cabecera no lleva acciones, así que le sobra
+            hueco—, pero dejarlo era dejar puesta la trampa para el día que
+            alguien le añada un botón. */}
+        <PageHeader title="Mi Colección" />
         <div className="surface rounded-2xl py-16 md:py-20 px-6 text-center flex flex-col items-center gap-4">
           <div className="w-14 h-14 rounded-2xl surface-2 flex items-center justify-center">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-7 h-7 ink-faint">
@@ -606,9 +650,29 @@ export default function CollectionPage() {
 
   return (
     <div className="select-none w-full">
+      {/* SIN SUBTÍTULO: SE CORTABA, Y ADEMÁS NO DECÍA NADA.
+       *
+       * "Tus cartas, progreso y estadísticas" mide 199px y el hueco que le deja
+       * PageHeader al lado de las tres acciones es de 183px a 375 y de 128px a
+       * 320, así que se leía "Tus cartas, progreso y estadís…".
+       *
+       * Acortarlo era posible —"Cartas y progreso" mide 121px y entra en los
+       * dos anchos—, así que la razón para quitarlo NO es que no cupiera nada:
+       * es que un subtítulo que promete "progreso y estadísticas" y no da
+       * ninguna de las dos ocupa un renglón para no decir nada. La versión
+       * corta lo empeora: dice todavía menos.
+       *
+       * Tampoco vale ensanchar el hueco desde aquí: PageHeader lo comparte toda
+       * la app —incluida la vitrina, que está congelada— y tocarlo movería
+       * pantallas que nadie ha pedido tocar.
+       *
+       * Así que el rótulo se va y su contenido se muda al renglón del acordeón
+       * de progreso, que tiene 227px libres a 375 y 168px a 320 y donde además
+       * deja de ser una promesa ("progreso y estadísticas") para ser el dato:
+       * cuántas cartas distintas y cuántas copias hay. Cero elementos
+       * recortados, y ni un píxel más de cabecera. */}
       <PageHeader
         title="Mi Colección"
-        subtitle="Tus cartas, progreso y estadísticas"
         actions={
           <>
           {/* LAS DOS PUERTAS A LAS PANTALLAS NUEVAS.
@@ -619,27 +683,44 @@ export default function CollectionPage() {
               Colección cubre sus rutas (ver components/nav-items.tsx) y el
               acceso vive donde el jugador ya está mirando sus cartas.
               El rótulo se oculta en móvil como el del botón de al lado; el
-              aria-label es lo que lo mantiene con nombre para un lector. */}
+              aria-label es lo que lo mantiene con nombre para un lector.
+
+              ── POR QUÉ EL RÓTULO ENCIENDE EN `lg` Y NO EN `sm` ──
+              Encendía en `sm` (640px), pero la barra lateral no aparece hasta
+              `md` (768px). Entre 768 y ~834 conviven las dos cosas: el bloque
+              de acciones mide 359px, PageHeader lo declara `shrink-0` y al
+              título le quedaban 78px, así que el <h1> se leía "Mi C…" —cortado
+              a mitad de la segunda letra—. Medido a 768: scrollWidth 145 contra
+              clientWidth 78; a 800, 145 contra 110; a 900 ya cabía.
+              Es exactamente el defecto que se arregló en el subtítulo, un
+              renglón más arriba, y estaba aquí desde antes.
+              Con `lg` (1024) los rótulos vuelven cuando de verdad hay sitio:
+              medido a 1024, 145 contra 145. Entre 768 y 1023 las acciones
+              quedan en icono, y por eso llevan `title`: con ratón el aria-label
+              no produce ninguna pista, y un icono sin nombre en un portátil no
+              es un arreglo, es otro problema. */}
           <Link
             href="/vitrina"
             aria-label="Abrir la vitrina"
+            title="Vitrina"
             className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press touch-target justify-center"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
               <rect x="3" y="3" width="18" height="18" rx="2" />
               <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
             </svg>
-            <span className="hidden sm:inline">Vitrina</span>
+            <span className="hidden lg:inline">Vitrina</span>
           </Link>
           <Link
             href="/graduacion"
             aria-label="Graduar cartas"
+            title="Graduar cartas"
             className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press touch-target justify-center"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
               <path d="M12 2 15 9l7 .6-5.3 4.6L18.2 21 12 17.3 5.8 21l1.5-6.8L2 9.6 9 9z" />
             </svg>
-            <span className="hidden sm:inline">Graduar</span>
+            <span className="hidden lg:inline">Graduar</span>
           </Link>
           <button
             onClick={requestSellAllDuplicates}
@@ -649,6 +730,7 @@ export default function CollectionPage() {
             // saca del árbol de accesibilidad: sin esta etiqueta el botón
             // quedaría sin nombre para un lector de pantalla.
             aria-label={pendingSale === "duplicates" ? "Vendiendo duplicados" : "Limpiar duplicados"}
+            title={pendingSale === "duplicates" ? "Vendiendo duplicados" : "Limpiar duplicados"}
             className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press touch-target justify-center disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {/* El vaciado es una sola petición, pero puede tardar un segundo
@@ -661,7 +743,7 @@ export default function CollectionPage() {
                 <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
               </svg>
             )}
-            <span className="hidden sm:inline">
+            <span className="hidden lg:inline">
               {pendingSale === "duplicates" ? "Vendiendo…" : "Limpiar duplicados"}
             </span>
           </button>
@@ -675,18 +757,27 @@ export default function CollectionPage() {
           <button
             onClick={() => { haptic("tap"); setShowStats(!showStats); }}
             aria-expanded={showStats}
-            className="w-full surface surface-hover rounded-2xl px-5 py-4 flex justify-between items-center group"
+            // El relleno se aprieta sólo en móvil: en escritorio no sobra
+            // pantalla que recuperar y el bloque ya estaba bien proporcionado.
+            className="w-full surface surface-hover rounded-2xl px-4 py-3 sm:px-5 sm:py-4 flex justify-between items-center group"
           >
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl surface-2 flex items-center justify-center">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl surface-2 flex items-center justify-center shrink-0">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 accent">
                   <path d="M3 3v18h18" />
                   <path d="M7 14l4-4 4 4 6-6" />
                 </svg>
               </div>
-              <div className="text-left">
+              <div className="text-left min-w-0">
                 <h3 className="font-semibold text-sm">Progreso de colección</h3>
-                <p className="text-xs ink-soft">{showStats ? "Ocultar detalles" : "Ver progreso por expansión"}</p>
+                {/* El renglón que antes decía "Ver progreso por expansión" (una
+                    instrucción que el chevrón ya da) ahora dice el recuento. Es
+                    el hueco donde se ha mudado el subtítulo de la cabecera. */}
+                <p className="text-xs ink-soft tnum">
+                  {resumenCartas.unicas === 0
+                    ? "Aún no tienes cartas"
+                    : `${formatNumber(resumenCartas.unicas)} cartas · ${formatNumber(resumenCartas.copias)} copias`}
+                </p>
               </div>
             </div>
             <motion.svg
@@ -785,13 +876,43 @@ export default function CollectionPage() {
          * SI ALGÚN DÍA SE QUIERE RECUPERAR EL ACCESO RÁPIDO sin gastar espacio,
          * la salida NO es volver a `sticky`: es el buscador global que ya
          * existe en la TopBar (la lupa), que busca en todo el catálogo y no
-         * ocupa nada. */}
+         * ocupa nada.
+         *
+         * ── LO QUE SÍ SE HA HECHO (y por qué no contradice nada de arriba) ──
+         *
+         * El problema que quedaba no era el posicionamiento sino el ALTO: este
+         * panel medía 174px por debajo de 1280 (buscador + tres desplegables
+         * apilados) y empujaba la primera carta hasta y=464 en un iPhone, el
+         * 57% del viewport. Los tres desplegables se han plegado tras un botón.
+         *
+         * La barra sigue EXACTAMENTE donde estaba: en el flujo, sin `sticky` ni
+         * `fixed`, y se va con el scroll igual que antes. Plegar cambia cuánto
+         * ocupa, no dónde vive; son dos cosas distintas y sólo la segunda es la
+         * que se pidió no tocar.
+         *
+         * EL BUSCADOR NO SE PLIEGA. Es lo que más se usa y se queda siempre
+         * visible; lo que se guarda son los filtros, que se tocan una vez y se
+         * dejan puestos. Y para que plegarlos no esconda que la rejilla está
+         * recortada, el botón lleva la cuenta de los que están activos.
+         *
+         * A partir de `xl` (1280px, el escritorio del encargo) no se pliega
+         * nada: ahí los tres caben en la misma fila que el buscador y el panel
+         * mide 70px, que ya estaba bien. El corte es `xl` y no `sm` porque
+         * entre 640 y 1280 la fila NO cabía —a 768, con la barra lateral
+         * comiendo 240px, el panel seguía midiendo 174px y la primera carta
+         * caía en y=476, peor que en el móvil—. */}
         <div
-          className="surface rounded-2xl px-3 py-3 flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:items-center"
+          className="surface rounded-2xl px-3 py-3 flex flex-col xl:flex-row xl:flex-wrap gap-2 xl:items-center"
         >
+          {/* El buscador y el botón de filtros comparten renglón: así plegar no
+              cuesta ni un píxel de alto (el botón cabe dentro de los 44px que
+              ya medía el campo). En `xl` este envoltorio pasa a `contents` y el
+              campo vuelve a ser hijo directo del flex, o sea que la fila de
+              escritorio queda exactamente como estaba. */}
+          <div className="flex items-center gap-2 xl:contents">
           {/* Etiqueta y no contenedor neutro: así tocar el icono o el relleno
               enfoca el campo. min-h-11 son los 44px mínimos de zona táctil. */}
-          <label className="input-field flex min-h-11 items-center gap-2 px-3 py-2 rounded-xl flex-1 sm:min-w-[180px]">
+          <label className="input-field flex min-h-11 items-center gap-2 px-3 py-2 rounded-xl flex-1 min-w-0 xl:min-w-[180px]">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint shrink-0">
               <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
             </svg>
@@ -827,16 +948,90 @@ export default function CollectionPage() {
             )}
           </label>
 
-          {/* Rejilla en vez de tira desplazable: un <select> se estira hasta su
-              opción más larga, así que con `shrink-0` en una fila horizontal el
-              de expansiones (305px) echaba a los otros dos fuera de pantalla.
-              Con w-full + min-w-0 el texto se recorta y todo cabe. */}
-          <div className="grid grid-cols-2 gap-2 sm:contents">
+          {/* EL BOTÓN QUE PLIEGA LOS FILTROS. Sólo existe por debajo de `xl`;
+              a partir de ahí los tres desplegables están siempre a la vista y
+              este botón sería un rodeo para nada.
+              La insignia es lo que impide el fallo clásico de los filtros
+              plegables: la rejilla enseña 12 cartas de 214 y no se ve por qué.
+              Con la cuenta encima del botón, se ve. */}
+          <button
+            type="button"
+            onClick={() => { haptic("tap"); setFiltrosAbiertos((v) => !v); }}
+            aria-expanded={filtrosAbiertos}
+            aria-controls="filtros-coleccion"
+            aria-label={
+              filtrosActivos > 0
+                ? `Filtros y orden, ${filtrosActivos} ${filtrosActivos === 1 ? "activo" : "activos"}`
+                : "Filtros y orden"
+            }
+            // El `title` no es un duplicado ocioso del aria-label: este botón
+            // existe hasta 1279px, o sea también en un portátil con ratón, y
+            // ahí el aria-label no produce ninguna pista al pasar por encima.
+            // Sin él, entre 768 y 1279 los tres desplegables desaparecen tras
+            // un icono de tres rayas que no dice qué hace hasta que se pulsa.
+            title={
+              filtrosActivos > 0
+                ? `Filtros y orden (${filtrosActivos} ${filtrosActivos === 1 ? "activo" : "activos"})`
+                : "Filtros y orden"
+            }
+            className="btn-ghost press touch-target relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl xl:hidden"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="w-[18px] h-[18px]" aria-hidden="true">
+              <path d="M4 6h16M7 12h10M10 18h4" />
+            </svg>
+            {filtrosActivos > 0 && (
+              <span
+                aria-hidden="true"
+                className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold tnum"
+                style={{ background: "var(--accent)", color: "#04110c" }}
+              >
+                {filtrosActivos}
+              </span>
+            )}
+          </button>
+          </div>
+
+          {/* LOS TRES DESPLEGABLES.
+              Apilados a lo ancho y no en rejilla de dos columnas, y esto arregla
+              de paso el problema de que "rareza" y "orden" pareciesen el mismo
+              control: iban lado a lado, con el MISMO ancho exacto (155px a 375,
+              127px a 320), uno diciendo "Toda rareza" y el otro "Rareza". Lo
+              único que los distinguía era el aria-label, que no se ve.
+              Ahora van uno debajo de otro, a ancho completo —así ninguno se
+              recorta ni siquiera a 320px, donde un "Orden: rar…" habría dejado
+              el arreglo a medias— y el de ordenar dice en voz alta lo que hace.
+              Como el panel arranca plegado, estos 148px sólo se pagan cuando se
+              van a usar.
+              En `xl` el envoltorio pasa a `contents` y los tres vuelven a ser
+              hijos del flex del panel, con su ancho automático de siempre. */}
+          <div
+            id="filtros-coleccion"
+            className={`grid grid-cols-1 gap-2 xl:contents ${filtrosAbiertos ? "" : "max-xl:hidden"}`}
+          >
             <select
               value={filterSet}
               onChange={(e) => { haptic("select"); setFilterSet(e.target.value); }}
               aria-label="Filtrar por expansión"
-              className="input-field col-span-2 w-full min-w-0 px-3 py-2.5 rounded-xl text-xs cursor-pointer truncate sm:col-span-1 sm:w-auto"
+              // TOPE DE ANCHO EN ESCRITORIO: 320 Y NO 260.
+              //
+              // Un <select> con ancho automático se estira hasta su opción más
+              // larga, y aquí las opciones son nombres de expansión. Sin tope,
+              // un nombre desmedido empujaría la fila de cuatro controles a
+              // partirse en dos y el panel pasaría de 70px a ~124.
+              //
+              // Pero el tope estaba en 260 y eso SÍ recortaba algo real: la
+              // opción más larga del catálogo ("Scarlet & Violet Black Star
+              // Promos") mide 305px, así que al seleccionarla se leía a medias
+              // en escritorio, donde antes se leía entera. Y no compraba nada:
+              // comprobado en vivo a 1280 quitando el tope, el select sube a
+              // 305 y los cuatro controles SIGUEN en la misma fila (los cuatro
+              // con top=285, panel 70px). Con el tope en 320 caben los 305 sin
+              // recortar y queda el seguro puesto para un nombre más largo.
+              //
+              // (Y no, este tope no decide ningún punto de ruptura: sólo existe
+              // a partir de `xl`, que es justo donde la fila ya cabía. Por
+              // debajo los tres desplegables son `w-full` y van apilados.)
+              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl text-xs cursor-pointer truncate xl:w-auto xl:max-w-[320px]"
             >
               <option value="all">Todas las expansiones</option>
               {dbSets.map((set) => (<option key={set.id} value={set.id}>{set.name}</option>))}
@@ -845,20 +1040,33 @@ export default function CollectionPage() {
               value={filterRarity}
               onChange={(e) => { haptic("select"); setFilterRarity(e.target.value); }}
               aria-label="Filtrar por rareza"
-              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl text-xs cursor-pointer truncate sm:w-auto"
+              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl text-xs cursor-pointer truncate xl:w-auto"
             >
-              <option value="all">Toda rareza</option>
+              {/* "Todas las rarezas" y no "Toda rareza": el paralelo con "Todas
+                  las expansiones" deja claro de un vistazo que este es un filtro
+                  y no un criterio de orden. No cuesta ancho, porque el del
+                  select lo fija la opción más larga de la lista de rarezas. */}
+              <option value="all">Todas las rarezas</option>
               {rarityOptions.map((r) => (<option key={r} value={r}>{r}</option>))}
             </select>
             <select
               value={sortBy}
               onChange={(e) => { haptic("select"); setSortBy(e.target.value); }}
               aria-label="Ordenar por"
-              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl text-xs cursor-pointer truncate sm:w-auto"
+              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl text-xs cursor-pointer truncate xl:w-auto"
             >
-              <option value="rarity_desc">Rareza</option>
-              <option value="quantity_desc">Cantidad</option>
-              <option value="name_asc">Nombre</option>
+              {/* El prefijo "Orden:" va DENTRO de las opciones, no en un rótulo
+                  al lado: un <select> nativo no admite nada antes de su texto
+                  sin envolverlo, y envolverlo es perder la rueda nativa de iOS.
+                  Es el mismo recurso que ya usa ListaGraduables, donde las
+                  opciones se describen solas. Así el valor cerrado se lee
+                  "Orden: rareza" y deja de ser el gemelo del filtro de al lado.
+                  Ojo con alargarlas: los <select> se pintan a 16px (lo fuerza
+                  globals.css para que iOS no haga zoom), así que cada palabra
+                  aquí cuesta ancho de verdad en la fila de escritorio. */}
+              <option value="rarity_desc">Orden: rareza</option>
+              <option value="quantity_desc">Orden: cantidad</option>
+              <option value="name_asc">Orden: nombre</option>
             </select>
           </div>
         </div>
