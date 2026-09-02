@@ -211,19 +211,23 @@ function leerSeriesAbiertas(): Record<string, boolean> | null {
  *
  * Y esto es un tope de DATOS, no de gusto. Lo que se recuerda es lo que se
  * descarga al abrir la aplicación, y la rejilla no está virtualizada: un
- * jugador que alguna vez hubiera desplegado las diecisiete series se habría
- * encontrado con las 131 fotografías —9,42 MB medidos en disco, sumando la
- * variante que le toca a cada expansión con la semilla de la tesela— en la
- * portada, en CADA visita, en un teléfono con datos. Y no lo salvaba el
- * `loading="lazy"`: está medido en components/SetPackTile.tsx que el margen de
- * precarga del navegador es mayor que la rejilla, así que se piden casi todas
- * aunque no se vea ninguna.
+ * jugador que alguna vez hubiera desplegado las diecisiete series se encuentra
+ * con una imagen por expansión en la portada, en CADA visita, en un teléfono
+ * con datos. Y no lo salva el `loading="lazy"`: el margen de precarga del
+ * navegador es mayor que la rejilla, así que se piden casi todas aunque no se
+ * vea ninguna.
  *
- * Con el tope, la portada cuesta como mucho UNA serie, y la más gorda de las
- * diecisiete —Espada y Escudo, 25 expansiones, 17 con foto— son 1 511 KB.
- * Encima es una serie que el jugador eligió a mano. DENTRO de la sesión no hay
- * tope de nada: se pueden abrir las diecisiete a la vez y ninguna se cierra
- * sola; lo único acotado es lo que sobrevive a cerrar la pestaña.
+ * LA CIFRA BAJÓ MUCHO Y EL TOPE SE QUEDA. Cuando la tesela pintaba la
+ * FOTOGRAFÍA del sobre, desplegarlo todo eran las 131 fotos y 9,42 MB medidos
+ * en disco, y la serie más gorda —Espada y Escudo, 25 expansiones, 17 con
+ * foto— 1 511 KB. Ahora la tesela pinta el SÍMBOLO del set (9,4 KB de media) y
+ * esa misma serie son ~235 KB; las fotos se fueron al selector de tipo de
+ * sobre, que pide tres y sólo de la expansión que se acaba de elegir. Con el
+ * tope, la portada sigue costando como mucho UNA serie, y encima una que el
+ * jugador eligió a mano: sale barato mantenerlo y quitarlo sólo devolvería
+ * peticiones a cambio de nada. DENTRO de la sesión no hay tope de nada: se
+ * pueden abrir las diecisiete a la vez y ninguna se cierra sola; lo único
+ * acotado es lo que sobrevive a cerrar la pestaña.
  *
  * Guardar es opcional por definición: si la cuota está llena, no pasa nada.
  */
@@ -497,6 +501,134 @@ export default function Home() {
     !efectosApagados && fase !== "cartas" ? (T_FANFARRIA - T_CARTA) / 1000 : 0;
 
   const currentSetObj = dbSets.find((s) => s.id === selectedSet);
+
+  /* ==================================================================== *
+   * UNA FOTO DE SOBRE DISTINTA POR TIPO DE SOBRE
+   * ====================================================================
+   *
+   * QUÉ SE PIDE. En el selector de tipo de sobre —Estándar, Premium, Leyenda—
+   * cada tarjeta enseña la fotografía REAL del sobre de esta expansión, y las
+   * tres enseñan una VARIANTE DISTINTA. Es lo que pasa en una tienda: el mismo
+   * set se vende en varios sobres con ilustraciones diferentes, y el jugador
+   * elige mirando. Antes ahí había tres iconos SVG genéricos —un contorno de
+   * sobre, un destello, una corona— idénticos en las 171 expansiones.
+   *
+   * POR QUÉ NO VALEN TRES SEMILLAS FIJAS, QUE ERA LO EVIDENTE.
+   * `ilustracionDeSobre` sortea la variante con `hash(carpeta#semilla) % n`, y
+   * eso es un reparto pseudoaleatorio, NO una permutación: nada impide que dos
+   * semillas distintas caigan en la misma foto. Medido sobre las 117
+   * expansiones del manifiesto que tienen tres variantes, las semillas 0,1,2
+   * dan las tres fotos distintas en sólo 61 (52%); la mejor tripleta fija de
+   * 0..24 llega a 66 (56%). O sea que con semillas fijas casi la mitad de las
+   * expansiones enseñarían dos tarjetas con la MISMA foto, que es justo lo que
+   * hay que evitar.
+   *
+   * LO QUE SÍ FUNCIONA: REPARTO CODICIOSO. Para cada tarjeta se coge la MENOR
+   * semilla cuya foto no esté ya repartida. Medido: 117 de 117 dan las tres
+   * distintas, y la semilla más alta que hace falta en todo el catálogo es 5
+   * (sv6pt5). Sigue siendo puro y determinista —la misma expansión da siempre
+   * las mismas tres fotos y en el mismo orden—, que es lo que impide que las
+   * tarjetas cambien de cara al re-renderizar.
+   *
+   * Y NO CUESTA BYTES DE MÁS, aunque no por el motivo que este comentario dijo
+   * primero. Decía que el precargador de aquí abajo deja las tres URLs en la
+   * caché "cuando la pantalla se monta" y eso es FALSO en el orden: el
+   * precargador es un `useEffect` y corre DESPUÉS del commit en el que estas
+   * <img> ya se han pintado, o sea que las pide el propio selector y el efecto
+   * llega detrás. Lo que sí es cierto es el total: las tres semillas que se
+   * reparten aquí son un subconjunto de las 0..7 que ese efecto recorre de
+   * todas formas, así que el navegador acaba pidiendo las mismas imágenes y
+   * ninguna de más; sólo cambia quién dispara cuál. Por eso el techo son OCHO
+   * semillas y no veinte: más allá de 7 se pediría una foto que el precargador
+   * no cubre, y el reparto nunca lo ha necesitado.
+   *
+   * CON AHORRO DE DATOS SE REPARTE UNA SOLA. El precargador de abajo declina en
+   * seco si `connection.saveData` —"no vale gastarle los datos a nadie por una
+   * animación"— y esto se saltaba esa política: pedía tres fotos (~214 KB) y
+   * encima en frío, porque nadie había precargado nada. Pero apagarlas del todo
+   * tampoco vale: allí la foto es el adorno de una animación y aquí es lo que
+   * el jugador ha venido a mirar, y el icono SVG dejaría la pantalla como
+   * estaba antes del encargo. El término medio es repartir la MISMA foto a las
+   * tres tarjetas: una petición en vez de tres (~71 KB), la pantalla sigue
+   * enseñando el sobre real en las tres, y lo único que se pierde es la
+   * variedad de variantes —que es exactamente el estado que ya viven las seis
+   * expansiones de una sola foto del párrafo de abajo, así que el diseño lo
+   * aguanta—. `loading="lazy"` no servía de sustituto: el margen de precarga
+   * del navegador supera de largo los ~950px que mide el carrusel entero, como
+   * ya documenta `guardarSeriesAbiertas` en este mismo fichero.
+   *
+   * CUANDO NO ALCANZA, Y ESTO NO ESTÁ RESUELTO SINO ACEPTADO. Trece
+   * expansiones del manifiesto tienen UNA sola foto (y `dc1` dos). Ahí el bucle
+   * agota las semillas sin encontrar nada nuevo y repite la primera: las tres
+   * tarjetas enseñan el mismo sobre. Siete de esas trece son `isSpecialSet` y
+   * pintan UNA sola tarjeta, así que el problema no existe en ellas; las SEIS
+   * que sí pintan tres son, comprobadas contra las cinco condiciones de
+   * `isSpecialSet` de este fichero: me2pt5 (Ascended Heroes), pgo (Pokémon GO),
+   * rsv10pt5 (White Flare), sv3pt5 (151), swsh12pt5 (Zenit Supremo) y zsv10pt5
+   * (Black Bolt). No es la cola del catálogo: 151 y Zenit Supremo están entre
+   * las más buscadas, y Mega Evolución es la serie que la portada abre sola.
+   * Se deja repetida a propósito, no por descuido: no existe una segunda foto
+   * que sacar, y sigue diferenciándolas el color de acento, el distintivo y el
+   * título. La alternativa —foto en la primera tarjeta e icono SVG en las otras
+   * dos— es peor de mirar y además hace pensar que a las otras dos les falta
+   * algo. Si alguna vez se prefiere, se cambia aquí y en ningún sitio más.
+   *
+   * CUANDO NO HAY NINGUNA. `ilustracionDeSobre` devuelve `null` en las ~41
+   * expansiones sin foto (promos, Trainer Gallery, Shiny Vault, kits,
+   * energías). Entonces esto devuelve `null` y `PackCard` sigue pintando su
+   * icono SVG de siempre: NO se deja un hueco.
+   *
+   * LOS DOS ESPACIOS DE IDS, otra vez y por el mismo motivo que en
+   * components/SetPackTile.tsx y en el precargador de abajo: el primer
+   * argumento va NORMALIZADO porque el manifiesto se indexa así, y el `remoto`
+   * lleva el id CRUDO porque es la clave de `set_pack_art`. Pasar el crudo
+   * donde va el normalizado es el fallo que este fichero ya pagó una vez.
+   * El `remoto` se pasa SÍ O SÍ: la función mira el manifiesto estático primero
+   * y sólo cae al remoto si no hay foto estática, así que a las ~130 que ya la
+   * tienen no les cuesta nada, y sin él las expansiones que trae el cron
+   * —Chaos Rising, Perfect Order— se quedarían sin foto teniéndola.
+   */
+  const fotosDeSobre = useMemo<(string | null)[]>(() => {
+    const id = currentSetObj?.id;
+    if (!id) return [null, null, null];
+    const variantes = currentSetObj?.variantesSobre;
+    const remoto = variantes ? { setId: id, variantes } : null;
+    const normalizado = normalizarId(id);
+
+    /* Leer `navigator` en pleno render es seguro AQUÍ y sólo aquí: por encima
+       está el `if (!id)`, y `selectedSet` arranca en `null`, así que en el
+       servidor y en la hidratación esto ya ha salido por la puerta de arriba.
+       Cuando se llega a esta línea el jugador ya ha tocado una expansión y no
+       queda ningún render que emparejar. */
+    const ahorrandoDatos = (navigator as unknown as {
+      connection?: { saveData?: boolean };
+    }).connection?.saveData === true;
+    if (ahorrandoDatos) {
+      const unica = ilustracionDeSobre(normalizado, 0, remoto);
+      return [unica, unica, unica];
+    }
+
+    const repartidas: string[] = [];
+    return [0, 1, 2].map(() => {
+      let elegida: string | null = null;
+      // El techo es 8 por lo dicho arriba: es exactamente lo que precarga el
+      // efecto de abajo, y el reparto nunca ha necesitado pasar de 5.
+      for (let semilla = 0; semilla < 8; semilla++) {
+        const url = ilustracionDeSobre(normalizado, semilla, remoto);
+        // Sin foto no hay nada que repartir: esta expansión va con icono.
+        if (!url) return null;
+        // La primera que salga vale de respaldo para cuando la expansión no
+        // tenga variantes suficientes y haya que repetir.
+        if (elegida === null) elegida = url;
+        if (!repartidas.includes(url)) {
+          elegida = url;
+          break;
+        }
+      }
+      if (elegida) repartidas.push(elegida);
+      return elegida;
+    });
+  }, [currentSetObj?.id, currentSetObj?.variantesSobre]);
 
   /* ==================================================================== *
    * LA ILUSTRACIÓN DEL SOBRE SE PIDE EN CUANTO SE ELIGE LA EXPANSIÓN
@@ -1822,7 +1954,7 @@ export default function Home() {
               contesta `getSetsFromDB` no había absolutamente nada — la misma
               portada vacía que se vino a arreglar, sólo que unos segundos
               antes. Un esqueleto con la FORMA de lo que va a llegar (la fila de
-              serie y su rejilla 3:4) ocupa ese hueco sin pedir un byte: es CSS
+              serie y su rejilla 4:3) ocupa ese hueco sin pedir un byte: es CSS
               constante, ni una imagen. El razonamiento largo de por qué un
               esqueleto y no un círculo girando está en components/Loader.tsx,
               que usa la misma clase.
@@ -1837,9 +1969,15 @@ export default function Home() {
                 <div className="skeleton h-[52px] w-full rounded-2xl md:h-[60px]" />
                 <div className="grid grid-cols-2 gap-2.5 md:gap-4 min-[880px]:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                   {/* Diez es lo que llena una pantalla de escritorio (dos filas
-                      de cinco) sin desbordar la de un móvil (cinco de dos). */}
+                      de cinco) sin desbordar la de un móvil (cinco de dos).
+                      LA PROPORCIÓN VA ATADA A LA DE components/SetPackTile.tsx
+                      y hay que moverla con ella: si el hueco de carga es 3/4 y
+                      la tesela que llega es 4/3, la portada entera pega un
+                      salto de 97px por fila justo en el fotograma en el que
+                      aparecen las expansiones. Un esqueleto que no mide lo que
+                      va a ocupar el contenido es peor que no poner ninguno. */}
                   {Array.from({ length: 10 }, (_, i) => (
-                    <div key={i} className="skeleton aspect-[3/4] w-full rounded-2xl md:rounded-3xl" />
+                    <div key={i} className="skeleton aspect-[4/3] w-full rounded-2xl md:rounded-3xl" />
                   ))}
                 </div>
                 <div className="skeleton h-[52px] w-full rounded-2xl md:h-[60px]" />
@@ -1872,10 +2010,10 @@ export default function Home() {
                   guardarSeriesAbiertas(siguiente, seriesName);
                 }}
                 /* `press-flat` y no `press`. Que quede claro lo que NO es este
-                   cambio: la rejilla de fotografías no cuelga de este botón —son
+                   cambio: la rejilla de teselas no cuelga de este botón —son
                    HERMANOS, los dos hijos del mismo motion.div de arriba—, así
                    que el `transform: scale(.97)` de `press` nunca fue un ancestro
-                   de ninguna foto y quitarlo no desborra nada. El motivo es más
+                   de ninguna imagen y quitarlo no desborra nada. El motivo es más
                    simple: esta fila mide el ancho entero (1 216px en escritorio)
                    y un 3% de escala en una barra tan larga se lee como un
                    bandazo, no como un botón que se hunde. `press-flat` baja 2px
@@ -1933,9 +2071,11 @@ export default function Home() {
                         961px, no los 1040 que decía este comentario, y con cinco
                         columnas la tesela sale de 179px, no de 195. Con cuatro
                         salían 228px.
-                        Ojo: cada tesela es 3:4, así que una columna de más
-                        también acorta el alto de la rejilla; el número de fotos
-                        que se descargan es el mismo. */}
+                        Ojo: cada tesela es 4:3 —apaisada desde que la
+                        fotografía del sobre se fue al selector de tipo de
+                        sobre—, así que una columna de más también acorta el
+                        alto de la rejilla; el número de imágenes que se
+                        descargan es el mismo. */}
                     <div className="grid grid-cols-2 gap-2.5 md:gap-4 min-[880px]:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 pt-3">
 
                       {sets.map((set) => (
@@ -1958,8 +2098,19 @@ export default function Home() {
       {/* VIEW 2: PACK SHOP */}
       {selectedSet && !isPackOpen && !currentPack.length && (
         <motion.div
-          initial={{ opacity: 0, scale: 0.98 }}
-          animate={{ opacity: 1, scale: 1 }}
+          /* LA ENTRADA ES OPACIDAD Y TRASLACIÓN, NO ESCALA, y esto dejó de ser
+             cosmético cuando las tarjetas de abajo pasaron a llevar la
+             fotografía del sobre. Era `scale: 0.98 → 1` sobre este div, o sea
+             sobre un ANCESTRO de las tres fotos: durante el medio segundo de
+             montaje WebKit rasteriza la foto a 0,98 y la vuelve a rasterizar al
+             acabar, y ese medio segundo es exactamente el fotograma en el que
+             se está mirando la pantalla. Framer deja `transform: none` al
+             terminar, así que el defecto era transitorio y no permanente —por
+             eso se venía tolerando—, pero un desplazamiento de 8px hace la
+             misma entrada sin tocar la escala a la que se rasteriza nada.
+             La regla, medida, está en components/PokemonCard.tsx. */
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
           /* max-w-6xl y no 5xl. Los tres sobres de la tienda se quedaban en
              1024px mientras <main> ofrecía 1216: medido en una ventana de
@@ -2019,6 +2170,9 @@ export default function Home() {
                 description={<>Garantiza una carta<br />que aún no posees.</>}
                 price={PACK_PRICES.SPECIAL}
                 odds={oddsPorTipo.SPECIAL}
+                /* Aquí sólo hay UNA tarjeta, así que se lleva la primera del
+                   reparto y no hay variantes que distribuir. */
+                foto={fotosDeSobre[0]}
                 icon={
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
                     <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
@@ -2035,6 +2189,7 @@ export default function Home() {
                   description={<>{cartasPorTipo.STANDARD} cartas.<br />La opción clásica.</>}
                   price={PACK_PRICES.STANDARD}
                   odds={oddsPorTipo.STANDARD}
+                  foto={fotosDeSobre[0]}
                   icon={
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
                       <rect width="12" height="16" x="2" y="6" rx="2" />
@@ -2052,6 +2207,7 @@ export default function Home() {
                   description={<>Sin cartas comunes.<br />{rarasPremium} Raras aseguradas.</>}
                   price={PACK_PRICES.PREMIUM}
                   odds={oddsPorTipo.PREMIUM}
+                  foto={fotosDeSobre[1]}
                   icon={
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
                       <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
@@ -2068,6 +2224,7 @@ export default function Home() {
                   description={<>1 carta nueva<br />garantizada.</>}
                   price={PACK_PRICES.GOLDEN}
                   odds={oddsPorTipo.GOLDEN}
+                  foto={fotosDeSobre[2]}
                   icon={
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
                       <path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14" />
@@ -2804,7 +2961,21 @@ interface PackCardProps {
   title: string;
   description: React.ReactNode;
   price: number;
+  /**
+   * El SVG genérico de este tipo de sobre. Sigue siendo obligatorio: es lo que
+   * se pinta en las ~41 expansiones que no tienen fotografía (promos, Trainer
+   * Gallery, kits, energías), donde `foto` llega en `null`. Nunca se deja el
+   * hueco vacío.
+   */
   icon: React.ReactNode;
+  /**
+   * La fotografía REAL del sobre de esta expansión, ya repartida por
+   * `fotosDeSobre` para que cada tipo de sobre enseñe una variante distinta.
+   * `null` cuando la expansión no tiene ninguna: entonces manda `icon`. Y
+   * también manda `icon` si la foto llega pero NO carga —503 de la ruta de
+   * Postgres, PWA sin red—, que es lo que vigila `fotoRota` ahí abajo.
+   */
+  foto?: string | null;
   onClick: () => void;
   onMulti?: () => void;
   multiCount?: number;
@@ -2813,7 +2984,7 @@ interface PackCardProps {
   disabled?: boolean;
 }
 
-function PackCard({ accent, badge, title, description, price, icon, onClick, onMulti, multiCount = 10, odds, disabled = false }: PackCardProps) {
+function PackCard({ accent, badge, title, description, price, icon, foto, onClick, onMulti, multiCount = 10, odds, disabled = false }: PackCardProps) {
   const accents: Record<string, { iconColor: string; btn: string; badgeBg: string; glow: string }> = {
     white:  { iconColor: "ink-soft",        btn: "btn-ghost",                                  badgeBg: "chip ink-soft",                       glow: "rgba(148,163,184,0.18)" },
     purple: { iconColor: "text-purple-400", btn: "bg-purple-600 hover:bg-purple-500 text-white", badgeBg: "bg-purple-500/15 text-purple-300 border border-purple-500/20", glow: "rgba(168,85,247,0.22)" },
@@ -2822,21 +2993,120 @@ function PackCard({ accent, badge, title, description, price, icon, onClick, onM
   };
   const a = accents[accent];
 
+  /* SE GUARDA LA URL QUE FALLÓ Y NO UN BOOLEANO, por el mismo motivo por el que
+     lo hace components/BoosterPack.tsx con la que sí cargó: con un `true`
+     heredado, cambiar de expansión daría por rota una foto nueva que nadie ha
+     intentado pedir todavía, y esa expansión se quedaría con el icono para
+     siempre. Comparando URLs, el reintento es automático y sin efecto. */
+  const [fotoRota, setFotoRota] = useState<string | null>(null);
+  const fotoUsable = foto && foto !== fotoRota ? foto : null;
+
   return (
     <motion.div
       whileHover={{ y: -6 }}
-      whileTap={{ scale: 0.98 }}
+      /* LOS DOS GESTOS SON TRASLACIONES. El de antes era `whileTap: scale 0.98`
+         sobre la tarjeta entera, o sea un transform de escala en un ANCESTRO de
+         la fotografía del sobre: exactamente lo que la rasteriza a escala fija y
+         la deja borrosa en iOS. Es el mismo cambio que ya se hizo en
+         components/SetPackTile.tsx, y aquí es más grave porque la foto ocupa
+         180px y no 44. Un hundimiento de 2px acusa recibo igual. */
+      whileTap={{ y: 2 }}
       transition={{ duration: 0.25 }}
       className="surface surface-hover rounded-3xl p-5 md:p-8 flex flex-col items-center group relative overflow-hidden text-left w-[76vw] max-w-[300px] shrink-0 snap-center md:w-auto md:max-w-none md:shrink"
     >
+      {/* EL RESPLANDOR ES HERMANO DE LA FOTO, NO ANCESTRO, y por eso su
+          `blur-3xl` puede quedarse. `filter` promociona a capa y crea contexto
+          de apilamiento para sus DESCENDIENTES, y este div no tiene ninguno:
+          es un hijo directo de la tarjeta, igual que el hueco de la foto. Queda
+          justo detrás de ella (`-top-16 w-40 h-40`), pero la foto va con
+          `relative z-10` y pasa por encima. Comprobado a propósito antes de
+          meter la fotografía: si algún día molesta visualmente se le baja la
+          `opacity`, no se le toca el `filter`. */}
       <div className="absolute -top-16 left-1/2 -translate-x-1/2 w-40 h-40 rounded-full blur-3xl pointer-events-none opacity-60 group-hover:opacity-100 transition-opacity" style={{ background: `radial-gradient(circle, ${a.glow}, transparent 70%)` }} />
       {badge && (
         <div className={`absolute top-0 left-0 right-0 ${a.badgeBg} text-[10px] uppercase font-semibold text-center py-1.5 tracking-[0.25em]`}>
           {badge}
         </div>
       )}
-      <div className={`${a.iconColor} mb-3 md:mb-8 ${badge ? "mt-6" : ""} group-hover:scale-110 transition-transform duration-500 relative z-10`}>
-        {icon}
+      {/* EL HUECO DEL SOBRE.
+          AQUÍ ESTABA LA PEOR INFRACCIÓN DE LA PANTALLA: este div llevaba
+          `group-hover:scale-110`, o sea `transform: scale(1.1)` sobre el PADRE
+          DIRECTO de lo que ahora es una fotografía. Sobre un SVG de 48px daba
+          igual —un vector se redibuja—, pero sobre un bitmap de 180px WebKit lo
+          promociona a capa y lo rasteriza a escala fija: la foto se ve borrosa
+          en el iPhone en cuanto el puntero pasa por encima, y en iOS el hover
+          se queda pegado después del toque. El realce lo hace ahora un
+          `translate` de 4px, que está permitido porque no cambia la escala a la
+          que se rasteriza nada; y la tarjeta entera ya sube 6px, así que el
+          conjunto se lee como el sobre despegándose del estante. */}
+      <div className={`${a.iconColor} mb-3 md:mb-8 ${badge ? "mt-6" : ""} group-hover:-translate-y-1 transition-transform duration-500 relative z-10`}>
+        {fotoUsable ? (
+          /* EL SOBRE ENTERO Y SIN RECORTAR, y las dos cosas a propósito.
+             ALTURA FIJA Y ANCHO LIBRE (`h-[180px] w-auto object-contain`): las
+             367 fotos del manifiesto tienen la misma proporción medida —entre
+             0,546 y 0,548 de ancho/alto—, así que a 180px de alto salen a ~98px
+             de ancho; las que trae el cron están acotadas por RATIO_MIN/MAX
+             (services/sobresEmparejar.ts) entre 0,50 y 0,606 y con esto salen
+             algo más anchas o estrechas, pero NUNCA cortadas. Recortar sería
+             peor que en la portada: lo que distingue a las tres variantes de un
+             mismo set es la ilustración del centro, que es justo lo que un
+             `object-cover` en caja vertical se come.
+             POR QUÉ 180 Y NO MÁS. La tarjeta mide 285px a 375px de ancho y ya
+             lleva título, descripción, un desplegable de probabilidades y dos
+             botones: pasa de 358px de alto a 490px con distintivo. Encima de
+             ella hay 156px de cabecera (Volver + logo) y abajo ~80px de barra,
+             o sea que el presupuesto sin scroll en un iPhone 375x812 son ~576px
+             y esto cabe con 86px de margen. Con 220px ya no cabrían los dos
+             botones de compra sin desplazar, y esos botones son el motivo de la
+             pantalla.
+             NITIDEZ, MEDIDA SOBRE LOS 367 FICHEROS: el ancho mediano es 437px y
+             el mínimo 144px (sm5), así que a 98px mostrados el sobremuestreo
+             mediano es 4,5x y sólo 56 de 367 quedan por debajo de los 295px que
+             pide un DPR de 3. Es MEJOR que la portada de antes, que las pintaba
+             a 166px de ancho.
+             `alt=""`: es decorativa. El nombre del tipo de sobre está en el
+             <h3> de abajo y en el botón de compra; repetirlo aquí lo diría dos
+             veces al lector de pantalla.
+             Sin `loading="lazy"`, y no por descuido: lo dice ya el comentario de
+             `guardarSeriesAbiertas` en este mismo fichero —el margen de precarga
+             del navegador es mayor que lo que se está difiriendo—. El carrusel
+             entero mide ~950px de ancho de desplazamiento y ese margen anda por
+             encima del millar, así que `lazy` aquí pediría las tres igual y sólo
+             añadiría un salto de ancho al entrar. Lo que sí recorta de verdad el
+             gasto es el reparto de `fotosDeSobre` con ahorro de datos. */
+          <img
+            src={fotoUsable}
+            alt=""
+            aria-hidden="true"
+            decoding="async"
+            /* EL RESPALDO DEL RESPALDO, y cierra un agujero que abrió este
+               encargo. `foto === null` ya manda al icono, pero eso sólo cubre
+               "esta expansión no tiene foto"; NO cubre que la petición falle.
+               Y falla de verdad en dos sitios medidos: la ruta
+               app/api/arte-sobre/[setId]/[variante] devuelve 503 a propósito
+               cuando Postgres no contesta o falta la migración, y public/sw.js
+               declina cachear /api entero, así que las expansiones que trae el
+               cron —Chaos Rising, Perfect Order— no tienen foto sin red.
+               Sin esto quedaban tres huecos de 180px, que es justo lo que la
+               cabecera de esa ruta promete por escrito que no puede pasar
+               ("no hay ningún camino por el que una respuesta de aquí deje un
+               hueco en la pantalla"): esa promesa se apoyaba en que el único
+               consumidor era BoosterPack, y ahora hay dos.
+               POR QUÉ AQUÍ SÍ VALE UN <img> pese a la doctrina de
+               components/BoosterPack.tsx ("las imágenes del sobre van como
+               background y NUNCA como <img>"): allí el motivo es que un <img>
+               roto pinta el icono de imagen partida encima del sobre, y un
+               `background` roto no pinta nada. Pero "no pintar nada" aquí es el
+               hueco, porque detrás de esta foto no hay sobre dibujado. Con
+               `onError` se gana lo que un background no puede dar: recuperar el
+               SVG. La doctrina se respeta en el fondo —nunca se enseña una
+               imagen partida— por el medio contrario. */
+            onError={() => setFotoRota(fotoUsable)}
+            className="h-[180px] w-auto object-contain md:h-[210px]"
+          />
+        ) : (
+          icon
+        )}
       </div>
       <h3 className="text-lg md:text-xl font-bold mb-1.5 md:mb-3 relative z-10">{title}</h3>
       <p className="text-[11px] md:text-xs ink-soft text-center mb-3 md:mb-4 leading-relaxed relative z-10">{description}</p>

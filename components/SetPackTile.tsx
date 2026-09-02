@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { useMemo } from "react";
-import { arteDeSobre, ilustracionDeSobre, normalizarId } from "../utils/sobreArte";
+import { arteDeSobre } from "../utils/sobreArte";
 import type { Expansion } from "../utils/tipos";
 
 /* =====================================================================
@@ -10,67 +10,65 @@ import type { Expansion } from "../utils/tipos";
  * =====================================================================
  *
  * POR QUÉ EXISTE ESTE FICHERO. La rejilla de expansiones es la pantalla que
- * más se mira de la aplicación y hasta ahora pintaba, para las 171 expansiones,
- * el MISMO rectángulo gris con el logo del set centrado encima. Un catálogo de
- * sobres que no enseña ni un sobre. Y no era por falta de material: el
- * repositorio ya tenía 131 fotografías reales de sobre en public/sobres y una
- * identidad visual completa por expansión en utils/sobreArte.ts, y las dos
- * cosas se usaban sólo dentro de components/BoosterPack.tsx, o sea a dos
- * toques de distancia.
+ * más se mira de la aplicación y hasta hace poco pintaba, para las 171
+ * expansiones, el MISMO rectángulo gris con el logo del set centrado encima.
+ * Un catálogo que no distingue un set de otro. El repositorio ya tenía una
+ * identidad visual completa por expansión en utils/sobreArte.ts —dos colores,
+ * un ángulo y el perfil de impresión de su era— y se usaba sólo dentro de
+ * components/BoosterPack.tsx. Eso es lo que pinta esta tesela.
  *
- * LO QUE SE PINTA, EN ORDEN DE PREFERENCIA
+ * LA FOTOGRAFÍA DEL SOBRE SE FUE DE AQUÍ, Y ES UNA DECISIÓN DEL DUEÑO, NO UN
+ * DESCUIDO. Durante una tanda esta tesela pintó la foto real del sobre a
+ * sangre. Ya no: las fotos viven ahora en el SELECTOR DE TIPO DE SOBRE
+ * (app/page.tsx, la pantalla que sale al elegir una expansión), donde cada
+ * tarjeta —Estándar, Premium, Leyenda— enseña una VARIANTE DISTINTA del sobre
+ * real de esa expansión. Es el sitio donde la foto informa de algo: allí se
+ * está eligiendo QUÉ SOBRE COMPRAR, y una foto de sobre responde exactamente a
+ * esa pregunta. Aquí sólo se está eligiendo EXPANSIÓN, y para eso valen el
+ * color de la familia, el símbolo y el nombre.
  *
- *  1. LA FOTO DEL SOBRE, a sangre, cuando la expansión tiene una. Son 130 de
- *     171 en producción y 29 de las 38 que sirve el respaldo local.
- *  2. EL SOBRE DIBUJADO cuando no la hay. Las 41 restantes son promos,
- *     Trainer Gallery, Shiny Vault, kits y energías: productos que nunca se
- *     vendieron en sobre, así que no hay foto que buscar y la lista no va a
- *     bajar mucho de 41. En vez del gris común se usa el color y la textura de
- *     era que `arteDeSobre` ya calcula para el sobre de verdad, de modo que la
- *     rejilla no queda a dos velocidades: una tesela sin foto sigue siendo la
- *     tesela de ESA expansión y no un hueco.
+ * Si alguien vuelve a meter la foto aquí, que sea sabiendo lo que cuesta:
+ * son 14 peticiones y 1 340,9 KB en la serie que la portada abre por defecto
+ * (respaldo local; 3 fotos y 259 KB en producción, donde la serie reciente es
+ * Mega Evolution y tiene tres expansiones), contra los 150,4 KB que cuestan
+ * ahora los 16 símbolos. Un 89% menos.
  *
- * EL PESO, DICHO ENTERO Y SIN TRAMPA. Son dos cuentas distintas y las dos
- * hacen falta:
+ * LO QUE SE PINTA, EN ORDEN
  *
- *  · POR SERIE DESPLEGADA el peso BAJA. Medido con curl sobre las 38
- *    expansiones del respaldo local: los logos remotos que se pintaban antes
- *    suman 5 269,4 KB y lo que se pinta ahora (29 fotos locales + 9 símbolos)
- *    suma 2 760,4 KB, un 47,6% menos. Los logos de pokemontcg.io son PNG sin
- *    optimizar —`sve` pesa 427,7 KB él solo, `swsh12` y `swsh12tg` 385,6 KB
- *    cada uno— y cada subset tiene su URL propia aunque devuelva bytes
- *    idénticos, así que la caché HTTP no comparte ni uno.
+ *  1. EL SOBRE DIBUJADO, siempre y en las 171: el degradado de la familia y el
+ *     rayado de impresión de su era, que `arteDeSobre` calcula para el sobre de
+ *     verdad. Cuesta CERO PETICIONES —son dos `background`— y es lo que hace
+ *     que la rejilla no sean 171 rectángulos iguales.
+ *  2. EL SÍMBOLO del set encima (`images.symbol`), sobre una chapa clara.
  *
- *  · POR ABRIR LA APLICACIÓN el peso SUBE, y ese número no puede faltar aquí.
- *    Antes la portada arrancaba con todas las series plegadas, o sea CERO
- *    imágenes de expansión; ahora arranca con una serie abierta (ver la
- *    siembra en app/page.tsx) y eso son 14 fotos y 1 340,9 KB medidos en el
- *    respaldo local, 3 fotos y 259 KB en producción, donde la serie más
- *    reciente es Mega Evolution y tiene tres expansiones. El 47,6% de arriba
- *    es real para el mismo gesto, pero nadie hacía ese gesto: por eso la
- *    portada recuerda como mucho UNA serie desplegada, y por eso importa que
- *    lo de aquí abajo no pida ni un byte de más.
+ * EL SÍMBOLO Y NO EL LOGO, y esto sigue siendo una cuenta, no un gusto. El
+ * símbolo pesa 9,4 KB de media contra 168,9 KB del logo (medido sobre las
+ * mismas expansiones), o sea 1/18, y es además la única imagen que la capa de
+ * idioma deja siempre apuntando a pokemontcg.io —el logo se reescribe a
+ * assets.tcgdex.net en español—. Y hay un motivo de forma además del peso: los
+ * logos son APAISADOS y de proporción salvaje (medidos: de 1,32 en sv3pt5 a
+ * 9,48 en bw1), así que no hay un hueco que les venga bien a todos. El símbolo
+ * es cuadrado en las 171.
  *
- * NO SE PIDE EL LOGO ADEMÁS DE LA FOTO. Es la tentación evidente —"la foto de
- * fondo y el logo delante"— y sería 7 944,9 KB, medio mega más que las dos
- * cosas por separado.
+ * LA PROPORCIÓN ES 4/3, O SEA APAISADA, Y CAMBIÓ AL IRSE LA FOTO. Era 3/4
+ * —vertical— porque dentro había una fotografía vertical de sobre (1:1,83).
+ * Sin ella, a 375px la tesela medía 166×221 y su contenido real son un sello de
+ * 44px y una línea de nombre: quedaban ~147px de degradado vacío. Con 4/3 la
+ * tesela mide 166×124,5 y la rejilla de la serie sembrada pasa de 1 852px a
+ * 1 078px de alto, un 42% menos de scroll para ver las mismas 16 expansiones.
+ * Lo que queda dentro —un gráfico cuadrado y una línea de texto— no pide alto.
  *
- * Cuando no hay foto se usa el SÍMBOLO del set (`images.symbol`: 9,4 KB de
- * media en esas nueve expansiones, contra los 168,9 KB que pesa de media el
- * logo de esas mismas nueve), que además es la única imagen que la capa de
- * idioma deja siempre apuntando a pokemontcg.io.
- *
- * NADA DE `filter`, `drop-shadow` NI `transform: scale`, y aquí importa más
- * que en ningún otro sitio. La regla está medida y documentada en
- * components/PokemonCard.tsx y en la cabecera de components/BoosterPack.tsx:
- * WebKit promociona a capa cualquier elemento con esas propiedades y lo
- * rasteriza a una escala fija, así que la ilustración sale BORROSA en el
- * iPhone. La tesela de antes tenía DOS infracciones sobre el logo —un
- * `group-hover:scale-110` y un `drop-shadow-lg`— más un `whileTap` de escala
- * en la tarjeta entera, o sea en un ANCESTRO. Sobre un logo de 58px eso se
- * venía tolerando; sobre una fotografía a sangre no. Aquí el hover levanta con
+ * NADA DE `filter`, `drop-shadow` NI `transform: scale`. La regla está medida y
+ * documentada en components/PokemonCard.tsx y en la cabecera de
+ * components/BoosterPack.tsx: WebKit promociona a capa cualquier elemento con
+ * esas propiedades y lo rasteriza a una escala fija, así que lo que haya debajo
+ * sale BORROSO en el iPhone. La tesela de antes tenía DOS infracciones sobre el
+ * logo —un `group-hover:scale-110` y un `drop-shadow-lg`— más un `whileTap` de
+ * escala en la tarjeta entera, o sea en un ANCESTRO. Aquí el hover levanta con
  * `translate`, el toque hunde con `translate` y el resto es `background`,
- * `box-shadow` y `opacity`.
+ * `box-shadow` y `opacity`. NO SE REPONEN aunque ahora dentro sólo haya un
+ * símbolo de 44px: el símbolo también se rasteriza, y la regla no se relaja por
+ * pantallas.
  * ===================================================================== */
 
 interface SetPackTileProps {
@@ -85,20 +83,6 @@ interface SetPackTileProps {
   poseidas: number;
   onSelect: (id: string) => void;
 }
-
-/**
- * La variante de foto que le toca a la tesela es SIEMPRE la misma.
- *
- * `ilustracionDeSobre` sortea entre las variantes de la expansión con la
- * semilla que se le pase, y en la apertura eso es lo que hace que dos sobres
- * seguidos del mismo set salgan distintos. Aquí sería un defecto: la tesela se
- * re-renderiza cada vez que cambia la colección o se pliega una serie, y con
- * una semilla viva cambiaría de fotografía delante de los ojos de quien está
- * mirando la rejilla. Con una constante, la expansión tiene una cara y una
- * sola, y además el navegador reutiliza la imagen ya cacheada al replegar y
- * volver a desplegar la serie.
- */
-const SEMILLA_TESELA = 0;
 
 export default function SetPackTile({ set, poseidas, onSelect }: SetPackTileProps) {
   /*
@@ -119,30 +103,6 @@ export default function SetPackTile({ set, poseidas, onSelect }: SetPackTileProp
   );
 
   /*
-   * LA FOTO, Y SÓLO DEL MANIFIESTO ESTÁTICO.
-   *
-   * `ilustracionDeSobre` acepta un tercer argumento `remoto` que resuelve
-   * contra `set_pack_art` (las fotos que baja el cron para las expansiones
-   * salidas después del último despliegue) y devuelve una URL de
-   * /api/arte-sobre/…, que es UNA CONSULTA A POSTGRES POR IMAGEN. En la
-   * apertura eso es una consulta; aquí serían hasta 38 en la misma pantalla,
-   * sólo por desplegar una serie. Así que aquí no se pasa: el manifiesto viaja
-   * en el bundle (4,6 KB) y contesta en el primer render sin red.
-   *
-   * La consecuencia hay que decirla: una expansión recién ingerida por el cron
-   * enseña en la portada el sobre dibujado y al abrirla enseña la foto. Es el
-   * intercambio correcto —una expansión, dos días, contra 38 consultas cada vez
-   * que alguien despliega una serie— y se corrige solo en el siguiente
-   * despliegue, cuando la foto entra en el manifiesto.
-   *
-   * EL ID VA NORMALIZADO. El manifiesto se indexa por el id normalizado
-   * ("sv3pt5" y "sv03.5" son la misma expansión y las dos caen en "sv3.5"), y
-   * pasarlo en crudo es el fallo que ya se pagó una vez en app/page.tsx: ocho
-   * expansiones con foto se quedaban sin ella en silencio.
-   */
-  const foto = useMemo(() => ilustracionDeSobre(normalizarId(set.id), SEMILLA_TESELA), [set.id]);
-
-  /*
    * El progreso, con el mismo denominador que el álbum (app/collection):
    * `cardsCount` —las cartas que EXISTEN en la base— y `total` sólo de
    * respaldo, porque el declarado por la API viene inflado y hacía inalcanzable
@@ -155,118 +115,88 @@ export default function SetPackTile({ set, poseidas, onSelect }: SetPackTileProp
   return (
     <motion.button
       /* Los dos gestos son TRANSLACIONES. El de antes era `whileTap: scale`
-         sobre la tarjeta entera, o sea un transform de escala en un ancestro
-         de la ilustración: exactamente lo que deja la foto borrosa en iOS. Un
-         hundimiento de 2px da el mismo acuse de recibo y no cambia la escala a
-         la que se rasteriza nada. */
+         sobre la tarjeta entera, o sea un transform de escala en un ancestro de
+         todo lo que hay dentro: exactamente lo que rasteriza a escala fija y
+         deja borroso en iOS lo que sea que se esté pintando ahí —fue la foto y
+         hoy es el símbolo—. Un hundimiento de 2px da el mismo acuse de recibo
+         sin cambiar la escala a la que se rasteriza nada. NO SE REPONE. */
       whileHover={{ y: -4 }}
       whileTap={{ y: 2 }}
       transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
       onClick={() => onSelect(set.id)}
       title={set.name}
-      className="group surface surface-hover relative flex aspect-[3/4] w-full flex-col justify-end overflow-hidden rounded-2xl md:rounded-3xl"
+      /* APAISADA (4/3), y el porqué está arriba en la cabecera: dentro ya no
+         hay una fotografía vertical de sobre, sino un símbolo cuadrado y una
+         línea de nombre. Con 3/4 sobraban ~147px de degradado vacío por tesela
+         a 375px y la rejilla de la serie sembrada medía 1 852px; con 4/3 mide
+         1 078px. */
+      className="group surface surface-hover relative flex aspect-[4/3] w-full flex-col justify-end overflow-hidden rounded-2xl md:rounded-3xl"
       /* Las custom properties de la expansión heredan a las capas de fondo.
          No son propiedades de caja: no pueden pisar nada del layout. */
       style={arte.vars}
     >
-      {/* EL SOBRE DIBUJADO VA SIEMPRE, Y DEBAJO DE TODO.
-          Antes vivía en la rama `else` —sólo se pintaba en las expansiones sin
-          foto— y eso dejaba a las 130 CON foto sin nada debajo: mientras la
-          fotografía viajaba, la tesela era el panel de `.surface` (crema en
-          claro, casi negro en oscuro) con la banda del velo abajo y el nombre
-          encima. Se ve de sobra en la primera captura de cada carga: una
-          rejilla de rectángulos vacíos con el nombre debajo. Y no era sólo el
-          rato de la descarga: era también lo que quedaba PARA SIEMPRE si la
-          foto daba 404 o si el jugador entraba sin cobertura antes de que el
-          service worker tuviera el fichero. O sea el rectángulo gris que este
-          fichero venía a matar, otra vez.
-          Ponerlo siempre cuesta CERO BYTES —son dos `background` constantes,
-          ninguna petición— y lo que se ve mientras la foto llega ya no es un
-          hueco: es el sobre de ESA expansión, con sus colores y el rayado de
-          su era. */}
+      {/* EL SOBRE DIBUJADO, QUE AHORA ES EL FONDO Y NO UN RESPALDO.
+          Cuando aquí había una fotografía, estas dos capas eran lo que se veía
+          mientras viajaba —y lo que quedaba PARA SIEMPRE si daba 404 o si el
+          jugador entraba sin cobertura antes de que el service worker tuviera
+          el fichero—. Ahora son el único fondo, y siguen costando CERO
+          PETICIONES: son dos `background` constantes con las custom properties
+          de la expansión. Es lo que impide que la rejilla vuelva a ser 171
+          rectángulos idénticos por haber quitado la foto. */}
       <div className="tesela-fondo pointer-events-none absolute inset-0" />
       <div className="tesela-rayado pointer-events-none absolute inset-0" />
 
-      {foto ? (
-        /* A SANGRE Y ANCLADA ARRIBA. La foto es 1:1,83 (más estrecha y alta
-           que la tesela), así que `object-cover` recorta por abajo y
-           `object-top` conserva la mitad que identifica el sobre: el logo de
-           la expansión y el arranque de la ilustración. Anclarla al centro
-           dejaba fuera el logo en los sobres altos.
-           `alt=""` porque es decorativa: el nombre accesible del botón sale
-           del texto de abajo, y repetirlo aquí lo diría dos veces.
-           OPACA DEL TODO, y esto cambió con lo de arriba: antes iba al 94% y
-           dejaba pasar un 6% de lo que hubiera detrás, que era `.surface`, o
-           sea que la MISMA fotografía salía con un tinte distinto en el modo
-           claro y en el oscuro. Ahora detrás hay un degradado de colores y el
-           tinte sería peor. El realce del puntero no se pierde: lo hace
-           `.tesela-lustre`, que es una capa aparte. */
-        <img
-          src={foto}
-          alt=""
-          aria-hidden="true"
-          /* `lazy` + prioridad baja: no cuesta nada y en la serie más larga
-             (Espada y Escudo, 25 expansiones) la rejilla mide más de 3 000px
-             en un móvil, así que la última fila sí queda fuera del margen de
-             precarga. MEDIDO, para que nadie le atribuya más de lo que hace:
-             con la serie sembrada (16 expansiones, rejilla de 1 858px a
-             375px de ancho) el navegador pide las 14 fotos con scrollY 0, o
-             sea que ahí NO difiere nada — el margen de precarga de Chrome es
-             mayor que la rejilla entera, y encima crece cuando la conexión
-             empeora. Diferir de verdad exigiría IntersectionObserver propio o
-             `content-visibility`, y lo segundo es una propiedad de
-             contención sobre una fotografía: no se mete sin poder medirla en
-             un iPhone de verdad. */
-          loading="lazy"
-          decoding="async"
-          fetchPriority="low"
-          className="absolute inset-0 h-full w-full object-cover object-top"
-        />
-      ) : (
-        set.images?.symbol && (
-          /* EL SÍMBOLO, SOBRE UNA CHAPA CLARA.
-              El símbolo, no el logo: 9,4 KB contra 168,9 KB de media, y es la
-              única imagen que la capa de idioma no reescribe. Va centrado en
-              el tercio superior, donde la foto tendría el logo impreso.
-              La chapa no es adorno. Sin ella el símbolo se pintaba directo
-              sobre el degradado y NO SE VEÍA. Medidos con canvas píxel a
-              píxel, los símbolos de set son gris medio —sv3.5 rgb(106,105,
-              106), swsh3.5tg rgb(108,120,133), base1 rgb(144,116,103),
-              swshp rgb(89,89,89)— y el fondo de la familia Espada y Escudo en
-              ese punto es rgb(112,72,120). Los cinco daban entre 1,04:1 y
-              1,69:1, cuando un gráfico que porta significado necesita 3:1.
-              Sobre la chapa dan entre 3,82:1 y 6,21:1.
-              Y aquí el símbolo porta TODO el significado: las expansiones de
-              una familia comparten colores, ángulo y textura —las siete de
-              Espada y Escudo reciben el mismo #1f66b0/#c22a41 a 106deg, o sea
-              fondos idénticos píxel a píxel—, así que el símbolo y el nombre
-              son literalmente lo único que las distingue. El color no se puede
-              variar desde aquí sin tocar `arteDeSobre`, que no se toca.
-              Es `background` y `box-shadow`: nada que promocione capa. */
-          <span className="tesela-sello pointer-events-none absolute left-1/2 top-[30%] flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full md:h-14 md:w-14">
-            <img
-              src={set.images.symbol}
-              alt=""
-              aria-hidden="true"
-              loading="lazy"
-              decoding="async"
-              fetchPriority="low"
-              className="h-6 w-6 object-contain md:h-8 md:w-8"
-            />
-          </span>
-        )
+      {set.images?.symbol && (
+        /* EL SÍMBOLO, SOBRE UNA CHAPA CLARA.
+            El símbolo, no el logo: 9,4 KB contra 168,9 KB de media, y es la
+            única imagen que la capa de idioma no reescribe. Va centrado en
+            el tercio superior, que es donde el ojo lo busca teniendo el
+            nombre abajo.
+            La chapa no es adorno. Sin ella el símbolo se pintaba directo
+            sobre el degradado y NO SE VEÍA. Medidos con canvas píxel a
+            píxel, los símbolos de set son gris medio —sv3.5 rgb(106,105,
+            106), swsh3.5tg rgb(108,120,133), base1 rgb(144,116,103),
+            swshp rgb(89,89,89)— y el fondo de la familia Espada y Escudo en
+            ese punto es rgb(112,72,120). Los cinco daban entre 1,04:1 y
+            1,69:1, cuando un gráfico que porta significado necesita 3:1.
+            Sobre la chapa dan entre 3,82:1 y 6,21:1.
+            Y aquí el símbolo porta TODO el significado, más que nunca desde
+            que la foto se fue: las expansiones de una familia comparten
+            colores, ángulo y textura —las siete de Espada y Escudo reciben el
+            mismo #1f66b0/#c22a41 a 106deg, o sea fondos idénticos píxel a
+            píxel—, así que el símbolo y el nombre son literalmente lo único
+            que las distingue. El color no se puede variar desde aquí sin
+            tocar `arteDeSobre`, que no se toca.
+            Es `background` y `box-shadow`: nada que promocione capa.
+            A 4/3 el sello sigue cabiendo entero sobre el velo: a 375px la
+            tesela mide 124,5px de alto, el centro cae en 37,4 y el sello de
+            44px ocupa de 15,4 a 59,4, con el velo empezando en 62,3. */
+        <span className="tesela-sello pointer-events-none absolute left-1/2 top-[30%] flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full md:h-14 md:w-14">
+          <img
+            src={set.images.symbol}
+            alt=""
+            aria-hidden="true"
+            loading="lazy"
+            decoding="async"
+            fetchPriority="low"
+            className="h-6 w-6 object-contain md:h-8 md:w-8"
+          />
+        </span>
       )}
 
       {/* EL VELO, QUE ES LO QUE HACE QUE EL NOMBRE SE LEA.
-          Una foto de sobre es colorida y trae su propio texto impreso; el
-          nombre de la expansión encima, a pelo, se pierde contra los claros.
-          El velo es un degradado negro que sólo cubre la mitad inferior, así
-          que la ilustración se ve entera y el texto cae siempre sobre un fondo
-          oscuro conocido: blanco puro sobre rgba(6,5,3,.92) da 18,9:1 pase lo
-          que pase debajo, y en el punto más claro del degradado (68% de alto,
+          SE QUEDA AUNQUE LA FOTO SE HAYA IDO, y no por inercia: debajo sigue
+          habiendo un degradado de dos colores libres —`arteDeSobre` da amarillos
+          y cianes tan claros como cualquier fotografía— y el nombre va en blanco
+          fijo. Sin el velo, el contraste dependería de la familia de la
+          expansión, que es justo lo que no se puede dejar al azar.
+          Es un degradado negro que sólo cubre la mitad inferior, así que el
+          fondo de la expansión se ve entero y el texto cae siempre sobre un
+          fondo oscuro conocido: blanco puro sobre rgba(6,5,3,.92) da 18,9:1 pase
+          lo que pase debajo, y en el punto más claro del degradado (68% de alto,
           alfa .18) el texto ya no llega. Es `background`, no `backdrop-filter`:
-          lo segundo no existe en Chrome con el prefijo y además promociona la
-          capa de la foto. */}
+          lo segundo no existe en Chrome con el prefijo y además promocionaría la
+          capa de todo lo que tiene detrás. */}
       <div className="tesela-velo pointer-events-none absolute inset-x-0 bottom-0 h-1/2" />
 
       {/* Realce al pasar por encima: sólo opacidad sobre un degradado ya
@@ -301,9 +231,10 @@ export default function SetPackTile({ set, poseidas, onSelect }: SetPackTileProp
         </span>
       )}
 
-      {/* El nombre en blanco fijo y no con la tinta del tema: debajo hay una
-          fotografía, no la superficie de papel, así que el color que garantiza
-          contraste es el del velo, no el del modo claro/oscuro. */}
+      {/* El nombre en blanco fijo y no con la tinta del tema: debajo hay el
+          degradado de la expansión y el velo, no la superficie de papel, así
+          que el color que garantiza contraste es el del velo y no el del modo
+          claro/oscuro. */}
       <span className="relative z-10 w-full truncate px-2.5 pb-2.5 text-left text-[11px] font-semibold tracking-wide text-white md:px-3.5 md:pb-3 md:text-xs">
         {set.name}
       </span>
