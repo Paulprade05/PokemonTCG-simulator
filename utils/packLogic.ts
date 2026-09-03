@@ -66,7 +66,12 @@ const draw = (
     return { id: 'error', name: 'MissingNo', rarity: 'Common', images: { small: '', large: '' } } as Card;
   }
 
-  // 2. Filtro anti-repetición
+  // 2. Filtro anti-repetición — Y SU ÁMBITO, que el dueño preguntó expresamente:
+  //    currentPackIds nace DENTRO de cada open*Pack, así que sólo impide repetir
+  //    carta dentro del MISMO sobre. Entre los sobres de un ×10 sí se repite
+  //    (medido: en 200 tiradas de ×10, las 200 tuvieron alguna repetida entre
+  //    sobres, con picos de 5 copias de la misma carta). El tope natural queda
+  //    en una por sobre: máximo 10 copias en un ×10, que es lo pedido.
   const uniquePool = availableCards.filter(c => !currentPackIds.has(c.id));
   const finalPool = uniquePool.length > 0 ? uniquePool : availableCards;
 

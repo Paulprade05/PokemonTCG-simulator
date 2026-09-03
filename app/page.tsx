@@ -44,7 +44,6 @@ import { useImmersive } from "../components/AppShell";
 import PokemonCard from "../components/PokemonCard";
 import MazoCartas from "../components/MazoCartas";
 import BoosterPack, { semillaDeSobre, type FaseSobre } from "../components/BoosterPack";
-import SetPackTile from "../components/SetPackTile";
 import { formatNumber } from "../utils/format";
 import Portal from "../components/ui/Portal";
 import type { Carta, Expansion } from "../utils/tipos";
@@ -982,68 +981,6 @@ export default function Home() {
   }, [dbSets]);
 
   /**
-   * CUÁNTAS CARTAS DISTINTAS TIENE EL JUGADOR DE CADA EXPANSIÓN.
-   *
-   * Es el único dato que la tesela de la portada añade sobre lo que ya había, y
-   * es REAL en los dos modos: `userCollectionIds` se rellena con la colección
-   * del servidor cuando hay sesión y con la de localStorage cuando se juega de
-   * invitado, así que un invitado que lleve tres sobres abiertos ve su progreso
-   * igual que un jugador registrado. Nada que enseñe esta pantalla sale de una
-   * estimación.
-   *
-   * El corte por el ÚLTIMO guion y no por el primero: el id de una carta es
-   * `<setId>-<numero>` y hay expansiones cuyo id lleva guiones. Es el mismo
-   * cálculo que usa el álbum (app/collection/page.tsx), a propósito: dos sitios
-   * que cuentan lo mismo tienen que contarlo igual o el jugador ve dos cifras
-   * distintas del mismo hecho.
-   *
-   * Llega TARDE, y no es un problema: la sincronización de la colección es
-   * asíncrona, así que el primer pintado de la rejilla no lleva pastillas y
-   * aparecen solas al llegar. Como la pastilla sólo se dibuja cuando hay algo
-   * que contar, lo que se ve no es un "0/199" que cambia, es un hueco que se
-   * llena.
-   *
-   * ================= POR QUÉ SE DEDUPLICA AQUÍ =================
-   *
-   * `userCollectionIds` NO es una lista de cartas distintas: es una lista de
-   * PERTENENCIA, y trae repetidos a propósito. Nace deduplicada (getCollection
-   * y getFullCollection devuelven una fila por carta), pero al abrir un sobre
-   * se le CONCATENAN las cartas del sobre tal cual salen —repetidas incluidas—
-   * en dos sitios (el ×N de `buyMultiple` y el cierre de `finishPack`), y a sus
-   * dos consumidores de siempre eso les da igual: `openGoldenPack` sólo
-   * pregunta si un id está, y `prePackIds` sólo marca qué era nuevo.
-   *
-   * Contar sobre esa lista sin más era un error que se veía enseguida: un
-   * invitado con 52/252 de Chispas Centelleantes compraba «Abrir ×10», volvía a
-   * la portada con un toque (sin recargar) y la pastilla decía 152/252, porque
-   * sumaba las 100 cartas del sobre y no las ~10 nuevas que de verdad había
-   * guardado `saveToCollection`. Con sobres suficientes el `Math.min` de la
-   * tesela lo remataba poniendo 252/252 en un set a medias. Y la pestaña
-   * Colección, que cuenta desde la lista deduplicada, seguía diciendo la cifra
-   * buena: dos cifras distintas del mismo hecho, que es exactamente lo que este
-   * bloque promete que no pasa. Con sesión igual, además, porque
-   * `refreshAfterPack` recarga monedas y bonus pero no la colección.
-   *
-   * El arreglo va AQUÍ y no en quien concatena: los otros dos consumidores
-   * dependen de que la lista siga siendo la que es, y quitarles los repetidos
-   * costaría un Set por sobre abierto para no ganar nada.
-   */
-  const cartasPorSet = useMemo(() => {
-    const conteo = new Map<string, number>();
-    const vistas = new Set<string>();
-    for (const bruto of userCollectionIds) {
-      const id = String(bruto);
-      if (vistas.has(id)) continue;
-      vistas.add(id);
-      const guion = id.lastIndexOf("-");
-      if (guion <= 0) continue;
-      const sid = id.slice(0, guion);
-      conteo.set(sid, (conteo.get(sid) ?? 0) + 1);
-    }
-    return conteo;
-  }, [userCollectionIds]);
-
-  /**
    * Gestión del foco del diálogo inmersivo. Con el resto de la app inerte
    * (AppShell), el foco tiene que ENTRAR aquí al abrir — si se quedara en el
    * botón de compra, ahora inerte, el teclado y el lector de pantalla se
@@ -1967,17 +1904,15 @@ export default function Home() {
               </span>
               <div aria-hidden="true" className="flex flex-col gap-4">
                 <div className="skeleton h-[52px] w-full rounded-2xl md:h-[60px]" />
-                <div className="grid grid-cols-2 gap-2.5 md:gap-4 min-[880px]:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-                  {/* Diez es lo que llena una pantalla de escritorio (dos filas
-                      de cinco) sin desbordar la de un móvil (cinco de dos).
-                      LA PROPORCIÓN VA ATADA A LA DE components/SetPackTile.tsx
-                      y hay que moverla con ella: si el hueco de carga es 3/4 y
-                      la tesela que llega es 4/3, la portada entera pega un
-                      salto de 97px por fila justo en el fotograma en el que
-                      aparecen las expansiones. Un esqueleto que no mide lo que
-                      va a ocupar el contenido es peor que no poner ninguno. */}
-                  {Array.from({ length: 10 }, (_, i) => (
-                    <div key={i} className="skeleton aspect-[4/3] w-full rounded-2xl md:rounded-3xl" />
+                <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 md:gap-4 lg:grid-cols-4">
+                  {/* Ocho llena dos filas en escritorio (4 col) y cuatro en un
+                      móvil (2 col) sin desbordar. LA ALTURA VA ATADA A LA DE LA
+                      TARJETA DE LOGO DE ABAJO (min-h-[126px] / md:min-h-[180px])
+                      y hay que moverla con ella: un esqueleto que no mide lo que
+                      va a ocupar el contenido hace saltar la portada justo en el
+                      fotograma en que aparecen las expansiones. */}
+                  {Array.from({ length: 8 }, (_, i) => (
+                    <div key={i} className="skeleton min-h-[126px] md:min-h-[180px] w-full rounded-2xl md:rounded-3xl" />
                   ))}
                 </div>
                 <div className="skeleton h-[52px] w-full rounded-2xl md:h-[60px]" />
@@ -2046,45 +1981,64 @@ export default function Home() {
                     transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                     className="overflow-hidden"
                   >
-                    {/* LA REJILLA DE SOBRES.
-                        LA ESCALERA SE MIDE POR EL ANCHO DE LA TESELA, no por el
-                        de la ventana, porque a partir de `md` aparece el menú
-                        lateral y se come 319px fijos. Medido tesela a tesela con
-                        getBoundingClientRect:
-
-                          375px  2 col  166px   (sin menú lateral)
-                          768px  2 col  216px   (antes: 3 col y 139px)
-                          880px  3 col  176px
-                          1024px 4 col  164px
-                          1280px 5 col  179px
-
-                        La fila de 768 es la que había que arreglar: con
-                        `md:grid-cols-3` la tesela era de 139px, LA MÁS ESTRECHA
-                        de toda la escala —más que en un iPhone de 375— y encima
-                        es justo donde SetPackTile sube el cuerpo del nombre, así
-                        que la caja del texto caía a 109px y se elidían 4 de 16
-                        nombres (en español, peor: "Escarlata y Púrpura Energía"
-                        mide 168px). La tercera columna se retrasa a 880px, que
-                        es donde vuelve a haber sitio para 176px por tesela.
-
-                        Las cifras de 1280 son las MEDIDAS: el contenedor son
-                        961px, no los 1040 que decía este comentario, y con cinco
-                        columnas la tesela sale de 179px, no de 195. Con cuatro
-                        salían 228px.
-                        Ojo: cada tesela es 4:3 —apaisada desde que la
-                        fotografía del sobre se fue al selector de tipo de
-                        sobre—, así que una columna de más también acorta el
-                        alto de la rejilla; el número de imágenes que se
-                        descargan es el mismo. */}
-                    <div className="grid grid-cols-2 gap-2.5 md:gap-4 min-[880px]:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 pt-3">
-
+                    {/* LA REJILLA DE LOGOS, RESTAURADA A PETICIÓN DEL DUEÑO.
+                        Aquí hubo dos rediseños en dos días —primero la foto del
+                        sobre real, luego un degradado de identidad con el
+                        símbolo del set— y el dueño pidió volver a esto, literal:
+                        "quiero que dejes el apartado de las expansiones y sus
+                        sets como estaba antes, es decir con el logo de cada
+                        expansion y set". Este bloque es el original de entonces,
+                        recuperado de git tal cual (0e4c205), con su
+                        `group-hover:scale-110` y su `drop-shadow-lg` incluidos:
+                        sobre un LOGO se toleran (la prohibición de WebKit
+                        protege ilustraciones de cartas y fotos de sobre, que es
+                        donde el rasterizado se ve).
+                        Las fotos reales de los sobres viven ahora en el
+                        selector de tipo de sobre, que es donde él las quiso. */}
+                    <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 md:gap-4 lg:grid-cols-4 pt-3">
                       {sets.map((set) => (
-                        <SetPackTile
+                        <motion.button
                           key={set.id}
-                          set={set}
-                          poseidas={cartasPorSet.get(set.id) ?? 0}
-                          onSelect={handleSelectSet}
-                        />
+                          whileHover={{ y: -5 }}
+                          whileTap={{ scale: 0.96 }}
+                          transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                          onClick={() => handleSelectSet(set.id)}
+                          className="group surface surface-hover p-3.5 md:p-8 rounded-2xl md:rounded-3xl flex flex-col items-center justify-between gap-2 md:gap-4 overflow-hidden relative min-h-[126px] md:min-h-[180px]"
+                        >
+                          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.06),transparent_60%)] pointer-events-none" />
+                          {/* Esta expansión todavía no tiene diccionario español
+                              y se ve en inglés. El aviso existe porque el cron
+                              trae expansiones nuevas y la lista va por fecha
+                              descendente: salen las PRIMERAS, así que sin él
+                              parece que el idioma está roto.
+                              `=== false` y no `!set.tieneEs`: el servidor sólo
+                              añade el campo en español, así que en inglés es
+                              undefined y aquí no se pinta nada.
+                              Va como <span> y no como botón: la tarjeta ya es un
+                              botón y anidarlos es HTML inválido. */}
+                          {set.tieneEs === false && (
+                            <span className="absolute top-2 right-2 md:top-3 md:right-3 z-10 chip ink-soft px-1.5 py-0.5 text-[9px] md:text-[10px] font-semibold uppercase tracking-[0.12em] leading-none">
+                              EN
+                              <span className="sr-only"> · esta expansión todavía no está traducida al español</span>
+                            </span>
+                          )}
+                          <div className="flex-1 flex items-center justify-center w-full relative z-10">
+                            {set.images?.logo ? (
+                              <img
+                                src={set.images.logo}
+                                alt={set.name}
+                                loading="lazy"
+                                decoding="async"
+                                className="max-h-[58px] md:max-h-20 max-w-full object-contain group-hover:scale-110 transition-transform duration-500 opacity-90 group-hover:opacity-100 drop-shadow-lg"
+                              />
+                            ) : (
+                              <div className="ink-faint text-sm text-center">{set.name}</div>
+                            )}
+                          </div>
+                          <span className="font-medium text-[11px] md:text-xs ink-soft group-hover:ink transition-colors text-center tracking-wide truncate w-full relative z-10">
+                            {set.name}
+                          </span>
+                        </motion.button>
                       ))}
                     </div>
                   </motion.div>
