@@ -88,7 +88,43 @@ interface Props {
    * lo tiene activado.
    */
   efectosApagados?: boolean;
+  /**
+   * Las URL de las ilustraciones de una hoja, para PRECARGAR las vecinas en
+   * reposo. Ver `precargarVecinas` abajo. Opcional: sin ella el libro se
+   * comporta como siempre.
+   */
+  urlsDeHoja?: (numero: number) => string[];
 }
+
+/**
+ * Las URL que ya se han pedido en esta sesión, para no volver a pedirlas cada
+ * vez que se pasa por la misma hoja. Es del módulo y no del componente porque
+ * la caché del navegador también lo es: si ya se pidió, ya está.
+ */
+const precargadas = new Set<string>();
+
+/**
+ * ANCHO MÁXIMO DEL ARCHIVADOR EN ESCRITORIO (la tapa de Vitrina.tsx y su
+ * esqueleto en Loader.tsx lo comparten; por eso vive aquí, que es el módulo
+ * ligero que los dos pueden importar).
+ *
+ * Medido a 1280x800: con el tope de siempre (42rem = 672px) la tapa medía
+ * 672x823 en una ventana de 800 de alto, y "Hoja 1 de 3" con sus flechas
+ * quedaban en y=1093-1181: 446px de scroll para pasar de hoja. Lo que hay
+ * por encima de la tapa y debajo de la barra superior son 187px fijos
+ * (pt-6 24 + cabecera 50 + su margen 32 + barra de aviso 61 + hueco 20) y
+ * los mandos necesitan 64 más (hueco 20 + fila de 44) por debajo: 251px en
+ * total. El resto del alto de la app es para la tapa, y su ancho sale de la
+ * proporción medida de la tapa (823/672 = 1,2247 → ×0,816). La barra de
+ * progreso y la nota de abajo sí pueden quedar por debajo del pliegue: son
+ * decorativas, la hoja y sus mandos no.
+ *
+ * `--app-height` la escribe hooks/useViewport.ts (y app/globals.css la deja
+ * en 100dvh hasta entonces). Sólo se aplica a partir de `md`: en el móvil el
+ * ancho de la pantalla ya es el tope y la página se desplaza como siempre.
+ */
+export const ANCHO_MAX_ARCHIVADOR =
+  "min(42rem, calc((var(--app-height) - var(--sat) - var(--topbar-h) - 251px) * 0.816))";
 
 export default function LibroArchivador({
   ref,
@@ -97,6 +133,7 @@ export default function LibroArchivador({
   renderHoja,
   onCambio,
   efectosApagados = false,
+  urlsDeHoja,
 }: Props) {
   /** Hacia dónde gira: +1 adelante, −1 atrás, 0 quieto. */
   const [girando, setGirando] = useState<0 | 1 | -1>(0);
@@ -111,6 +148,43 @@ export default function LibroArchivador({
     },
     [],
   );
+
+  /* PRECARGA DE LAS HOJAS VECINAS, EN REPOSO.
+   *
+   * Sólo se monta la hoja visible (ver la cabecera: cada hoja de más es un
+   * árbol de nueve cartas). El precio era que la vecina se montaba EN EL
+   * INSTANTE del giro con sus <img loading="lazy">: el navegador pedía todas
+   * sus ilustraciones justo cuando empezaba la animación (medido, hasta 1,5 MB
+   * por hoja) y a los 200 ms del giro tres de cinco fundas seguían vacías. Lo
+   * que se descubre al pasar la página era un hueco.
+   *
+   * Aquí se piden las ilustraciones de la hoja anterior y la siguiente con
+   * `new Image()` mientras el libro está quieto: van a la caché HTTP (y a la
+   * del service worker, que las guarda como cualquier carta) y cuando la hoja
+   * vecina se monta, sus <img> las encuentran hechas. No se montan hojas
+   * ocultas para esto: `loading="lazy"` no pide nada que no esté en el
+   * viewport, y montarlas visibles-pero-tapadas multiplicaría el árbol de la
+   * vitrina por tres.
+   *
+   * Con un respiro de unos cientos de milisegundos, para que la hoja visible
+   * pida lo suyo primero, y sólo con el libro quieto: a mitad de giro la red
+   * es para la hoja que se está descubriendo. */
+  useEffect(() => {
+    if (!urlsDeHoja || girando !== 0) return;
+    const pendientes = [...urlsDeHoja(hoja - 1), ...urlsDeHoja(hoja + 1)].filter(
+      (u) => u && !precargadas.has(u),
+    );
+    if (pendientes.length === 0) return;
+    const t = window.setTimeout(() => {
+      for (const url of pendientes) {
+        precargadas.add(url);
+        const img = new Image();
+        img.decoding = "async";
+        img.src = url;
+      }
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [hoja, girando, urlsDeHoja]);
 
   const pasar = useCallback(
     (dir: 1 | -1) => {
@@ -154,10 +228,20 @@ export default function LibroArchivador({
       className="relative w-full"
       /* EL ESCENARIO 3D SÓLO EXISTE MIENTRAS SE PASA PÁGINA. Ver la cabecera:
        * dejar la perspectiva puesta rasteriza las cartas y en iPhone se ven
-       * borrosas. En reposo esto es un div normal y corriente. */
+       * borrosas. En reposo esto es un div normal y corriente.
+       *
+       * POR QUÉ 3000px Y NO 1800. Con el punto de fuga en el lomo (0% 50%), el
+       * canto libre de la hoja se acerca a la cámara al girar y crece según
+       * p / (p − z), con z el ancho de la hoja. Con 1800px y la hoja de 602px
+       * del escritorio eso es ×1,5: +176px de alto a mitad de giro, que se
+       * salían del archivador y pisaban la cabecera. Con 3000px se queda en
+       * ×1,25 (y en ×1,1 con la hoja de 297px del móvil): sigue leyéndose como
+       * papel que gira, pero el bulto ya cabe dentro del bloque. No se recorta
+       * con overflow porque la hoja tiene que poder acabar a la IZQUIERDA del
+       * lomo, fuera de esta caja —ver la nota de la ventana en Vitrina.tsx—. */
       style={
         girando !== 0
-          ? { perspective: "1800px", perspectiveOrigin: "0% 50%" }
+          ? { perspective: "3000px", perspectiveOrigin: "0% 50%" }
           : undefined
       }
       data-pasando={girando !== 0 ? "si" : undefined}

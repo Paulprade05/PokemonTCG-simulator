@@ -12,11 +12,34 @@ import PageHeader from "../../../components/PageHeader";
 import Loader from "../../../components/Loader";
 import Sheet from "../../../components/ui/Sheet";
 import CardZoom from "../../../components/ui/CardZoom";
+import CardDetailModal from "../../../components/CardDetailModal";
 import { useHaptics } from "../../../hooks/useHaptics";
 import { useSwipe, touchActionFor } from "../../../hooks/useSwipe";
 import type { Carta, CartaEnColeccion, Expansion } from "../../../utils/tipos";
 
 type Filter = "all" | "owned" | "missing";
+
+/* ==================================================================== *
+ * UN SOLO DETALLE DE CARTA EN TODA LA APLICACIÓN
+ * ====================================================================
+ *
+ * El álbum tenía su propia hoja de detalle (la que sigue más abajo, dentro
+ * de `<Sheet>`), con otro diseño y otro tamaño de carta que la ficha que
+ * abren la colección, el buscador, la vitrina y el perfil de un entrenador
+ * (components/CardDetailModal.tsx). El dueño pidió que todo tuviera el mismo
+ * diseño, así que el álbum abre ahora esa misma ficha en modo `readOnly`,
+ * como ya hace app/trainer/[id]/page.tsx, y le pasa el recorrido
+ * (`navCards`) para conservar el gesto de pasar de carta y las flechas.
+ *
+ * La hoja propia NO SE BORRA: queda detrás de esta bandera, sin uso, por si
+ * hubiera que volver a ella. Con la bandera en `false`:
+ *  · no se monta la hoja ni su visor CardZoom (la ficha trae el suyo),
+ *  · el atajo de flechas de esta página se apaga, porque CardDetailModal ya
+ *    escucha ArrowLeft/ArrowRight en window y los dos juntos avanzarían dos
+ *    cartas por pulsación,
+ *  · el gesto de `detailImageRef` no encuentra elemento y no engancha nada.
+ */
+const USAR_HOJA_PROPIA = false;
 
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "Todas" },
@@ -60,6 +83,8 @@ export default function SetAlbumPage() {
   const [detail, setDetail] = useState<Carta | null>(null);
   /** Visor a pantalla completa: el único sitio de la app con zoom (pellizco). */
   const [zoomOpen, setZoomOpen] = useState(false);
+  /** Hoja propia: id de la carta cuya imagen ya cargó (el fundido espera a ella). */
+  const [hojaCargadaId, setHojaCargadaId] = useState<string | null>(null);
 
   // Pantalla baja y ancha: el móvil girado. La ficha se reparte en dos columnas
   // y el tope de la carta cambia, así que hace falta saberlo también en JS.
@@ -183,9 +208,10 @@ export default function SetAlbumPage() {
     ...(canPrev ? { onSwipeRight: () => step(-1) } : {}),
   });
 
-  // Mismo recorrido con teclado, para quien no tiene pantalla táctil.
+  // Mismo recorrido con teclado, para quien no tiene pantalla táctil. Sólo
+  // con la hoja propia: la ficha común trae sus propias flechas.
   useEffect(() => {
-    if (!detail) return;
+    if (!detail || !USAR_HOJA_PROPIA) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
       if (e.key === "ArrowRight") {
@@ -354,7 +380,9 @@ export default function SetAlbumPage() {
                 </span>
               )}
             </div>
-            <p className="text-[11px] sm:text-xs ink-faint mt-1">
+            {/* ink-soft y no ink-faint en los rótulos de 10-11 px: la tinta
+                tenue (3,66:1 en claro) no llega al mínimo a ese tamaño. */}
+            <p className="text-[11px] sm:text-xs ink-soft mt-1">
               <span className="tnum">{owned}</span> de <span className="tnum">{total}</span> cartas coleccionadas
               {setInfo?.releaseDate && <span className="ml-2">· {setInfo.releaseDate}</span>}
             </p>
@@ -407,7 +435,7 @@ export default function SetAlbumPage() {
                 }
               >
                 <span className="text-[11px] sm:text-xs font-medium leading-tight">{f.label}</span>
-                <span className="text-[10px] tnum ink-faint leading-none">{counts[f.id]}</span>
+                <span className="text-[10px] tnum ink-soft leading-none">{counts[f.id]}</span>
               </button>
             );
           })}
@@ -446,7 +474,10 @@ export default function SetAlbumPage() {
                     type="button"
                     onClick={() => openDetail(blueprintCard, ownedCard)}
                     aria-label={`Ver ${ownedCard.name || blueprintCard.name}`}
-                    className="relative group text-left press rounded-[4.5%]"
+                    // `press-flat` y no `press`: el botón es ancestro de la
+                    // carta y `.press` escala, que la rasteriza y la deja
+                    // borrosa en iPhone (app/globals.css, junto a .press-flat).
+                    className="relative group text-left press-flat rounded-[4.5%]"
                   >
                     {ownedCard.quantity > 1 && (
                       <div
@@ -498,7 +529,7 @@ export default function SetAlbumPage() {
             ref={sentinelRef}
             className="flex flex-col items-center justify-center gap-2 py-3"
           >
-            <p className="text-[11px] ink-faint">
+            <p className="text-[11px] ink-soft">
               Mostrando <span className="tnum">{renderedCards.length}</span> de{" "}
               <span className="tnum">{visibleCards.length}</span>
             </p>
@@ -521,7 +552,25 @@ export default function SetAlbumPage() {
         )}
       </div>
 
-      {/* DETALLE DE CARTA POSEÍDA */}
+      {/* DETALLE DE CARTA POSEÍDA: la misma ficha que el resto de la app. El
+          recorrido es `navCards` (las conseguidas que el filtro deja ver) y
+          el índice cambia con el gesto o las flechas de la propia ficha. */}
+      {!USAR_HOJA_PROPIA && (
+        <CardDetailModal
+          card={detail}
+          onClose={() => setDetail(null)}
+          readOnly
+          cards={navCards}
+          index={detailIndex}
+          onIndexChange={(i) => {
+            const siguiente = navCards[i];
+            if (siguiente) setDetail(mergeDetail(siguiente, ownedCards.get(siguiente.id)));
+          }}
+        />
+      )}
+
+      {/* LA HOJA PROPIA DEL ÁLBUM. Sin uso (ver USAR_HOJA_PROPIA arriba). */}
+      {USAR_HOJA_PROPIA && (
       <Sheet
         open={!!detail}
         onClose={() => setDetail(null)}
@@ -544,10 +593,18 @@ export default function SetAlbumPage() {
               // convierte el alto disponible a ancho con esa proporción
               // (2.5/3.5 ≈ 0.715) y así encaja exacta en pantallas bajas sin
               // deformarse ni desbordar la hoja.
+              //
+              // LOS 412 px SON LO QUE DE VERDAD HAY ALREDEDOR DE LA CARTA, no
+              // los 260 que se descontaban antes (y por los que "Cerrar"
+              // quedaba 88 px fuera en un iPhone con insets). Medido en
+              // 375×812: bajo la carta van 336 px (fila de posición, ficha,
+              // botón "Cerrar" y el pb-5) más el gap-4 (16) y el pt-2 (8), y
+              // por encima el asa de la hoja (26) y el margen que <Sheet>
+              // deja bajo el notch (24). --sat y --sab ya se restan aparte.
               style={{
                 touchAction: touchActionFor("x"),
                 maxWidth:
-                  "min(320px, calc((var(--app-height) - var(--sat) - var(--sab) - 260px) * 0.715))",
+                  "min(320px, calc((var(--app-height) - var(--sat) - var(--sab) - 412px) * 0.715))",
                 // En apaisado no hay 260px de fichas debajo que descontar: la
                 // carta ocupa la columna izquierda y sólo esquiva el asa.
                 ...(landscape
@@ -558,7 +615,11 @@ export default function SetAlbumPage() {
                   : null),
               }}
             >
+              {/* Sólo opacidad, nunca `scale` (rasterizaría la carta), y el
+                  fundido arranca cuando la imagen ESTÁ (onLoad), no al
+                  montarse: con red lenta se veía un fundido sobre nada. */}
               {detailImage && (
+              <AnimatePresence initial={false}>
                 <motion.img
                   key={detail.id}
                   src={detailImage}
@@ -567,8 +628,11 @@ export default function SetAlbumPage() {
                   role="button"
                   tabIndex={0}
                   aria-label={`Ampliar ${detail.name}`}
-                  initial={{ opacity: 0, scale: 0.97 }}
-                  animate={{ opacity: 1, scale: 1 }}
+                  onLoad={() => setHojaCargadaId(detail.id)}
+                  onError={() => setHojaCargadaId(detail.id)}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: hojaCargadaId === detail.id ? 1 : 0 }}
+                  exit={{ opacity: 0 }}
                   transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
                   onClick={() => {
                     // Un arrastre de navegación acaba en click sintético: no
@@ -589,6 +653,7 @@ export default function SetAlbumPage() {
                   className="absolute inset-0 h-full w-full cursor-zoom-in rounded-[4.5%] object-cover"
                   style={{ boxShadow: "var(--shadow-lg)" }}
                 />
+              </AnimatePresence>
               )}
             </div>
 
@@ -621,7 +686,7 @@ export default function SetAlbumPage() {
                   </button>
                 )}
 
-                <p className="text-[11px] ink-faint text-center min-w-0" aria-live="polite">
+                <p className="text-[11px] ink-soft text-center min-w-0" aria-live="polite">
                   <span className="tnum">{detailIndex + 1}</span> de{" "}
                   <span className="tnum">{navCards.length}</span> conseguidas
                 </p>
@@ -663,7 +728,7 @@ export default function SetAlbumPage() {
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-[11px] ink-faint font-mono tnum">
+                    <p className="text-[11px] ink-soft font-mono tnum">
                       #{padNumber(detail.number)}
                       {/* El "n / N" de la ficha usa el MISMO total que la barra
                           de progreso: enseñar aquí el declarado y allí el real
@@ -715,8 +780,11 @@ export default function SetAlbumPage() {
           </div>
         )}
       </Sheet>
+      )}
 
-      {/* Visor con pellizco. Se cierra solo si la ficha desaparece debajo. */}
+      {/* Visor con pellizco de la hoja propia. Se cierra solo si la ficha
+          desaparece debajo. (La ficha común lleva el suyo dentro.) */}
+      {USAR_HOJA_PROPIA && (
       <CardZoom
         open={zoomOpen && !!detail}
         src={detailImage}
@@ -726,6 +794,7 @@ export default function SetAlbumPage() {
         onPrev={canPrev ? () => step(-1) : undefined}
         onNext={canNext ? () => step(1) : undefined}
       />
+      )}
     </div>
   );
 }

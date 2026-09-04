@@ -28,6 +28,7 @@ import Loader from "./Loader";
 import CardDetailModal from "./CardDetailModal";
 import { useToast } from "./ui/Toast";
 import LibroArchivador, {
+  ANCHO_MAX_ARCHIVADOR,
   DURACION_PASE_MS,
   type LibroHandle,
 } from "./vitrina/LibroArchivador";
@@ -564,6 +565,26 @@ export default function Vitrina() {
     [hojaSegura, totalHojas, mapa, fundas.length, abrirFunda],
   );
 
+  /**
+   * Las ilustraciones de una hoja, para que LibroArchivador precargue las
+   * vecinas en reposo (ver su nota "PRECARGA DE LAS HOJAS VECINAS"). La URL es
+   * EXACTAMENTE la que va a pedir PokemonCard en su camino rápido —la variante
+   * pequeña, o la grande si no hay otra (`pickImageUrl` con useHighRes=false)—:
+   * precargar otra variante llenaría la caché con algo que nadie pinta.
+   */
+  const urlsDeHoja = useCallback(
+    (n: number): string[] => {
+      if (n < 0 || n >= totalHojas) return [];
+      const urls: string[] = [];
+      for (const carta of huecosDeHoja(mapa, n)) {
+        const url = carta?.images?.small || carta?.images?.large;
+        if (url) urls.push(url);
+      }
+      return urls;
+    },
+    [mapa, totalHojas],
+  );
+
   /* ---------------------------------------------------------------- */
   /* ESCRITURAS                                                        */
   /* ---------------------------------------------------------------- */
@@ -819,9 +840,21 @@ export default function Vitrina() {
           crecer hasta los 1280px del <main> daría cartas de 380px y un bloque
           de más de dos pantallas de alto — habría que hacer scroll para ver
           una sola hoja, que es justo lo contrario de lo que hace un
-          archivador. A 672px las cartas salen a ~180px (algo mayores que en la
-          rejilla de la colección) y la hoja entera se abarca de un vistazo. */}
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
+          archivador.
+
+          Y EL TOPE DEPENDE DEL ALTO DE LA VENTANA, no sólo de un ancho fijo.
+          Con 42rem a secas, en un portátil de 1280x800 la tapa medía 672x823
+          en 800 de alto y "Hoja 1 de 3" con sus flechas caían en y=1093-1181:
+          446px de scroll para pasar de hoja, o sea que la frase de antes ("la
+          hoja entera se abarca de un vistazo") era falsa en la pantalla en la
+          que más importa. A partir de `md` el ancho sale de lo que queda de
+          alto una vez descontado lo que rodea a la tapa; la fórmula, con sus
+          medidas, está en ANCHO_MAX_ARCHIVADOR (LibroArchivador.tsx), que
+          comparte con el esqueleto de carga para que no salte al llegar. */}
+      <div
+        className="mx-auto flex w-full max-w-2xl flex-col gap-5 md:max-w-[var(--archivador-max)]"
+        style={{ "--archivador-max": ANCHO_MAX_ARCHIVADOR } as React.CSSProperties}
+      >
         {/* LA BARRA DICE QUÉ HACER, no qué hay: un archivador vacío es un
             estado legítimo y sin una frase que lo explique parece una pantalla
             que no ha cargado. Es el aviso más importante de la pantalla la
@@ -912,6 +945,7 @@ export default function Vitrina() {
                     setHoja(pase ? pase.hasta : nueva);
                   }}
                   efectosApagados={!!reducido}
+                  urlsDeHoja={urlsDeHoja}
                 />
               </div>
             </div>

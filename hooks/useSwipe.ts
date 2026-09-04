@@ -31,6 +31,15 @@ export interface SwipeOptions {
   /** Recibe el desplazamiento en curso, por si hace falta pintar algo. */
   onMove?: (dx: number, dy: number) => void;
   onEnd?: () => void;
+  /**
+   * El gesto se ha ABANDONADO sin llegar a soltarse: baja un segundo dedo (es
+   * un pellizco, no un deslizamiento) o el dedo se va por el eje que no es el
+   * nuestro (se le devuelve el scroll a la página). Por esos dos caminos NO se
+   * llama a onEnd —no hay velocidad ni destino que medir— y sin este aviso
+   * quien hubiera preparado algo en onStart (una capa promocionada, una carta
+   * apartada del centro) se quedaba así hasta el siguiente toque.
+   */
+  onCancel?: () => void;
 }
 
 const DEFAULTS = {
@@ -140,11 +149,14 @@ export function useSwipe(
       if (!cfg().enabled) return;
       if (e.button !== 0) return;
       // Segundo dedo: es un pellizco, no un deslizamiento. Se abandona el
-      // gesto; en CardZoom eso le cede el control a su zoom propio.
+      // gesto; en CardZoom eso le cede el control a su zoom propio. Se avisa
+      // con onCancel y no con onEnd: no hay nada que medir ni destino que
+      // decidir, sólo devolver lo que onStart hubiera preparado.
       if (active) {
         active = false;
         locked = null;
         release(true);
+        cfg().onCancel?.();
         return;
       }
       active = true;
@@ -176,10 +188,12 @@ export function useSwipe(
         locked = adx > ady ? "x" : "y";
         const { axis } = cfg();
         // Si el eje no es el nuestro, soltamos el gesto para no robarle el
-        // scroll a la página.
+        // scroll a la página. Es el otro camino que abandona sin onEnd, y por
+        // eso también avisa con onCancel.
         if (axis !== "both" && locked !== axis) {
           active = false;
           release(false);
+          cfg().onCancel?.();
           return;
         }
       }
@@ -286,6 +300,13 @@ export function useSwipe(
       clearTimeout(releaseTimer);
       el.style.transform = "";
       el.style.transition = "";
+      // El will-change lo escribe onPointerDown en el elemento que escucha
+      // (moved() es `el` salvo con followTarget). Si `enabled` pasa a false a
+      // mitad de gesto —el sobre al rasgarse, app/page.tsx— este efecto se
+      // deshace antes de que llegue el pointerup que lo limpiaría, y sin esta
+      // línea el elemento se quedaba promocionado hasta desmontar: la foto
+      // del sobre, rasterizada a escala fija durante toda la caída.
+      el.style.willChange = "";
       // Si el hook se desmonta a mitad de arrastre, el followTarget se quedaría
       // desplazado: se devuelve a su sitio también.
       const ft = optsRef.current.followTarget?.current;

@@ -17,6 +17,7 @@ import { etiquetaNota, valorGraduado } from "../utils/graduacion";
 import { getCardFromDB, toggleWishlist, getWishlistIds } from "../app/action";
 import { useHaptics } from "../hooks/useHaptics";
 import { useSwipe, touchActionFor } from "../hooks/useSwipe";
+import { RARITY_GLOW } from "../utils/rarityGlow";
 import CardZoom from "./ui/CardZoom";
 import Portal from "./ui/Portal";
 import { useToast } from "./ui/Toast";
@@ -43,24 +44,19 @@ interface CardDetailModalProps {
   onIndexChange?: (index: number) => void;
 }
 
-// Halo / acento por rareza
-const RARITY_AURA: Record<string, { halo: string; chip: string }> = {
-  "Hyper Rare":               { halo: "rgba(250,204,21,0.55)",  chip: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30" },
-  "Rare Secret":              { halo: "rgba(250,204,21,0.45)",  chip: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30" },
-  "Rare Rainbow":             { halo: "rgba(244,114,182,0.55)", chip: "bg-pink-500/20 text-pink-300 border-pink-500/30" },
-  "Special Illustration Rare":{ halo: "rgba(217,70,239,0.5)",   chip: "bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/30" },
-  "Illustration Rare":        { halo: "rgba(168,85,247,0.45)",  chip: "bg-purple-500/20 text-purple-300 border-purple-500/30" },
-  "Shiny Ultra Rare":         { halo: "rgba(56,189,248,0.5)",   chip: "bg-sky-500/20 text-sky-300 border-sky-500/30" },
-  "Ultra Rare":               { halo: "rgba(99,102,241,0.5)",   chip: "bg-indigo-500/20 text-indigo-300 border-indigo-500/30" },
-  "Rare Ultra":               { halo: "rgba(99,102,241,0.5)",   chip: "bg-indigo-500/20 text-indigo-300 border-indigo-500/30" },
-  "Rare Holo VSTAR":          { halo: "rgba(34,211,238,0.5)",   chip: "bg-cyan-500/20 text-cyan-300 border-cyan-500/30" },
-  "Rare Holo VMAX":           { halo: "rgba(244,63,94,0.5)",    chip: "bg-rose-500/20 text-rose-300 border-rose-500/30" },
-  "Double Rare":              { halo: "rgba(96,165,250,0.4)",   chip: "bg-blue-500/20 text-blue-300 border-blue-500/30" },
-  "Rare Holo V":              { halo: "rgba(96,165,250,0.4)",   chip: "bg-blue-500/20 text-blue-300 border-blue-500/30" },
-  "Rare Holo":                { halo: "rgba(250,204,21,0.3)",   chip: "bg-yellow-500/15 text-yellow-300 border-yellow-500/25" },
-  "Radiant Rare":             { halo: "rgba(251,146,60,0.4)",   chip: "bg-orange-500/20 text-orange-300 border-orange-500/30" },
-};
-const auraFor = (rarity?: string) => (rarity && RARITY_AURA[rarity]) || null;
+/**
+ * El color de la rareza sale de utils/rarityGlow.ts, la misma tabla que usa la
+ * carta de la rejilla y el aura de la apertura de sobres. Aquí había una copia
+ * con catorce entradas (menos que la original: faltaban las Shiny, la ACE
+ * SPEC, las promos…) y con un juego de clases de Tailwind por rareza para el
+ * chip —text-yellow-300 sobre bg-yellow-500/20—, que en tema claro daba
+ * 1,10:1 de contraste: invisible. Ahora el chip se tiñe con el halo y el
+ * texto es tinta (11,5:1 a 13,4:1 en claro, 9,4:1 a 12:1 en oscuro).
+ */
+const auraFor = (rarity?: string) => (rarity && RARITY_GLOW[rarity]) || null;
+
+/** El mismo color del halo con otra opacidad (los halos son `rgba(r, g, b, a)`). */
+const conAlfa = (rgba: string, alfa: number) => rgba.replace(/[\d.]+\)$/, `${alfa})`);
 
 /* ------------------------------------------------------------------ */
 /* ESTADO FÍSICO DE LA COPIA                                           */
@@ -118,10 +114,19 @@ export default function CardDetailModal({
   /** Cerrojo del toggle de deseos: dos toques rápidos cruzaban dos peticiones
    *  cuyo orden de respuesta dejaba el marcador al revés. */
   const wishBusyRef = useRef(false);
-  /** Contenedor de la carta que recibe el balanceo 3D. */
+  /** Contenedor de la carta que acompaña al dedo (translate + rotate, 2D). */
   const tiltRef = useRef<HTMLDivElement>(null);
   /** Vista de sólo la carta, a pantalla completa. */
   const [zoomed, setZoomed] = useState(false);
+  /**
+   * Id de la carta cuya imagen YA está cargada. La ilustración se funde a la
+   * vista sólo cuando el navegador la tiene: sin esto, al navegar con red
+   * lenta se veía un fotograma en blanco y luego un fundido sobre nada.
+   */
+  const [cargadaId, setCargadaId] = useState<string | null>(null);
+  const marcarCargada = useCallback((id: string) => {
+    setCargadaId((prev) => (prev === id ? prev : id));
+  }, []);
 
   // El gesto de arrastre sólo existe en móvil; en md+ el diálogo sigue centrado.
   useEffect(() => {
@@ -172,41 +177,36 @@ export default function CardDetailModal({
   // Deslizar sobre la imagen cambia de carta. Va en la columna izquierda y no
   // en el panel de detalles para no robarle su scroll. En los extremos el
   // manejador queda sin definir y el hook aplica resistencia.
-  /**
-   * Balanceo 3D de la carta mientras se arrastra: la carta gira sobre su eje
-   * vertical siguiendo al dedo, como si la sostuvieras. Se pinta a mano en vez
-   * de con el `follow` del hook porque eso sólo hace traslación y giro plano.
+  /* ==================================================================== *
+   * EL BALANCEO ES 2D, Y ES EL MISMO QUE EL DEL ÁLBUM
+   * ====================================================================
+   *
+   * Aquí había un balanceo 3D pintado a mano: en cada movimiento se escribía
+   * `perspective(900px) rotateY() rotateX()` sobre tiltRef, que es el PADRE de
+   * la carta. Un `perspective` en un ancestro de la carta la manda a una capa
+   * rasterizada a escala fija y en iPhone la ilustración salía borrosa
+   * (la trampa documentada en components/PokemonCard.tsx:140-163). Y el
+   * retorno se hacía con una transición de 0,55 s y un setTimeout(580) sin
+   * guardar el id: dos arrastres seguidos hacían que el primer temporizador
+   * borrara la transición a mitad del rebote del segundo y la carta saltaba
+   * a su sitio en seco — la carta "pillada".
+   *
+   * Ahora lo pinta el propio hook con `follow` sobre tiltRef: translate más un
+   * giro plano de 4° por cada 100 px, lo mismo que hace la ficha del álbum. El
+   * hook guarda el id de su temporizador de retorno y lo cancela al empezar
+   * cada gesto, así que el salto desaparece sin código extra aquí. Y sólo
+   * escribe translate, rotate y un will-change que quita al soltar: nada que
+   * rasterice la carta.
    */
-  const applyTilt = useCallback((dx: number, dy: number) => {
-    const el = tiltRef.current;
-    if (!el) return;
-    const clamp = (v: number, max: number) => Math.max(-max, Math.min(max, v));
-    const rotY = clamp(dx * 0.2, 26);
-    const rotX = clamp(-dy * 0.12, 14);
-    el.style.transition = "";
-    el.style.transform = `perspective(900px) rotateY(${rotY}deg) rotateX(${rotX}deg) translateX(${dx * 0.3}px)`;
-  }, []);
-
-  /** Al soltar vuelve al centro con un rebote: de ahí el balanceo. */
-  const resetTilt = useCallback(() => {
-    const el = tiltRef.current;
-    if (!el) return;
-    el.style.transition = "transform 0.55s cubic-bezier(0.22, 1.35, 0.36, 1)";
-    el.style.transform = "";
-    window.setTimeout(() => {
-      if (el) el.style.transition = "";
-    }, 580);
-  }, []);
-
   const imageSwipedRef = useSwipe(imageColRef, {
     axis: "x",
     threshold: NAV_OFFSET,
     velocity: NAV_VELOCITY,
-    // El movimiento lo pinta applyTilt, no el hook.
-    follow: false,
+    follow: true,
+    followTarget: tiltRef,
+    rotate: 4,
+    resistance: 0.3,
     enabled: !!card,
-    onMove: applyTilt,
-    onEnd: resetTilt,
     onSwipeLeft: canNext ? goNext : undefined,
     onSwipeRight: canPrev ? goPrev : undefined,
   });
@@ -395,9 +395,20 @@ export default function CardDetailModal({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[100] flex items-end justify-center md:items-center bg-black/85 backdrop-blur-md md:p-6"
+          className="fixed inset-0 z-[100] flex items-end justify-center md:items-center md:p-6"
           onClick={onClose}
         >
+          {/* El telón, con el desenfoque, es HERMANO del panel y no la raíz.
+              Antes el backdrop-blur iba en la raíz, que es ancestro del panel
+              y de la carta: un backdrop-filter en un ancestro rasteriza la
+              carta a escala fija y en iPhone salía borrosa. Como hermano
+              absoluto detrás del panel desenfoca la página de fondo y no
+              toca nada de lo que hay encima. Mismo --scrim que Sheet. */}
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 backdrop-blur-md"
+            style={{ background: "var(--scrim)" }}
+          />
           <motion.div
             ref={panelRef}
             tabIndex={-1}
@@ -405,9 +416,13 @@ export default function CardDetailModal({
             role="dialog"
             aria-modal="true"
             aria-label={`Detalle de ${c.name}`}
-            initial={isMobile ? { y: "100%" } : { scale: 0.97, opacity: 0, y: 8 }}
-            animate={isMobile ? { y: 0 } : { scale: 1, opacity: 1, y: 0 }}
-            exit={isMobile ? { y: "100%" } : { scale: 0.97, opacity: 0 }}
+            /* En md+ el diálogo entra con opacidad y un desplazamiento corto,
+               nunca con `scale`: el panel es ancestro de la carta y una escala
+               —aunque sea transitoria— la rasteriza a otro tamaño y queda
+               borrosa hasta que el navegador la repinta. */
+            initial={isMobile ? { y: "100%" } : { opacity: 0, y: 12 }}
+            animate={isMobile ? { y: 0 } : { opacity: 1, y: 0 }}
+            exit={isMobile ? { y: "100%" } : { opacity: 0, y: 12 }}
             transition={
               isMobile
                 ? { type: "spring", stiffness: 380, damping: 38, mass: 0.9 }
@@ -457,11 +472,14 @@ export default function CardDetailModal({
               </div>
             )}
 
-            {/* Ambient glow per rarity */}
+            {/* Resplandor de la rareza en la esquina. Es un degradado radial,
+                que ya es suave por sí mismo: llevaba además un blur(64px)
+                PERMANENTE, y un filtro que vive todo el rato le cuesta caro
+                al iPhone aunque sea en una capa hermana. */}
             {aura && (
               <div
-                className="absolute -top-32 -right-32 w-80 h-80 rounded-full pointer-events-none opacity-60 blur-3xl"
-                style={{ background: `radial-gradient(circle, ${aura.halo}, transparent 70%)` }}
+                className="absolute -top-32 -right-32 w-80 h-80 rounded-full pointer-events-none opacity-60"
+                style={{ background: `radial-gradient(circle, ${aura}, transparent 70%)` }}
               />
             )}
 
@@ -486,7 +504,7 @@ export default function CardDetailModal({
               className={`relative w-full md:w-[44%] shrink-0 p-5 md:p-8 pt-14 md:pt-10 ${hasNav ? "pb-12" : ""} flex items-center justify-center`}
               style={{
                 background: aura
-                  ? `radial-gradient(circle at 50% 35%, ${aura.halo.replace(/[\d.]+\)$/, "0.18)")}, transparent 70%), var(--surface-2)`
+                  ? `radial-gradient(circle at 50% 35%, ${conAlfa(aura, 0.18)}, transparent 70%), var(--surface-2)`
                   : "var(--surface-2)",
                 // "pan-y": el gesto horizontal es nuestro y el scroll vertical
                 // sigue siendo del navegador. El zoom vive en CardZoom.
@@ -495,21 +513,28 @@ export default function CardDetailModal({
             >
               {/* Floating action buttons */}
               <div className="absolute top-4 left-4 z-40 flex flex-col gap-2">
+                {/* Los estados activos siguen la regla del tema: el RELLENO
+                    lleva el color de marca (--danger / --warn, rebajados) y
+                    la TINTA es su versión legible (--danger-ink / --warn-ink).
+                    Con text-rose-300 sobre rose-500/25 el corazón daba
+                    2,5:1 en tema claro; ahora 5,1:1 y 4,9:1. */}
                 {!readOnly && onToggleFavorite && (
                   <button
                     onClick={afterSwipeGuard(onToggleFavorite)}
                     className={`w-10 h-10 rounded-full border transition flex items-center justify-center press ${
-                      c.is_favorite
-                        ? "bg-rose-500/25 border-rose-500/50 text-rose-300"
-                        : "btn-ghost ink-soft hover:ink"
+                      c.is_favorite ? "" : "btn-ghost ink-soft hover:ink"
                     }`}
+                    style={c.is_favorite ? ESTILO_FAVORITO : undefined}
                     aria-label="Favorito"
                   >
                     <Heart filled={c.is_favorite} />
                   </button>
                 )}
                 {readOnly && c.is_favorite && (
-                  <div className="w-10 h-10 rounded-full bg-rose-500/25 border border-rose-500/50 text-rose-300 flex items-center justify-center">
+                  <div
+                    className="w-10 h-10 rounded-full border flex items-center justify-center"
+                    style={ESTILO_FAVORITO}
+                  >
                     <Heart filled />
                   </div>
                 )}
@@ -517,10 +542,9 @@ export default function CardDetailModal({
                   <button
                     onClick={afterSwipeGuard(handleToggleWishlist)}
                     className={`w-10 h-10 rounded-full border transition flex items-center justify-center press ${
-                      wishlisted
-                        ? "bg-pink-500/25 border-pink-500/50 text-pink-300"
-                        : "btn-ghost ink-soft hover:ink"
+                      wishlisted ? "" : "btn-ghost ink-soft hover:ink"
                     }`}
+                    style={wishlisted ? ESTILO_DESEADA : undefined}
                     aria-label="Deseos"
                     title={wishlisted ? "Quitar de deseos" : "Añadir a deseos"}
                   >
@@ -536,32 +560,63 @@ export default function CardDetailModal({
                   medía distinto y navegar recolocaba todo el panel. El ancho
                   deriva del alto del panel (--panel-max, nunca vh): la caja es
                   idéntica para todas las cartas. */}
+              {/* En móvil la carta se lleva la mitad del alto del panel (antes
+                  el 42 %): esta ficha es ahora también la del álbum, que
+                  enseñaba la carta más grande, y el dueño quiere un solo
+                  tamaño. La ficha de debajo sigue haciendo scroll. */}
               <div
                 className="relative w-full"
                 style={{
                   maxWidth: isMobile
-                    ? "calc(var(--panel-max) * 0.42 * 0.715)"
+                    ? "calc(var(--panel-max) * 0.5 * 0.715)"
                     : "calc(var(--panel-max) * 0.82 * 0.715)",
                 }}
               >
-                {/* Halo de rareza: capa HERMANA fuera del contenedor 3D (un
-                    filter dentro rasterizaría la carta y saldría borrosa) y
-                    absoluta, para que nunca empuje el layout. */}
+                {/* Halo de rareza: capa HERMANA de la carta (nunca ancestro) y
+                    absoluta, para que no empuje el layout. Es un box-shadow
+                    con el color del halo y no un div con blur(40px): un
+                    filtro permanente, aunque sea en un hermano, se paga en
+                    cada fotograma en iPhone; la sombra la pinta la GPU sin
+                    rasterizar nada. Con la silueta de la carta (mismo radio)
+                    para que el resplandor salga de sus cantos. */}
                 {aura && (
                   <div
                     aria-hidden="true"
-                    className="absolute -inset-6 rounded-[20%] blur-2xl opacity-70 pointer-events-none"
-                    style={{ background: `radial-gradient(circle, ${aura.halo}, transparent 75%)` }}
+                    className="absolute inset-0 rounded-[4.5%] pointer-events-none"
+                    style={{ boxShadow: `0 0 48px 14px ${aura}` }}
                   />
                 )}
                 <div ref={tiltRef} className="relative w-full aspect-[2.5/3.5]">
+                  {/* AnimatePresence + onLoad: la imagen entra cuando ESTÁ,
+                      no cuando se monta. Antes el <img> se remontaba por `key`
+                      y arrancaba su fundido en el acto: con red lenta, un
+                      fotograma en blanco y un fundido sobre nada. Ahora la
+                      carta anterior se retira mientras la nueva se queda
+                      transparente hasta que el navegador la tiene, y sólo
+                      entonces se funde. Y sólo opacidad, nunca `scale`: la
+                      escala rasteriza la ilustración a otro tamaño. */}
+                  <AnimatePresence initial={false}>
+                  <motion.div
+                    key={c.id}
+                    className="absolute inset-0"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: cargadaId === c.id ? 1 : 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+                  >
                   {(() => {
                     const imagen = (
-                      <motion.img
-                        key={c.id}
-                        initial={{ scale: 0.96, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                      <img
+                        // Con la imagen en caché el `load` también dispara,
+                        // pero si el elemento ya está completo al montarse se
+                        // marca aquí y no se espera a nadie.
+                        ref={(el) => {
+                          if (el && el.complete && el.naturalWidth > 0) marcarCargada(c.id);
+                        }}
+                        onLoad={() => marcarCargada(c.id)}
+                        // Si la imagen falla, que al menos se vea el texto
+                        // alternativo y no un hueco transparente para siempre.
+                        onError={() => marcarCargada(c.id)}
                         src={c.images?.large}
                         alt={c.name}
                         loading="eager"
@@ -572,8 +627,8 @@ export default function CardDetailModal({
                           haptic("tap");
                           setZoomed(true);
                         }}
-                        // Sombra con box-shadow y no drop-shadow: un filter dentro
-                        // del contexto 3D del balanceo rasterizaría la carta.
+                        // Sombra con box-shadow y no drop-shadow: un filter
+                        // sobre la carta la rasterizaría.
                         style={{ borderRadius: "4.5%", boxShadow: "var(--shadow-lg)" }}
                         /* `cover` y no `contain`, por lo mismo que en
                            components/PokemonCard.tsx (allí está la cuenta
@@ -594,7 +649,7 @@ export default function CardDetailModal({
                            unos píxeles desplazados respecto a la ilustración
                            sobre la que dicen estar. Con `cover` las dos cajas
                            son la misma y las marcas caen donde tienen que caer. */
-                        className={`absolute inset-0 h-full w-full cursor-zoom-in object-cover ${c.owned === false ? "grayscale opacity-70" : ""}`}
+                        className="absolute inset-0 h-full w-full cursor-zoom-in object-cover"
                       />
                     );
                     // Copia limpia: el árbol se queda EXACTAMENTE como estaba.
@@ -608,8 +663,7 @@ export default function CardDetailModal({
                          descentrado no se pinta, se MUEVE la ilustración dentro
                          del marco y el marco recorta; por el lado del que se
                          retira asoma el cartón, que es el fondo. `translate` y
-                         nunca `scale`, que rasterizaría la capa (y aquí, dentro
-                         del contexto 3D del balanceo, se notaría el doble).
+                         nunca `scale`, que rasterizaría la capa.
                          La sombra sube al marco: la de la imagen queda dentro
                          del overflow-hidden y no se vería. */
                       <div
@@ -632,6 +686,22 @@ export default function CardDetailModal({
                       </div>
                     );
                   })()}
+                  </motion.div>
+                  </AnimatePresence>
+
+                  {/* Carta que NO se posee (llega así desde el buscador
+                      global): un velo HERMANO del color del papel, con
+                      opacidad, en vez de `grayscale` sobre la propia imagen.
+                      Un filter sobre la carta la rasteriza y en iPhone sale
+                      borrosa; el velo apaga la ilustración igual y no toca
+                      la capa de la imagen. */}
+                  {c.owned === false && (
+                    <div
+                      aria-hidden="true"
+                      className="absolute inset-0 rounded-[4.5%] pointer-events-none"
+                      style={{ background: "var(--surface)", opacity: 0.55 }}
+                    />
+                  )}
 
                   {/* AQUÍ ESTABA LA INSIGNIA "ESTADO: DAÑADA", y no vuelve.
                       Las marcas se siguen pintando arriba: lo que se ha
@@ -643,9 +713,11 @@ export default function CardDetailModal({
               </div>
 
               {/* Navegación explícita, para quien no descubra el gesto.
-                  transform-gpu: la carta balanceándose vive en una capa 3D y
-                  Safari la compone por encima del z-index normal; con capa
-                  propia estos controles nunca quedan tapados por ella. */}
+                  transform-gpu: mientras se arrastra, la carta lleva un
+                  will-change y Safari la compone en capa propia por encima
+                  del z-index normal; con capa propia estos controles nunca
+                  quedan tapados por ella. (Va en los botones, que no son
+                  ancestros de la carta: a ellos sí se les puede promover.) */}
               {hasNav && (
                 <>
                   <button
@@ -692,13 +764,19 @@ export default function CardDetailModal({
               <div className="p-5 md:p-7 pb-7 md:pb-8 flex flex-col gap-4 relative">
                 {/* HEADER */}
                 <div>
+                  {/* Rótulos de 9-11 px en ink-soft, no en ink-faint: a ese
+                      tamaño la tinta tenue (3,66:1) no llega al mínimo. */}
                   <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <span className="text-[10px] uppercase tracking-[0.25em] ink-faint font-semibold">{c.supertype || "Pokémon"}</span>
+                    <span className="text-[10px] uppercase tracking-[0.25em] ink-soft font-semibold">{c.supertype || "Pokémon"}</span>
                     {c.subtypes?.slice(0, 3).map((s: string) => (
                       <span key={s} className="text-[10px] uppercase tracking-wider ink-soft chip px-2 py-0.5">{s}</span>
                     ))}
+                    {/* Fondo teñido con el halo de la rareza, texto en tinta. */}
                     {c.rarity && aura && (
-                      <span className={`text-[10px] uppercase tracking-wider font-semibold border rounded-full px-2 py-0.5 ${aura.chip}`}>
+                      <span
+                        className="text-[10px] uppercase tracking-wider font-semibold border rounded-full px-2 py-0.5 ink"
+                        style={{ background: conAlfa(aura, 0.18), borderColor: conAlfa(aura, 0.4) }}
+                      >
                         {c.rarity}
                       </span>
                     )}
@@ -706,7 +784,7 @@ export default function CardDetailModal({
                   <div className="flex items-baseline justify-between gap-3">
                     <h2 className="text-2xl md:text-4xl font-bold tracking-tight">{c.name}</h2>
                     {c.hp && (
-                      <span className="text-rose-400 font-mono text-base md:text-lg font-bold shrink-0">HP {c.hp}</span>
+                      <span className="font-mono text-base md:text-lg font-bold shrink-0" style={{ color: "var(--danger-ink)" }}>HP {c.hp}</span>
                     )}
                   </div>
                   {c.types?.length > 0 && (
@@ -793,17 +871,20 @@ export default function CardDetailModal({
                  * otra. No lo pongas sin volver a preguntar al dueño. */}
 
                 {/* PRICES */}
+                {/* --ok y no --accent para el dinero: --accent es color de
+                    marca y sobre el papel claro da 2,4:1 (app/globals.css lo
+                    avisa); --ok es su versión de tinta, 6,1:1. */}
                 <div className="grid grid-cols-2 gap-2">
                   <PriceTile
                     label={notaGraduada ? `Valor · ${etiquetaNota(notaGraduada)}` : "Valor de venta"}
                     value={`${getMarketPrice()}`}
                     unit="💰"
-                    accent="accent"
+                    color="var(--ok)"
                   />
                   {(() => {
                     const tcg = getTcgPrice();
                     return (
-                      <PriceTile label="Valor real" value={tcg != null ? `$${tcg.toFixed(2)}` : "—"} accent={tcg != null ? "text-sky-400" : "ink-faint"} />
+                      <PriceTile label="Valor real" value={tcg != null ? `$${tcg.toFixed(2)}` : "—"} color={tcg != null ? "var(--ink)" : "var(--ink-soft)"} />
                     );
                   })()}
                 </div>
@@ -821,15 +902,17 @@ export default function CardDetailModal({
                   </button>
                 )}
                 {readOnly && c.quantity != null && (
-                  <div className="text-center text-[11px] uppercase tracking-wider ink-faint">
+                  <div className="text-center text-[11px] uppercase tracking-wider ink-soft">
                     {c.quantity > 1 ? `Posee ${c.quantity} copias` : "Copia única"}
                   </div>
                 )}
 
-                {/* ABILITIES */}
+                {/* ABILITIES. El fondo malva se queda (un relleno puede ser
+                    de color); el rótulo va en tinta, que text-purple-400
+                    daba 2,6:1 en claro. */}
                 {c.abilities?.length > 0 && (
                   <div className="bg-gradient-to-br from-purple-500/10 to-transparent border border-purple-500/20 rounded-2xl p-4">
-                    <p className="text-purple-400 text-[10px] font-semibold uppercase tracking-wider mb-3">Habilidades</p>
+                    <p className="ink-soft text-[10px] font-semibold uppercase tracking-wider mb-3">Habilidades</p>
                     <div className="flex flex-col gap-3">
                       {c.abilities.map((ab: any, i: number) => (
                         <div key={i}>
@@ -844,14 +927,14 @@ export default function CardDetailModal({
                 {/* ATTACKS */}
                 {c.attacks?.length > 0 && (
                   <div className="surface-2 rounded-2xl overflow-hidden">
-                    <p className="ink-faint text-[10px] font-semibold uppercase tracking-wider px-4 pt-3">Ataques</p>
+                    <p className="ink-soft text-[10px] font-semibold uppercase tracking-wider px-4 pt-3">Ataques</p>
                     <div className="flex flex-col divide-y divide-[var(--border)]">
                       {c.attacks.map((atk: any, i: number) => (
                         <div key={i} className="p-4 flex flex-col gap-2">
                           <div className="flex items-center gap-3">
                             <div className="shrink-0"><EnergyCost cost={atk.cost || []} /></div>
                             <span className="text-sm font-semibold truncate flex-1">{atk.name}</span>
-                            {atk.damage && <span className="text-base font-mono font-bold text-rose-400 shrink-0">{atk.damage}</span>}
+                            {atk.damage && <span className="text-base font-mono font-bold shrink-0" style={{ color: "var(--danger-ink)" }}>{atk.damage}</span>}
                           </div>
                           {atk.text && <p className="text-[12px] ink-soft leading-snug">{atk.text}</p>}
                         </div>
@@ -867,7 +950,7 @@ export default function CardDetailModal({
                       ? c.weaknesses.map((w: any, i: number) => (
                           <div key={i} className="flex items-center gap-1">
                             <TypeBadge type={w.type} size="xs" />
-                            <span className="text-[11px] text-rose-400 font-semibold">{w.value}</span>
+                            <span className="text-[11px] font-semibold" style={{ color: "var(--danger-ink)" }}>{w.value}</span>
                           </div>
                         ))
                       : <span className="ink-faint text-xs">—</span>}
@@ -877,7 +960,7 @@ export default function CardDetailModal({
                       ? c.resistances.map((w: any, i: number) => (
                           <div key={i} className="flex items-center gap-1">
                             <TypeBadge type={w.type} size="xs" />
-                            <span className="text-[11px] text-emerald-400 font-semibold">{w.value}</span>
+                            <span className="text-[11px] font-semibold" style={{ color: "var(--ok)" }}>{w.value}</span>
                           </div>
                         ))
                       : <span className="ink-faint text-xs">—</span>}
@@ -897,7 +980,7 @@ export default function CardDetailModal({
                     )}
                     <div className="flex-1 min-w-0 text-[11px]">
                       <p className="font-medium truncate">{c.set.name}</p>
-                      <p className="ink-faint font-mono">
+                      <p className="ink-soft font-mono">
                         #{c.number || "—"}{c.set.printedTotal ? `/${c.set.printedTotal}` : ""}
                         {c.artist ? ` · ${c.artist}` : ""}
                       </p>
@@ -906,7 +989,7 @@ export default function CardDetailModal({
                 )}
 
                 {loadingEnrich && (
-                  <p className="text-[9px] ink-faint uppercase tracking-wider animate-pulse text-center">Cargando detalles…</p>
+                  <p className="text-[9px] ink-soft uppercase tracking-wider animate-pulse text-center">Cargando detalles…</p>
                 )}
               </div>
             </div>
@@ -949,11 +1032,29 @@ function Heart({ filled }: { filled?: boolean }) {
   );
 }
 
-function PriceTile({ label, value, unit, accent }: { label: string; value: string; unit?: string; accent: string }) {
+/**
+ * Estados activos de los botones flotantes: relleno con el color de marca
+ * rebajado y tinta legible encima (ver la regla junto a --danger-ink en
+ * app/globals.css). Fuera del componente para no crear los objetos en cada
+ * render.
+ */
+const ESTILO_FAVORITO: React.CSSProperties = {
+  background: "color-mix(in srgb, var(--danger) 20%, var(--surface))",
+  borderColor: "color-mix(in srgb, var(--danger) 45%, transparent)",
+  color: "var(--danger-ink)",
+};
+const ESTILO_DESEADA: React.CSSProperties = {
+  background: "color-mix(in srgb, var(--warn) 20%, var(--surface))",
+  borderColor: "color-mix(in srgb, var(--warn) 45%, transparent)",
+  color: "var(--warn-ink)",
+};
+
+/** `color` es un color CSS (un token del tema), no una clase de Tailwind. */
+function PriceTile({ label, value, unit, color }: { label: string; value: string; unit?: string; color: string }) {
   return (
     <div className="surface-2 rounded-2xl px-3 py-2.5">
-      <p className="text-[9px] uppercase tracking-wider ink-faint font-semibold">{label}</p>
-      <p className={`text-base md:text-lg font-bold ${accent} tabular-nums leading-tight mt-0.5`}>
+      <p className="text-[9px] uppercase tracking-wider ink-soft font-semibold">{label}</p>
+      <p className="text-base md:text-lg font-bold tabular-nums leading-tight mt-0.5" style={{ color }}>
         {value}{unit && <span className="text-xs ml-1">{unit}</span>}
       </p>
     </div>
@@ -963,7 +1064,7 @@ function PriceTile({ label, value, unit, accent }: { label: string; value: strin
 function StatTile({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="surface-2 rounded-2xl p-3">
-      <p className="text-[9px] uppercase tracking-wider ink-faint font-semibold mb-1.5">{label}</p>
+      <p className="text-[9px] uppercase tracking-wider ink-soft font-semibold mb-1.5">{label}</p>
       <div className="flex flex-col gap-1">{children}</div>
     </div>
   );

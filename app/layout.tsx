@@ -5,7 +5,6 @@ import "./globals.css";
 import { ClerkProvider } from "@clerk/nextjs";
 import SmoothScroll from "../components/SmoothScroll";
 import AppShell from "../components/AppShell";
-import ServiceWorkerRegister from "../components/pwa/ServiceWorkerRegister";
 
 // Fija el tema antes del primer pintado y, con él, el color de la barra del
 // navegador: si theme-color se dejara al valor estático, el tema claro saldría
@@ -74,8 +73,10 @@ export const metadata: Metadata = {
   other: {
     // Next 16 sólo emite la variante estándar; iOS anterior a 16.4 sigue
     // necesitando la etiqueta con prefijo apple para abrir sin barra de Safari.
+    // SÓLO la prefijada: `appleWebApp.capable` de arriba ya emite la estándar
+    // (`mobile-web-app-capable`), y aquí se repetía — el HTML llevaba la misma
+    // meta dos veces.
     "apple-mobile-web-app-capable": "yes",
-    "mobile-web-app-capable": "yes",
   },
 };
 
@@ -112,7 +113,8 @@ export default function RootLayout({
           <script dangerouslySetInnerHTML={{ __html: idiomaInit }} />
         </head>
         <body className={inter.className}>
-          <ServiceWorkerRegister />
+          {/* El registro del service worker vive dentro de AppShell: necesita
+              el proveedor de avisos para decir "hay una versión nueva". */}
           <SmoothScroll />
           <AppShell>{children}</AppShell>
         </body>

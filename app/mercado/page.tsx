@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
 import { cumplirOferta, getCartasMercado, getMercado } from "../action";
 import {
@@ -464,7 +463,7 @@ export default function MercadoPage() {
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {ofertas.map((oferta, i) => (
+          {ofertas.map((oferta) => (
             <TarjetaOferta
               key={oferta.id}
               oferta={oferta}
@@ -473,7 +472,6 @@ export default function MercadoPage() {
               puedeCobrar={Boolean(isSignedIn)}
               enCurso={enCurso === oferta.id}
               bloqueada={enCurso !== null && enCurso !== oferta.id}
-              retardo={i * 0.04}
               nombresSet={nombresSet}
               autoCompleta={automaticaCompleta.get(oferta.id) ?? true}
               onCumplir={() => onCumplir(oferta)}
@@ -535,7 +533,6 @@ function TarjetaOferta({
   puedeCobrar,
   enCurso,
   bloqueada,
-  retardo,
   nombresSet,
   autoCompleta,
   onCumplir,
@@ -548,7 +545,6 @@ function TarjetaOferta({
   puedeCobrar: boolean;
   enCurso: boolean;
   bloqueada: boolean;
-  retardo: number;
   nombresSet: Record<string, string>;
   /**
    * ¿La oferta se completaría sin lo que el jugador ha clavado? Sólo se usa para
@@ -573,10 +569,16 @@ function TarjetaOferta({
   const hayFijadas = reparto?.partes.some((p) => p.fijas.some(Boolean)) ?? false;
 
   return (
-    <motion.article
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, delay: retardo, ease: [0.16, 1, 0.3, 1] }}
+    /* SIN ENTRADA PROPIA. Cada tarjeta traía su fundido con 10px de subida y
+     * un retardo escalonado (i × 0,04 s) ADEMÁS de la entrada de la pantalla
+     * que ya pone app/template.tsx: la doctrina está en PageHeader.tsx ("una
+     * pantalla, una entrada"). Y aquí costaba más que en la cabecera: framer
+     * escribe `opacity:0` en línea en el HTML servido y sólo lo enciende en su
+     * primer requestAnimationFrame, así que con la pestaña en segundo plano
+     * las tarjetas seguían invisibles cuatro segundos después de llegar. Un
+     * <article> normal se pinta cuando llega, que es lo que hace el resto de
+     * rejillas de la app (colección, álbum, bazar). */
+    <article
       className={`surface rounded-3xl p-5 flex flex-col gap-4 ${cumplida ? "opacity-60" : ""}`}
     >
       <header className="flex items-start gap-3">
@@ -745,7 +747,7 @@ function TarjetaOferta({
                       "Te faltan duplicados"}
         </button>
       </div>
-    </motion.article>
+    </article>
   );
 }
 

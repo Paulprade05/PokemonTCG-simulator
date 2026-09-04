@@ -2106,7 +2106,23 @@ export async function searchCardsInDB(query: string, page = 1, pageSize = 10) {
     return { data, total, page: p, pageSize: size };
   } catch (e) {
     console.error("searchCardsInDB error:", e);
-    return { data: [], total: 0, page, pageSize };
+    /* SE RELANZA, Y ES LA DIFERENCIA ENTRE "NO HAY" Y "NO SÉ".
+     *
+     * Antes este catch devolvía `{ data: [], total: 0 }`: la misma respuesta
+     * exacta que una búsqueda sin coincidencias. GlobalSearch no tenía forma de
+     * distinguirlas y pintaba "Sin resultados" con la base de datos caída, sin
+     * conexión o —como se midió en desarrollo— sin `POSTGRES_URL` en el
+     * entorno: ahí `sql.query` lanza `missing_connection_string` antes de
+     * consultar nada, y "pikachu" salía como si no existiera ninguna carta.
+     * La consulta en sí es correcta (LOWER(name) LIKE '%pikachu%'); lo que
+     * mentía era esta rama.
+     *
+     * Rechazando, el `catch` de GlobalSearch enciende su estado de error
+     * ("No se pudo buscar"), que es lo que ya hace con un fallo de transporte.
+     * Next no filtra al navegador el mensaje de un error lanzado en una server
+     * action en producción (llega un texto genérico con su digest), así que
+     * el detalle se queda en el log del servidor, que es donde sirve. */
+    throw new Error("busqueda-fallida");
   }
 }
 

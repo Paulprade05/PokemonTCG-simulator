@@ -2,26 +2,45 @@
 
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
 import { getTrainerCollection, getSetsFromDB } from "../../action";
 import { getSocialOverview } from "../../social";
 import { RARITY_RANK, SELL_PRICES } from "../../../utils/constanst";
+import { useSesionResuelta } from "../../../hooks/useGameCurrency";
 import PokemonCard from "../../../components/PokemonCard";
 import PageHeader from "../../../components/PageHeader";
 import Loader from "../../../components/Loader";
 import CardDetailModal from "../../../components/CardDetailModal";
 
+/**
+ * Forma de un id de usuario de Clerk: `user_` y una ristra alfanumérica (27
+ * caracteres hoy; se admite margen por si cambian la longitud). Cualquier otra
+ * cosa en la URL no puede ser un entrenador: ver `noExiste` más abajo.
+ */
+const ID_DE_CLERK = /^user_[A-Za-z0-9]{20,64}$/;
+
 export default function TrainerProfilePage() {
   const params = useParams();
   const trainerId = params.id as string;
-  const { isLoaded } = useUser();
+  const { isSignedIn } = useUser();
+  // `useSesionResuelta` y no `isLoaded` de Clerk: sin conexión, Clerk no
+  // resuelve nunca y el esqueleto se quedaba girando para siempre. Con el plazo
+  // (hooks/useGameCurrency.tsx) se sigue como invitado.
+  const sesionResuelta = useSesionResuelta();
   const [cards, setCards] = useState<any[]>([]);
   const [dbSets, setDbSets] = useState<any[]>([]);
   const [showStats, setShowStats] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [trainerName, setTrainerName] = useState("");
+  /**
+   * ¿SE SABE QUE ESTE ENTRENADOR EXISTE? El servidor no lo dice: ver la nota
+   * larga de `noExiste`. `null` = la lista social aún no ha contestado (o ha
+   * fallado, que a estos efectos es lo mismo: no se sabe).
+   */
+  const [conocido, setConocido] = useState<boolean | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState("rarity_desc");
   const [filterSet, setFilterSet] = useState("all");
@@ -66,10 +85,39 @@ export default function TrainerProfilePage() {
         if (cancelled) return;
         const match = (overview.friends as any[]).find((f) => f.friend_id === trainerId);
         if (match) setTrainerName(match.isMe ? "Tu álbum" : match.friend_name);
+        setConocido(Boolean(match));
       })
-      .catch(() => {});
+      .catch(() => {
+        // Sin lista social no se puede afirmar nada: `conocido` se queda en
+        // null y la pantalla no dirá que el entrenador no existe.
+      });
     return () => { cancelled = true; };
   }, [trainerId]);
+
+  /**
+   * "NO EXISTE" FRENTE A "EXISTE SIN CARTAS".
+   *
+   * `getTrainerCollection` devuelve `[]` en los tres casos —id inexistente,
+   * álbum vacío y visitante sin sesión— y no se puede tocar desde aquí, así
+   * que la pantalla decía "Este entrenador no tiene cartas" ante cualquier
+   * id inventado en la URL. Se distingue con las dos señales que sí hay:
+   *
+   *  · la FORMA del id: lo que no parece un id de Clerk no es nadie;
+   *  · la LISTA SOCIAL: a un álbum se llega desde "Ver álbum" en Social, así
+   *    que cualquier entrenador al que se navega normalmente está entre los
+   *    amigos (o eres tú). Un id bien formado, con el álbum vacío y que no es
+   *    de nadie de tu círculo se trata como inexistente.
+   *
+   * El caso que esto no cubre —un desconocido con el álbum vacío al que se
+   * llega tecleando la URL— sale como "no encontrado", que es el menos dañino
+   * de los dos errores posibles. Sólo se decide con las cartas ya cargadas y
+   * la lista social contestada; mientras tanto no se afirma nada.
+   */
+  const noExiste =
+    !loading &&
+    !loadError &&
+    cards.length === 0 &&
+    (!ID_DE_CLERK.test(trainerId) || conocido === false);
 
   const setStats = useMemo(() => dbSets.map((set) => {
     // Mismo criterio que /collection y /album: el progreso se mide contra las
@@ -102,7 +150,47 @@ export default function TrainerProfilePage() {
 
   const getPrice = (rarity: string) => SELL_PRICES[rarity] || 10;
 
-  if (loading || !isLoaded) return <Loader label="Cargando entrenador" />;
+  if (loading || !sesionResuelta) return <Loader label="Cargando entrenador" />;
+
+  // Sin sesión el servidor no entrega ningún álbum (getTrainerCollection lo
+  // exige a propósito): decirlo es mejor que enseñar un álbum "vacío".
+  if (!isSignedIn) {
+    return (
+      <div className="select-none w-full">
+        <PageHeader back="/friends" title="Álbum de entrenador" />
+        <div className="surface rounded-2xl px-6 py-16 flex flex-col items-center gap-4 text-center">
+          <p className="ink font-medium">Inicia sesión para ver los álbumes de otros entrenadores</p>
+          <p className="ink-soft text-sm -mt-2">Los álbumes sólo se comparten entre cuentas.</p>
+          <Link
+            href="/"
+            className="btn-accent press touch-target rounded-xl px-5 text-sm font-semibold flex items-center justify-center"
+          >
+            Ir al inicio
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (noExiste) {
+    return (
+      <div className="select-none w-full">
+        <PageHeader back="/friends" title="Álbum de entrenador" />
+        <div className="surface rounded-2xl px-6 py-16 flex flex-col items-center gap-4 text-center">
+          <p className="ink font-medium">No encontramos a este entrenador</p>
+          <p className="ink-soft text-sm -mt-2">
+            El enlace puede estar mal copiado o la cuenta ya no existe.
+          </p>
+          <Link
+            href="/friends"
+            className="btn-accent press touch-target rounded-xl px-5 text-sm font-semibold flex items-center justify-center"
+          >
+            Volver a Social
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   if (loadError) {
     return (
@@ -253,7 +341,13 @@ export default function TrainerProfilePage() {
         </div>
 
         {processedCards.length === 0 ? (
-          <div className="surface rounded-2xl py-20 text-center ink-faint text-sm">Este entrenador no tiene cartas.</div>
+          // Aquí ya se sabe que el entrenador existe (ver `noExiste`): o su
+          // álbum está vacío de verdad, o son los filtros los que no dejan nada.
+          <div className="surface rounded-2xl py-20 px-6 text-center ink-soft text-sm">
+            {cards.length === 0
+              ? "Este entrenador todavía no tiene cartas."
+              : "Ninguna carta coincide con los filtros."}
+          </div>
         ) : (
           // Misma rejilla que colección y álbum: las cartas miden igual en
           // las tres pantallas y en móvil caben tres por fila.

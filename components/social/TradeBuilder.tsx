@@ -106,7 +106,9 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
     <div className="surface-2 rounded-2xl p-3 flex flex-col min-h-0">
       <div className="flex items-center justify-between mb-2 px-1">
         <h4 className="text-xs font-semibold uppercase tracking-wider ink-soft">{title}</h4>
-        <span className={`text-[10px] font-bold ${accent}`}>{Object.values(selected).reduce((a, b) => a + b, 0)}</span>
+        {/* `accent` es un color CSS del tema (--ok / --warn-ink), no una
+            clase: `.accent` y text-cyan-400 daban 2,4:1 y 2,1:1 en claro. */}
+        <span className="text-[10px] font-bold" style={{ color: accent }}>{Object.values(selected).reduce((a, b) => a + b, 0)}</span>
       </div>
       <div className="input-field rounded-xl px-3 py-2 flex items-center gap-2 mb-2">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5 ink-faint">
@@ -124,15 +126,24 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
         {cards.map((c) => {
           const sel = selected[c.id] || 0;
           return (
+            // `press-flat` y no `press`: el botón es ancestro de la carta y
+            // `.press` escala, que la rasteriza y la deja borrosa en iPhone.
             <button
               key={c.id}
               onClick={() => toggle(side, c)}
-              className={`relative rounded-lg overflow-hidden border-2 transition press ${sel > 0 ? "border-[var(--accent)] ring-accent" : "border-transparent hover:border-[var(--border-strong)]"}`}
+              className={`relative rounded-lg overflow-hidden border-2 transition press-flat ${sel > 0 ? "border-[var(--accent)] ring-accent" : "border-transparent hover:border-[var(--border-strong)]"}`}
               title={c.name}
             >
               {c.images?.small && <img src={c.images.small} alt={c.name} loading="lazy" className="w-full h-auto" />}
+              {/* El contador va OPACO sobre la ilustración: llevaba un
+                  backdrop-blur, y un backdrop-filter encima de la carta obliga
+                  a leerla y desenfocarla en cada fotograma. Un relleno de
+                  papel se lee igual y no cuesta nada. */}
               {c.quantity > 1 && (
-                <span className="absolute top-1 left-1 chip text-[9px] px-1.5 py-0.5 font-bold backdrop-blur">×{c.quantity}</span>
+                <span
+                  className="absolute top-1 left-1 chip text-[9px] px-1.5 py-0.5 font-bold"
+                  style={{ background: "var(--surface)" }}
+                >×{c.quantity}</span>
               )}
               {sel > 0 && (
                 <span className="absolute top-1 right-1 w-5 h-5 rounded-full btn-accent text-[10px] font-bold flex items-center justify-center">
@@ -152,22 +163,34 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
       {friend && (
         <motion.div
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          className="fixed inset-x-0 top-0 z-[100] flex items-end md:items-center justify-center bg-black/80 backdrop-blur-md md:p-6"
+          className="fixed inset-x-0 top-0 z-[100] flex items-end md:items-center justify-center md:p-6"
           // En iOS el viewport de layout no encoge con el teclado: sin esto el panel
           // quedaría debajo de él.
           style={{ bottom: "var(--keyboard)" }}
           onClick={onClose}
         >
+          {/* El telón con el desenfoque es HERMANO del panel y no este
+              contenedor: dentro se pintan dos rejillas de cartas, y un
+              backdrop-filter en un ancestro las rasteriza (borrosas en
+              iPhone). Mismo --scrim que Sheet y que la ficha de carta. */}
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 backdrop-blur-md"
+            style={{ background: "var(--scrim)" }}
+          />
+          {/* Entra con opacidad y desplazamiento, sin `scale`: el panel es
+              ancestro de las cartas y una escala, aunque dure 0,3 s, las
+              rasteriza a otro tamaño. `relative` para quedar sobre el telón. */}
           <motion.div
-            initial={{ y: 40, opacity: 0, scale: 0.98 }}
-            animate={{ y: 0, opacity: 1, scale: 1 }}
+            initial={{ y: 40, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
             exit={{ y: 40, opacity: 0 }}
             transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
             aria-label={`Nuevo intercambio con ${friend.friend_name}`}
-            className="w-full max-w-4xl bg-[var(--surface)] border border-[var(--border)] rounded-t-3xl md:rounded-3xl shadow-2xl flex flex-col max-h-[calc(var(--app-height)_-_var(--sat)_-_16px)] md:max-h-[calc(var(--app-height)_-_64px)] overflow-hidden"
+            className="relative w-full max-w-4xl bg-[var(--surface)] border border-[var(--border)] rounded-t-3xl md:rounded-3xl shadow-2xl flex flex-col max-h-[calc(var(--app-height)_-_var(--sat)_-_16px)] md:max-h-[calc(var(--app-height)_-_64px)] overflow-hidden"
           >
             {/* Header */}
             <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
@@ -188,8 +211,8 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
               </div>
             ) : (
               <div className="flex-1 overflow-y-auto p-4 grid grid-cols-1 md:grid-cols-2 gap-3" data-lenis-prevent>
-                {renderColumn("Ofreces", filteredMine, offer, "offer", qMine, setQMine, "accent")}
-                {renderColumn("Pides", filteredTheirs, request, "request", qTheirs, setQTheirs, "text-cyan-400")}
+                {renderColumn("Ofreces", filteredMine, offer, "offer", qMine, setQMine, "var(--ok)")}
+                {renderColumn("Pides", filteredTheirs, request, "request", qTheirs, setQTheirs, "var(--warn-ink)")}
               </div>
             )}
 
@@ -200,10 +223,16 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
               style={{ paddingBottom: "max(12px, calc(var(--sab) - var(--keyboard) + 12px))" }}
             >
               <div className="flex-1 text-xs ink-soft">
-                <span className={`font-semibold ${offeredIds.length > MAX_PER_SIDE ? "text-[var(--danger)]" : "accent"}`}>
+                <span
+                  className="font-semibold"
+                  style={{ color: offeredIds.length > MAX_PER_SIDE ? "var(--danger-ink)" : "var(--ok)" }}
+                >
                   {offeredIds.length}/{MAX_PER_SIDE}
                 </span> ofrecidas ·{" "}
-                <span className={`font-semibold ${requestedIds.length > MAX_PER_SIDE ? "text-[var(--danger)]" : "text-cyan-400"}`}>
+                <span
+                  className="font-semibold"
+                  style={{ color: requestedIds.length > MAX_PER_SIDE ? "var(--danger-ink)" : "var(--warn-ink)" }}
+                >
                   {requestedIds.length}/{MAX_PER_SIDE}
                 </span> pedidas
               </div>

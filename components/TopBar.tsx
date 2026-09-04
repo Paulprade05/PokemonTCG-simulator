@@ -40,12 +40,25 @@ export default function TopBar() {
 
   return (
     <motion.header
-      initial={{ y: -16, opacity: 0 }}
+      /* SIN ENTRADA: LA CABECERA NACE YA EN SU SITIO.
+       *
+       * Llevaba `initial={{ y: -16, opacity: 0 }}`, y framer escribe ese
+       * estado EN LÍNEA en el HTML que sirve el servidor: la barra llegaba
+       * invisible y 16px por encima de su sitio, y sólo se encendía en el
+       * primer requestAnimationFrame del cliente. En el arranque en frío de la
+       * PWA, o al volver del segundo plano (donde rAF no corre), eso es una
+       * cabecera que no está y luego aparece de golpe — medido con la pestaña
+       * en segundo plano: seguía a y=-16 y opacity 0 pasados varios segundos.
+       *
+       * Aquí no hay "primer montaje del cliente" que distinguir, como sí hace
+       * app/template.tsx: esta barra vive en AppShell, dentro del layout raíz,
+       * así que se monta UNA vez por documento y nunca vuelve a montarse al
+       * navegar. Su única entrada posible era la primera pintura, que es
+       * justo la que no debe animarse. `initial={false}` la deja en reposo
+       * desde el HTML servido (opacity 1, sin transform); la pantalla que va
+       * debajo sí sigue entrando, empujada por la transición de ruta. */
+      initial={false}
       animate={{ y: 0, opacity: 1 }}
-      // --d-slow y --ease-out de globals.css. Antes eran 0,5 s, el valor más
-      // largo de toda la app y sin motivo: la cabecera no tiene que tardar más
-      // que la pantalla que la acompaña.
-      transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1] }}
       // Los insets laterales van DENTRO del padding, igual que en BottomNav:
       // con el móvil en apaisado el notch se va a un lado y con `px-4` fijo el
       // saldo y el botón de ajustes quedaban debajo del recorte. El max()

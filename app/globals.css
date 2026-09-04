@@ -103,6 +103,15 @@
   --shadow-md: 0 2px 4px rgba(62,50,32,0.07), 0 6px 14px -6px rgba(62,50,32,0.14);
   --shadow-lg: 0 4px 8px rgba(62,50,32,0.09), 0 12px 26px -10px rgba(62,50,32,0.18);
   --background: var(--bg);
+  /* ROJO PARA TEXTO. --danger es de marca (3,46:1 sobre este papel: sirve de
+     relleno, no de tinta). Éste es su versión legible: 6,41:1 sobre --surface
+     y 5,10:1 sobre un relleno de --danger al 18 %. Lo usan los HP, el daño de
+     los ataques y la debilidad en la ficha de carta. */
+  --danger-ink: #b4123a;
+  /* EL TELÓN DE TODO LO MODAL, uno solo. Cada hoja/modal traía el suyo (60, 80,
+     85 % de negro) y la app parecía hecha a trozos al abrir una cosa u otra.
+     Tinta y no negro puro, para que pegue con el papel de debajo. */
+  --scrim: rgba(28, 22, 14, 0.62);
 }
 html[data-theme="light"] body {
   background:
@@ -139,6 +148,9 @@ html[data-theme="dark"] {
   --shadow-md: 0 2px 5px rgba(0,0,0,0.35), 0 8px 18px -8px rgba(0,0,0,0.5);
   --shadow-lg: 0 4px 10px rgba(0,0,0,0.4), 0 14px 30px -12px rgba(0,0,0,0.55);
   --background: var(--bg);
+  /* Los mismos dos de la sección clara. 6,51:1 sobre --surface. */
+  --danger-ink: #fb7185;
+  --scrim: rgba(0, 0, 0, 0.72);
 }
 html[data-theme="dark"] body {
   background:
@@ -198,6 +210,30 @@ input, textarea, [contenteditable="true"] {
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* EL MISMO RECORTE, PERO POR EL INTERRUPTOR DE LA APP.
+ *
+ * La media query de arriba obedece al ajuste del SISTEMA. La app tiene además
+ * el suyo propio ("reducir efectos", en la hoja de ajustes), y hasta ahora sólo
+ * lo leían 6 de los 30 ficheros con animación: el aura de las cartas raras y el
+ * oscurecido del escenario, por ejemplo, seguían moviéndose con el interruptor
+ * puesto porque miraban únicamente la preferencia del SO.
+ *
+ * `components/AppShell.tsx` escribe `data-efectos="off"` en <html> cuando el
+ * ajuste está activo (y de paso pone MotionConfig reducedMotion="always", que
+ * es la mitad de framer). Esta regla es la otra mitad: todo lo que anime por
+ * CSS —los @keyframes del sobre, el barrido del esqueleto, los degradados de
+ * texto— se recorta igual que con la preferencia del sistema.
+ *
+ * Va aquí y no dentro de la media query a propósito: son dos interruptores
+ * independientes y cualquiera de los dos debe bastar. */
+:root[data-efectos="off"] *,
+:root[data-efectos="off"] *::before,
+:root[data-efectos="off"] *::after {
+  animation-duration: .01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: .01ms !important;
 }
 
 @layer utilities {
@@ -392,6 +428,23 @@ input, textarea, [contenteditable="true"] {
      que es inofensivo para la nitidez aunque haya cartas cerca. Con
      "reducir movimiento" el bloque se queda quieto y liso (la regla global
      recorta la animación) y sigue cumpliendo su función, que es ocupar sitio. */
+  /* `:where()` PARA QUE EL RADIO NO PISE AL DE QUIEN LO USA, y es el mismo
+     arreglo que ya lleva `.chip` unas líneas más arriba.
+
+     `.skeleton` vive en `@layer utilities`, que se emite DESPUÉS de las
+     utilidades de Tailwind de la misma capa. Con la clase a peso, su
+     `border-radius: 10px` ganaba a `rounded-full` y a `rounded-xl` por orden de
+     aparición: medido en el navegador, un `skeleton rounded-full` daba 10px.
+     Consecuencias que se veían: el avatar redondo del esqueleto de Social salía
+     cuadrado, las cartas falsas llevaban 10px cuando la carta real usa 4,5% (≈5px
+     a 108px de ancho) y las teselas de la portada pedían 16/24px y pintaban 10.
+     Al llegar el contenido, todas las esquinas cambiaban de golpe.
+
+     Con `:where()` la especificidad del selector cae a cero: el 10px es sólo el
+     valor por defecto para quien no pida ninguno, y cualquier `rounded-*` de
+     Tailwind lo gana. */
+  :where(.skeleton) { border-radius: 10px; }
+
   .skeleton {
     background-color: color-mix(in srgb, var(--ink) 7%, transparent);
     background-image: linear-gradient(
@@ -403,7 +456,6 @@ input, textarea, [contenteditable="true"] {
     background-size: 300% 100%;
     background-repeat: no-repeat;
     animation: skeleton-sweep 1.5s ease-in-out infinite;
-    border-radius: 10px;
   }
 }
 

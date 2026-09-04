@@ -22,8 +22,8 @@ import { STARTING_COINS } from "../utils/constanst";
  * instancia— seguía mostrando el valor viejo hasta recargar. Con un contexto
  * hay un único saldo y todos los consumidores se enteran a la vez.
  *
- * La API es la misma de antes (coins, setCoins, spendCoins, addCoins, loaded),
- * así que ningún consumidor necesita cambiar.
+ * La API de siempre (coins, setCoins, spendCoins, addCoins, loaded) no cambia;
+ * se le añade `sesionResuelta`, que explica el bloque de abajo.
  */
 interface CurrencyValue {
   coins: number;
@@ -32,6 +32,12 @@ interface CurrencyValue {
   spendCoins: (amount: number) => boolean;
   addCoins: (amount: number) => void;
   loaded: boolean;
+  /**
+   * Clerk ha dicho quién es el usuario, O se ha cansado de esperarle. Es lo
+   * que deben mirar las pantallas que hoy miran `useUser().isLoaded` para
+   * decidir si pintan su esqueleto; ver `useSesionResuelta` abajo.
+   */
+  sesionResuelta: boolean;
 }
 
 const CurrencyContext = createContext<CurrencyValue | null>(null);
@@ -41,6 +47,27 @@ const CurrencyContext = createContext<CurrencyValue | null>(null);
  * UNA vez a la clave del invitado y no resetear a nadie al separar los saldos.
  */
 const LEGACY_KEY = "coins";
+
+/**
+ * CLERK PUEDE NO LLEGAR NUNCA, Y HAY QUE SEGUIR SIN ÉL.
+ *
+ * El script de Clerk se sirve desde su propio dominio y, aunque el service
+ * worker lo guarde (public/sw.js), para resolver la sesión clerk-js necesita
+ * hablar con su API. Sin conexión —la PWA instalada abierta en el metro— eso
+ * no ocurre y `useUser().isLoaded` se queda en false PARA SIEMPRE. Todo lo que
+ * esperaba a esa bandera se quedaba colgado: la barra superior con "…" en
+ * lugar del saldo, y los esqueletos de Social y del álbum de entrenador
+ * girando sin fin, con la app entera cacheada y lista debajo.
+ *
+ * Cuatro segundos son más de lo que Clerk tarda con red (medio segundo largo
+ * en un móvil) y menos de lo que aguanta alguien mirando tres puntos. Pasado
+ * el plazo se sigue COMO INVITADO: se lee la clave `coins:guest`, que es la
+ * única que se puede leer sin saber quién es el usuario. Si Clerk acaba
+ * llegando más tarde con una cuenta, el efecto de carga se vuelve a ejecutar
+ * con la clave de esa cuenta y el saldo bueno sustituye al del invitado —el
+ * mismo camino que ya recorre un cambio de sesión—.
+ */
+const ESPERA_CLERK_MS = 4000;
 
 /**
  * Cada identidad guarda su saldo bajo su propia clave: `coins:<userId>` con
@@ -58,6 +85,16 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
   // Hasta que Clerk resuelve la sesión no se sabe qué clave leer.
   const { user, isLoaded } = useUser();
   const storageKey = keyFor(user?.id);
+
+  // El plazo de espera a Clerk: ver ESPERA_CLERK_MS. Se arma sólo mientras
+  // Clerk no ha contestado y se desarma en cuanto contesta.
+  const [clerkTardo, setClerkTardo] = useState(false);
+  useEffect(() => {
+    if (isLoaded) return;
+    const t = window.setTimeout(() => setClerkTardo(true), ESPERA_CLERK_MS);
+    return () => window.clearTimeout(t);
+  }, [isLoaded]);
+  const sesionResuelta = isLoaded || clerkTardo;
 
   const [coins, setCoinsState] = useState(STARTING_COINS);
   const [loaded, setLoaded] = useState(false);
@@ -84,10 +121,10 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Carga inicial y cambios de identidad: cada cuenta (y el invitado) lee su
-  // propia clave. Espera a que Clerk resuelva la sesión: leer antes mezclaría el
-  // saldo del invitado con el de la cuenta.
+  // propia clave. Espera a que Clerk resuelva la sesión —o a que venza el
+  // plazo—: leer antes mezclaría el saldo del invitado con el de la cuenta.
   useEffect(() => {
-    if (!isLoaded) return;
+    if (!sesionResuelta) return;
     const esInvitado = storageKey === "coins:guest";
     storageKeyRef.current = storageKey;
     let raw = localStorage.getItem(storageKey);
@@ -108,7 +145,7 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
     const saved = sanitize(parseInt(raw ?? "", 10));
     commit(saved !== null ? saved : STARTING_COINS);
     setLoaded(true);
-  }, [isLoaded, storageKey, commit]);
+  }, [sesionResuelta, storageKey, commit]);
 
   useEffect(() => {
     if (loaded) localStorage.setItem(storageKeyRef.current, String(coins));
@@ -154,8 +191,8 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ coins, setCoins, spendCoins, addCoins, loaded }),
-    [coins, setCoins, spendCoins, addCoins, loaded],
+    () => ({ coins, setCoins, spendCoins, addCoins, loaded, sesionResuelta }),
+    [coins, setCoins, spendCoins, addCoins, loaded, sesionResuelta],
   );
 
   return (
@@ -170,3 +207,13 @@ export const useCurrency = (): CurrencyValue => {
   }
   return ctx;
 };
+
+/**
+ * `useUser().isLoaded` con plazo: true cuando Clerk ha contestado o cuando ya
+ * ha esperado ESPERA_CLERK_MS sin respuesta. Es lo que deben usar las pantallas
+ * para salir de su esqueleto —Social y el álbum de entrenador lo hacen—; con
+ * `isLoaded` a secas, sin conexión se quedaban cargando para siempre.
+ * Cuando el plazo vence sin Clerk, `useUser().isSignedIn` sigue siendo
+ * `undefined`: las pantallas lo tratan como invitado, que es lo honesto.
+ */
+export const useSesionResuelta = (): boolean => useCurrency().sesionResuelta;

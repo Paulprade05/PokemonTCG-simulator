@@ -141,20 +141,46 @@ export default function Sheet({
           exit={{ opacity: 0 }}
           transition={{ duration: D_BASE, ease: "linear" }}
         >
+          {/* El desenfoque vive AQUÍ, en el telón, y sólo aquí. El telón es
+              HERMANO del panel, nunca su ancestro, así que las cartas que se
+              pintan dentro de la hoja no lo heredan. --scrim es el mismo telón
+              que usan el detalle de carta, el buscador y el intercambio. */}
           <div
             ref={fondoRef}
-            className="absolute inset-0 bg-black/60 backdrop-blur-md"
+            className="absolute inset-0 backdrop-blur-md"
+            style={{ background: "var(--scrim)" }}
             onClick={onClose}
           />
 
+          {/* EL PANEL ES OPACO, Y NO ES UNA ELECCIÓN DE ESTILO.
+              Llevaba `.glass` (backdrop-filter: blur 8px), y dentro de esta
+              hoja se pintan cartas: el selector de la vitrina (36 a la vez),
+              las acciones de una funda, el paso 1 y 2 de publicar en el bazar
+              y la ficha del álbum. Un backdrop-filter en un ANCESTRO de la
+              carta la manda a una capa rasterizada a escala fija y en iPhone
+              sale borrosa (la trampa documentada en PokemonCard.tsx:140-163).
+              El esmerilado se queda en el telón de arriba, que es hermano. */}
           <motion.div
             ref={panelRef}
             role="dialog"
             aria-modal="true"
             aria-label={label}
-            className="glass relative w-full max-w-2xl overflow-hidden rounded-t-[28px] sm:mb-4 sm:rounded-[28px]"
+            /* `flex flex-col` + `min-h-0` en el área de scroll, y no
+               `max-h-[inherit]`: POR ESTO NO SE LLEGABA AL FINAL DE LAS HOJAS.
+               El panel lleva `max-height` con box-sizing border-box, así que
+               ese tope INCLUYE el borde y el relleno inferior de la barra de
+               gestos (--sab, 34 px en iPhone). El área de scroll heredaba el
+               mismo tope entero, sin descontar ni eso ni el asa (26 px), y el
+               overflow-hidden del panel se comía sus últimos ~62 px (~28 en
+               escritorio): el botón "Cerrar" de la ficha del álbum y el pie de
+               cualquier hoja larga quedaban fuera aunque se hiciera scroll
+               hasta el final. Medido en 375×812 con insets 47/34. Como columna
+               flex, el área recibe lo que sobra tras el asa y el relleno, y
+               el `min-h-0` le permite encoger y desplazar su contenido. */
+            className="ink relative flex w-full max-w-2xl flex-col overflow-hidden rounded-t-[28px] border border-[var(--border)] sm:mb-4 sm:rounded-[28px]"
             style={{
               maxHeight,
+              background: "var(--grain), var(--surface)",
               boxShadow: "var(--shadow-lg)",
               // Con el teclado desplegado ya no hay barra de gestos que esquivar.
               paddingBottom: "max(0px, calc(var(--sab) - var(--keyboard)))",
@@ -196,7 +222,7 @@ export default function Sheet({
                 scroll interno de la hoja. */}
             <div
               data-lenis-prevent
-              className="scroll-area custom-scrollbar max-h-[inherit]"
+              className="scroll-area custom-scrollbar min-h-0"
             >
               {children}
             </div>

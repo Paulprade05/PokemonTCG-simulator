@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { usePathname } from "next/navigation";
+import { RAICES_DE_PESTANA } from "../components/nav-items";
 
 /**
  * TRANSICIÓN DE RUTA CON DIRECCIÓN.
@@ -26,6 +27,28 @@ import { usePathname } from "next/navigation";
  * `overflow-x: hidden` del body (globals.css), que se propaga al viewport, pero
  * cuanto menos haya que recortar, menos margen de error queda en iOS. 22px son
  * suficientes para que el ojo lea la dirección.
+ *
+ * ---------------------------------------------------------------------------
+ * LA PRIMERA PINTURA DEL DOCUMENTO NO SE ANIMA.
+ *
+ * framer escribe el estado `initial` EN LÍNEA en el HTML que sirve el servidor
+ * (`opacity:0; transform:translateY(10px)`) y sólo lo enciende en su primer
+ * requestAnimationFrame. Eso está bien para una navegación dentro de la app,
+ * pero es un desastre para la primera carga: en el arranque en frío de la PWA,
+ * o al volver del segundo plano —donde rAF no corre—, el usuario ve el fondo
+ * vacío y luego todo de golpe. Medido con la pestaña en segundo plano: las
+ * tarjetas del mercado seguían a opacity:0 cuatro segundos después de servirse,
+ * y la cabecera clavada 16px por encima de su sitio.
+ *
+ * Por eso el PRIMER montaje del documento va con `initial={false}`: la pantalla
+ * se pinta ya en reposo, exactamente como llega del servidor, y no hay nada que
+ * esperar. Las navegaciones siguientes remontan este componente y sí entran
+ * animadas, que es donde la animación cuenta algo (la dirección de arriba).
+ *
+ * La bandera vive en el MÓDULO, como `rutaPrevia`: en el servidor ningún efecto
+ * corre, así que allí es `true` para siempre y el HTML sale en reposo; en el
+ * navegador la baja el primer efecto, y la hidratación —que es el primer
+ * render— todavía la ve a `true`, o sea que servidor y cliente pintan lo mismo.
  */
 
 /* Espejo en JavaScript de la escala de app/globals.css: framer-motion no lee
@@ -34,10 +57,14 @@ import { usePathname } from "next/navigation";
 const D_SLOW = 0.34;
 const EASE_IOS: [number, number, number, number] = [0.32, 0.72, 0, 1];
 
-// Orden REAL de las pestañas en la barra inferior (components/nav-items.tsx).
-// Es lo que decide el signo del desplazamiento: pasar de Inicio a Mercado va
-// hacia la derecha, y al revés hacia la izquierda.
-const PESTANAS = ["/", "/collection", "/mercado", "/friends"];
+/**
+ * Orden REAL de las pestañas en la barra inferior. Es lo que decide el signo del
+ * desplazamiento: pasar de Inicio a Mercado va hacia la derecha, y al revés
+ * hacia la izquierda. Sale de components/nav-items.tsx y no de una lista escrita
+ * aquí a mano: la copia local y la de EdgeBackGesture no coincidían (a la del
+ * gesto le faltaba "/mercado") y cada una fallaba a su manera.
+ */
+const PESTANAS = RAICES_DE_PESTANA;
 
 /**
  * Rutas que NO son pestaña pero cuelgan de una. Se emparejan con su pestaña
@@ -77,6 +104,13 @@ function ubicar(ruta: string): Ubicacion {
  */
 let rutaPrevia: string | null = null;
 
+/**
+ * ¿Todavía no se ha pintado ninguna pantalla en este documento? Ver la cabecera
+ * ("LA PRIMERA PINTURA DEL DOCUMENTO NO SE ANIMA"). Mismo motivo que
+ * `rutaPrevia` para vivir en el módulo: tiene que sobrevivir al remontaje.
+ */
+let primeraPintura = true;
+
 /** Desplazamiento inicial en X. 0 = la pantalla entra sin lateral. */
 function desplazamiento(desde: string | null, hasta: string): number {
   // Primera carga de la sesión: no hay "de dónde", así que no hay dirección que
@@ -112,8 +146,14 @@ export default function Template({ children }: { children: React.ReactNode }) {
   // guarda la anterior, que es justo lo que hace falta.
   const [x] = useState(() => desplazamiento(rutaPrevia, pathname));
 
+  // Igual que `x`: se lee UNA vez, en el primer render, antes de que el efecto
+  // la baje. En la hidratación sigue a `true` (el efecto aún no ha corrido) y
+  // en cualquier montaje posterior ya está a `false`.
+  const [esLaPrimera] = useState(() => primeraPintura);
+
   useEffect(() => {
     rutaPrevia = pathname;
+    primeraPintura = false;
   }, [pathname]);
 
   // Sin lateral, la entrada es la de siempre: fundido con 10px de subida. Con
@@ -123,7 +163,9 @@ export default function Template({ children }: { children: React.ReactNode }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, x, y }}
+      // `false` en la primera pintura del documento: se sirve y se hidrata ya
+      // en reposo (opacity 1, sin transform). Ver la cabecera.
+      initial={esLaPrimera ? false : { opacity: 0, x, y }}
       animate={{ opacity: 1, x: 0, y: 0 }}
       transition={{
         // La opacidad termina antes que el recorrido a propósito: el contenido
@@ -133,8 +175,9 @@ export default function Template({ children }: { children: React.ReactNode }) {
         opacity: { duration: 0.18, ease: "linear" },
         default: { duration: D_SLOW, ease: EASE_IOS },
       }}
-      // El MotionConfig de AppShell tiene reducedMotion="user": con la
-      // preferencia activa, framer descarta x/y y deja sólo el fundido.
+      // El MotionConfig de AppShell lleva reducedMotion="user" (o "always" con
+      // el ajuste "reducir efectos" de la app): en cualquiera de los dos casos
+      // framer descarta x/y y deja sólo el fundido.
     >
       {children}
     </motion.div>

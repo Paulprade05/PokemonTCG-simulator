@@ -146,10 +146,19 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
               exit={{ opacity: 0 }}
               /* Anclado sobre el teclado: en iOS el viewport de layout no encoge,
                  así que un inset-0 dejaría el panel (y el input) por debajo. */
-              className="fixed inset-x-0 top-0 z-[110] bg-black/80 backdrop-blur-xl flex md:items-start md:justify-center md:pt-24 md:p-4"
+              className="fixed inset-x-0 top-0 z-[110] flex md:items-start md:justify-center md:pt-24 md:p-4"
               style={{ bottom: "var(--keyboard)" }}
               onClick={closeSearch}
             >
+              {/* El telón con el desenfoque es un HERMANO del panel, no este
+                  contenedor: la rejilla de resultados pinta cartas y un
+                  backdrop-filter en un ancestro las rasteriza (borrosas en
+                  iPhone). Mismo --scrim que Sheet y que la ficha de carta. */}
+              <div
+                aria-hidden="true"
+                className="absolute inset-0 backdrop-blur-md"
+                style={{ background: "var(--scrim)" }}
+              />
               <motion.div
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -159,7 +168,8 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                 role="dialog"
                 aria-modal="true"
                 aria-label="Buscar carta"
-                className="w-full h-full md:h-auto md:max-h-full md:max-w-3xl bg-[var(--surface)] md:border md:border-[var(--border)] md:rounded-2xl overflow-hidden flex flex-col"
+                // `relative` para pintarse por encima del telón absoluto.
+                className="relative w-full h-full md:h-auto md:max-h-full md:max-w-3xl bg-[var(--surface)] md:border md:border-[var(--border)] md:rounded-2xl overflow-hidden flex flex-col"
               >
                 {/* pt-safe deja libre el notch cuando el panel va a pantalla completa */}
                 <div className="pt-safe md:pt-0 border-b border-[var(--border)] shrink-0">
@@ -198,7 +208,7 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                 >
                   {loading && <p className="text-xs ink-faint text-center py-8">Buscando…</p>}
                   {!loading && searchError && (
-                    <p className="text-xs text-center py-8" style={{ color: "var(--danger)" }}>
+                    <p className="text-xs text-center py-8" style={{ color: "var(--danger-ink)" }}>
                       No se pudo buscar. Revisa tu conexión.
                     </p>
                   )}
@@ -218,20 +228,36 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                   )}
                   <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
                     {results.map((c) => (
+                      // `press-flat` y no `press`: la celda es ancestro de la
+                      // carta y `.press` escala, que la rasteriza y la deja
+                      // borrosa en iPhone (app/globals.css, junto a .press-flat).
                       <button
                         key={c.id}
                         onClick={() => { haptic("select"); setSelected(c); }}
-                        className="group surface-2 surface-hover border border-[var(--border)] rounded-xl p-1.5 transition text-left press"
+                        className="group surface-2 surface-hover border border-[var(--border)] rounded-xl p-1.5 transition text-left press-flat"
                         title={c.owned ? "" : "No la posees"}
                       >
                         {c.images?.small && (
-                          <img
-                            src={c.images.small}
-                            alt={c.name}
-                            loading="lazy"
-                            decoding="async"
-                            className={`w-full h-auto rounded-md transition ${c.owned ? "" : "grayscale opacity-60 group-hover:opacity-90"}`}
-                          />
+                          // La carta que no se posee se apaga con un velo
+                          // HERMANO del color del papel, no con `grayscale`
+                          // sobre la imagen: un filter sobre la carta la
+                          // rasteriza. El velo se retira al pasar el ratón.
+                          <div className="relative">
+                            <img
+                              src={c.images.small}
+                              alt={c.name}
+                              loading="lazy"
+                              decoding="async"
+                              className="w-full h-auto rounded-md"
+                            />
+                            {!c.owned && (
+                              <div
+                                aria-hidden="true"
+                                className="absolute inset-0 rounded-md pointer-events-none transition-opacity opacity-55 group-hover:opacity-20"
+                                style={{ background: "var(--surface)" }}
+                              />
+                            )}
+                          </div>
                         )}
                         <p className={`text-[10px] truncate mt-1 ${c.owned ? "ink" : "ink-faint"}`}>{c.name}</p>
                         <p className="text-[9px] ink-faint truncate">{c.set?.name}</p>

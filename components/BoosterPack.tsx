@@ -173,9 +173,10 @@ function derivarSobre(semilla: number): Record<string, string> {
  * sitio en todos los sobres de Pokémon, mientras que la insignia y la posición
  * del logo cambian por época.
  *
- * OJO: los 48px del sobre dibujado (11,4% del alto) caen EN MITAD del logo. No
- * es un descuido de aquel diseño —allí no hay logo impreso, el logo es un <img>
- * centrado más abajo—, pero copiarlos aquí partiría POKÉMON por la mitad.
+ * OJO: la tapa del sobre dibujado (0,168 del ancho: 48px en el dibujo
+ * original de 286, un 9% del alto de hoy) cae EN MITAD del logo. No es un
+ * descuido de aquel diseño —allí no hay logo impreso, el logo es un <img>
+ * centrado más abajo—, pero copiarla aquí partiría POKÉMON por la mitad.
  *
  * Va en porcentaje y no en px porque el alto del sobre depende del viewport:
  * con 48px fijos la tapa se lleva el 9,5% de la ilustración en una tablet y el
@@ -186,33 +187,58 @@ function derivarSobre(semilla: number): Record<string, string> {
 const CORTE_ARTE = "5.2%";
 
 /**
- * Proporción de las ilustraciones (780x1426 = 1,83 de alto por ancho). Se le
- * da al CONTENEDOR para que el hueco y la foto sean la misma caja: así no hay
- * ni bandas vacías a los lados ni recorte por abajo.
+ * Proporción del sobre (780x1426 = 1,8282 de alto por ancho). Es la de las
+ * fotos de public/sobres, recortadas a ese tamaño exacto por sharp, y la
+ * mediana de las 367 del manifiesto cae en 1,8286: la misma a tres decimales.
+ * Se le da al CONTENEDOR para que el hueco y la foto sean la misma caja: así
+ * no hay ni bandas vacías a los lados ni recorte por abajo.
+ *
+ * Y ES LA MISMA EN LOS DOS MODOS, foto y dibujado. Hasta ahora el mismo objeto
+ * tenía tres proporciones distintas (2,5/3,76 dibujado, 780/1426 con foto, y
+ * la de la carta cuando la foto fallaba) y cambiaba de forma al llegar la
+ * imagen. Ahora la caja se sabe sin red y no vuelve a cambiar.
  */
-const RATIO_ARTE = "780 / 1426";
+const RATIO_SOBRE = "780 / 1426";
 
 /**
- * Y el ancho, en unidades de `anchoCarta`.
+ * EL ANCHO DEL SOBRE ES EL DE LA CARTA, y por qué eso es lo correcto.
  *
- * EL CRITERIO: SE CONSERVA EL ALTO Y SE CEDE EL ANCHO. El sobre dibujado mide
- * 0,93 de ancho con proporción 2,5/3,76, o sea 1,3987 de alto, que es
- * EXACTAMENTE el alto de la carta (2,5/3,5). Ese alto no se puede tocar: la
- * ranura vertical está calculada en app/page.tsx (CARD_WIDTH descuenta
- * cabecera, pie y aire) y un sobre más alto se saldría por arriba y por abajo
- * de la zona central, encima de la cabecera y del pie. Así que se despeja el
- * ancho: 1,3987 / 1,8282 = 0,7651.
+ * Un sobre de Pokémon de verdad mide 63 mm de ancho, EXACTAMENTE lo que mide
+ * la carta que lleva dentro (63x88), y unos 110-115 mm de alto: 1,78-1,83 de
+ * alto por ancho, que es la proporción de las fotos. El comentario que hubo
+ * aquí decía que "un sobre es más estrecho que la carta" y era falso; con ese
+ * criterio el sobre medía 0,765 anchos de carta (235 px en el iPhone contra
+ * 307 de carta) y al emerger, la carta —un 30% MÁS ANCHA que el sobre— asomaba
+ * 36 px por cada lado antes de que nadie la hubiera sacado. Con el ancho de la
+ * carta, la carta sale de DENTRO del sobre.
  *
- * Lo que se paga: el sobre con foto es más ESTRECHO que la carta (0,765 contra
- * 1,0), y mientras la carta emerge se le ven los bordes por los lados del
- * sobre. Ya pasaba con el sobre dibujado —0,93 contra 1,0— sólo que menos.
- * Es el menor de los tres males posibles: estirar la foto la deforma, y
- * recortarla para llenar la caja de la carta se come el 17,7% del alto, que es
- * justo donde están el título de la expansión y la banda de "10 ADDITIONAL
- * GAME CARDS". Y es lo que pasa de verdad: un sobre es más estrecho y más
- * largo que la carta que lleva dentro.
+ * LO QUE LIMITA ES EL ALTO. Con 1,83 de proporción, un sobre tan ancho como la
+ * carta mide 1,83 anchos de alto, y en un PC apaisado eso no cabe: la zona
+ * central (app-height menos insets, cabecera de 56 px, pie de 96 px y 20 px de
+ * aire: los MISMOS 172 px que descuenta CARD_WIDTH en app/page.tsx) mide 628 px
+ * a 1280x800, y una carta de 360 pediría un sobre de 658. Así que el ancho es
+ * el de la carta O el que quepa en el hueco vertical, lo que sea menor:
+ *
+ *     min(anchoCarta, (app-height - sat - sab - 172px) * 780 / 1426)
+ *
+ *   · iPhone 375x812 (sat 47, sab 34): 305,7 x 559. El hueco vertical manda
+ *     por 2 px (la carta mide 307,5): el sobre es el 99,4% del ancho de la
+ *     carta y deja los 20 px de aire de CARD_WIDTH, diez arriba y diez abajo.
+ *   · PC 1280x800: 343,5 x 628, el 95% del ancho de la carta (360 x 504).
+ *
+ * Los 172 px se escriben aquí y no se importan de app/page.tsx porque allí no
+ * están como constante: CARD_WIDTH es una cadena. Si un día cambian la
+ * cabecera o el pie, hay que tocar los dos sitios; por eso el número va con
+ * nombre y con su desglose.
+ *
+ * Es el mismo criterio que rige para la carta —ancho tope, y lo que quepa en
+ * vertical— y por eso los dos objetos ocupan la misma ranura y se mueven con
+ * la barra dinámica de Safari a la vez.
  */
-const ANCHO_ARTE = ((0.93 * 3.76) / 2.5 / (1426 / 780)).toFixed(4);
+const RESERVA_VERTICAL = "172px";
+function anchoDeSobre(anchoCarta: string): string {
+  return `min(${anchoCarta}, calc((var(--app-height) - var(--sat) - var(--sab) - ${RESERVA_VERTICAL}) * 780 / 1426))`;
+}
 
 interface BoosterPackProps {
   fase: FaseSobre;
@@ -223,7 +249,8 @@ interface BoosterPackProps {
   sobreRef: RefObject<HTMLDivElement | null>;
   /** Tira: recibe el transform del dedo mientras se arrastra. */
   tiraRef: RefObject<HTMLDivElement | null>;
-  /** CARD_WIDTH de la vista: el sobre ocupa la misma ranura que la carta. */
+  /** CARD_WIDTH de la vista: el sobre es tan ancho como la carta, o lo que
+   *  quepa en el hueco vertical si es menos (ver anchoDeSobre). */
   anchoCarta: string;
   logo?: string;
   nombreSet?: string;
@@ -303,6 +330,9 @@ interface BoosterPackProps {
  * regla.
  */
 const CSS = `
+/* Entrada de la capa entera. Sólo opacity y translate: esta capa es ANCESTRO
+   del sobre y de su foto, y un scale aquí —aunque dure 420 ms— la rasteriza
+   justo mientras la foto llega (150-750 ms tras montar). */
 .sobre-capa { animation: sobre-entra .42s cubic-bezier(.16,1,.3,1) both; }
 
 /* OJO AL EDITAR: este bloque es un template literal, así que aquí dentro no
@@ -315,14 +345,30 @@ const CSS = `
    de que el sobre se pareciese a su expansión. Un sobre del que no sepamos
    nada —sin logo del que sacar el id— se ve hoy igual que ayer, y eso es lo
    que permite comparar. */
+/* LAS MEDIDAS DEL SOBRE DIBUJADO VAN EN FRACCIONES DE SU ANCHO (--sobre-w, la
+   misma expresión que su width, puesta inline). El dibujo se hizo para un
+   sobre de 286 px de ancho y llevaba sus medidas en px: 48 de tapa, 7 de
+   crimpado, 10 de letra en la banda... Desde que el sobre mide lo que la carta
+   (306 px en el iPhone, 343 en el PC) esos px fijos se quedaban pequeños y
+   no crecían con él. Cada fracción de abajo es el px de entonces entre 286,
+   así que en un sobre de 286 el dibujo sale clavado al de antes. */
 .sobre {
-  position: relative; border-radius: 14px; --tapa-h: 48px;
+  position: relative; border-radius: 14px; --tapa-h: calc(var(--sobre-w) * .168);
   --sb-a: var(--accent); --sb-b: var(--accent-2);
   --sb-ang: 102deg; --sb-rayado: .55; --sb-paso: 1; --sb-lustre: 1;
   --sb-t1: 30%; --sb-t2: 22%;
+  transition: translate .16s ease-out;
 }
 .sobre[data-fase="sellado"] { animation: sobre-flota 4.2s ease-in-out infinite; }
-.sobre[data-fase="sellado"]:active { animation: none; transform: scale(.985); }
+/* Al agarrarlo el balanceo se PAUSA, no se corta: con animation:none el sobre
+   saltaba en seco desde donde estuviera (hasta 4 px) a su sitio. Y el
+   hundimiento es un translate de 2 px, no la escala a .985 que había: una
+   escala sobre el sobre —y el arrastre de la tira lo mantiene :active todo el
+   gesto— hace que WebKit rasterice la foto a otro tamaño y se vea borrosa
+   justo mientras la miras. Va por la propiedad translate y no por transform
+   porque transform lo tiene la animación, que manda sobre la regla aunque
+   esté en pausa. */
+.sobre[data-fase="sellado"]:active { animation-play-state: paused; translate: 0 2px; }
 /* El balanceo es adorno: con efectos reducidos no se mueve nada. */
 .sobre[data-quieto="si"] { animation: none; }
 
@@ -358,13 +404,19 @@ const CSS = `
     calc(var(--luz,0) * -7px) 16px 26px -14px rgba(0,0,0,.42),
     var(--shadow-lg);
 }
-/* El cuerpo espera QUIETO a que la tira salga y la carta empiece a subir
-   (0-620ms desde el rasgado); sólo entonces cae. El delay de 620ms casa con
-   T_CARTA=420 de app/page.tsx: entre 620 y 1100 el cuerpo baja cruzándose
-   con la carta que emerge. Va con forwards y sin both: durante el delay no
-   se aplica ningún fotograma y el cuerpo no se mueve. */
+/* El cuerpo espera QUIETO mientras la tira sale (0-420 ms desde el rasgado) y
+   empieza a bajar EN EL MISMO INSTANTE en que la carta monta y sube: el delay
+   de 420 ms ES T_CARTA de app/page.tsx. Antes esperaba hasta 620 y caía en
+   480; ahora arranca 200 ms antes y tarda 680, y termina donde terminaba
+   (420 + 680 = 1100, que es lo que T_FIN espera). Los primeros 200 ms son un
+   descenso lento —el sobre que baja en la mano mientras la otra tira de la
+   carta— y el resto la caída de siempre. Ese descenso es lo que deja ver la
+   carta: el sobre es ahora 130 px más alto que ella y, si se quedara quieto,
+   una subida de 90 px sólo asomaría 26 (ver sobre-cuerpo-cae, abajo).
+   Va con forwards y sin both: durante el delay no se aplica ningún fotograma
+   y el cuerpo no se mueve. */
 .sobre[data-fase="rasgando"] .sobre__cuerpo,
-.sobre[data-fase="abriendo"] .sobre__cuerpo { animation: sobre-cuerpo-cae 480ms linear 620ms forwards; }
+.sobre[data-fase="abriendo"] .sobre__cuerpo { animation: sobre-cuerpo-cae 680ms linear 420ms forwards; }
 
 /* Rayado lenticular: el arcoíris IMPRESO del envoltorio. No se sortea — es de
    fábrica, igual que el crimpado. Cuatro bandas por periodo (tinta, veta de
@@ -402,7 +454,7 @@ const CSS = `
    Y va aquí, entre el rayado y los pliegues, porque es TINTA: los pliegues y
    los reflejos del film tienen que pasarle por encima. */
 .sobre__sello {
-  position: absolute; right: 6%; bottom: 44px; width: 13%; aspect-ratio: 1;
+  position: absolute; right: 6%; bottom: calc(var(--sobre-w) * .154); width: 13%; aspect-ratio: 1;
   pointer-events: none; opacity: .5;
   background-image: var(--sb-sello, none),
     radial-gradient(closest-side, rgba(255,255,255,.42), rgba(255,255,255,.10) 68%, transparent 100%);
@@ -417,8 +469,8 @@ html[data-theme="dark"] .sobre__sello { opacity: .66; }
    oscuro --ink es marfil y el valle saldría claro. Una sombra es negra en los
    dos temas; lo único que cambia es cuánta cabe, y de eso se encarga el
    opacity de abajo.
-   Escala: con W≈300 el sobre mide 279×419, así que 1% horizontal ≈ 2,8px —
-   un valle de 0,5% son 1,4px y una ceja de 1,2% son 3,4px. */
+   Escala: en el iPhone el sobre mide 306×559, así que 1% horizontal ≈ 3,1px —
+   un valle de 0,5% son 1,5px y una ceja de 1,2% son 3,7px. */
 .sobre__pliegues {
   position: absolute; inset: 0; pointer-events: none; opacity: .46;
   background:
@@ -487,7 +539,13 @@ html[data-theme="dark"] .sobre__pliegues { opacity: .66; }
     rgba(255,255,255,.07) 53%,
     rgba(255,255,255,.20) 61%,
     transparent 100%);
-  animation: sobre-brillo var(--br-dur,5.5s) cubic-bezier(.45,0,.2,1) var(--br-delay,0s) infinite;
+  /* backwards ES LO QUE ARREGLA "el brillo sale estático y luego se anima".
+     --br-delay sortea hasta 2,2 s de espera y, sin fill-mode, durante esa
+     espera no se aplica NINGÚN fotograma: la banda se pintaba con su estilo
+     base —left:0, quieta, a plena opacidad, encima del sobre— y al acabar el
+     delay saltaba de golpe fuera del sobre para empezar el barrido. Con
+     backwards, durante el delay se aplica el 0%, que ya está fuera. */
+  animation: sobre-brillo var(--br-dur,5.5s) cubic-bezier(.45,0,.2,1) var(--br-delay,0s) infinite backwards;
 }
 /* Interior del sobre, a la vista en cuanto la tira empieza a despegarse. */
 .sobre__boca {
@@ -499,8 +557,8 @@ html[data-theme="dark"] .sobre__pliegues { opacity: .66; }
 }
 /* Pie impreso del sobre. */
 .sobre__banda {
-  position: absolute; left: 0; right: 0; bottom: 0; padding: 9px 0; text-align: center;
-  font-size: 10px; font-weight: 700; letter-spacing: .28em; text-transform: uppercase;
+  position: absolute; left: 0; right: 0; bottom: 0; padding: calc(var(--sobre-w) * .031) 0; text-align: center;
+  font-size: calc(var(--sobre-w) * .035); font-weight: 700; letter-spacing: .28em; text-transform: uppercase;
   color: var(--ink-soft); border-top: 1px solid var(--border);
   background: linear-gradient(180deg,
     color-mix(in srgb, var(--ink) 10%, transparent),
@@ -522,7 +580,7 @@ html[data-theme="dark"] .sobre__pliegues { opacity: .66; }
 }
 /* Crimpado real: estrías verticales finas, no dientes de sierra. */
 .sobre__crimpado {
-  height: 7px; flex: none;
+  height: calc(var(--sobre-w) * .0245); flex: none;
   background:
     repeating-linear-gradient(90deg, color-mix(in srgb, var(--ink) 22%, transparent) 0 2px, transparent 2px 5px),
     color-mix(in srgb, var(--surface-2) 90%, var(--ink));
@@ -624,18 +682,36 @@ html[data-theme="dark"] .sobre__pliegues { opacity: .66; }
 .sobre[data-arte="si"] .sobre__tapa-dedo {
   background: var(--sb-arte) 50% 0 / var(--sb-arte-size, 100% auto) no-repeat;
   /* El .touch-target de la tira reserva 44px de alto para el dedo, y la
-     tapa en modo foto mide bastante menos (5,2% del sobre: unos 21px).
-     Sin esto el dedo sobresale por debajo de la línea de rasgado y se
-     lleva la perforación y las flechas con él, dibujadas donde el sobre
-     NO se va a romper. Se puede quitar sin perder el gesto porque el
-     arrastre no lo escucha la tira sino el sobre entero (ver el style
-     inline de .sobre, touchAction): la tira es la PISTA de dónde se
-     rasga, no el sitio al que hay que apuntar. */
+     tapa en modo foto mide bastante menos (5,2% del sobre: 29px en el
+     iPhone, 33 en el PC). Sin esto el dedo sobresale por debajo de la
+     línea de rasgado y se lleva la perforación y las flechas con él,
+     dibujadas donde el sobre NO se va a romper. Se puede quitar sin
+     perder el gesto porque el arrastre no lo escucha la tira sino el
+     sobre entero (ver el style inline de .sobre, touchAction): la tira
+     es la PISTA de dónde se rasga, no el sitio al que hay que apuntar.
+     Los 44px de zona tocable los devuelve el ::after de abajo. */
   min-height: 0;
 }
+/* LA ZONA TOCABLE DE LA TIRA VUELVE A MEDIR 44px sin que se vea. Con la
+   tapa a 29px, el min-height:0 de arriba dejaba a la tira por debajo de los
+   44px que .touch-target promete a todo lo que se toca en la app. Aquí se
+   le devuelven con un pseudoelemento transparente y sin contenido, que no
+   puede ir en .sobre__tapa-dedo —recorta a sus hijos, y overflow:hidden
+   recorta también el hit-test— así que se cuelga de .sobre__tapa, que no
+   recorta y ya está a z-index 2. Que quede claro lo que NO hace: hoy no
+   cambia quién recibe el toque, porque el gesto lo escucha .sobre entero y
+   los 15px que sobresalen caen sobre el cuerpo, que también es .sobre. Lo
+   que hace es que la tira, POR SÍ MISMA, mida lo que dice que mide: si un
+   día el arrastre vuelve a escucharse en la tira, la caja ya está. Hereda el
+   pointer-events:none que la tapa recibe al rasgar, así que no estorba a la
+   carta que emerge. */
+.sobre[data-arte="si"] .sobre__tapa::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 0;
+  height: max(100%, 44px);
+}
 /* El crimpado plateado se pliega a cero en vez de apagarse: el de la
-   foto es el de SU expansión y está en su sitio, y estos 7px sólo
-   servían para reservarle hueco al dibujado. Con la tapa a 21px, dejarlo
+   foto es el de SU expansión y está en su sitio, y esta franja sólo
+   servía para reservarle hueco al dibujado. Con la tapa a 29px, dejarlo
    ocupando sitio dejaba la tira sin alto para las flechas. */
 .sobre[data-arte="si"] .sobre__crimpado { height: 0; }
 /* La tira deja de ser una banda impresa y pasa a ser SOMBRA: el film
@@ -669,8 +745,12 @@ html[data-theme="dark"] .sobre__pliegues { opacity: .66; }
    oscuro— por especificidad: clase + atributo + clase. */
 .sobre[data-arte="si"] .sobre__pliegues { opacity: .26; }
 
-@keyframes sobre-entra  { from { opacity:0; transform: translate3d(0,16px,0) scale(.94); } to { opacity:1; transform:none; } }
-@keyframes sobre-flota  { 0%,100% { transform: translate3d(0,0,0); } 50% { transform: translate3d(0,-5px,0); } }
+/* Sin scale (era .94): la capa es ancestro de la foto. Se sube un poco más
+   de recorrido, 20px en vez de 16, para que la entrada siga teniendo peso. */
+@keyframes sobre-entra  { from { opacity:0; transform: translate3d(0,20px,0); } to { opacity:1; transform:none; } }
+/* 4px y no 5: el sobre mide ahora lo que la carta y deja sólo 10px de aire
+   arriba; con 5 el balanceo se acercaba a la cabecera. */
+@keyframes sobre-flota  { 0%,100% { transform: translate3d(0,0,0); } 50% { transform: translate3d(0,-4px,0); } }
 /* El recorrido sale del ancho de la tira (--br-x0/x1 ya vienen calculados):
    entra y sale del sobre por completo sea cual sea el ancho sorteado, y con
    la luz a la derecha cruza en sentido contrario. */
@@ -696,18 +776,34 @@ html[data-theme="dark"] .sobre__pliegues { opacity: .66; }
   80%  { transform: translate3d(-112px,110px,0) rotate(-31deg); opacity: .8; }
   100% { transform: translate3d(-140px,222px,0) rotate(-44deg); opacity: 0; }
 }
-/* Respingo corto (el único: el cuerpo ya no se mueve en "rasgando") y caída
-   acelerada dibujada en POSICIONES: cada tramo recorre más que el anterior.
-   Mientras el cuerpo cae, la carta sube por la boca y vuelve a asentarse
-   (keyframes y:[0,-90,0] en app/page.tsx): se cruzan y el relevo no deja
-   hueco ni deja nunca a la carta asomando por debajo del sobre. */
+/* LA CAÍDA DEL CUERPO, en 680 ms desde T_CARTA (420). Tres tramos, dibujados
+   en POSICIONES con timing linear para que el arco salga igual en todos los
+   motores:
+     · 0-12% (420-500 ms): respingo de 5px, el tirón de la mano.
+     · 12-57% (500-808 ms): DESCENSO. El cuerpo baja 60px mientras la carta
+       sube 90 (keyframes y:[0,-90,0] de components/MazoCartas.tsx, que
+       llega a su cima en 805 ms). Sumadas, la carta asoma unos 86px por la
+       boca en el iPhone y 88 en el PC: la carta se SACA del sobre, y el sobre
+       baja en la otra mano. Sin este tramo, con el sobre 130px más alto que
+       la carta, sólo asomarían 26.
+     · 57-100% (808-1100 ms): la caída acelerada de siempre, cada tramo
+       recorre más que el anterior, y se apaga. Termina en 1100, como antes.
+   SIN ESCALA. Había una de 1.01 → .93 que daba la sensación de alejarse,
+   y .sobre__cuerpo es quien PINTA la foto: WebKit la rasteriza a otro
+   tamaño justo en los fotogramas que se miran. El "alejarse" lo hacen ahora
+   un giro de hasta 3° hacia el lado por el que salió la tira (--caida-dir,
+   inline en .sobre: +1 derecha, -1 izquierda) y una deriva de 12px en ese
+   sentido: un cuerpo que cae no baja en vertical perfecta. Los px de la
+   caída no escalan con el sobre a propósito: son gravedad, no dibujo. */
 @keyframes sobre-cuerpo-cae {
-  0%   { transform: translate3d(0,0,0) scale(1);         opacity: 1; }
-  18%  { transform: translate3d(0,-6px,0) scale(1.01);   opacity: 1; }
-  40%  { transform: translate3d(0,14px,0) scale(1);      opacity: 1; }
-  62%  { transform: translate3d(0,56px,0) scale(.98);    opacity: .92; }
-  82%  { transform: translate3d(0,112px,0) scale(.955);  opacity: .55; }
-  100% { transform: translate3d(0,170px,0) scale(.93);   opacity: 0; }
+  0%   { transform: translate3d(0,0,0) rotate(0deg);   opacity: 1; }
+  12%  { transform: translate3d(0,-5px,0) rotate(0deg); opacity: 1; }
+  30%  { transform: translate3d(calc(var(--caida-dir,1) * 1px),12px,0) rotate(calc(var(--caida-dir,1) * .2deg)); opacity: 1; }
+  45%  { transform: translate3d(calc(var(--caida-dir,1) * 2px),36px,0) rotate(calc(var(--caida-dir,1) * .5deg)); opacity: 1; }
+  57%  { transform: translate3d(calc(var(--caida-dir,1) * 3px),60px,0) rotate(calc(var(--caida-dir,1) * .8deg)); opacity: .98; }
+  72%  { transform: translate3d(calc(var(--caida-dir,1) * 6px),100px,0) rotate(calc(var(--caida-dir,1) * 1.5deg)); opacity: .85; }
+  87%  { transform: translate3d(calc(var(--caida-dir,1) * 9px),150px,0) rotate(calc(var(--caida-dir,1) * 2.3deg)); opacity: .5; }
+  100% { transform: translate3d(calc(var(--caida-dir,1) * 12px),200px,0) rotate(calc(var(--caida-dir,1) * 3deg)); opacity: 0; }
 }
 `;
 
@@ -845,20 +941,20 @@ export default function BoosterPack({
   /*
    * LA FOTO NO HA LLEGADO Y NO VA A LLEGAR.
    *
-   * Existe sólo para volver a la FORMA del sobre dibujado, y hace falta desde
-   * que la foto puede venir de Postgres. Antes, `urlArte` no nulo significaba un
-   * .webp horneado en el despliegue —que no falla— así que dar por hecha la
-   * caja de la foto era gratis. Ahora significa una consulta a Postgres por
-   * imagen, y basta un 503 de la ruta para que no llegue.
+   * Nació para devolverle al sobre la FORMA del dibujado cuando la foto fallaba
+   * (los dos modos tenían cajas distintas). Ya no: la caja es la misma con foto
+   * y sin ella (RATIO_SOBRE), así que un fallo no cambia ninguna medida. Lo que
+   * sigue decidiendo es EL BARRIDO DE REFLEJO: mientras se espera una foto que
+   * está de camino, el barrido no arranca (barrer sobre el dibujado para que
+   * 150-750 ms después le cambie la cara al sobre debajo es justo el tipo de
+   * "se queda pillado y luego se anima" que el dueño describía); pero si la
+   * descarga ha fallado no va a llegar nada y el barrido tiene que empezar ya
+   * sobre el dibujado, que es lo que se va a ver. Desde que la foto puede
+   * venir de Postgres, basta un 503 de la ruta para que no llegue.
    *
-   * Y lo que quedaba entonces era raro de una forma difícil de diagnosticar: la
-   * caja mide `780/1426` porque la decide `urlArte`, pero DENTRO se pinta el
-   * sobre dibujado, que se hizo para `2.5/3.76`. Mismo alto y un 17,7% más
-   * estrecho que los sobres de al lado, para siempre y sin que nada lo explique.
-   *
-   * Se paga un reajuste de tamaño en el caso de fallo, que es el intercambio
-   * bueno: pasa una vez, al principio y con el sobre aún sellado, y deja el
-   * sobre con las proporciones de las otras ~170 expansiones sin foto.
+   * SE GUARDA LA URL QUE FALLÓ Y NO UN `true`, por el mismo motivo que
+   * `arteEnUso` guarda la que se puso: un booleano heredado seguiría diciendo
+   * "esta expansión no tiene foto" después de cambiar de expansión.
    */
   const [urlFallida, setUrlFallida] = useState<string | null>(null);
   useEffect(() => {
@@ -866,11 +962,7 @@ export default function BoosterPack({
     let vivo = true;
     const img = new Image();
     // No cuenta como avería —una expansión sin foto es el caso normal de 41 de
-    // las 171— pero sí decide la forma de la caja: ver el bloque de arriba.
-    //
-    // SE GUARDA LA URL QUE FALLÓ Y NO UN `true`, por el mismo motivo que
-    // `arteEnUso` guarda la que se puso: un booleano heredado seguiría diciendo
-    // "esta expansión no tiene foto" después de cambiar de expansión.
+    // las 171— pero sí libera el barrido de reflejo: ver el bloque de arriba.
     img.onerror = () => {
       if (vivo) setUrlFallida(urlArte);
     };
@@ -902,9 +994,31 @@ export default function BoosterPack({
   }, [urlArte]);
 
   const conArte = urlArte !== null && arteEnUso === urlArte;
-  /* ¿Se reserva la caja de la foto? Se sabe SIN RED en el caso normal —`urlArte`
-   * sale del bundle— y sólo se retira si la descarga ha fallado de verdad. */
-  const cajaDeFoto = urlArte !== null && urlFallida !== urlArte;
+  /* ¿Hay una foto de camino? Se sabe SIN RED en el caso normal —`urlArte` sale
+   * del bundle— y sólo deja de esperarse si la descarga ha fallado de verdad. */
+  const esperandoArte = urlArte !== null && !conArte && urlFallida !== urlArte;
+  /* El barrido de reflejo espera a la foto (punto 1 del encargo del brillo):
+   * si arrancara sobre el dibujado, la foto le cambiaría el sobre debajo a
+   * mitad de barrido. Con fill-mode backwards (ver .sobre__brillo) el sorteo
+   * de --br-delay lo deja quieto y FUERA del sobre hasta que le toca. */
+  const conBrillo = !efectosApagados && !esperandoArte;
+
+  /*
+   * GEOMETRÍA Y CAÍDA, como custom properties. Van en un Record y no sueltas
+   * en el style por lo mismo que `film` y `arte.vars`: CSSProperties no admite
+   * claves `--x` escritas a mano en el literal, y un cast en cada línea es
+   * peor que un objeto con nombre.
+   *
+   * --sobre-w es el ancho del sobre, la MISMA expresión que su width: el
+   * dibujado mide su tapa, su crimpado y su banda como fracciones de él en
+   * vez de en px que no crecen con el sobre (ver el CSS de .sobre).
+   * --caida-dir es hacia qué lado se inclina el cuerpo al caer: el mismo por
+   * el que salió la tira (sobre-cuerpo-cae).
+   */
+  const geometria: Record<string, string> = {
+    "--sobre-w": anchoDeSobre(anchoCarta),
+    "--caida-dir": tearDir < 0 ? "-1" : "1",
+  };
 
   return (
     <div
@@ -978,23 +1092,13 @@ export default function BoosterPack({
              con tres decimales: ni comillas ni paréntesis, nada que pueda
              cerrar la declaración. */
           ...(conArte && tamanoArte ? { "--sb-arte-size": tamanoArte } : null),
-          // GEOMETRÍA. El alto es el mismo en los dos modos: 1,399·W, el alto
-          // exacto de la carta, para que el sobre ocupe su misma ranura y la
-          // carta salga del mismo hueco. Lo que cambia es el ancho, porque la
-          // foto es más estrecha y alargada que la carta (ver ANCHO_ARTE).
-          //
-          // Y depende de `urlArte`, que se sabe SIN RED, no de `conArte`, que
-          // espera a la descarga: así el sobre nace ya con la caja que va a
-          // tener y cuando la foto llega sólo cambia lo pintado. Con `conArte`
-          // el sobre daría un salto de ancho a mitad de espera, delante de los
-          // ojos de quien está a punto de tocarlo.
-          //
-          // La ÚNICA marcha atrás es que la descarga falle (`falloArte`): ahí no
-          // va a haber foto nunca y quedarse con su caja dejaría el sobre
-          // dibujado un 17,7% más estrecho que sus vecinos para siempre. Un
-          // reajuste al principio es mejor que una forma equivocada permanente.
-          width: `calc(${anchoCarta} * ${cajaDeFoto ? ANCHO_ARTE : "0.93"})`,
-          aspectRatio: cajaDeFoto ? RATIO_ARTE : "2.5 / 3.76",
+          // GEOMETRÍA. La misma caja con foto y sin ella, y la misma desde el
+          // primer fotograma: no depende de nada que llegue por red (ver
+          // RATIO_SOBRE y anchoDeSobre). El ancho va en --sobre-w (arriba,
+          // `geometria`) y el width lo lee de ahí.
+          ...geometria,
+          width: "var(--sobre-w)",
+          aspectRatio: RATIO_SOBRE,
           // El arrastre vale en TODO el sobre, no sólo en la tira: apuntar a
           // una franja de 48px con el dedo es puntería fina.
           touchAction: touchActionFor("x"),
@@ -1021,7 +1125,7 @@ export default function BoosterPack({
               rasterizan una vez al montar y no cuestan nada después. */}
           <div className="sobre__pliegues" aria-hidden="true" />
           <div className="sobre__luces" aria-hidden="true" />
-          {!efectosApagados && <div className="sobre__brillo" aria-hidden="true" />}
+          {conBrillo && <div className="sobre__brillo" aria-hidden="true" />}
           {/* Boca: el interior que queda a la vista al despegarse la tira.
               Pintada siempre; mientras arrastras se va destapando por el borde. */}
           <div className="sobre__boca" aria-hidden="true" />
@@ -1039,7 +1143,13 @@ export default function BoosterPack({
               "1 / N" en la cabecera. */}
           {!conArte && (
             <>
-              <div className="absolute inset-x-0 top-12 bottom-9 flex flex-col items-center justify-center gap-3 px-6">
+              <div
+                className="absolute inset-x-0 flex flex-col items-center justify-center gap-3 px-6"
+                // Arriba empieza donde acaba la tapa y abajo deja el sitio de
+                // la banda (36px en el dibujo de 286): en fracciones del ancho
+                // del sobre, como el resto del dibujado (ver el CSS de .sobre).
+                style={{ top: "var(--tapa-h)", bottom: "calc(var(--sobre-w) * .126)" }}
+              >
                 {logo ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img

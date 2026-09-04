@@ -12,7 +12,7 @@ import {
 } from "../action";
 import { SOBRES_PARA_VENDER } from "../../utils/bazar";
 import { formatNumber } from "../../utils/format";
-import { useCurrency } from "../../hooks/useGameCurrency";
+import { useCurrency, useSesionResuelta } from "../../hooks/useGameCurrency";
 import { useHaptics } from "../../hooks/useHaptics";
 import { useToast } from "../../components/ui/Toast";
 import ConfirmSheet from "../../components/ui/ConfirmSheet";
@@ -101,7 +101,12 @@ const ERRORES_RETIRAR: Record<string, string> = {
 type Vista = "escaparate" | "mios";
 
 export default function BazarPage() {
-  const { isSignedIn, isLoaded } = useUser();
+  const { isSignedIn } = useUser();
+  // `useSesionResuelta` y no `isLoaded` de Clerk: sin conexión, Clerk no
+  // resuelve nunca y el esqueleto se quedaba para siempre. Con el plazo
+  // (hooks/useGameCurrency.tsx) se sigue como invitado y, si la red también
+  // falta, se llega al estado de error con su botón de reintentar.
+  const sesionResuelta = useSesionResuelta();
   const { coins, setCoins } = useCurrency();
   const toast = useToast();
   const haptic = useHaptics();
@@ -205,11 +210,11 @@ export default function BazarPage() {
   }, [isSignedIn]);
 
   useEffect(() => {
-    if (!isLoaded) return;
+    if (!sesionResuelta) return;
     cargarEscaparate(0);
     cargarMios();
     cargarSobres();
-  }, [isLoaded, cargarEscaparate, cargarMios, cargarSobres]);
+  }, [sesionResuelta, cargarEscaparate, cargarMios, cargarSobres]);
 
   /**
    * Anuncios activos POR CARTA. Es lo que necesita el selector de publicar para
@@ -314,29 +319,71 @@ export default function BazarPage() {
     return <Loader label="Abriendo el bazar" />;
   }
 
+  /**
+   * EL AVISO DE INVITADO, fuera del JSX principal porque se pinta en DOS
+   * sitios: en la pantalla buena y en la de error. Antes sólo estaba en la
+   * buena, y como el `return` de error va antes, un invitado con el escaparate
+   * caído (hoy, sin `bazar_listings` en la base, es lo primero que ve) se
+   * encontraba "No se pudo cargar" y nunca llegaba a leer ni que estaba de
+   * invitado ni las tres reglas del bazar. El invitado va PRIMERO en las dos
+   * ramas: lo que le pasa a él no depende de que el servidor conteste.
+   */
+  const avisoInvitado = !isSignedIn ? (
+    <div
+      className="surface flex items-start gap-3 rounded-2xl p-4"
+      style={{ borderColor: "color-mix(in srgb, var(--warn) 40%, transparent)" }}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="mt-0.5 h-5 w-5 shrink-0" style={{ color: "var(--warn)" }} aria-hidden="true">
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+        <circle cx="12" cy="12" r="9" />
+      </svg>
+      <div className="min-w-0">
+        <p className="text-sm font-semibold">Estás jugando como invitado</p>
+        <p className="ink-soft mt-1 text-xs leading-relaxed">
+          Puedes mirar el escaparate, pero comprar y vender mueven monedas
+          y cartas entre cuentas: eso ocurre en el servidor y las tuyas
+          viven sólo en este dispositivo.{" "}
+          <Link href="/" className="accent font-medium underline underline-offset-2">
+            Ir al inicio
+          </Link>
+        </p>
+      </div>
+    </div>
+  ) : null;
+
   if (estado === "error") {
+    const cajaError = (
+      <div className="surface flex w-full flex-col items-center gap-4 rounded-2xl px-6 py-16 text-center">
+        <p className="ink-soft text-sm">No se pudo cargar el escaparate.</p>
+        <button
+          type="button"
+          onClick={() => cargarEscaparate(pagina)}
+          className="btn-accent press touch-target flex items-center justify-center rounded-xl px-6 text-sm font-semibold"
+        >
+          Reintentar
+        </button>
+      </div>
+    );
     return (
       <>
         <PageHeader title="Bazar" subtitle="Cartas que ponen a la venta otros jugadores" />
-        {/* CENTRADO, POR EL MISMO MOTIVO QUE EL AVISO DE INVITADO DE
-            /graduacion. Este `return` es anterior a todo lo demás de la
-            pantalla, así que cuando salta no hay NADA debajo: medido a 375x812,
-            la caja iba de y=168 a y=378 y dejaba 375px de fondo vacío hasta la
-            barra de pestañas. Y es un estado que se ve más de lo que parece:
-            hoy, sin `bazar_listings` en la base, es lo único que ve un invitado
-            que entra aquí —nunca llega a leer por qué no puede vender—. */}
-        <HuecoCentrado>
-          <div className="surface flex w-full flex-col items-center gap-4 rounded-2xl px-6 py-16 text-center">
-            <p className="ink-soft text-sm">No se pudo cargar el escaparate.</p>
-            <button
-              type="button"
-              onClick={() => cargarEscaparate(pagina)}
-              className="btn-accent press touch-target flex items-center justify-center rounded-xl px-6 text-sm font-semibold"
-            >
-              Reintentar
-            </button>
+        {isSignedIn ? (
+          /* CENTRADO, POR EL MISMO MOTIVO QUE EL AVISO DE INVITADO DE
+             /graduacion: con sesión, cuando esto salta no hay NADA más en la
+             pantalla, y medido a 375x812 la caja iba de y=168 a y=378 dejando
+             375px de fondo vacío hasta la barra de pestañas. */
+          <HuecoCentrado>{cajaError}</HuecoCentrado>
+        ) : (
+          /* Para el invitado sí hay contenido: su aviso y las reglas van
+             primero, y el error se queda debajo, en el flujo normal. Ver la
+             nota de `avisoInvitado`. */
+          <div className="flex w-full flex-col gap-4">
+            {avisoInvitado}
+            <ReglasBazar sobresAbiertos={sobres} />
+            {cajaError}
           </div>
-        </HuecoCentrado>
+        )}
       </>
     );
   }
@@ -393,29 +440,7 @@ export default function BazarPage() {
       />
 
       <div className="flex w-full flex-col gap-4">
-        {!isSignedIn && (
-          <div
-            className="surface flex items-start gap-3 rounded-2xl p-4"
-            style={{ borderColor: "color-mix(in srgb, var(--warn) 40%, transparent)" }}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="mt-0.5 h-5 w-5 shrink-0" style={{ color: "var(--warn)" }} aria-hidden="true">
-              <path d="M12 9v4" />
-              <path d="M12 17h.01" />
-              <circle cx="12" cy="12" r="9" />
-            </svg>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold">Estás jugando como invitado</p>
-              <p className="ink-soft mt-1 text-xs leading-relaxed">
-                Puedes mirar el escaparate, pero comprar y vender mueven monedas
-                y cartas entre cuentas: eso ocurre en el servidor y las tuyas
-                viven sólo en este dispositivo.{" "}
-                <Link href="/" className="accent font-medium underline underline-offset-2">
-                  Ir al inicio
-                </Link>
-              </p>
-            </div>
-          </div>
-        )}
+        {avisoInvitado}
 
         {/* Las tres reglas, en corto y sin desplegar nada: quien entra a comprar
             tiene que ver de qué va esto sin leerse un manual, y quien entra a

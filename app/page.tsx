@@ -100,14 +100,26 @@ const nuevaClaveDeCompra = (): string => {
  * Los valores de abajo y los @keyframes de components/BoosterPack.tsx
  * están calibrados juntos: si cambias uno, mira el otro.
  *
- * Línea de tiempo desde el rasgado (t=0): la tira vuela (0-460), a los 420
- * monta la carta y sube desde detrás del cuerpo del sobre (650ms), a los 620
- * el cuerpo cae (480ms) CRUZÁNDOSE con la carta que sube, a los 950 la
- * primera carta ya está asentada y se celebra, y a los 1150 mandan los
- * gestos y botones.
+ * Línea de tiempo desde el rasgado (t=0): la tira vuela (0-460); a los 420
+ * monta la carta y sube 90px desde detrás del cuerpo del sobre (700ms, cima
+ * a los 805) MIENTRAS el cuerpo, desde ese mismo instante, baja y se apaga
+ * (sobre-cuerpo-cae: 680ms, hasta 1100); a los 800 la carta está en lo alto
+ * de su salida, ya a la vista, y se celebra; a los 1100 el cuerpo ha
+ * desaparecido y cruza el destello; y a los 1150 mandan los gestos y botones.
+ *
+ * T_FANFARRIA ESTABA EN 950 Y SE HA ADELANTADO A 800. Medido: la carta asoma
+ * por la boca desde los ~650 y está en lo más alto a los 805, pero el aura,
+ * la insignia "Nueva" y el nombre esperaban a 950 y el destello arrancaba a
+ * 1110: entre 150 y 300 ms con la carta a la vista y "apagada". Ahora todo lo
+ * que rodea a la carta se enciende cuando la carta corona (800), y lo único
+ * que espera es el destello, porque cruza la CARA de la carta y hasta 1100
+ * el cuerpo del sobre la tapa (T_DESPEJE).
  */
 const T_CARTA = 420; // se monta la carta: la tira ya casi ha salido
-const T_FANFARRIA = 950; // la PRIMERA carta ya se asentó: háptico, campanada y fanfarria
+const T_FANFARRIA = 800; // la PRIMERA carta corona su salida: háptico, campanada y fanfarria
+/** El cuerpo del sobre termina de caer: 420 + 680 de sobre-cuerpo-cae
+ *  (components/BoosterPack.tsx). El destello espera a esto, no a la fanfarria. */
+const T_DESPEJE = 1100;
 const T_FIN = 1150; // el sobre se desmonta y se aceptan gestos y botones
 /** Toque con inercia justo tras la llegada de la última carta: cerraría el
  *  sobre sin dejarla ver. Cubre la entrada (260ms) y el arranque de la
@@ -408,6 +420,9 @@ export default function Home() {
    *  resetPackState a propósito: "otro sobre" trae otro envoltorio. */
   const aperturasRef = useRef(0);
   const tearHapticRef = useRef(0);
+  /** Temporizador que limpia la transition del retorno de la tira: se anota
+   *  para cancelarlo si empieza otro arrastre antes de que venza. */
+  const tearReturnTimerRef = useRef(0);
   const play = useSound();
   // Menos animación por preferencia del sistema: el aura a pantalla completa es
   // un cambio de luminancia grande y framer no desactiva la opacidad por su
@@ -493,8 +508,9 @@ export default function Home() {
     (currentCard?.rarity && RARITY_GLOW[currentCard.rarity]) ||
     "color-mix(in srgb, var(--accent) 45%, transparent)";
   /** La PRIMERA carta monta con el sobre aún cayendo (fase "abriendo"): el
-   *  aura y el escenario esperan a la fanfarria (T_FANFARRIA) para no
-   *  encenderse detrás del envoltorio. En el resto de llegadas, al instante.
+   *  aura y el escenario esperan a la fanfarria (T_FANFARRIA), que es cuando
+   *  la carta corona su salida y ya se ve, para no encenderse detrás del
+   *  envoltorio. En el resto de llegadas, al instante.
    *  Es un delay de framer, no un temporizador: cerrar la vista lo desmonta. */
   const retardoAura =
     !efectosApagados && fase !== "cartas" ? (T_FANFARRIA - T_CARTA) / 1000 : 0;
@@ -1540,7 +1556,7 @@ export default function Home() {
     };
     if (fase !== "cartas") {
       // Primera carta del sobre: todavía está emergiendo (fase "abriendo").
-      // La celebración espera a que se asiente (T_FANFARRIA). Va por
+      // La celebración espera a que corone su salida (T_FANFARRIA). Va por
       // programar(): salir a mitad (Escape, chevron) la anula y no suena ni
       // vibra nada con la vista ya cerrada. anunciadoRef ya garantiza que no
       // se programe dos veces. Con efectos apagados nunca se entra aquí: la
@@ -1633,6 +1649,12 @@ export default function Home() {
     onStart: () => {
       tearWidthRef.current = sobreRef.current?.offsetWidth || 280;
       tearHapticRef.current = 0;
+      // Un arrastre nuevo dentro de los 260 ms del retorno anterior heredaba
+      // su transition de 0,25 s y la tira iba a rastras del dedo; y el
+      // temporizador de aquel retorno, al vencer, le quitaba la transition a
+      // mitad de este gesto. Se cancela y se limpia AQUÍ, al empezar.
+      window.clearTimeout(tearReturnTimerRef.current);
+      if (tearStripRef.current) tearStripRef.current.style.transition = "";
     },
     onMove: (dx) => {
       if (tornRef.current) return;
@@ -1655,7 +1677,8 @@ export default function Home() {
       if (!strip) return;
       strip.style.transition = "transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)";
       strip.style.transform = "";
-      window.setTimeout(() => {
+      window.clearTimeout(tearReturnTimerRef.current);
+      tearReturnTimerRef.current = window.setTimeout(() => {
         if (tearStripRef.current) tearStripRef.current.style.transition = "";
       }, 260);
     },
@@ -1861,7 +1884,24 @@ export default function Home() {
       {/* VIEW 1: SET SELECTION */}
       {!selectedSet && (
         <motion.div
-          initial={{ opacity: 0 }}
+          /* SIN ENTRADA: `initial={false}`, y es el mismo motivo que ya se
+             escribió en app/template.tsx y en components/TopBar.tsx.
+
+             framer imprime el estado `initial` EN LÍNEA en el HTML que sirve el
+             servidor. Con `initial={{ opacity: 0 }}` la portada se servía con
+             `style="opacity:0"` sobre el contenedor de TODA la lista de
+             expansiones, y sólo se encendía en el primer fotograma de
+             animación: en un arranque en frío de la PWA —o al volver del
+             segundo plano, donde el navegador no corre rAF— se veía fondo vacío
+             y luego la lista aparecía de golpe. Es la misma clase de fallo que
+             el dueño describió como "sale estático y luego ya hace la
+             animación".
+
+             La pantalla entera ya entra una vez desde app/template.tsx (una
+             pantalla, una entrada: la doctrina está en components/PageHeader.tsx).
+             Este segundo fundido encima no aportaba nada y sí quitaba la
+             primera pintura. */
+          initial={false}
           animate={{ opacity: 1 }}
           /* max-w-7xl, el mismo tope que <main>. Con 6xl (1152px) la lista se
              quedaba estrecha justo donde había sitio de sobra: medido en una
@@ -2005,7 +2045,12 @@ export default function Home() {
                           onClick={() => handleSelectSet(set.id)}
                           className="group surface surface-hover p-3.5 md:p-8 rounded-2xl md:rounded-3xl flex flex-col items-center justify-between gap-2 md:gap-4 overflow-hidden relative min-h-[126px] md:min-h-[180px]"
                         >
-                          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.06),transparent_60%)] pointer-events-none" />
+                          {/* Los hover van con md: en toda la tarjeta: en iOS el
+                              :hover se queda PEGADO al primer toque (no hay
+                              puntero que se vaya), y el logo se quedaba
+                              agrandado y la tarjeta iluminada hasta tocar
+                              otra. En pantallas con ratón, todo igual. */}
+                          <div className="absolute inset-0 opacity-0 md:group-hover:opacity-100 transition-opacity duration-500 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.06),transparent_60%)] pointer-events-none" />
                           {/* Esta expansión todavía no tiene diccionario español
                               y se ve en inglés. El aviso existe porque el cron
                               trae expansiones nuevas y la lista va por fecha
@@ -2029,13 +2074,13 @@ export default function Home() {
                                 alt={set.name}
                                 loading="lazy"
                                 decoding="async"
-                                className="max-h-[58px] md:max-h-20 max-w-full object-contain group-hover:scale-110 transition-transform duration-500 opacity-90 group-hover:opacity-100 drop-shadow-lg"
+                                className="max-h-[58px] md:max-h-20 max-w-full object-contain md:group-hover:scale-110 transition-transform duration-500 opacity-90 md:group-hover:opacity-100 drop-shadow-lg"
                               />
                             ) : (
                               <div className="ink-faint text-sm text-center">{set.name}</div>
                             )}
                           </div>
-                          <span className="font-medium text-[11px] md:text-xs ink-soft group-hover:ink transition-colors text-center tracking-wide truncate w-full relative z-10">
+                          <span className="font-medium text-[11px] md:text-xs ink-soft md:group-hover:ink transition-colors text-center tracking-wide truncate w-full relative z-10">
                             {set.name}
                           </span>
                         </motion.button>
@@ -2260,12 +2305,18 @@ export default function Home() {
             {auraLevel >= 2 && (
               // A oscuras la carta buena se lee como un premio; sin esto, en
               // tema claro el aura queda en un manchurrón de color.
+              // La key NO lleva packIndex a propósito: entre dos raras
+              // seguidas el oscurecido se quedaba desmontando (0,15 s) y
+              // volviendo a montar (0,6 s), un parpadeo de luz a pantalla
+              // completa entre carta y carta. Montado una vez, sólo cambia su
+              // opacidad (0,5 ↔ 0,78 según la rareza) y sale cuando llega una
+              // carta sin aura.
               <motion.div
-                key={`stage-${packIndex}`}
+                key="stage"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: auraLevel >= 3 ? 0.78 : 0.5 }}
                 exit={{ opacity: 0, transition: { duration: 0.15 } }}
-                transition={{ duration: reduceMotion ? 0 : 0.6, ease: "easeOut", delay: retardoAura }}
+                transition={{ duration: efectosApagados ? 0 : 0.6, ease: "easeOut", delay: retardoAura }}
                 className="pointer-events-none absolute inset-0 z-0"
                 style={{
                   background:
@@ -2277,17 +2328,20 @@ export default function Home() {
               <motion.div
                 key={`aura-${packIndex}`}
                 initial={{ opacity: 0 }}
-                // Con movimiento reducido se enciende sin pulso: un cambio de
+                // Con efectos apagados se enciende sin pulso: un cambio de
                 // luminancia a pantalla completa es lo que evita esa opción.
+                // Mira efectosApagados y no sólo reduceMotion: el ajuste
+                // "reducir efectos" de la app tiene que apagar esto igual que
+                // apaga el confeti y el destello.
                 animate={
-                  reduceMotion
+                  efectosApagados
                     ? { opacity: auraLevel >= 2 ? 0.35 : 0.22 }
                     : { opacity: auraLevel >= 3 ? [0, 1, 0.7] : auraLevel >= 2 ? [0, 0.9, 0.55] : [0, 0.5, 0.28] }
                 }
                 // La salida va corta y aparte: con los 1,2 s de entrada, el
                 // resplandor de una rara seguía tiñendo la carta siguiente.
                 exit={{ opacity: 0, transition: { duration: 0.15 } }}
-                transition={{ duration: reduceMotion ? 0 : 1.2, ease: "easeOut", delay: retardoAura }}
+                transition={{ duration: efectosApagados ? 0 : 1.2, ease: "easeOut", delay: retardoAura }}
                 className="pointer-events-none absolute inset-0 z-0"
                 style={{
                   background: `radial-gradient(circle at 50% 46%, ${auraColor}, color-mix(in srgb, ${auraColor} 30%, transparent) 45%, transparent 72%)`,
@@ -2502,7 +2556,10 @@ export default function Home() {
                 aria-live="polite"
                 // pointer-events-none: se pinta por encima del sobre y sin
                 // esto se comería el pointerdown del arrastre de la tira.
-                className="pointer-events-none absolute bottom-4 left-0 right-0 text-center text-[11px] ink-soft animate-pulse z-30"
+                // El pulso es adorno y respeta "reducir efectos".
+                className={`pointer-events-none absolute bottom-4 left-0 right-0 text-center text-[11px] ink-soft z-30${
+                  efectosApagados ? "" : " animate-pulse"
+                }`}
               >
                 Preparando el sobre...
               </p>
@@ -2610,7 +2667,18 @@ export default function Home() {
                   <motion.div
                     initial={{ x: "-130%", opacity: 0 }}
                     animate={{ x: "130%", opacity: [0, 0.85, 0] }}
-                    transition={{ duration: 0.7, delay: 0.16, ease: "easeOut" }}
+                    // En la primera carta el barrido espera a que el cuerpo
+                    // del sobre haya terminado de caer (T_DESPEJE): el sobre
+                    // va a z-50, por encima de esta zona, y un barrido que
+                    // cruzase antes lo haría detrás del envoltorio. Con la
+                    // fanfarria en T_FANFARRIA eso son 300 ms. En el resto de
+                    // llegadas no hay sobre que esperar: 160 ms tras la
+                    // llegada, como siempre.
+                    transition={{
+                      duration: 0.7,
+                      delay: fase !== "cartas" ? (T_DESPEJE - T_FANFARRIA) / 1000 : 0.16,
+                      ease: "easeOut",
+                    }}
                     className="absolute inset-y-[-15%] w-[60%]"
                     style={{
                       background:
@@ -2641,7 +2709,11 @@ export default function Home() {
                     exit={{ opacity: 0, transition: { duration: efectosApagados ? 0 : 0.15 } }}
                     className="absolute inset-0 flex items-center justify-center ink-faint text-[11px] uppercase tracking-[0.2em]"
                   >
-                    Rasga la tira superior para abrir
+                    {/* "Desliza" y no "rasga la tira": el gesto lo escucha el
+                        sobre ENTERO (touchAction en components/BoosterPack.tsx),
+                        y el rótulo anterior mandaba a apuntar a una franja de
+                        29px. */}
+                    Desliza para rasgar el sobre
                   </motion.p>
                 )}
                 {fase === "rasgando" && (
@@ -2850,8 +2922,11 @@ export default function Home() {
               monedas. Un solo respaldo para las dos cosas. */}
           {bestPull && precioDeCartaSuelta(bestPull.rarity) >= 50 && (
             <motion.div
-              initial={{ opacity: 0, scale: 0.97 }}
-              animate={{ opacity: 1, scale: 1 }}
+              // opacity + y, y NUNCA scale: dentro va la ilustración de la
+              // mejor carta del sobre, y un scale sobre su ancestro la
+              // rasteriza borrosa en WebKit.
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
               className="w-full mb-8 surface rounded-2xl p-4 flex items-center gap-4"
               style={{ border: "1px solid color-mix(in srgb, var(--warn) 30%, transparent)" }}
             >
@@ -2976,7 +3051,10 @@ function PackCard({ accent, badge, title, description, price, icon, foto, onClic
           `relative z-10` y pasa por encima. Comprobado a propósito antes de
           meter la fotografía: si algún día molesta visualmente se le baja la
           `opacity`, no se le toca el `filter`. */}
-      <div className="absolute -top-16 left-1/2 -translate-x-1/2 w-40 h-40 rounded-full blur-3xl pointer-events-none opacity-60 group-hover:opacity-100 transition-opacity" style={{ background: `radial-gradient(circle, ${a.glow}, transparent 70%)` }} />
+      {/* md:group-hover y no group-hover: en iOS el :hover se queda pegado al
+          primer toque y el resplandor y el realce se quedaban encendidos en la
+          tarjeta que acababas de tocar. */}
+      <div className="absolute -top-16 left-1/2 -translate-x-1/2 w-40 h-40 rounded-full blur-3xl pointer-events-none opacity-60 md:group-hover:opacity-100 transition-opacity" style={{ background: `radial-gradient(circle, ${a.glow}, transparent 70%)` }} />
       {badge && (
         <div className={`absolute top-0 left-0 right-0 ${a.badgeBg} text-[10px] uppercase font-semibold text-center py-1.5 tracking-[0.25em]`}>
           {badge}
@@ -2993,7 +3071,7 @@ function PackCard({ accent, badge, title, description, price, icon, foto, onClic
           `translate` de 4px, que está permitido porque no cambia la escala a la
           que se rasteriza nada; y la tarjeta entera ya sube 6px, así que el
           conjunto se lee como el sobre despegándose del estante. */}
-      <div className={`${a.iconColor} mb-3 md:mb-8 ${badge ? "mt-6" : ""} group-hover:-translate-y-1 transition-transform duration-500 relative z-10`}>
+      <div className={`${a.iconColor} mb-3 md:mb-8 ${badge ? "mt-6" : ""} md:group-hover:-translate-y-1 transition-transform duration-500 relative z-10`}>
         {fotoUsable ? (
           /* EL SOBRE ENTERO Y SIN RECORTAR, y las dos cosas a propósito.
              ALTURA FIJA Y ANCHO LIBRE (`h-[180px] w-auto object-contain`): las

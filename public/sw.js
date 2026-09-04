@@ -7,7 +7,7 @@
 // Súbelo en cada cambio de este fichero: el byte distinto es lo que hace que
 // el navegador instale el service worker nuevo y dispare la recarga única de
 // ServiceWorkerRegister en las PWA instaladas.
-const VERSION = "v8"; // v8: sólo comentarios, pero el byte distinto fuerza la reinstalación
+const VERSION = "v9"; // v9: se cachea el script de Clerk (ver el bloque de abajo)
 const SHELL_CACHE = `shell-${VERSION}`;
 const STATIC_CACHE = `static-${VERSION}`;
 const IMAGE_CACHE = `cards-${VERSION}`;
@@ -48,6 +48,23 @@ const MAX_IMAGE_ENTRIES = 1400;
 // Cada navegación cachea su HTML: sin tope, pages-vN crece hasta que el
 // navegador purga el origen entero (y con él la caché de cartas).
 const MAX_PAGE_ENTRIES = 40;
+
+// EL SCRIPT DE CLERK (clerk.browser.js). Se sirve desde el dominio de Clerk
+// —`<slug>.clerk.accounts.dev` en desarrollo, `clerk.<dominio>` en producción—
+// y sin conexión no llegaba: la etiqueta <script> fallaba y `useUser()` no
+// resolvía jamás. Es un bundle público y versionado, así que va como los
+// estáticos propios (caché primero, revalidación en segundo plano). La
+// respuesta es OPACA (la etiqueta lo pide sin CORS), y por eso entra con
+// allowOpaque como las imágenes; el navegador ejecuta sin problema un script
+// opaco servido desde caché, igual que lo ejecuta desde la red.
+//
+// LO QUE ESTO NO ARREGLA, para que nadie lo espere: con el script en caché
+// clerk-js arranca, pero para saber QUIÉN es el usuario tiene que hablar con
+// su API (/v1/environment, /v1/client), y sin red eso falla. `isLoaded` sigue
+// sin llegar. Quien desatasca la interfaz en ese caso es el plazo de espera de
+// hooks/useGameCurrency.tsx (ESPERA_CLERK_MS): pasado, la app sigue como
+// invitado. Aquí sólo se evita que además falte el script.
+const ES_HOST_DE_CLERK = /(^|\.)clerk\./;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -166,6 +183,17 @@ self.addEventListener("fetch", (event) => {
         trim: MAX_IMAGE_ENTRIES,
         allowOpaque: true,
       }).catch(() => fetch(request)),
+    );
+    return;
+  }
+
+  // Sólo el SCRIPT de Clerk, nunca sus llamadas de API (mismo host, pero
+  // `destination` distinto): la sesión no se cachea jamás.
+  if (request.destination === "script" && ES_HOST_DE_CLERK.test(url.hostname)) {
+    event.respondWith(
+      cacheFirst(request, STATIC_CACHE, { allowOpaque: true }).catch(() =>
+        fetch(request),
+      ),
     );
     return;
   }

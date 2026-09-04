@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import { usePathname } from "next/navigation";
+import { useToast } from "../ui/Toast";
 
 /**
  * Registra el service worker que da soporte offline y cachea las imágenes de
@@ -9,11 +11,46 @@ import { useEffect } from "react";
  * usuario seguía ejecutando el JS de un despliegue antiguo aunque el service
  * worker nuevo ya hubiera tomado el control: veía features desaparecidas o a
  * medias. El ciclo completo es: buscar actualización al volver al primer
- * plano → SKIP_WAITING → controllerchange → recarga única.
+ * plano → SKIP_WAITING → controllerchange → aviso → recarga en la siguiente
+ * navegación.
+ *
+ * POR QUÉ YA NO RECARGA EN EL ACTO. El relevo del service worker llega cuando
+ * la app vuelve al primer plano, y ése es justo el momento en el que alguien
+ * puede estar a mitad de algo: un sobre rasgado con las cartas sin dar la
+ * vuelta, una carta elegida en el selector de la vitrina, una oferta a medio
+ * componer en el bazar. Un `location.reload()` ahí se lo llevaba todo sin
+ * avisar. Ahora se anuncia con un aviso ("Hay una versión nueva") y la recarga
+ * se APLAZA A LA SIGUIENTE NAVEGACIÓN: el cambio de ruta es un momento en el
+ * que, por definición, no hay nada a medias en la pantalla que se deja. Si el
+ * usuario no navega, sigue con la versión que tiene, que es la que estaba
+ * funcionando; la nueva entra en la próxima apertura.
+ *
+ * Por eso vive dentro de AppShell (bajo el ToastProvider) y no en el layout.
  *
  * En desarrollo se desregistra para no servir chunks obsoletos de Turbopack.
  */
 export default function ServiceWorkerRegister() {
+  const toast = useToast();
+  const pathname = usePathname();
+
+  /* Ruta en la que se detectó la versión nueva, o null si no hay nada
+   * pendiente. Es la ruta y no un booleano para poder distinguir "ha cambiado
+   * de pantalla" de "sigue en la misma": el efecto de abajo se ejecuta también
+   * con el pathname con el que se montó. */
+  const pendienteDesdeRef = useRef<string | null>(null);
+  /* El aviso se dispara desde un oyente registrado una sola vez; se lee por
+   * ref para no volver a registrar el service worker si `toast` cambiara. */
+  const toastRef = useRef(toast);
+  useEffect(() => {
+    toastRef.current = toast;
+  }, [toast]);
+
+  // LA RECARGA APLAZADA: en cuanto la ruta cambia con una versión pendiente.
+  useEffect(() => {
+    const desde = pendienteDesdeRef.current;
+    if (desde !== null && desde !== pathname) window.location.reload();
+  }, [pathname]);
+
   useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
 
@@ -28,25 +65,28 @@ export default function ServiceWorkerRegister() {
     let disposed = false;
     let registration: ServiceWorkerRegistration | null = null;
 
-    // Una sola recarga por relevo de service worker. Sin el guard, un SW que
-    // llamara a clients.claim() en bucle recargaría la página sin fin.
-    let reloading = false;
-    // La PRIMERA toma de control no debe recargar: en un usuario nuevo (o tras
-    // un hard reload) la página llega sin controller, y el clients.claim() de
-    // la primera instalación dispara controllerchange igualmente — pero ese
-    // HTML/JS ya es el del despliegue vigente, no hay nada viejo que refrescar.
-    // Sólo se recarga si otro service worker ya nos servía al cargar.
+    // La PRIMERA toma de control no es una actualización: en un usuario nuevo
+    // (o tras un hard reload) la página llega sin controller, y el
+    // clients.claim() de la primera instalación dispara controllerchange
+    // igualmente — pero ese HTML/JS ya es el del despliegue vigente, no hay
+    // nada viejo que refrescar. Sólo cuenta si otro service worker ya nos
+    // servía al cargar.
     let hadController = !!navigator.serviceWorker.controller;
     const onControllerChange = () => {
       if (!hadController) {
         // A partir de aquí la página sí está controlada: el siguiente relevo
-        // (una actualización real) ya recarga.
+        // (una actualización real) ya cuenta.
         hadController = true;
         return;
       }
-      if (reloading) return;
-      reloading = true;
-      window.location.reload();
+      // Un solo aviso por relevo: un SW que llamara a clients.claim() en bucle
+      // no puede llenar la pantalla de avisos ni recargar sin fin.
+      if (pendienteDesdeRef.current !== null) return;
+      pendienteDesdeRef.current = window.location.pathname;
+      toastRef.current(
+        "Hay una versión nueva. Se aplicará al cambiar de pantalla.",
+        "info",
+      );
     };
     navigator.serviceWorker.addEventListener(
       "controllerchange",

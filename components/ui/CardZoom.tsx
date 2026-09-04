@@ -182,7 +182,17 @@ export default function CardZoom({
     el.style.transition = animate
       ? "transform 0.25s cubic-bezier(0.22, 1, 0.36, 1)"
       : "";
-    el.style.transform = `translate3d(${offsetRef.current.x}px, ${offsetRef.current.y}px, 0) scale(${scaleRef.current})`;
+    const { x, y } = offsetRef.current;
+    const s = scaleRef.current;
+    // A 1× sin desplazamiento se escribe la cadena VACÍA y no
+    // `translate3d(0,0,0) scale(1)`: una escala 1 sigue siendo un transform
+    // escrito, y un transform escrito en un ancestro de la carta la deja
+    // promovida a una capa rasterizada a escala fija —borrosa en iPhone—
+    // aunque ya no se esté ampliando nada.
+    el.style.transform =
+      s === 1 && x === 0 && y === 0
+        ? ""
+        : `translate3d(${x}px, ${y}px, 0) scale(${s})`;
   }, []);
 
   /**
@@ -273,36 +283,37 @@ export default function CardZoom({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [open, onClose, onPrev, onNext, setScaleTo]);
 
-  const applyTilt = useCallback((dx: number, dy: number) => {
-    const el = tiltRef.current;
-    if (!el) return;
-    const clamp = (v: number, max: number) => Math.max(-max, Math.min(max, v));
-    el.style.transition = "";
-    el.style.transform =
-      `perspective(1000px) rotateY(${clamp(dx * 0.22, 30)}deg) ` +
-      `rotateX(${clamp(-dy * 0.14, 18)}deg) translate3d(${dx * 0.25}px, ${dy * 0.25}px, 0)`;
-  }, []);
-
-  const resetTilt = useCallback(() => {
-    const el = tiltRef.current;
-    if (!el) return;
-    el.style.transition = "transform 0.6s cubic-bezier(0.22, 1.4, 0.36, 1)";
-    el.style.transform = "";
-    window.setTimeout(() => {
-      if (el) el.style.transition = "";
-    }, 620);
-  }, []);
-
+  /* ==================================================================== *
+   * EL BALANCEO ES 2D: TRANSLATE + ROTATE, LO MISMO QUE EN EL ÁLBUM Y EN LA
+   * FICHA (components/CardDetailModal.tsx).
+   * ====================================================================
+   *
+   * Aquí había un balanceo 3D escrito a mano en cada movimiento —
+   * `perspective(1000px) rotateY() rotateX()` sobre tiltRef, el PADRE de la
+   * carta—, y este visor es justo el sitio donde la carta tiene que verse
+   * nítida: un `perspective` en un ancestro la manda a una capa rasterizada a
+   * escala fija y en iPhone salía borrosa (PokemonCard.tsx:140-163). Además
+   * el retorno fijaba una transición de 0,6 s y un setTimeout(620) sin
+   * guardar el id: dos arrastres seguidos hacían que el primer temporizador
+   * borrara la transición a mitad del rebote del segundo y la carta saltaba.
+   *
+   * Ahora el movimiento lo pinta el hook con `follow` sobre tiltRef (translate
+   * y 4° por cada 100 px), y el hook guarda y cancela su propio temporizador
+   * de retorno, así que el salto se va solo. El segundo dedo del pellizco
+   * aborta el gesto dentro del hook, y ese abort devuelve tiltRef a su sitio
+   * (release) antes de que el zoom tome el control: la carta no se queda
+   * torcida durante la ampliación.
+   */
   // Inclinar, pasar de carta y cerrar deslizando sólo tienen sentido con la
   // carta a tamaño natural: ampliada, el dedo es para desplazarse por ella.
   useSwipe(surfaceRef, {
     axis: "both",
     threshold: 80,
     velocity: 460,
-    follow: false,
+    follow: true,
+    followTarget: tiltRef,
+    rotate: 4,
     enabled: open && !zoomActive,
-    onMove: applyTilt,
-    onEnd: resetTilt,
     onSwipeLeft: onNext,
     onSwipeRight: onPrev,
     onSwipeDown: () => {
@@ -329,10 +340,9 @@ export default function CardZoom({
     });
     const pts = [...pointersRef.current.values()];
     if (pts.length === 2) {
-      // El segundo dedo aborta el gesto de useSwipe sin pasar por su onEnd:
-      // si la carta venía inclinándose, sin esto se quedaría torcida durante
-      // todo el zoom (el swipe, que es quien la endereza, queda apagado).
-      resetTilt();
+      // El segundo dedo aborta el gesto de useSwipe, y como el balanceo lo
+      // pinta el propio hook (`follow` sobre tiltRef), ese abort ya devuelve
+      // la carta a su sitio: no hay que enderezarla desde aquí.
       pts[0].pinched = true;
       pts[1].pinched = true;
       // Empieza el pellizco: la base congela escala y desplazamiento actuales.
@@ -467,10 +477,20 @@ export default function CardZoom({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
-          className="fixed inset-0 z-[140] flex flex-col items-center justify-center bg-black/92 backdrop-blur-xl"
+          className="fixed inset-0 z-[140] flex flex-col items-center justify-center"
           style={{ paddingTop: "var(--sat)", paddingBottom: "var(--sab)" }}
           onClick={onClose}
         >
+          {/* El telón oscuro con el desenfoque es un HERMANO absoluto detrás
+              de la carta, no la raíz: un backdrop-filter en un ancestro de la
+              carta la rasteriza a escala fija y aquí, donde se amplía hasta
+              3×, es donde más se notaba el borrón. Más oscuro que el --scrim
+              común a propósito: esto es un visor de la ilustración y el fondo
+              tiene que desaparecer. */}
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 bg-black/92 backdrop-blur-xl"
+          />
           <button
             onClick={onClose}
             aria-label="Cerrar"
@@ -491,7 +511,9 @@ export default function CardZoom({
 
           <div
             ref={surfaceRef}
-            className="flex flex-1 items-center justify-center overflow-hidden px-5"
+            // `relative`: con el telón absoluto delante en el árbol, esta
+            // superficie tiene que estar posicionada para pintarse encima.
+            className="relative flex flex-1 items-center justify-center overflow-hidden px-5"
             // "none" a propósito: aquí no hay scroll que ceder y el pellizco
             // lo gestiona el propio visor con sus eventos de puntero.
             style={{ touchAction: "none" }}
@@ -550,7 +572,7 @@ export default function CardZoom({
 
                        `estiloDescentrado` es un `translate` y va en su PROPIO
                        div: encima ya hay dos transforms escritos a mano —el
-                       scale del pellizco en zoomRef y el perspective del
+                       scale del pellizco en zoomRef y el translate+rotate del
                        balanceo en tiltRef— y un tercero en el mismo elemento
                        pisaría a uno de ellos. Nunca `scale` aquí: ver la
                        cabecera de components/DesperfectosCarta.tsx.
@@ -585,7 +607,7 @@ export default function CardZoom({
             </div>
           </div>
 
-          <p className="pointer-events-none pb-4 text-center text-[11px] text-white/45">
+          <p className="pointer-events-none relative pb-4 text-center text-[11px] text-white/45">
             {caption ? `${caption} · ` : ""}
             {zoomActive
               ? "Arrastra para moverte · Doble toque para alejar"

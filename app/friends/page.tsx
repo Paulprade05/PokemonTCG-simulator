@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useUser } from "@clerk/nextjs";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { syncUserName, getProfileStats } from "../action";
 import {
   getSocialOverview, addFriend, acceptFriend, removeFriendship, searchUsersByName,
@@ -20,7 +20,7 @@ import { useHaptics } from "../../hooks/useHaptics";
 import { useImmersive } from "../../components/AppShell";
 import { formatNumber } from "../../utils/format";
 import { getCollection } from "../../utils/storage";
-import { useCurrency } from "../../hooks/useGameCurrency";
+import { useCurrency, useSesionResuelta } from "../../hooks/useGameCurrency";
 
 type Tab = "perfil" | "amigos" | "recibidas" | "enviadas" | "historial";
 
@@ -30,7 +30,11 @@ type PendingRemove = { id: number; name: string; kind: "friend" | "request" };
 type PendingCancel = { id: number; name: string };
 
 export default function SocialPage() {
-  const { user, isLoaded, isSignedIn } = useUser();
+  const { user, isSignedIn } = useUser();
+  // `useSesionResuelta` y no `isLoaded` de Clerk: sin conexión, el script de
+  // Clerk no resuelve nunca y la pantalla se quedaba en el esqueleto para
+  // siempre. Con el plazo (hooks/useGameCurrency.tsx) se sigue como invitado.
+  const sesionResuelta = useSesionResuelta();
   const [tab, setTab] = useState<Tab>("amigos");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -158,11 +162,11 @@ export default function SocialPage() {
   }, [isSignedIn]);
 
   useEffect(() => {
-    if (!isLoaded) return;
+    if (!sesionResuelta) return;
     if (!isSignedIn) { setLoading(false); return; }
     load();
     loadStats();
-  }, [isLoaded, isSignedIn, load, loadStats]);
+  }, [sesionResuelta, isSignedIn, load, loadStats]);
 
   /* ---- acciones ---- */
 
@@ -234,7 +238,7 @@ export default function SocialPage() {
     }
   }, [pendingCancel, haptic, toast, refresh, beginBusy, endBusy]);
 
-  if (!isLoaded || loading) return <Loader label="Cargando red social" />;
+  if (!sesionResuelta || loading) return <Loader label="Cargando red social" />;
 
   if (!isSignedIn) {
     // Sin sesión no hay red social, pero sí progreso local: se enseña para que
@@ -253,16 +257,23 @@ export default function SocialPage() {
   }
 
   if (loadError) {
+    // Mismo patrón que el error de la colección, la vitrina y el álbum de
+    // entrenador: la cabecera de la pantalla sigue ahí (se sabe dónde se está
+    // y la pestaña de abajo sigue teniendo sentido) y el aviso va en una
+    // superficie, no suelto en mitad del fondo.
     return (
-      <div className="flex flex-col items-center justify-center text-center py-24">
-        <h2 className="text-xl font-bold mb-2">No se pudo cargar</h2>
-        <p className="ink-soft text-sm mb-5">Revisa tu conexión e inténtalo de nuevo.</p>
-        <button
-          onClick={load}
-          className="btn-accent press touch-target px-6 rounded-xl text-sm font-semibold flex items-center justify-center"
-        >
-          Reintentar
-        </button>
+      <div className="w-full">
+        <PageHeader title="Social" subtitle="Perfil, amigos e intercambios" />
+        <div className="surface rounded-2xl px-6 py-16 flex flex-col items-center gap-4 text-center">
+          <p className="ink font-medium">No se pudo cargar tu red social</p>
+          <p className="ink-soft text-sm -mt-2">Revisa tu conexión e inténtalo de nuevo.</p>
+          <button
+            onClick={load}
+            className="btn-accent press touch-target px-6 rounded-xl text-sm font-semibold flex items-center justify-center"
+          >
+            Reintentar
+          </button>
+        </div>
       </div>
     );
   }
@@ -314,14 +325,19 @@ export default function SocialPage() {
         ))}
       </div>
 
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={tab}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          transition={{ duration: 0.25 }}
-        >
+      {/* SIN ANIMACIÓN DE SALIDA. Iba en un AnimatePresence con mode="wait":
+          la pestaña vieja se desvanecía durante 0,25 s y SÓLO ENTONCES entraba
+          la nueva, o sea un cuarto de segundo con el hueco vacío en cada toque
+          de pestaña, que se lee como una pantalla que se cuelga. Ahora la
+          nueva ocupa el sitio en el acto (la `key` remonta el bloque) y entra
+          con su fundido corto; la vieja simplemente se va, que es lo que hace
+          el cambio de pestaña del sistema. */}
+      <motion.div
+        key={tab}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25 }}
+      >
           {tab === "perfil" && (
             <PerfilTab
               stats={stats}
@@ -358,8 +374,7 @@ export default function SocialPage() {
             />
           )}
           {tab === "historial" && <HistoryTab items={history} />}
-        </motion.div>
-      </AnimatePresence>
+      </motion.div>
 
       <TradeBuilder
         friend={tradeFriend}
@@ -576,9 +591,13 @@ function AmigosTab({ friends, requests, myId, onAccept, onRemove, onTrade, busyI
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {friends.map((f: any, i: number) => (
-          <motion.div
+          // Sin entrada por tarjeta (fundido escalonado i × 0,03 s): la pantalla
+          // ya entra entera desde app/template.tsx y la pestaña desde el bloque
+          // de arriba —"una pantalla, una entrada", PageHeader.tsx—. Y framer
+          // dejaba `opacity:0` escrito en el HTML servido hasta su primer rAF,
+          // que en segundo plano no llega nunca.
+          <div
             key={f.friend_id}
-            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i * 0.03, 0.3) }}
             className={`surface surface-hover rounded-2xl p-4 relative overflow-hidden ${f.isMe ? "ring-accent" : ""}`}
           >
             {i < 3 && <span className="absolute top-3 right-3 text-lg">{medal[i]}</span>}
@@ -613,7 +632,7 @@ function AmigosTab({ friends, requests, myId, onAccept, onRemove, onTrade, busyI
                 </>
               )}
             </div>
-          </motion.div>
+          </div>
         ))}
       </div>
 

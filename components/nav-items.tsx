@@ -14,6 +14,23 @@ const I = (d: ReactNode) => (
   </svg>
 );
 
+/**
+ * LAS RAÍCES DE PESTAÑA, en el orden de la barra. UNA lista, derivada de la de
+ * abajo, para los dos sitios que necesitan saber "esta ruta es una pestaña":
+ *
+ *  · app/template.tsx, que decide el signo del desplazamiento de entrada por
+ *    la posición de la pestaña en la barra;
+ *  · components/ui/EdgeBackGesture.tsx, que en la raíz de una pestaña no
+ *    ofrece "atrás".
+ *
+ * Cada uno tenía la suya escrita a mano y no coincidían: al gesto le faltaba
+ * "/mercado", así que en la PWA instalada deslizar desde el borde en el
+ * Mercado hacía router.back() y sacaba de la app. Derivándola de NAV_ITEMS no
+ * puede volver a pasar: una pestaña nueva entra aquí y se entera todo el mundo.
+ */
+export const RAICES_DE_PESTANA: string[] = [];
+export const esRaizDePestana = (ruta: string) => RAICES_DE_PESTANA.includes(ruta);
+
 export const NAV_ITEMS: NavItem[] = [
   {
     href: "/",
@@ -53,3 +70,8 @@ export const NAV_ITEMS: NavItem[] = [
     icon: I(<><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></>),
   },
 ];
+
+// Se rellena aquí y no con un `NAV_ITEMS.map` en su declaración porque la
+// lista se declara ANTES que NAV_ITEMS (para que el comentario que la explica
+// quede arriba, donde se lee) y una const no se puede usar antes de existir.
+RAICES_DE_PESTANA.push(...NAV_ITEMS.map((it) => it.href));

@@ -375,6 +375,15 @@ export default function MazoCartas({
    */
   const cierreRef = useRef(-1);
   /**
+   * Instante (performance.now) en el que termina la llegada que está en vuelo,
+   * o 0 si no hay ninguna. Lo anotan los tres sitios que escriben una llegada
+   * con transición (el relevo por toque o tecla, el soltar del gesto y el
+   * abandono) y lo consulta el reajuste por resize: ver `recolocar`.
+   */
+  const llegadaHastaRef = useRef(0);
+  /** Reajuste por resize aplazado hasta que termine la llegada en curso. */
+  const recolocarTimerRef = useRef(0);
+  /**
    * Última cadena de `transition` escrita en cada ranura. Comparar evita que el
    * motor de estilo reparsee diez declaraciones cada vez que se coloca el mazo.
    */
@@ -477,6 +486,16 @@ export default function MazoCartas({
     if (el) escribirTransform(el, px, 0);
   }, []);
 
+  /** Anota que hay una llegada de `ms` en vuelo (más el margen de limpieza). */
+  const anotarLlegada = useCallback(
+    (ms: number) => {
+      llegadaHastaRef.current = ms
+        ? performance.now() + ms + T_LIMPIEZA_MS
+        : 0;
+    },
+    [],
+  );
+
   /**
    * Reposición: cambio de carta por toque, teclado o botón, y primer pintado.
    * Va en layout effect para que el destino esté escrito antes de pintar.
@@ -502,11 +521,13 @@ export default function MazoCartas({
     if (salto === 0) return;
     // Relevo por toque, tecla o botón: la misma ley que el gesto. Con salto = 1
     // devuelve los 260ms de siempre.
-    escribirMazo(indice, { transicion: duracionCierre(salto) });
+    const ms = duracionCierre(salto);
+    anotarLlegada(efectosApagados ? 0 : ms);
+    escribirMazo(indice, { transicion: ms });
     // maxRevealed no entra aquí: las poses no dependen de él (sólo del índice),
     // y reescribir el mazo cuando sube el fondo molestaría a una llegada en
     // curso.
-  }, [indice, escribirMazo, medir]);
+  }, [indice, efectosApagados, escribirMazo, medir, anotarLlegada]);
 
   /**
    * EL DESGASTE, DICHO. Sin esto, una copia machacada sólo existe para quien la
@@ -544,12 +565,31 @@ export default function MazoCartas({
    * releer W las cartas apartadas se quedan mal apartadas hasta el siguiente
    * gesto (y en el caso peor asomaría un canto, que es justo lo que no puede
    * pasar).
+   *
+   * PERO NUNCA A MITAD DE UNA LLEGADA. Este reajuste escribe el mazo con
+   * transición 0, y Safari colapsa la barra justo cuando el dedo se mueve: si
+   * el resize cae dentro de los 180-420 ms de una llegada, la carta en vuelo
+   * saltaba en seco a su destino. Así que mientras haya una llegada en curso
+   * (`llegadaHastaRef`) el reajuste se APLAZA a su final, no se descarta: el
+   * ancho nuevo se aplica igual, sólo que cuando ya no hay nada volando.
+   *
+   * Y se coloca lo que está PINTADO (`focoRef`), con el apartado del arrastre
+   * si lo hay: durante un arrastre la selección continua (`pRef`) puede haber
+   * cruzado a la siguiente carta sin que se pinte, y recolocar sobre ella
+   * cambiaba la carta bajo el dedo.
    */
   useEffect(() => {
     const recolocar = () => {
+      window.clearTimeout(recolocarTimerRef.current);
+      const falta = llegadaHastaRef.current - performance.now();
+      if (falta > 0) {
+        recolocarTimerRef.current = window.setTimeout(recolocar, falta);
+        return;
+      }
       anchoRef.current = 0;
       medir();
-      escribirMazo(pRef.current, { transicion: 0 });
+      const pintada = focoRef.current >= 0 ? focoRef.current : pRef.current;
+      escribirMazo(pintada, { transicion: 0, arrastre: arrastreRef.current });
     };
     window.addEventListener("resize", recolocar);
     window.addEventListener("orientationchange", recolocar);
@@ -557,6 +597,7 @@ export default function MazoCartas({
       window.removeEventListener("resize", recolocar);
       window.removeEventListener("orientationchange", recolocar);
       window.clearTimeout(limpiezaRef.current);
+      window.clearTimeout(recolocarTimerRef.current);
     };
   }, [escribirMazo, medir]);
 
@@ -587,7 +628,11 @@ export default function MazoCartas({
    * seguiría marcando el lanzamiento que ya habías cancelado — el defecto más
    * habitual de las inercias hechas a ojo.
    */
-  const medirVelocidad = () => {
+  // En useCallback —y `anotarMuestra`, abajo, igual— por el linter, no por
+  // rendimiento: las reglas del compilador de React tratan una función creada
+  // en el render como si pudiera EJECUTARSE en el render, y performance.now()
+  // ahí es "impuro". Sólo las llaman onMove y onEnd, que son manejadores.
+  const medirVelocidad = useCallback(() => {
     const m = muestrasRef.current;
     const ahora = performance.now();
     while (m.length && ahora - m[0].t > VENTANA_VEL_MS) m.shift();
@@ -596,7 +641,19 @@ export default function MazoCartas({
     const b = m[m.length - 1];
     const dt = b.t - a.t;
     return dt > 0 ? (b.dx - a.dx) / dt : 0;
-  };
+  }, []);
+
+  /**
+   * Ventana deslizante de velocidad. Se poda ANTES de meter la nueva muestra
+   * para que la ventana sea siempre la de los últimos ms reales.
+   */
+  const anotarMuestra = useCallback((dx: number) => {
+    const ahora = performance.now();
+    const m = muestrasRef.current;
+    while (m.length && ahora - m[0].t > VENTANA_VEL_MS) m.shift();
+    m.push({ t: ahora, dx });
+    dxRef.current = dx;
+  }, []);
 
   /**
    * Cartas que la inercia le suma al destino.
@@ -663,13 +720,7 @@ export default function MazoCartas({
     onMove: (dx) => {
       const W = anchoRef.current;
       if (!W) return;
-      // Ventana deslizante de velocidad. Se poda ANTES de meter la nueva
-      // muestra para que la ventana sea siempre la de los últimos ms reales.
-      const ahora = performance.now();
-      const m = muestrasRef.current;
-      while (m.length && ahora - m[0].t > VENTANA_VEL_MS) m.shift();
-      m.push({ t: ahora, dx });
-      dxRef.current = dx;
+      anotarMuestra(dx);
 
       // SELECCIÓN: se lleva la cuenta completa (zona muerta, paso de carta y
       // recorte al rango) pero no se pinta. Nadie ve las otras cartas mientras
@@ -736,6 +787,7 @@ export default function MazoCartas({
       // hay que despromocionar a nadie antes de escribirle la transición.
       promocionar([indice, destino]);
       cierreRef.current = destino;
+      anotarLlegada(efectosApagados ? 0 : ms);
       escribirMazo(destino, { transicion: ms });
       if (destino !== indice) onSeleccionar(destino);
       arrastreRef.current = 0;
@@ -754,53 +806,70 @@ export default function MazoCartas({
         efectosApagados ? 0 : ms + T_LIMPIEZA_MS,
       );
     },
+    // El hook abandona el gesto sin soltarlo cuando baja un segundo dedo (es
+    // un pellizco) y avisa por aquí: se deja el mazo en reposo por el mismo
+    // camino que el cierre de seguridad de abajo.
+    onCancel: () => abortarRef.current(),
   });
 
   /**
-   * CIERRE DE SEGURIDAD. useSwipe abandona el gesto EN SECO cuando baja un
-   * segundo dedo (lo trata como pellizco, hooks/useSwipe.ts:145-149) y por ese
-   * camino NO llama a onEnd: la carta se quedaría congelada a medio arrastre y
-   * promocionada hasta el siguiente toque. Se comprueba en un temporizador a 0
-   * para que el onEnd normal —que es síncrono— gane siempre, sea cual sea el
-   * orden en que se registraron los escuchas (useSwipe vuelve a suscribirse
-   * cada vez que cambia `enabled`).
+   * GESTO ABANDONADO: la carta vuelve a su sitio sin velocidad ni destino.
+   *
+   * Sin velocidad que valga: esto no es soltar, es un gesto abortado. Se vuelve
+   * a donde se estaba, con la ley de siempre para que la carta no dé un tirón
+   * raro. El mazo sigue pintado en `indice`: lo único que tiene que deshacerse
+   * es el apartado del arrastre. Medir desde pRef daría el recorrido de una
+   * carta que nunca llegó a moverse, y la carta volvería a cámara lenta desde
+   * 40px.
+   *
+   * Lo llaman dos sitios y por eso vive en un ref que se renueva tras cada
+   * render: el `onCancel` del hook (que lee sus opciones al vuelo) y el cierre
+   * de seguridad de abajo, cuyos escuchas no pueden depender de una función
+   * recreada en cada render sin resuscribirse en cada uno. El ref se escribe
+   * en un layout effect y NO en el cuerpo del render: escribir un ref durante
+   * el render es lo que React prohíbe (y lo que marca el linter), y el layout
+   * effect corre antes de que pueda llegar ningún pointerup.
+   */
+  const abortarGesto = () => {
+    if (!gestoVivoRef.current) return;
+    gestoVivoRef.current = false;
+    flingRef.current = 0;
+    arrastrandoRef.current = false;
+    const ms = duracionCierre(
+      recorridoCierre(indice, indice, anchoRef.current),
+    );
+    pRef.current = indice;
+    arrastreRef.current = 0;
+    muestrasRef.current.length = 0;
+    cierreRef.current = indice;
+    anotarLlegada(efectosApagados ? 0 : ms);
+    escribirMazo(indice, { transicion: ms });
+    window.clearTimeout(limpiezaRef.current);
+    limpiezaRef.current = window.setTimeout(
+      () => {
+        despromocionar();
+        cierreRef.current = -1;
+      },
+      efectosApagados ? 0 : ms + T_LIMPIEZA_MS,
+    );
+  };
+  const abortarRef = useRef(abortarGesto);
+  useLayoutEffect(() => {
+    abortarRef.current = abortarGesto;
+  });
+
+  /**
+   * CIERRE DE SEGURIDAD. El hook ya avisa por `onCancel` de los dos abandonos
+   * que conoce (segundo dedo, eje ajeno), pero hay un tercero que no puede
+   * avisar: que `enabled` pase a false a mitad de gesto y el hook se
+   * resuscriba sin pointerup. Este escucha lo cubre. Se comprueba en un
+   * temporizador a 0 para que el onEnd normal —que es síncrono— gane siempre,
+   * sea cual sea el orden en que se registraron los escuchas; y si onCancel ya
+   * pasó por aquí, `gestoVivoRef` está a false y no hace nada.
    */
   useEffect(() => {
     const revisar = () => {
-      window.setTimeout(() => {
-        if (!gestoVivoRef.current) return;
-        gestoVivoRef.current = false;
-        flingRef.current = 0;
-        arrastrandoRef.current = false;
-        // Sin velocidad que valga: esto no es soltar, es un gesto abortado. Se
-        // vuelve a donde se estaba, con la ley de siempre para que la carta no
-        // dé un tirón raro.
-        // El mazo sigue pintado en `indice`: lo único que tiene que deshacerse
-        // es el apartado del arrastre. Medir desde pRef daría el recorrido de
-        // una carta que nunca llegó a moverse, y la carta volvería a cámara
-        // lenta desde 40px.
-        const ms = duracionCierre(
-          recorridoCierre(indice, indice, anchoRef.current),
-        );
-        pRef.current = indice;
-        arrastreRef.current = 0;
-        muestrasRef.current.length = 0;
-        cierreRef.current = indice;
-        escribirMazo(indice, { transicion: ms });
-        window.clearTimeout(limpiezaRef.current);
-        limpiezaRef.current = window.setTimeout(
-          () => {
-            // Mismo bucle que despromocionar(), pero escrito aquí: el efecto no
-            // puede depender de una función recreada en cada render sin
-            // resuscribir los dos escuchas en cada uno.
-            for (const el of ranurasRef.current) {
-              if (el) el.style.willChange = "";
-            }
-            cierreRef.current = -1;
-          },
-          efectosApagados ? 0 : ms + T_LIMPIEZA_MS,
-        );
-      }, 0);
+      window.setTimeout(() => abortarRef.current(), 0);
     };
     window.addEventListener("pointerup", revisar);
     window.addEventListener("pointercancel", revisar);
@@ -808,7 +877,7 @@ export default function MazoCartas({
       window.removeEventListener("pointerup", revisar);
       window.removeEventListener("pointercancel", revisar);
     };
-  }, [indice, efectosApagados, escribirMazo]);
+  }, []);
 
   // El onClick de la zona vive en la página y necesita este ref para ignorar el
   // click sintético que el navegador emite tras un arrastre.
@@ -829,12 +898,27 @@ export default function MazoCartas({
       // perspective y sin rotateY: existían para disimular un relevo que ya no
       // hay, y un contexto 3D con diez cartas montadas es el mayor riesgo de
       // rasterizado del proyecto.
-      initial={emerge && !efectosApagados ? { y: 0, scale: 0.97 } : false}
-      animate={
-        emerge && !efectosApagados
-          ? { y: [0, -90, 0], scale: [0.97, 0.99, 1] }
-          : { y: 0, scale: 1 }
-      }
+      //
+      // Y SIN SCALE, como dice la cabecera de este fichero: había un
+      // [0.97, 0.99, 1] sobre el marco de las diez ranuras, 700 ms de escala
+      // sobre un ancestro de la carta justo mientras se la mira por primera
+      // vez.
+      //
+      // LOS 90px SE QUEDAN aunque el sobre mida ahora lo que la carta (130px
+      // más alto que ella en el iPhone, 124 en el PC, centrados los dos en la
+      // misma zona). Medido a 375x812: la carta arranca 64px por debajo del
+      // borde del sobre, y subir sólo 90 asomaría 26. Pero subir más no cabe:
+      // con -90 el borde superior de la carta llega ya 16px por encima de la
+      // zona central —justo el relleno inferior de la cabecera—, y con los
+      // -156 que harían falta para asomar 90 la carta cubriría la cabecera
+      // entera y el contador durante 300 ms. Lo que hace que asome es que el
+      // SOBRE BAJA mientras la carta sube: sobre-cuerpo-cae, en
+      // components/BoosterPack.tsx, desciende 60px entre 500 y 808 ms, así
+      // que en la cima de la subida (805 ms) la carta asoma 86px en el iPhone
+      // y 88 en el PC, lo mismo que asomaba antes. Los dos relojes van a la
+      // par: si tocas la duración o los `times` de aquí, mira aquel keyframe.
+      initial={emerge && !efectosApagados ? { y: 0 } : false}
+      animate={emerge && !efectosApagados ? { y: [0, -90, 0] } : { y: 0 }}
       transition={
         emerge && !efectosApagados
           ? { duration: 0.7, times: [0, 0.55, 1], ease: ["easeOut", "easeInOut"] }
