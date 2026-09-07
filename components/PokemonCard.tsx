@@ -85,11 +85,11 @@ function CardFace({
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-2 text-center">
       {card.number && (
-        <span className="text-xs font-semibold tnum ink-soft">#{card.number}</span>
+        <span className="t-cuerpo-2 font-semibold tnum ink-soft">#{card.number}</span>
       )}
       {/* El nombre es la única información útil del hueco: ink-soft (>=5,5:1),
           no ink-faint (~3,7:1), que a ~11px no llega al mínimo de texto. */}
-      <span className="text-[0.7rem] leading-tight ink-soft line-clamp-3">
+      <span className="t-meta leading-tight ink-soft line-clamp-3">
         {card.name || "Carta sin imagen"}
       </span>
     </div>
@@ -284,9 +284,12 @@ function PokemonCardInteractive({
             // entera —la imagen incluida— y la textura no siempre respeta la
             // densidad de pantalla del iPhone, lo que se ve como una carta
             // borrosa. box-shadow pinta igual sin rasterizar el contenido.
+            // El halo lleva el color de la rareza, así que ése sí va a mano; la
+            // sombra de caída que iba detrás estaba escrita en negro fijo y no
+            // se enteraba del tema, y es la misma caída que --shadow-lg.
             boxShadow:
               interactive && !isFlipped && rarityGlow
-                ? `0 0 ${isHovered ? 30 : 18}px ${rarityGlow}, 0 12px 18px rgba(0,0,0,0.5)`
+                ? `0 0 ${isHovered ? 30 : 18}px ${rarityGlow}, var(--shadow-lg)`
                 : "var(--shadow-md)",
           }}
         >
@@ -298,7 +301,7 @@ function PokemonCardInteractive({
 
           {hasHoloEffect && interactive && (
             <motion.div
-              className="absolute inset-0 z-20 mix-blend-color-dodge transition-opacity duration-300 pointer-events-none"
+              className="absolute inset-0 z-20 mix-blend-color-dodge transition-opacity duration-[var(--d-base)] pointer-events-none"
               style={{
                 backgroundImage: `linear-gradient(115deg, transparent 20%, rgba(255,255,255,0.4) 45%, rgba(255,200,255,0.4) 50%, rgba(200,255,255,0.4) 55%, transparent 80%)`,
                 backgroundSize: '200% 200%',

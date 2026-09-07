@@ -3,6 +3,7 @@
 import NotaGraduada from "./NotaGraduada";
 import { formatNumber } from "../../utils/format";
 import { MAX_ANUNCIOS_ABIERTOS } from "../../utils/bazar";
+import EstadoVacio from "../ui/EstadoVacio";
 import type { MiAnuncio } from "./tipos";
 
 /**
@@ -32,8 +33,11 @@ function rotuloEstado(estado: string): string {
 /** Tinta del estado: sólo la venta merece color, el resto es información. */
 function tintaEstado(estado: string): string {
   if (estado === "vendida") return "var(--ok)";
-  if (estado === "activa") return "var(--ink-soft)";
-  return "var(--ink-faint)";
+  // Los otros dos comparten --ink-soft. El cerrado llevaba --ink-faint, que a
+  // los 11px de este rótulo se queda en 3,66:1: la regla de la casa lo limita
+  // a 12px en adelante. La fila entera ya va con opacity-70 cuando no está
+  // activa, así que el estado se sigue distinguiendo sin apagar la tinta.
+  return "var(--ink-soft)";
 }
 
 interface MisAnunciosProps {
@@ -65,40 +69,42 @@ export default function MisAnuncios({
 
   if (anuncios.length === 0) {
     return (
-      <div className="surface flex flex-col items-center gap-4 rounded-2xl px-6 py-16 text-center">
-        <div className="surface-2 flex h-14 w-14 items-center justify-center rounded-2xl">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="ink-faint h-7 w-7" aria-hidden="true">
+      <EstadoVacio
+        titulo="No has puesto nada a la venta"
+        detalle="Publica una carta que te sobre y espera a que alguien la compre."
+        /* La bolsa de la compra es el icono de la pestaña del bazar en la barra
+           de navegación: el vacío enseña el mismo dibujo que el sitio donde se
+           está, que es lo que lo ata a esta pantalla y no a otra. Se queda
+           escrito aquí porque sólo aparece en este vacío. */
+        icono={
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={24} height={24} aria-hidden="true">
             <path d="M3 9h18l-1.5 10.5a2 2 0 0 1-2 1.5H6.5a2 2 0 0 1-2-1.5z" />
             <path d="M8 9V6a4 4 0 0 1 8 0v3" />
           </svg>
-        </div>
-        <div>
-          <p className="ink font-medium">No has puesto nada a la venta</p>
-          <p className="ink-soft mt-1 text-sm">
-            Publica una carta que te sobre y espera a que alguien la compre.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onPublicar}
-          disabled={!puedePublicar}
-          className="btn-accent press touch-target flex items-center justify-center rounded-xl px-5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Publicar una carta
-        </button>
-      </div>
+        }
+        accion={
+          <button
+            type="button"
+            onClick={onPublicar}
+            disabled={!puedePublicar}
+            className="btn-accent press control-44 t-cuerpo rounded-xl px-5 font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Publicar una carta
+          </button>
+        }
+      />
     );
   }
 
   return (
     <div className="flex flex-col gap-3">
       <div className="surface-2 flex flex-wrap items-center justify-between gap-2 rounded-2xl px-4 py-3">
-        <p className="ink-soft text-[12px]">
+        <p className="ink-soft t-cuerpo-2">
           <span className="tnum ink font-semibold">{activos}</span> de{" "}
           <span className="tnum">{MAX_ANUNCIOS_ABIERTOS}</span> anuncios abiertos
         </p>
         {cobrado > 0 && (
-          <p className="ink-soft text-[12px]">
+          <p className="ink-soft t-cuerpo-2">
             Cobrado en el bazar:{" "}
             <span className="tnum font-semibold" style={{ color: "var(--ok)" }}>
               {formatNumber(cobrado)}
@@ -131,20 +137,20 @@ export default function MisAnuncios({
               )}
 
               <div className="min-w-0 flex-1">
-                <p className="ink truncate text-[14px] leading-tight font-semibold">
+                <p className="ink truncate t-cuerpo leading-tight font-semibold">
                   {a.name}
                 </p>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5">
                   <span
-                    className="text-[11px] font-semibold"
+                    className="t-meta font-semibold"
                     style={{ color: tintaEstado(a.estado) }}
                   >
                     {rotuloEstado(a.estado)}
                   </span>
-                  <span className="ink-faint text-[11px]">· {a.rarity}</span>
+                  <span className="ink-soft t-meta">· {a.rarity}</span>
                   {a.nota !== null && <NotaGraduada nota={a.nota} variante="linea" />}
                 </div>
-                <p className="ink-soft mt-1.5 text-[11px] leading-snug">
+                <p className="ink-soft mt-1.5 t-meta leading-snug">
                   {a.estado === "vendida" ? "Cobraste" : "Cobrarás"}{" "}
                   <span
                     className="tnum font-semibold"
@@ -152,7 +158,7 @@ export default function MisAnuncios({
                   >
                     {formatNumber(a.cobrarias)}
                   </span>
-                  <span className="ink-faint">
+                  <span className="ink-soft">
                     {" "}
                     · el comprador paga {formatNumber(a.precio)}
                   </span>
@@ -166,7 +172,7 @@ export default function MisAnuncios({
                   disabled={enCurso === a.id || bloqueada}
                   aria-busy={enCurso === a.id}
                   aria-label={`Retirar ${a.name} del bazar`}
-                  className="btn-ghost press touch-target ink-soft flex shrink-0 items-center justify-center rounded-xl px-3 text-[12px] font-medium disabled:cursor-not-allowed disabled:opacity-40"
+                  className="btn-ghost press control-44 ink-soft shrink-0 rounded-xl px-3 t-cuerpo-2 font-medium disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {enCurso === a.id ? "…" : "Retirar"}
                 </button>
@@ -182,7 +188,7 @@ export default function MisAnuncios({
           que gasta una de las copias que te sobran para futuras publicaciones.
           Se dice tal cual para que nadie abra el álbum a comprobar si su carta
           ha desaparecido. */}
-      <p className="ink-faint mx-auto mt-1 max-w-md text-center text-[11px] leading-relaxed">
+      <p className="ink-soft mx-auto mt-1 max-w-md text-center t-meta leading-relaxed">
         Mientras un anuncio está en venta, la carta sigue en tu álbum: lo único
         que cambia es que esa copia ya no cuenta como libre para publicar otra
         vez. Retirar un anuncio no cuesta nada ni pierde nada.

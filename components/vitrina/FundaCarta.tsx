@@ -5,6 +5,7 @@ import DesperfectosCarta, {
   estadoDeCopia,
   estiloDescentrado,
 } from "../DesperfectosCarta";
+import { IconoMas } from "../icons";
 import type { CartaEnColeccion } from "../../utils/tipos";
 
 /**
@@ -100,7 +101,14 @@ interface FundaCartaProps {
 /* El bolsillo: papel de la hoja visto a través del plástico. El `inset` de
  * arriba es el canto iluminado del plástico y el de abajo la sombra que
  * proyecta la carta dentro de la funda; los dos con box-shadow, que pinta sin
- * rasterizar el contenido. */
+ * rasterizar el contenido.
+ *
+ * EL 6 % DE `rounded-[6%]` NO ES UN 4,5 % MAL COPIADO. La escala de radios del
+ * proyecto fija 4,5 % para LA CARTA, y la funda no es la carta: es una caja un
+ * 8 % más ancha (el `p-[4%]` de cada lado). Para que las dos curvas se vean
+ * concéntricas, la de fuera tiene que ser mayor en píxeles, y en porcentaje de
+ * una caja mayor eso son ~6. Bajarla a 4,5 dejaría el plástico más cuadrado que
+ * la carta que envuelve, que es justo lo contrario de lo que hace una funda. */
 const FUNDA: React.CSSProperties = {
   background:
     "linear-gradient(158deg, color-mix(in srgb, var(--ink) 5%, transparent) 0%, transparent 38%), var(--surface-2)",
@@ -157,19 +165,10 @@ export default function FundaCarta({
             color: "var(--ink-soft)",
           }}
         >
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            className="h-3.5 w-3.5"
-          >
-            <path d="M12 5v14M5 12h14" />
-          </svg>
+          <IconoMas tam={16} />
         </span>
         {invita && (
-          <span className="ink-soft text-[9px] leading-tight sm:text-[11px]">
+          <span className="ink-soft t-micro leading-tight sm:t-meta">
             Coloca aquí tu primera carta
           </span>
         )}
@@ -256,7 +255,7 @@ export default function FundaCarta({
    * no arrastre el anillo de foco fuera de sitio. Sólo translate: ver la
    * cabecera. */
   const contenido = (
-    <div className="transition-transform duration-300 md:group-hover/funda:-translate-y-1 pointer-events-none">
+    <div className="transition-transform duration-[var(--d-base)] md:group-hover/funda:-translate-y-1 pointer-events-none">
       {estado ? (
         /* Marco + tira, el mismo montaje que
            components/graduacion/CartaConDesperfectos.tsx: el descentrado de una
@@ -346,10 +345,14 @@ export default function FundaCarta({
       {carta.is_favorite && (
         <div
           aria-hidden="true"
-          className="absolute left-[7%] top-[5%] z-20 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500"
-          style={{ boxShadow: "var(--shadow-sm)" }}
+          className="absolute left-[7%] top-[5%] z-20 flex h-5 w-5 items-center justify-center rounded-full"
+          style={{ background: "var(--danger)", color: "#fff", boxShadow: "var(--shadow-sm)" }}
         >
-          <svg viewBox="0 0 24 24" fill="white" className="h-3 w-3">
+          {/* 12px y no los 16 de la escala de iconos: esto no es un icono de
+              control, es el glifo de una insignia de 20px, y comparte esquina
+              con el "!" de huérfana, que también es un glifo pequeño. A 16 el
+              corazón tocaría el borde del círculo. */}
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="h-3 w-3">
             <path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 5.5 5.5 5.5 0 0 1 21.5 12c-2.5 4.5-9.5 9-9.5 9z" />
           </svg>
         </div>
@@ -364,7 +367,7 @@ export default function FundaCarta({
         <div
           aria-hidden="true"
           title="Ya no tienes esta carta"
-          className="absolute right-[6%] top-[5%] z-20 flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold leading-none"
+          className="absolute right-[6%] top-[5%] z-20 flex h-5 w-5 items-center justify-center rounded-full t-meta font-bold leading-none"
           style={{
             background: "var(--surface)",
             color: "var(--warn-ink)",
@@ -385,7 +388,7 @@ export default function FundaCarta({
       {copias > 1 && (
         <div
           aria-hidden="true"
-          className="tnum absolute bottom-[5%] right-[6%] z-20 rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none"
+          className="tnum absolute bottom-[5%] right-[6%] z-20 rounded-full px-1.5 py-0.5 t-micro font-bold leading-none"
           style={{
             background: "var(--ink)",
             color: "var(--bg)",

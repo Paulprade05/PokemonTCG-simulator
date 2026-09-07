@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, type ReactNode } from "react";
 import { useHaptics } from "../../hooks/useHaptics";
 import { useSwipe, touchActionFor } from "../../hooks/useSwipe";
+import { D, EASE_IOS, MUELLE_PANEL } from "../../utils/motion";
 import Portal from "./Portal";
 
 interface SheetProps {
@@ -31,10 +32,10 @@ const RECORRIDO_FONDO = 260;
    arrastra sobre una pantalla plenamente legible pierde el sentido de capa. */
 const FONDO_MINIMO = 0.42;
 
-/* Espejo en JavaScript de la escala de app/globals.css (--d-base y --ease-ios):
-   framer-motion no lee variables CSS. Si se tocan allí, hay que tocarlos aquí. */
-const D_BASE = 0.22;
-const EASE_IOS: [number, number, number, number] = [0.32, 0.72, 0, 1];
+/* La escala de movimiento (--d-base, --ease-ios y el muelle del panel) llega
+   importada de utils/motion.ts: framer-motion no lee variables CSS, pero eso no
+   obliga a que cada componente se copie los números a mano — que es como se
+   llegó a tener veintitrés copias de la misma curva. */
 
 /**
  * Hoja inferior al estilo iOS: entra con muelle, se arrastra hacia abajo para
@@ -139,7 +140,7 @@ export default function Sheet({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: D_BASE, ease: "linear" }}
+          transition={{ duration: D.base, ease: "linear" }}
         >
           {/* El desenfoque vive AQUÍ, en el telón, y sólo aquí. El telón es
               HERMANO del panel, nunca su ancestro, así que las cartas que se
@@ -177,7 +178,7 @@ export default function Sheet({
                hasta el final. Medido en 375×812 con insets 47/34. Como columna
                flex, el área recibe lo que sobra tras el asa y el relleno, y
                el `min-h-0` le permite encoger y desplazar su contenido. */
-            className="ink relative flex w-full max-w-2xl flex-col overflow-hidden rounded-t-[28px] border border-[var(--border)] sm:mb-4 sm:rounded-[28px]"
+            className="ink relative flex w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl border border-[var(--border)] sm:mb-4 sm:rounded-3xl"
             style={{
               maxHeight,
               background: "var(--grain), var(--surface)",
@@ -200,8 +201,8 @@ export default function Sheet({
              * píxeles por encima de su sitio y dejaría ver una franja de fondo
              * por debajo. Ese es el motivo de que aquí el rebote esté
              * descartado, y no que quede feo. */
-            exit={{ y: "100%", transition: { duration: 0.24, ease: EASE_IOS } }}
-            transition={{ type: "spring", stiffness: 380, damping: 38, mass: 0.9 }}
+            exit={{ y: "100%", transition: { duration: D.base, ease: EASE_IOS } }}
+            transition={MUELLE_PANEL}
           >
             {!hideHandle && (
               <div

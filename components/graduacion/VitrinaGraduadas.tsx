@@ -30,6 +30,8 @@ import { motion } from "framer-motion";
 import CartaConDesperfectos from "./CartaConDesperfectos";
 import { SelloNota, type CopiaGraduada } from "./Comun";
 import { formatNumber } from "../../utils/format";
+import { D } from "../../utils/motion";
+import EstadoVacio from "../ui/EstadoVacio";
 
 interface Props {
   cartas: CopiaGraduada[];
@@ -60,13 +62,10 @@ export default function VitrinaGraduadas({
 
   if (cartas.length === 0) {
     return (
-      <div className="surface rounded-2xl py-14 px-6 text-center flex flex-col items-center gap-3">
-        <p className="ink font-medium text-sm">Todavía no has graduado nada</p>
-        <p className="ink-soft text-xs max-w-xs leading-relaxed">
-          Manda una copia repetida al graduador y aquí aparecerá con su nota, sus marcas y lo que
-          vale.
-        </p>
-      </div>
+      <EstadoVacio
+        titulo="Todavía no has graduado nada"
+        detalle="Manda una copia repetida al graduador y aquí aparecerá con su nota, sus marcas y lo que vale."
+      />
     );
   }
 
@@ -78,22 +77,22 @@ export default function VitrinaGraduadas({
           "¿cómo funciona?"). */}
       <div className="surface rounded-2xl px-5 py-4 flex flex-wrap items-center gap-x-6 gap-y-2">
         <div>
-          <p className="text-[10px] ink-faint uppercase tracking-[0.14em]">Copias</p>
-          <p className="text-sm font-semibold tnum">{formatNumber(cartas.length)}</p>
+          <p className="t-etiqueta ink-soft">Copias</p>
+          <p className="t-cuerpo font-semibold tnum">{formatNumber(cartas.length)}</p>
         </div>
         <div>
-          <p className="text-[10px] ink-faint uppercase tracking-[0.14em]">Valen</p>
-          <p className="text-sm font-semibold tnum" style={{ color: "var(--ok)" }}>
+          <p className="t-etiqueta ink-soft">Valen</p>
+          <p className="t-cuerpo font-semibold tnum" style={{ color: "var(--ok)" }}>
             {formatNumber(resumen.valor)}
           </p>
         </div>
         <div>
-          <p className="text-[10px] ink-faint uppercase tracking-[0.14em]">Pagado en tasas</p>
-          <p className="text-sm font-semibold tnum ink-soft">{formatNumber(resumen.invertido)}</p>
+          <p className="t-etiqueta ink-soft">Pagado en tasas</p>
+          <p className="t-cuerpo font-semibold tnum ink-soft">{formatNumber(resumen.invertido)}</p>
         </div>
         <div>
-          <p className="text-[10px] ink-faint uppercase tracking-[0.14em]">Mejor nota</p>
-          <p className="text-sm font-semibold tnum">{resumen.mejor}</p>
+          <p className="t-etiqueta ink-soft">Mejor nota</p>
+          <p className="t-cuerpo font-semibold tnum">{resumen.mejor}</p>
         </div>
       </div>
 
@@ -109,7 +108,7 @@ export default function VitrinaGraduadas({
               key={c.gradedId}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: Math.min(i, 12) * 0.03 }}
+              transition={{ duration: D.base, delay: Math.min(i, 12) * 0.03 }}
               className="surface rounded-2xl p-3 flex flex-col gap-2.5"
             >
               <CartaConDesperfectos
@@ -121,8 +120,8 @@ export default function VitrinaGraduadas({
 
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-[13px] font-semibold truncate">{c.name}</p>
-                  <p className="text-[10px] ink-faint truncate">
+                  <p className="t-cuerpo font-semibold truncate">{c.name}</p>
+                  <p className="t-micro ink-soft truncate">
                     {c.rarity} · copia n.º {c.copia}
                   </p>
                 </div>
@@ -131,18 +130,18 @@ export default function VitrinaGraduadas({
                 </div>
               </div>
 
-              <p className="text-[11px] ink-soft tnum">
+              <p className="t-meta ink-soft tnum">
                 {c.etiqueta} · vale {formatNumber(c.valor)}
               </p>
 
               {esUltimaCopia ? (
                 // Mismo texto que en la ceremonia, y a propósito: quien lo lea
                 // aquí tiene que reconocer la regla que ya leyó allí.
-                <p className="text-[10px] ink-faint leading-snug">
+                <p className="t-micro ink-soft leading-snug">
                   Es la última copia que te queda de esta carta: hay que quedarse con una.
                 </p>
               ) : noValeNada ? (
-                <p className="text-[10px] ink-faint leading-snug">
+                <p className="t-micro ink-soft leading-snug">
                   Un {c.nota} multiplica por cero: nadie paga por ella.
                 </p>
               ) : (
@@ -151,7 +150,7 @@ export default function VitrinaGraduadas({
                   onClick={() => onVender(c)}
                   disabled={enVuelo}
                   aria-busy={enVuelo}
-                  className="btn-ghost press touch-target w-full rounded-xl text-[12px] font-medium flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="btn-ghost press touch-target w-full rounded-xl t-cuerpo-2 font-medium flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   {enVuelo ? (
                     <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />

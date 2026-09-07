@@ -52,6 +52,7 @@ import {
 } from "../../utils/graduacion";
 import { formatNumber } from "../../utils/format";
 import { useHaptics } from "../../hooks/useHaptics";
+import { D, EASE_OUT, MUELLE_PILDORA } from "../../utils/motion";
 
 interface Props {
   resultados: Resultado[];
@@ -160,24 +161,24 @@ function Informe({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.3 }}
+              transition={{ duration: D.base }}
               className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 z-40 py-2 text-center"
               style={{
                 background: "color-mix(in srgb, var(--ink) 82%, transparent)",
                 color: "var(--bg)",
               }}
             >
-              <span className="text-[10px] font-bold uppercase tracking-[0.28em]">Sellado</span>
+              <span className="t-etiqueta font-bold">Sellado</span>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
 
       <div className={compacto ? "min-w-0" : "text-center min-w-0 w-full"}>
-        <p className={`font-semibold truncate ${compacto ? "text-[13px]" : "text-base"}`}>
+        <p className={`font-semibold truncate ${compacto ? "t-cuerpo" : "t-base"}`}>
           {carta.name}
         </p>
-        <p className="text-[11px] ink-faint truncate">
+        <p className="t-meta ink-soft truncate">
           {carta.rarity} · copia n.º {resultado.copia}
         </p>
       </div>
@@ -191,7 +192,7 @@ function Informe({
             key="sello"
             initial={{ opacity: 0, scale: 0.82 }}
             animate={{ opacity: 1, scale: 1 }}
-            transition={{ type: "spring", stiffness: 420, damping: 24 }}
+            transition={MUELLE_PILDORA}
             className="flex flex-col items-center gap-2"
           >
             <SelloNota nota={nota} tamano={compacto ? "sm" : "lg"} />
@@ -204,10 +205,10 @@ function Informe({
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           // Entra después del sello: primero el veredicto, luego el porqué.
-          transition={{ duration: 0.4, delay: 0.35, ease: [0.16, 1, 0.3, 1] }}
+          transition={{ duration: D.slow, delay: 0.35, ease: EASE_OUT }}
           className={compacto ? "flex flex-col gap-2" : "flex flex-col items-center gap-3 w-full"}
         >
-          <p className={`text-[11px] ink-soft leading-snug ${compacto ? "" : "text-center max-w-xs"}`}>
+          <p className={`t-meta ink-soft leading-snug ${compacto ? "" : "text-center max-w-xs"}`}>
             {enPalabras(desperfectos).join(" · ")}
           </p>
 
@@ -218,11 +219,11 @@ function Informe({
             className="rounded-xl px-3 py-2 flex items-baseline gap-2 tnum"
             style={{ background: "var(--surface-2)" }}
           >
-            <span className="text-[11px] ink-soft">Ahora vale</span>
-            <span className="text-lg font-bold" style={{ color: tintaDeNota(nota) }}>
+            <span className="t-meta ink-soft">Ahora vale</span>
+            <span className="t-titulo font-bold" style={{ color: tintaDeNota(nota) }}>
               {formatNumber(valor)}
             </span>
-            <span className="text-[11px] ink-faint">
+            <span className="t-meta ink-soft">
               {multiplicador(MULTIPLICADOR_NOTA[nota] ?? 0)} sobre {formatNumber(carta.valor)}
             </span>
           </div>
@@ -232,25 +233,25 @@ function Informe({
             type="button"
             onClick={() => setVerLimpia((v) => !v)}
             aria-pressed={verLimpia}
-            className="chip ink-soft text-[11px] px-3 py-1.5 press"
+            className="chip ink-soft t-meta px-3 py-1.5 press"
           >
             {verLimpia ? "Ver los desperfectos" : "Ver la carta limpia"}
           </button>
 
           {/* DECIDIR */}
           {decision === "vendida" ? (
-            <p className="text-[11px] font-semibold" style={{ color: "var(--ok)" }}>
+            <p className="t-meta font-semibold" style={{ color: "var(--ok)" }}>
               Vendida por {formatNumber(valor)} monedas
             </p>
           ) : decision === "guardada" ? (
-            <p className="text-[11px] ink-soft">Guardada en la vitrina</p>
+            <p className="t-meta ink-soft">Guardada en la vitrina</p>
           ) : (
             <div className={`flex gap-2 ${compacto ? "" : "w-full max-w-xs"}`}>
               <button
                 type="button"
                 onClick={onGuardar}
                 disabled={vendiendo}
-                className="btn-ghost press touch-target flex-1 rounded-xl text-[12px] font-medium px-3 disabled:opacity-40"
+                className="btn-ghost press touch-target flex-1 rounded-xl t-cuerpo-2 font-medium px-3 disabled:opacity-40"
               >
                 Guardar
               </button>
@@ -259,7 +260,7 @@ function Informe({
                 onClick={onVender}
                 disabled={!sePuedeVender || vendiendo}
                 aria-busy={vendiendo}
-                className="btn-accent press touch-target flex-1 rounded-xl text-[12px] font-semibold px-3 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="btn-accent press touch-target flex-1 rounded-xl t-cuerpo-2 font-semibold px-3 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {vendiendo ? (
                   <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
@@ -274,19 +275,19 @@ function Informe({
               aviso que salta después. Es la misma regla que protege el álbum en
               el resto del juego: nunca te quedas sin la carta. */}
           {!decision && esUltimaCopia && (
-            <p className="text-[11px] ink-faint leading-snug max-w-xs">
+            <p className="t-meta ink-soft leading-snug max-w-xs">
               Es la última copia que te queda de esta carta: hay que quedarse con una. Consigue otra
               copia y entonces podrás venderla.
             </p>
           )}
           {!decision && !esUltimaCopia && noValeNada && (
-            <p className="text-[11px] ink-faint leading-snug max-w-xs">
+            <p className="t-meta ink-soft leading-snug max-w-xs">
               Un {nota} multiplica por cero: nadie paga por ella. Se queda en tu vitrina como
               recuerdo.
             </p>
           )}
           {!decision && !esUltimaCopia && !noValeNada && sinFicha && (
-            <p className="text-[11px] ink-faint leading-snug max-w-xs">
+            <p className="t-meta ink-soft leading-snug max-w-xs">
               Esperando la ficha del graduador para poder venderla…
             </p>
           )}
@@ -358,10 +359,10 @@ export default function Revelacion({
       <div className="flex flex-col gap-5">
         <div className="surface rounded-2xl px-5 py-4 flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold">
+            <h2 className="t-cuerpo font-semibold">
               {formatNumber(total)} {total === 1 ? "copia graduada" : "copias graduadas"}
             </h2>
-            <p className="text-[11px] ink-soft tnum mt-0.5">
+            <p className="t-meta ink-soft tnum mt-0.5">
               {formatNumber(cobrado)} monedas de tasas
               {descuento > 0 && ` · con el descuento por volumen aplicado`}
               {mejor > 0 && ` · tu mejor nota: ${mejor} (${etiquetaNota(mejor)})`}
@@ -373,14 +374,14 @@ export default function Revelacion({
               haptic("tap");
               onTerminar();
             }}
-            className="btn-ghost press touch-target px-4 rounded-xl text-xs font-medium shrink-0"
+            className="btn-ghost press touch-target px-4 rounded-xl t-cuerpo-2 font-medium shrink-0"
           >
             {sinDecidir > 0 ? "Guardar el resto y salir" : "Volver a graduar"}
           </button>
         </div>
 
         {sinDecidir > 0 && (
-          <p className="text-[11px] ink-faint text-center">
+          <p className="t-meta ink-soft text-center">
             Lo que no vendas se queda en tu vitrina: guardar no hay que confirmarlo.
           </p>
         )}
@@ -414,14 +415,14 @@ export default function Revelacion({
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[11px] ink-soft tnum uppercase tracking-[0.16em]">
+        <p className="t-etiqueta ink-soft tnum">
           Informe {indice + 1} de {total}
         </p>
         {total > 1 && (
           <button
             type="button"
             onClick={revelarTodas}
-            className="chip ink-soft text-[11px] px-3 py-2 press touch-target"
+            className="chip ink-soft t-meta px-3 py-2 press touch-target"
           >
             Revelar todas
           </button>
@@ -469,7 +470,7 @@ export default function Revelacion({
           <button
             type="button"
             onClick={abrir}
-            className="btn-accent press touch-target w-full max-w-xs rounded-2xl py-3.5 text-sm font-semibold"
+            className="btn-accent press touch-target w-full max-w-xs rounded-2xl py-3.5 t-cuerpo font-semibold"
           >
             Abrir el informe
           </button>
@@ -477,7 +478,7 @@ export default function Revelacion({
           <button
             type="button"
             onClick={siguiente}
-            className="btn-ghost press touch-target w-full max-w-xs rounded-2xl py-3.5 text-sm font-medium"
+            className="btn-ghost press touch-target w-full max-w-xs rounded-2xl py-3.5 t-cuerpo font-medium"
           >
             {indice + 1 >= total ? "Ver el resumen" : "Siguiente copia"}
           </button>

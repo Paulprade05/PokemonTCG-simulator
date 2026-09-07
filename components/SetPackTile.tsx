@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import { useMemo } from "react";
+import { D, EASE_OUT } from "../utils/motion";
 import { arteDeSobre } from "../utils/sobreArte";
 import type { Expansion } from "../utils/tipos";
 
@@ -122,7 +123,7 @@ export default function SetPackTile({ set, poseidas, onSelect }: SetPackTileProp
          sin cambiar la escala a la que se rasteriza nada. NO SE REPONE. */
       whileHover={{ y: -4 }}
       whileTap={{ y: 2 }}
-      transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+      transition={{ duration: D.base, ease: EASE_OUT }}
       onClick={() => onSelect(set.id)}
       title={set.name}
       /* APAISADA (4/3), y el porqué está arriba en la cabecera: dentro ya no
@@ -201,7 +202,7 @@ export default function SetPackTile({ set, poseidas, onSelect }: SetPackTileProp
 
       {/* Realce al pasar por encima: sólo opacidad sobre un degradado ya
           montado. Sustituye al velo radial de la tesela anterior. */}
-      <div className="tesela-lustre pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+      <div className="tesela-lustre pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-[var(--d-slow)] group-hover:opacity-100" />
 
       {/* PROGRESO REAL, NUNCA INVENTADO. Sólo aparece cuando el jugador tiene
           algo de esta expansión, de modo que un invitado recién llegado ve la
@@ -209,7 +210,7 @@ export default function SetPackTile({ set, poseidas, onSelect }: SetPackTileProp
           dónde va. El dato sale de la colección local o de la del servidor,
           según haya sesión o no. */}
       {tengo > 0 && (
-        <span className="tesela-pastilla absolute left-2 top-2 z-10 rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none tabular-nums md:left-3 md:top-3 md:px-2 md:py-1 md:text-[10px]">
+        <span className="tesela-pastilla absolute left-2 top-2 z-10 rounded-full px-1.5 py-0.5 t-micro font-semibold leading-none tnum md:left-3 md:top-3 md:px-2 md:py-1">
           <span className="sr-only">Tienes </span>
           {total > 0 ? `${tengo}/${total}` : tengo}
           <span className="sr-only"> cartas de esta expansión</span>
@@ -225,7 +226,7 @@ export default function SetPackTile({ set, poseidas, onSelect }: SetPackTileProp
           Va como <span> y no como botón: la tesela ya es un botón y anidarlos
           es HTML inválido. */}
       {set.tieneEs === false && (
-        <span className="tesela-pastilla absolute right-2 top-2 z-10 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-none tracking-[0.12em] md:right-3 md:top-3 md:px-2 md:py-1 md:text-[10px]">
+        <span className="tesela-pastilla absolute right-2 top-2 z-10 rounded-full px-1.5 py-0.5 t-etiqueta leading-none md:right-3 md:top-3 md:px-2 md:py-1">
           EN
           <span className="sr-only"> · esta expansión todavía no está traducida al español</span>
         </span>
@@ -235,7 +236,7 @@ export default function SetPackTile({ set, poseidas, onSelect }: SetPackTileProp
           degradado de la expansión y el velo, no la superficie de papel, así
           que el color que garantiza contraste es el del velo y no el del modo
           claro/oscuro. */}
-      <span className="relative z-10 w-full truncate px-2.5 pb-2.5 text-left text-[11px] font-semibold tracking-wide text-white md:px-3.5 md:pb-3 md:text-xs">
+      <span className="relative z-10 w-full truncate px-2.5 pb-2.5 text-left t-meta font-semibold tracking-wide text-white md:px-3.5 md:pb-3 md:t-cuerpo-2">
         {set.name}
       </span>
     </motion.button>

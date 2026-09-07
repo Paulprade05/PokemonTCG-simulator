@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { isIOS, isStandaloneDisplay } from "../../utils/platform";
+import { IconoCerrar } from "../icons";
+import { MUELLE_PANEL } from "../../utils/motion";
 
 const DISMISS_KEY = "pwa-install-dismissed";
 // Tras descartarlo no volvemos a insistir en dos semanas.
@@ -18,10 +20,10 @@ const ShareIcon = () => (
     viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
-    strokeWidth={1.9}
+    strokeWidth={2}
     strokeLinecap="round"
     strokeLinejoin="round"
-    className="inline w-3.5 h-3.5 accent"
+    className="inline w-4 h-4 accent"
     aria-hidden="true"
   >
     <path d="M12 15V4M12 4 8.5 7.5M12 4l3.5 3.5" />
@@ -34,10 +36,10 @@ const PlusSquareIcon = () => (
     viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
-    strokeWidth={1.9}
+    strokeWidth={2}
     strokeLinecap="round"
     strokeLinejoin="round"
-    className="inline w-3.5 h-3.5 accent"
+    className="inline w-4 h-4 accent"
     aria-hidden="true"
   >
     <rect x="3.5" y="3.5" width="17" height="17" rx="4.5" />
@@ -106,7 +108,9 @@ export default function InstallPrompt() {
           initial={{ y: 140, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 140, opacity: 0 }}
-          transition={{ type: "spring", stiffness: 380, damping: 36 }}
+          // Es un panel que sube desde abajo, igual que la hoja: el muelle sale
+          // de utils/motion.ts en vez de ser un séptimo juego de números.
+          transition={MUELLE_PANEL}
           className="fixed inset-x-0 z-50 flex justify-center px-3"
           // Se apoya en el hueco que el armazón ya reserva para la barra de
           // pestañas: así sigue su alto real y en escritorio, donde esa barra no
@@ -121,11 +125,14 @@ export default function InstallPrompt() {
               className="w-11 h-11 rounded-xl shrink-0"
             />
             <div className="flex-1 min-w-0">
-              <p className="text-[13px] font-semibold ink">
+              {/* t-cuerpo y no t-cuerpo-2: es el rótulo principal del aviso y
+                  lo que tiene debajo son 11px. A 12 contra 11 no habría
+                  jerarquía ninguna. */}
+              <p className="t-cuerpo font-semibold ink">
                 Instala el simulador
               </p>
               {iosMode ? (
-                <p className="mt-0.5 text-[11px] leading-relaxed ink-faint flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                <p className="mt-0.5 t-meta leading-relaxed ink-soft flex flex-wrap items-center gap-x-1 gap-y-0.5">
                   Pulsa
                   <ShareIcon />
                   <span className="ink-soft">Compartir</span>y luego
@@ -133,7 +140,7 @@ export default function InstallPrompt() {
                   <span className="ink-soft">Añadir a inicio</span>
                 </p>
               ) : (
-                <p className="mt-0.5 text-[11px] leading-relaxed ink-faint">
+                <p className="mt-0.5 t-meta leading-relaxed ink-soft">
                   Pantalla completa, acceso directo y tus cartas disponibles sin
                   conexión.
                 </p>
@@ -141,7 +148,7 @@ export default function InstallPrompt() {
               {!iosMode && (
                 <button
                   onClick={install}
-                  className="btn-accent press mt-2.5 rounded-full px-4 py-1.5 text-xs font-semibold"
+                  className="btn-accent press control-44 mt-2.5 rounded-full px-4 t-cuerpo-2 font-semibold"
                 >
                   Instalar
                 </button>
@@ -150,19 +157,13 @@ export default function InstallPrompt() {
             <button
               onClick={dismiss}
               aria-label="Cerrar"
-              className="press shrink-0 -m-1 p-1 rounded-full ink-faint"
+              // La zona tocable era de 24px. `control-44` la sube al mínimo y
+              // el margen negativo de 14px devuelve el botón a la posición que
+              // tenía: 44 - 2·14 = los 16px que ocupaba en la fila, con el aspa
+              // en el mismo sitio y 44px de dedo alrededor.
+              className="press control-44 shrink-0 -m-3.5 rounded-full ink-faint"
             >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                className="w-4 h-4"
-                aria-hidden="true"
-              >
-                <path d="M18 6 6 18M6 6l12 12" />
-              </svg>
+              <IconoCerrar tam={16} />
             </button>
           </div>
         </motion.div>

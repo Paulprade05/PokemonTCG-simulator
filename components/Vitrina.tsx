@@ -27,6 +27,8 @@ import PageHeader from "./PageHeader";
 import Loader from "./Loader";
 import CardDetailModal from "./CardDetailModal";
 import { useToast } from "./ui/Toast";
+import EstadoError from "./ui/EstadoError";
+import { IconoAvanzar, IconoVolver } from "./icons";
 import LibroArchivador, {
   ANCHO_MAX_ARCHIVADOR,
   DURACION_PASE_MS,
@@ -791,35 +793,13 @@ export default function Vitrina() {
           subtitle="El archivador que montas tú, funda a funda"
           back="/collection"
         />
-        <div className="surface flex flex-col items-center gap-4 rounded-2xl px-6 py-16 text-center md:py-20">
-          <div className="surface-2 flex h-14 w-14 items-center justify-center rounded-2xl">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              className="ink-faint h-7 w-7"
-            >
-              <circle cx="12" cy="12" r="9" />
-              <path d="M12 7.5v5.5M12 16.5h.01" />
-            </svg>
-          </div>
-          <div>
-            <p className="ink font-medium">No se pudo abrir la vitrina</p>
-            <p className="ink-soft mt-1 text-sm">
-              Comprueba tu conexión e inténtalo de nuevo.
-            </p>
-          </div>
-          <button
-            onClick={() => {
-              haptic("tap");
-              cargar();
-            }}
-            className="btn-primary press touch-target rounded-xl px-5 py-2.5 text-sm font-medium"
-          >
-            Reintentar
-          </button>
-        </div>
+        <EstadoError
+          titulo="No se pudo abrir la vitrina"
+          onReintentar={() => {
+            haptic("tap");
+            cargar();
+          }}
+        />
       </div>
     );
   }
@@ -860,7 +840,7 @@ export default function Vitrina() {
             que no ha cargado. Es el aviso más importante de la pantalla la
             primera vez que se entra. */}
         <div className="surface flex flex-col gap-2 rounded-2xl px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="ink-soft text-[12px] leading-relaxed">
+          <p className="ink-soft t-cuerpo-2 leading-relaxed">
             {sinCartas
               ? "Todavía no tienes cartas que colocar. Abre un sobre y vuelve."
               : sinFundas
@@ -870,12 +850,12 @@ export default function Vitrina() {
           {sinCartas ? (
             <Link
               href="/"
-              className="btn-primary press shrink-0 rounded-xl px-4 py-2 text-center text-[12px] font-medium"
+              className="btn-primary press shrink-0 rounded-xl px-4 py-2 text-center t-cuerpo-2 font-medium"
             >
               Abrir sobres
             </Link>
           ) : (
-            <span className="chip ink-soft tnum shrink-0 px-3 py-2 text-center text-[11px] font-medium">
+            <span className="chip ink-soft tnum shrink-0 px-3 py-2 text-center t-meta font-medium">
               {formatNumber(fundas.length)}{" "}
               {fundas.length === 1 ? "funda ocupada" : "fundas ocupadas"}
             </span>
@@ -968,6 +948,9 @@ export default function Vitrina() {
               fill="none"
               stroke="currentColor"
               strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
               className="h-4 w-4"
             >
               <path d="m17 18-6-6 6-6M7 18V6" />
@@ -980,15 +963,7 @@ export default function Vitrina() {
             aria-label="Hoja anterior"
             className="btn-ghost press touch-target flex h-11 w-11 items-center justify-center rounded-xl disabled:cursor-not-allowed disabled:opacity-30"
           >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              className="h-4 w-4"
-            >
-              <path d="m15 18-6-6 6-6" />
-            </svg>
+            <IconoVolver tam={16} />
           </button>
 
           {/* `aria-live` para que el pase de hoja se anuncie: con lector de
@@ -997,7 +972,7 @@ export default function Vitrina() {
               pasado algo. */}
           <span
             aria-live="polite"
-            className="chip ink tnum min-w-[9.5rem] px-4 py-2 text-center text-sm font-medium"
+            className="chip ink tnum min-w-[9.5rem] px-4 py-2 text-center t-cuerpo font-medium"
           >
             Hoja {hojaSegura + 1} de {totalHojas}
           </span>
@@ -1009,15 +984,7 @@ export default function Vitrina() {
             aria-label="Hoja siguiente"
             className="btn-ghost press touch-target flex h-11 w-11 items-center justify-center rounded-xl disabled:cursor-not-allowed disabled:opacity-30"
           >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              className="h-4 w-4"
-            >
-              <path d="m9 18 6-6-6-6" />
-            </svg>
+            <IconoAvanzar tam={16} />
           </button>
           <button
             type="button"
@@ -1031,6 +998,9 @@ export default function Vitrina() {
               fill="none"
               stroke="currentColor"
               strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
               className="h-4 w-4"
             >
               <path d="m7 6 6 6-6 6M17 6v12" />
@@ -1050,7 +1020,7 @@ export default function Vitrina() {
           />
         </div>
 
-        <p className="ink-faint text-center text-[11px]">
+        <p className="ink-soft text-center t-meta">
           Desliza sobre las hojas o usa las flechas ← → para pasar de página.
           Siempre queda una hoja libre al final para seguir montando.
         </p>

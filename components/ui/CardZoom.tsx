@@ -4,8 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useHaptics } from "../../hooks/useHaptics";
+import { D } from "../../utils/motion";
 import { useSwipe } from "../../hooks/useSwipe";
 import DesperfectosCarta, { estiloDescentrado } from "../DesperfectosCarta";
+import { IconoCerrar } from "../icons";
 import type { Desperfectos, MarcasDeCarta } from "../../utils/graduacion";
 
 interface CardZoomProps {
@@ -476,7 +478,7 @@ export default function CardZoom({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
+          transition={{ duration: D.base }}
           className="fixed inset-0 z-[140] flex flex-col items-center justify-center"
           style={{ paddingTop: "var(--sat)", paddingBottom: "var(--sab)" }}
           onClick={onClose}
@@ -497,16 +499,7 @@ export default function CardZoom({
             className="glass absolute right-4 z-10 flex h-11 w-11 items-center justify-center rounded-full"
             style={{ top: "calc(var(--sat) + 12px)" }}
           >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              strokeLinecap="round"
-              className="ink h-5 w-5"
-            >
-              <path d="M18 6 6 18M6 6l12 12" />
-            </svg>
+            <IconoCerrar tam={20} className="ink" />
           </button>
 
           <div
@@ -607,7 +600,7 @@ export default function CardZoom({
             </div>
           </div>
 
-          <p className="pointer-events-none relative pb-4 text-center text-[11px] text-white/45">
+          <p className="pointer-events-none relative pb-4 text-center t-meta text-white/45">
             {caption ? `${caption} · ` : ""}
             {zoomActive
               ? "Arrastra para moverte · Doble toque para alejar"

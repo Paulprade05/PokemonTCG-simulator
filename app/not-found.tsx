@@ -19,7 +19,9 @@ export default function NotFound() {
           "calc(var(--app-height) - var(--topbar-h) - var(--sat) - var(--content-bottom) - 1.5rem)",
       }}
     >
-      <div className="surface w-full max-w-sm rounded-[var(--radius)] px-6 py-8 flex flex-col items-center gap-4">
+      {/* Mismo cambio que en error.tsx: --radius resolvía a 18px, fuera de la
+          escala de radios; 16 es el escalón de superficie. */}
+      <div className="surface w-full max-w-sm rounded-2xl px-6 py-8 flex flex-col items-center gap-4">
         <div
           className="w-14 h-14 rounded-2xl flex items-center justify-center"
           style={{
@@ -35,7 +37,7 @@ export default function NotFound() {
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
-            className="w-7 h-7"
+            className="w-6 h-6"
           >
             <circle cx="11" cy="11" r="7" />
             <path d="m20 20-3.5-3.5" />
@@ -45,17 +47,17 @@ export default function NotFound() {
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <h1 className="ink text-xl font-bold tracking-tight">
+          <h1 className="ink t-titulo font-bold tracking-tight">
             Esta página no existe
           </h1>
-          <p className="ink-soft text-sm leading-relaxed">
+          <p className="ink-soft t-cuerpo leading-relaxed">
             El enlace puede haber caducado o la dirección estar mal escrita.
           </p>
         </div>
 
         <Link
           href="/"
-          className="btn-accent touch-target w-full rounded-xl px-4 text-sm font-semibold flex items-center justify-center"
+          className="btn-accent touch-target w-full rounded-xl px-4 t-cuerpo font-semibold flex items-center justify-center"
         >
           Ir a los sobres
         </Link>

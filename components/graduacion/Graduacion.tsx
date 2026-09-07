@@ -41,7 +41,8 @@
 // que nadie haya abierto el primer sobre.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
+// `next/link` ya no se importa: el único enlace que quedaba era el "Ir al
+// inicio" del aviso de invitado, que ahora lo pinta components/ui/AvisoInvitado.
 import { motion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
 import {
@@ -57,12 +58,16 @@ import {
   valorGraduado,
 } from "../../utils/graduacion";
 import { formatNumber } from "../../utils/format";
+import { D, EASE_OUT } from "../../utils/motion";
 import { useCurrency } from "../../hooks/useGameCurrency";
 import { useHaptics } from "../../hooks/useHaptics";
 import { useToast } from "../ui/Toast";
 import PageHeader from "../PageHeader";
 import Loader from "../Loader";
 import HuecoCentrado from "../HuecoCentrado";
+import AvisoInvitado from "../ui/AvisoInvitado";
+import EstadoError from "../ui/EstadoError";
+import Segmentado from "../ui/Segmentado";
 import ListaGraduables from "./ListaGraduables";
 import BarraEnvio from "./BarraEnvio";
 import Revelacion from "./Revelacion";
@@ -558,32 +563,11 @@ export default function Graduacion() {
          * párrafo y se convierte en el botón de salida, que es donde lo pone el
          * patrón y donde se ve sin tener que leerse el párrafo entero. */}
         <HuecoCentrado>
-          <div
-            className="surface rounded-2xl w-full py-14 px-6 flex flex-col items-center text-center gap-4"
-            style={{ borderColor: "color-mix(in srgb, var(--warn) 40%, transparent)" }}
-          >
-            <div className="w-14 h-14 rounded-2xl surface-2 flex items-center justify-center">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="w-7 h-7" style={{ color: "var(--warn)" }} aria-hidden="true">
-                <path d="M12 9v4" />
-                <path d="M12 17h.01" />
-                <circle cx="12" cy="12" r="9" />
-              </svg>
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold">Estás jugando como invitado</p>
-              <p className="text-xs ink-soft mt-1 leading-relaxed max-w-sm mx-auto">
-                La nota de una copia se calcula a partir de tu cuenta y de qué número de copia es, y
-                el cobro se hace en el servidor. Como invitado tus cartas viven sólo en este
-                dispositivo, así que aquí no hay nada que graduar.
-              </p>
-            </div>
-            <Link
-              href="/"
-              className="btn-primary press touch-target px-5 rounded-xl text-sm font-medium flex items-center justify-center"
-            >
-              Ir al inicio
-            </Link>
-          </div>
+          <AvisoInvitado variante="hueco">
+            La nota de una copia se calcula a partir de tu cuenta y de qué número de copia es, y
+            el cobro se hace en el servidor. Como invitado tus cartas viven sólo en este
+            dispositivo, así que aquí no hay nada que graduar.
+          </AvisoInvitado>
         </HuecoCentrado>
       </>
     );
@@ -601,19 +585,13 @@ export default function Graduacion() {
             esta ruta que no tiene contenido debajo, y pegada arriba dejaba el
             mismo medio metro de fondo vacío. */}
         <HuecoCentrado>
-          <div className="surface rounded-2xl w-full py-16 px-6 flex flex-col items-center text-center gap-4">
-            <p className="text-sm ink-soft">No se pudo abrir el graduador.</p>
-            <button
-              type="button"
-              onClick={() => {
-                haptic("tap");
-                cargar();
-              }}
-              className="btn-accent press touch-target px-6 rounded-xl text-sm font-semibold flex items-center justify-center"
-            >
-              Reintentar
-            </button>
-          </div>
+          <EstadoError
+            titulo="No se pudo abrir el graduador"
+            onReintentar={() => {
+              haptic("tap");
+              cargar();
+            }}
+          />
         </HuecoCentrado>
       </>
     );
@@ -629,39 +607,29 @@ export default function Graduacion() {
 
       <div className="flex flex-col gap-4">
         {/* LAS DOS SECCIONES. Sin iconos: son dos sitios, no dos acciones.
-            NO LLEVAN role="tab"/"tablist" A PROPÓSITO. Ese patrón de ARIA obliga
-            a mover el foco con las flechas y a un tabindex rotatorio; anunciarse
-            como pestañas sin implementar eso deja al lector de pantalla diciendo
-            "pestaña 1 de 2" y esperando unas flechas que no hacen nada. Dos
-            botones con `aria-pressed` describen exactamente lo que son. */}
-        <div className="surface rounded-2xl p-1.5 flex gap-1.5">
-          {([
-            { id: "enviar" as const, rotulo: "Enviar a graduar" },
-            { id: "graduadas" as const, rotulo: `Mis graduadas${vitrina.length ? ` · ${formatNumber(vitrina.length)}` : ""}` },
-          ]).map(({ id, rotulo }) => {
-            const activa = pestana === id;
-            return (
-              <button
-                key={id}
-                type="button"
-                aria-pressed={activa}
-                onClick={() => {
-                  haptic("select");
-                  setPestana(id);
-                }}
-                className={`press touch-target flex-1 rounded-xl text-xs font-semibold px-3 ${activa ? "btn-primary" : "ink-soft"}`}
-              >
-                {rotulo}
-              </button>
-            );
-          })}
-        </div>
+            El razonamiento de por qué esto NO lleva role="tab"/"tablist" se
+            mudó con el control a components/ui/Segmentado.tsx, que es donde
+            ahora vive esta decisión para las cinco pantallas que la comparten. */}
+        <Segmentado
+          id="graduacion-pestana"
+          etiqueta="Sección del graduador"
+          valor={pestana}
+          onCambio={setPestana}
+          opciones={[
+            { id: "enviar", rotulo: "Enviar a graduar" },
+            {
+              id: "graduadas",
+              rotulo: "Mis graduadas",
+              insignia: vitrina.length || undefined,
+            },
+          ]}
+        />
 
         {pestana === "enviar" ? (
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ duration: D.base, ease: EASE_OUT }}
             className="flex flex-col gap-4"
           >
             <ComoFunciona />
@@ -697,7 +665,7 @@ export default function Graduacion() {
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ duration: D.base, ease: EASE_OUT }}
           >
             <VitrinaGraduadas
               cartas={vitrina}

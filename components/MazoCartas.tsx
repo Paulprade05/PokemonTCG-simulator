@@ -958,8 +958,11 @@ export default function MazoCartas({
             pointerEvents: "none",
             // Sombra de la carta. box-shadow y NUNCA drop-shadow: un filter aquí
             // rasteriza el subárbol y la carta sale blanda.
-            boxShadow:
-              "6px 0 10px -6px rgba(0,0,0,.45), 0 6px 14px -10px rgba(0,0,0,.5)",
+            // La caída va con el token, que es el que sabe de tema; la de la
+            // IZQUIERDA se queda escrita a mano porque no es una sombra de
+            // elevación sino el canto del mazo —las nueve ranuras apiladas— y
+            // no hay token con desplazamiento horizontal.
+            boxShadow: "6px 0 10px -6px rgba(0,0,0,.45), var(--shadow-md)",
             borderRadius: "4.5%",
           }}
         >

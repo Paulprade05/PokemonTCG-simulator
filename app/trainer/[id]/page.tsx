@@ -13,6 +13,11 @@ import PokemonCard from "../../../components/PokemonCard";
 import PageHeader from "../../../components/PageHeader";
 import Loader from "../../../components/Loader";
 import CardDetailModal from "../../../components/CardDetailModal";
+import AvisoInvitado from "../../../components/ui/AvisoInvitado";
+import CampoBusqueda from "../../../components/ui/CampoBusqueda";
+import EstadoError from "../../../components/ui/EstadoError";
+import EstadoVacio from "../../../components/ui/EstadoVacio";
+import { IconoDesplegar } from "../../../components/icons";
 
 /**
  * Forma de un id de usuario de Clerk: `user_` y una ristra alfanumérica (27
@@ -158,16 +163,17 @@ export default function TrainerProfilePage() {
     return (
       <div className="select-none w-full">
         <PageHeader back="/friends" title="Álbum de entrenador" />
-        <div className="surface rounded-2xl px-6 py-16 flex flex-col items-center gap-4 text-center">
-          <p className="ink font-medium">Inicia sesión para ver los álbumes de otros entrenadores</p>
-          <p className="ink-soft text-sm -mt-2">Los álbumes sólo se comparten entre cuentas.</p>
-          <Link
-            href="/"
-            className="btn-accent press touch-target rounded-xl px-5 text-sm font-semibold flex items-center justify-center"
-          >
-            Ir al inicio
-          </Link>
-        </div>
+        {/* `AvisoInvitado` y no `EstadoVacio`: esta pantalla decía exactamente
+            lo mismo que el mercado, el bazar, la graduación y social —"no hay
+            sesión"— y era la única de las cinco que lo decía con la cara de un
+            vacío, sin el borde ámbar ni el icono. Un vacío es "aquí todavía no
+            has puesto nada"; esto es "hay algo y no puedes verlo", que no es
+            lo mismo y no debe parecerlo. Va en "hueco" porque debajo no queda
+            absolutamente nada. */}
+        <AvisoInvitado variante="hueco">
+          Los álbumes sólo se comparten entre cuentas: inicia sesión para ver el
+          de otros entrenadores.
+        </AvisoInvitado>
       </div>
     );
   }
@@ -176,18 +182,18 @@ export default function TrainerProfilePage() {
     return (
       <div className="select-none w-full">
         <PageHeader back="/friends" title="Álbum de entrenador" />
-        <div className="surface rounded-2xl px-6 py-16 flex flex-col items-center gap-4 text-center">
-          <p className="ink font-medium">No encontramos a este entrenador</p>
-          <p className="ink-soft text-sm -mt-2">
-            El enlace puede estar mal copiado o la cuenta ya no existe.
-          </p>
-          <Link
-            href="/friends"
-            className="btn-accent press touch-target rounded-xl px-5 text-sm font-semibold flex items-center justify-center"
-          >
-            Volver a Social
-          </Link>
-        </div>
+        <EstadoVacio
+          titulo="No encontramos a este entrenador"
+          detalle="El enlace puede estar mal copiado o la cuenta ya no existe."
+          accion={
+            <Link
+              href="/friends"
+              className="btn-accent press control-44 t-cuerpo rounded-xl px-5 font-semibold"
+            >
+              Volver a Social
+            </Link>
+          }
+        />
       </div>
     );
   }
@@ -196,16 +202,7 @@ export default function TrainerProfilePage() {
     return (
       <div className="select-none w-full">
         <PageHeader back="/friends" title="Álbum de entrenador" subtitle={trainerName || undefined} />
-        <div className="surface rounded-2xl px-6 py-16 flex flex-col items-center gap-4 text-center">
-          <p className="text-sm ink-soft">No se ha podido cargar este álbum. Comprueba tu conexión.</p>
-          <button
-            type="button"
-            onClick={loadTrainer}
-            className="btn-accent press touch-target rounded-xl px-5 text-sm font-semibold flex items-center justify-center"
-          >
-            Reintentar
-          </button>
-        </div>
+        <EstadoError titulo="No se ha podido cargar este álbum" onReintentar={loadTrainer} />
       </div>
     );
   }
@@ -223,22 +220,27 @@ export default function TrainerProfilePage() {
           >
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl surface-2 border border-[var(--border)] flex items-center justify-center">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-blue-400">
+                {/* --accent-2 en lugar de la paleta literal de Tailwind: el
+                    azul/cian de la casa es un token, no un `blue-400` suelto
+                    que no sabe nada del tema. */}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 [color:var(--accent-2)]" aria-hidden="true">
                   <path d="M3 3v18h18" /><path d="M7 14l4-4 4 4 6-6" />
                 </svg>
               </div>
               <div className="text-left">
-                <h3 className="font-semibold text-sm ink">Progreso del entrenador</h3>
-                <p className="text-xs ink-faint">{showStats ? "Ocultar detalles" : "Ver por expansión"}</p>
+                <h3 className="font-semibold t-cuerpo ink">Progreso del entrenador</h3>
+                <p className="t-cuerpo-2 ink-faint">{showStats ? "Ocultar detalles" : "Ver por expansión"}</p>
               </div>
             </div>
-            <motion.svg
+            {/* El giro va en un envoltorio: el dibujo sale del vocabulario
+                común (components/icons.tsx). */}
+            <motion.span
               animate={{ rotate: showStats ? 180 : 0 }}
-              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-              className="w-4 h-4 ink-soft"
+              className="ink-soft flex shrink-0"
+              aria-hidden="true"
             >
-              <path d="m6 9 6 6 6-6" />
-            </motion.svg>
+              <IconoDesplegar tam={16} />
+            </motion.span>
           </button>
 
           <AnimatePresence>
@@ -255,10 +257,10 @@ export default function TrainerProfilePage() {
                       <div className="flex items-center gap-3 mb-3">
                         {stat.logo && <img src={stat.logo} alt={stat.name} className="h-7 object-contain opacity-90" />}
                         <div className="flex-1 min-w-0">
-                          <h3 className="font-medium text-sm ink truncate">{stat.name}</h3>
-                          <p className="text-[10px] ink-faint font-mono">{stat.owned}/{stat.total}</p>
+                          <h3 className="font-medium t-cuerpo ink truncate">{stat.name}</h3>
+                          <p className="t-micro ink-soft tnum">{stat.owned}/{stat.total}</p>
                         </div>
-                        <span className="text-xs font-semibold ink-soft">{stat.percentage}%</span>
+                        <span className="t-cuerpo-2 font-semibold ink-soft">{stat.percentage}%</span>
                       </div>
                       <div className="w-full h-1.5 bg-[color-mix(in_srgb,var(--ink)_8%,transparent)] rounded-full overflow-hidden">
                         <div className={stat.percentage === 100 ? "progress-bar h-full" : "progress-bar-blue h-full"} style={{ width: `${stat.percentage}%` }} />
@@ -272,39 +274,13 @@ export default function TrainerProfilePage() {
         </div>
 
         <div className="surface rounded-2xl px-3 py-3 flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:items-center">
-          {/* <label> y no <div>: tocar el icono o el relleno enfoca el campo. */}
-          <label className="input-field flex min-h-11 items-center gap-2 px-3 py-2 rounded-xl flex-1 sm:min-w-[180px]">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint shrink-0">
-              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
-            </svg>
-            <input
-              type="search"
-              inputMode="search"
-              enterKeyHint="search"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              aria-label="Buscar en el álbum"
-              placeholder="Buscar..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-              className="bg-transparent ink outline-none text-base flex-1 min-w-0 placeholder:text-[var(--ink-faint)] [&::-webkit-search-cancel-button]:hidden"
-            />
-            {searchTerm && (
-              <button
-                type="button"
-                onClick={() => setSearchTerm("")}
-                aria-label="Limpiar búsqueda"
-                className="ink-faint hover:ink shrink-0 -mr-1.5 press flex h-11 w-11 items-center justify-center rounded-full"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                  <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
-              </button>
-            )}
-          </label>
+          <CampoBusqueda
+            className="flex-1 sm:min-w-[180px]"
+            etiqueta="Buscar en el álbum"
+            marcador="Buscar..."
+            valor={searchTerm}
+            onCambio={setSearchTerm}
+          />
 
           {/* Rejilla de dos columnas: con `w-full` en una fila flexible cada
               selector se llevaba una línea entera (cuatro filas apiladas). */}
@@ -313,7 +289,7 @@ export default function TrainerProfilePage() {
               value={filterSet}
               onChange={(e) => setFilterSet(e.target.value)}
               aria-label="Filtrar por expansión"
-              className="input-field col-span-2 w-full min-w-0 truncate px-3 py-2.5 rounded-xl text-xs cursor-pointer sm:col-span-1 sm:w-auto"
+              className="input-field col-span-2 w-full min-w-0 truncate px-3 py-2.5 rounded-xl t-cuerpo-2 cursor-pointer sm:col-span-1 sm:w-auto"
             >
               <option value="all">Todas</option>
               {dbSets.map((set) => <option key={set.id} value={set.id}>{set.name}</option>)}
@@ -322,7 +298,7 @@ export default function TrainerProfilePage() {
               value={filterRarity}
               onChange={(e) => setFilterRarity(e.target.value)}
               aria-label="Filtrar por rareza"
-              className="input-field w-full min-w-0 truncate px-3 py-2.5 rounded-xl text-xs cursor-pointer sm:w-auto"
+              className="input-field w-full min-w-0 truncate px-3 py-2.5 rounded-xl t-cuerpo-2 cursor-pointer sm:w-auto"
             >
               <option value="all">Toda rareza</option>
               {rarityOptions.map((r) => <option key={r} value={r}>{r}</option>)}
@@ -331,7 +307,7 @@ export default function TrainerProfilePage() {
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
               aria-label="Ordenar por"
-              className="input-field w-full min-w-0 truncate px-3 py-2.5 rounded-xl text-xs cursor-pointer sm:w-auto"
+              className="input-field w-full min-w-0 truncate px-3 py-2.5 rounded-xl t-cuerpo-2 cursor-pointer sm:w-auto"
             >
               <option value="rarity_desc">Rareza</option>
               <option value="quantity_desc">Cantidad</option>
@@ -343,11 +319,13 @@ export default function TrainerProfilePage() {
         {processedCards.length === 0 ? (
           // Aquí ya se sabe que el entrenador existe (ver `noExiste`): o su
           // álbum está vacío de verdad, o son los filtros los que no dejan nada.
-          <div className="surface rounded-2xl py-20 px-6 text-center ink-soft text-sm">
-            {cards.length === 0
-              ? "Este entrenador todavía no tiene cartas."
-              : "Ninguna carta coincide con los filtros."}
-          </div>
+          <EstadoVacio
+            titulo={
+              cards.length === 0
+                ? "Este entrenador todavía no tiene cartas"
+                : "Ninguna carta coincide con los filtros"
+            }
+          />
         ) : (
           // Misma rejilla que colección y álbum: las cartas miden igual en
           // las tres pantallas y en móvil caben tres por fila.
@@ -358,7 +336,7 @@ export default function TrainerProfilePage() {
                   // Variables de tema, no bg-white/text-black: el blanco fijo
                   // quedaba invisible en tema claro. Mismo badge que colección.
                   <div
-                    className="absolute -top-2 -right-2 z-30 text-[10px] font-bold w-6 h-6 flex items-center justify-center rounded-full tnum"
+                    className="absolute -top-2 -right-2 z-30 t-micro font-bold w-6 h-6 flex items-center justify-center rounded-full tnum"
                     style={{
                       background: "var(--ink)",
                       color: "var(--bg)",
@@ -370,8 +348,17 @@ export default function TrainerProfilePage() {
                   </div>
                 )}
                 {card.is_favorite && (
-                  <div className="absolute -top-2 -left-2 z-30 bg-rose-500 w-5 h-5 rounded-full flex items-center justify-center shadow-lg">
-                    <svg viewBox="0 0 24 24" fill="white" className="w-3 h-3">
+                  // Tres cosas de coherencia en la misma chapa: el rojo sale de
+                  // --danger (token de fondo) y no de un `rose-500` literal; la
+                  // sombra sale de la escala en vez de un `shadow-lg` que no
+                  // cambia con el tema; y pasa a medir 24px con el corazón a 16,
+                  // que son los escalones de la casa — y de paso queda igual que
+                  // la chapa de copias que tiene enfrente, que ya medía 24.
+                  <div
+                    className="absolute -top-2 -left-2 z-30 w-6 h-6 rounded-full flex items-center justify-center"
+                    style={{ background: "var(--danger)", boxShadow: "var(--shadow-sm)" }}
+                  >
+                    <svg viewBox="0 0 24 24" fill="white" className="w-4 h-4" aria-hidden="true">
                       <path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 5.5 5.5 5.5 0 0 1 21.5 12c-2.5 4.5-9.5 9-9.5 9z" />
                     </svg>
                   </div>
@@ -385,13 +372,13 @@ export default function TrainerProfilePage() {
                   className="block w-full cursor-zoom-in text-left"
                   onClick={() => setSelectedCard(card)}
                 >
-                  <div className="transition transform group-hover:-translate-y-1 duration-300 pointer-events-none">
+                  <div className="transition transform group-hover:-translate-y-1 duration-[var(--d-base)] pointer-events-none">
                     <PokemonCard card={card} reveal={true} interactive={false} />
                   </div>
                 </button>
                 {/* En táctil no hay hover: el contador se ve siempre en móvil */}
-                <div className="mt-2 flex justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
-                  <span className="chip ink-soft text-[10px] px-2 py-1 rounded-full">
+                <div className="mt-2 flex justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-[var(--d-base)]">
+                  <span className="chip ink-soft t-micro px-2 py-1 rounded-full">
                     {card.quantity > 1 ? `${card.quantity} copias` : "Única"}
                   </span>
                 </div>

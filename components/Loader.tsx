@@ -44,10 +44,13 @@ import { ANCHO_MAX_ARCHIVADOR } from "./vitrina/LibroArchivador";
  * de pantalla, que es quien lo necesita. Para quien ve la pantalla, la forma ya
  * es el mensaje.
  *
- * LOS RADIOS los pone cada forma, no `.skeleton`: `rounded-full` para avatares
- * y píldoras, `rounded-[4.5%]` para las cartas (el mismo de PokemonCard),
- * `rounded-xl`/`rounded-2xl`/`rounded-3xl` para botones y superficies, y
- * `rounded-md` para un renglón de texto.
+ * LOS RADIOS los pone cada forma, no `.skeleton`, y salen todos de la escala de
+ * la casa: `rounded-full` para avatares y píldoras, `rounded-[4.5%]` para las
+ * cartas (el mismo de PokemonCard), `rounded-xl` (12, controles) /
+ * `rounded-2xl` (16, superficies) / `rounded-3xl` (24, hojas) para botones y
+ * superficies, y `rounded-lg` (8, el escalón pequeño) para un renglón de texto.
+ * Ese último era `rounded-md`, o sea 6px, un escalón que no existe en ninguna
+ * otra parte del proyecto; las MEDIDAS de las formas no se han tocado.
  */
 
 type Forma =
@@ -113,8 +116,8 @@ function CabeceraFalsa({
           <div className="skeleton h-9 w-32 rounded-lg md:h-11 md:w-40" />
         ) : (
           <div>
-            <div className="skeleton h-7 w-40 rounded-md md:h-8 md:w-56" />
-            {subtitulo && <div className="skeleton mt-0.5 h-4 w-52 rounded-md" />}
+            <div className="skeleton h-7 w-40 rounded-lg md:h-8 md:w-56" />
+            {subtitulo && <div className="skeleton mt-0.5 h-4 w-52 rounded-lg" />}
           </div>
         )}
       </div>
@@ -268,12 +271,12 @@ function Graduacion() {
                   <Carta />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="skeleton h-5 rounded-md" style={{ width: ANCHOS_NOMBRE[i] }} />
-                  <div className="skeleton mt-1 h-4 w-28 rounded-md" />
-                  <div className="skeleton mt-1 h-4 w-20 rounded-md" />
+                  <div className="skeleton h-5 rounded-lg" style={{ width: ANCHOS_NOMBRE[i] }} />
+                  <div className="skeleton mt-1 h-4 w-28 rounded-lg" />
+                  <div className="skeleton mt-1 h-4 w-20 rounded-lg" />
                 </div>
                 <div className="ml-auto flex items-center gap-2">
-                  <div className="skeleton h-9 w-12 rounded-md" />
+                  <div className="skeleton h-9 w-12 rounded-lg" />
                   <div className="skeleton h-11 w-11 rounded-xl" />
                   <div className="skeleton h-11 w-11 rounded-xl" />
                 </div>
@@ -305,25 +308,25 @@ function FichaMercado() {
             <div className="skeleton h-5 w-14 rounded-full" />
             <div className="skeleton h-5 w-24 rounded-full" />
           </div>
-          <div className="skeleton h-6 w-3/4 rounded-md" />
+          <div className="skeleton h-6 w-3/4 rounded-lg" />
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <div className="skeleton h-7 w-16 rounded-md" />
-          <div className="skeleton h-3 w-24 rounded-md" />
+          <div className="skeleton h-7 w-16 rounded-lg" />
+          <div className="skeleton h-3 w-24 rounded-lg" />
         </div>
       </div>
       <div className="flex flex-col gap-1.5">
-        <div className="skeleton h-[15px] rounded-md" />
-        <div className="skeleton h-[15px] rounded-md" />
-        <div className="skeleton h-[15px] rounded-md" />
-        <div className="skeleton h-[15px] w-3/5 rounded-md" />
+        <div className="skeleton h-[15px] rounded-lg" />
+        <div className="skeleton h-[15px] rounded-lg" />
+        <div className="skeleton h-[15px] rounded-lg" />
+        <div className="skeleton h-[15px] w-3/5 rounded-lg" />
       </div>
       <div className="flex flex-col gap-2.5">
         {[3, 5].map((miniaturas, i) => (
           <div key={i} className="surface-2 rounded-2xl px-3.5 py-3">
             <div className="mb-2 flex items-start justify-between gap-3">
-              <div className="skeleton h-4 w-2/3 rounded-md" />
-              <div className="skeleton h-4 w-8 rounded-md" />
+              <div className="skeleton h-4 w-2/3 rounded-lg" />
+              <div className="skeleton h-4 w-8 rounded-lg" />
             </div>
             <div className="skeleton h-1 rounded-full" />
             <div className="mt-3 flex flex-wrap gap-1.5">
@@ -379,12 +382,12 @@ function Bazar() {
             <div key={i} className="surface flex flex-col gap-2 rounded-2xl p-2.5">
               <Carta />
               <div>
-                <div className="skeleton h-[15px] rounded-md" style={{ width: ANCHOS_NOMBRE[i] }} />
-                <div className="skeleton mt-1 h-3 w-2/3 rounded-md" />
+                <div className="skeleton h-[15px] rounded-lg" style={{ width: ANCHOS_NOMBRE[i] }} />
+                <div className="skeleton mt-1 h-3 w-2/3 rounded-lg" />
               </div>
               <div className="flex items-baseline justify-between">
-                <div className="skeleton h-4 w-12 rounded-md" />
-                <div className="skeleton h-3 w-10 rounded-md" />
+                <div className="skeleton h-4 w-12 rounded-lg" />
+                <div className="skeleton h-3 w-10 rounded-lg" />
               </div>
               <div className="skeleton h-11 rounded-xl" />
             </div>
@@ -418,13 +421,13 @@ function Social() {
             <div className="mb-3 flex items-center gap-3">
               <div className="skeleton h-10 w-10 shrink-0 rounded-full" />
               <div className="min-w-0 flex-1">
-                <div className="skeleton h-5 rounded-md" style={{ width: ANCHOS_NOMBRE[i] }} />
-                <div className="skeleton mt-1 h-3.5 w-28 rounded-md" />
+                <div className="skeleton h-5 rounded-lg" style={{ width: ANCHOS_NOMBRE[i] }} />
+                <div className="skeleton mt-1 h-3.5 w-28 rounded-lg" />
               </div>
             </div>
             <div className="mb-3 flex items-center justify-between">
-              <div className="skeleton h-3 w-10 rounded-md" />
-              <div className="skeleton h-4 w-16 rounded-md" />
+              <div className="skeleton h-3 w-10 rounded-lg" />
+              <div className="skeleton h-4 w-16 rounded-lg" />
             </div>
             <div className="flex gap-2">
               <div className="skeleton h-9 flex-1 rounded-lg" />
@@ -507,7 +510,7 @@ export default function Loader({ label = "Cargando" }: { label?: string }) {
           aria-hidden="true"
           className="w-10 h-10 border-2 border-[var(--border)] border-t-[var(--accent)] rounded-full animate-spin mb-6"
         />
-        <p className="text-xs font-medium ink-soft uppercase tracking-[0.3em]">{label}</p>
+        <p className="t-etiqueta ink-soft">{label}</p>
       </div>
     );
   }

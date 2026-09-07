@@ -6,6 +6,8 @@ import { useUser } from "@clerk/nextjs";
 import { getTradableCollection, createTradeOffer } from "../../app/social";
 import { useToast } from "../ui/Toast";
 import Portal from "../ui/Portal";
+import { IconoCerrar, IconoLupa } from "../icons";
+import { D, EASE_OUT } from "../../utils/motion";
 
 interface Friend { friend_id: string; friend_name: string; }
 interface TradeBuilderProps {
@@ -105,24 +107,26 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
   ) => (
     <div className="surface-2 rounded-2xl p-3 flex flex-col min-h-0">
       <div className="flex items-center justify-between mb-2 px-1">
-        <h4 className="text-xs font-semibold uppercase tracking-wider ink-soft">{title}</h4>
-        {/* `accent` es un color CSS del tema (--ok / --warn-ink), no una
-            clase: `.accent` y text-cyan-400 daban 2,4:1 y 2,1:1 en claro. */}
-        <span className="text-[10px] font-bold" style={{ color: accent }}>{Object.values(selected).reduce((a, b) => a + b, 0)}</span>
+        <h4 className="t-etiqueta ink-soft">{title}</h4>
+        {/* `accent` es un color CSS del tema (--ok / --warn-ink), no una clase.
+            Ni la clase de acento de la casa ni el cian de la paleta de Tailwind
+            valían: daban 2,4:1 y 2,1:1 sobre el papel del tema claro.
+            (El nombre del cian no se escribe aquí a propósito: Tailwind 4
+            escanea estos ficheros como texto plano, comentarios incluidos, y
+            emitiría la clase de verdad. Lo explica SidebarExtras.tsx.) */}
+        <span className="t-micro font-bold" style={{ color: accent }}>{Object.values(selected).reduce((a, b) => a + b, 0)}</span>
       </div>
       <div className="input-field rounded-xl px-3 py-2 flex items-center gap-2 mb-2">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5 ink-faint">
-          <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
-        </svg>
+        <IconoLupa tam={16} className="ink-faint" />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filtrar…"
-          className="bg-transparent outline-none text-sm flex-1 min-w-0" />
+          className="bg-transparent outline-none t-cuerpo flex-1 min-w-0" />
       </div>
       {/* La columna es celda de un grid de filas automáticas, así que sin tope crecería
           con todas las cartas: en móvil se reparte el alto real entre las dos columnas.
           El suelo de 96px evita que la rejilla desaparezca cuando el teclado deja
           --app-height por debajo del descuento; el contenedor del panel ya hace scroll. */}
       <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 overflow-y-auto custom-scrollbar pr-1 flex-1 max-h-[max(96px,calc((var(--app-height)_-_260px)_/_2))] md:max-h-[max(96px,calc(var(--app-height)_-_260px))]" data-lenis-prevent>
-        {cards.length === 0 && <p className="col-span-full text-center text-xs ink-faint py-8">Sin cartas</p>}
+        {cards.length === 0 && <p className="col-span-full text-center t-cuerpo-2 ink-faint py-8">Sin cartas</p>}
         {cards.map((c) => {
           const sel = selected[c.id] || 0;
           return (
@@ -141,12 +145,12 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
                   papel se lee igual y no cuesta nada. */}
               {c.quantity > 1 && (
                 <span
-                  className="absolute top-1 left-1 chip text-[9px] px-1.5 py-0.5 font-bold"
+                  className="absolute top-1 left-1 chip t-micro px-1.5 py-0.5 font-bold"
                   style={{ background: "var(--surface)" }}
                 >×{c.quantity}</span>
               )}
               {sel > 0 && (
-                <span className="absolute top-1 right-1 w-5 h-5 rounded-full btn-accent text-[10px] font-bold flex items-center justify-center">
+                <span className="absolute top-1 right-1 w-5 h-5 rounded-full btn-accent t-micro font-bold flex items-center justify-center">
                   {sel}
                 </span>
               )}
@@ -185,23 +189,21 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
             initial={{ y: 40, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 40, opacity: 0 }}
-            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ duration: D.base, ease: EASE_OUT }}
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
             aria-label={`Nuevo intercambio con ${friend.friend_name}`}
-            className="relative w-full max-w-4xl bg-[var(--surface)] border border-[var(--border)] rounded-t-3xl md:rounded-3xl shadow-2xl flex flex-col max-h-[calc(var(--app-height)_-_var(--sat)_-_16px)] md:max-h-[calc(var(--app-height)_-_64px)] overflow-hidden"
+            className="relative w-full max-w-4xl bg-[var(--surface)] border border-[var(--border)] rounded-t-3xl md:rounded-3xl shadow-[var(--shadow-lg)] flex flex-col max-h-[calc(var(--app-height)_-_var(--sat)_-_16px)] md:max-h-[calc(var(--app-height)_-_64px)] overflow-hidden"
           >
             {/* Header */}
             <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
               <div className="min-w-0">
-                <p className="text-[10px] uppercase tracking-wider ink-faint">Nuevo intercambio</p>
-                <h3 className="text-lg font-bold tracking-tight truncate">con {friend.friend_name}</h3>
+                <p className="t-etiqueta ink-soft">Nuevo intercambio</p>
+                <h3 className="t-titulo font-bold tracking-tight truncate">con {friend.friend_name}</h3>
               </div>
-              <button onClick={onClose} aria-label="Cerrar" className="touch-target shrink-0 rounded-xl btn-ghost press flex items-center justify-center">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                  <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
+              <button onClick={onClose} aria-label="Cerrar" className="control-44 shrink-0 rounded-xl btn-ghost press">
+                <IconoCerrar tam={16} />
               </button>
             </div>
 
@@ -222,7 +224,7 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
               // Con el teclado desplegado ya no hay barra de gestos que esquivar.
               style={{ paddingBottom: "max(12px, calc(var(--sab) - var(--keyboard) + 12px))" }}
             >
-              <div className="flex-1 text-xs ink-soft">
+              <div className="flex-1 t-cuerpo-2 ink-soft">
                 <span
                   className="font-semibold"
                   style={{ color: offeredIds.length > MAX_PER_SIDE ? "var(--danger-ink)" : "var(--ok)" }}
@@ -242,7 +244,9 @@ export default function TradeBuilder({ friend, onClose, onSent }: TradeBuilderPr
                   offeredIds.length === 0 || requestedIds.length === 0 || sending ||
                   offeredIds.length > MAX_PER_SIDE || requestedIds.length > MAX_PER_SIDE
                 }
-                className="btn-accent press px-6 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+                // `.control-44`: medía 38px y es el botón que cierra un
+                // intercambio — el gesto más caro de esta pantalla.
+                className="btn-accent press control-44 px-6 rounded-xl t-cuerpo font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {sending ? "Enviando…" : "Enviar oferta"}
               </button>

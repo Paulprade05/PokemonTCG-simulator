@@ -333,7 +333,7 @@ const CSS = `
 /* Entrada de la capa entera. Sólo opacity y translate: esta capa es ANCESTRO
    del sobre y de su foto, y un scale aquí —aunque dure 420 ms— la rasteriza
    justo mientras la foto llega (150-750 ms tras montar). */
-.sobre-capa { animation: sobre-entra .42s cubic-bezier(.16,1,.3,1) both; }
+.sobre-capa { animation: sobre-entra .42s var(--ease-out) both; }
 
 /* OJO AL EDITAR: este bloque es un template literal, así que aquí dentro no
    puede aparecer un acento grave ni un \${. Los comentarios de abajo citan
@@ -357,7 +357,12 @@ const CSS = `
   --sb-a: var(--accent); --sb-b: var(--accent-2);
   --sb-ang: 102deg; --sb-rayado: .55; --sb-paso: 1; --sb-lustre: 1;
   --sb-t1: 30%; --sb-t2: 22%;
-  transition: translate .16s ease-out;
+  /* Los .16s y el ease-out de palabra eran la escala de movimiento escrita a
+     mano: son --d-fast y --ease-out (la curva de la casa, que NO es la misma
+     que la palabra clave ease-out del navegador). Las duraciones de los
+     KEYFRAMES de más abajo no se tocan: 420, 460 y 680 ms son la coreografía
+     del sobre y están atadas a T_CARTA y T_FIN en app/page.tsx. */
+  transition: translate var(--d-fast) var(--ease-out);
 }
 .sobre[data-fase="sellado"] { animation: sobre-flota 4.2s ease-in-out infinite; }
 /* Al agarrarlo el balanceo se PAUSA, no se corta: con animation:none el sobre
@@ -558,7 +563,13 @@ html[data-theme="dark"] .sobre__pliegues { opacity: .66; }
 /* Pie impreso del sobre. */
 .sobre__banda {
   position: absolute; left: 0; right: 0; bottom: 0; padding: calc(var(--sobre-w) * .031) 0; text-align: center;
-  font-size: calc(var(--sobre-w) * .035); font-weight: 700; letter-spacing: .28em; text-transform: uppercase;
+  /* Es la etiqueta en mayúsculas de la casa (.t-etiqueta) escrita a mano, que
+     es lo que se puede hacer aquí dentro: peso 600 y .14em en vez del 700 y
+     el .28em que llevaba suelto. El TAMAÑO no se toca —sigue siendo la
+     fracción del ancho del sobre, como el resto del dibujo— y no hace falta:
+     a los 286 px para los que se dibujó, .035 son los 10 px exactos de
+     .t-etiqueta, así que sólo escalan juntos. */
+  font-size: calc(var(--sobre-w) * .035); font-weight: 600; letter-spacing: .14em; text-transform: uppercase;
   color: var(--ink-soft); border-top: 1px solid var(--border);
   background: linear-gradient(180deg,
     color-mix(in srgb, var(--ink) 10%, transparent),
@@ -1159,10 +1170,10 @@ export default function BoosterPack({
                     className="max-h-[46%] max-w-[86%] object-contain"
                   />
                 ) : (
-                  <span className="text-lg font-bold text-center">{nombreSet}</span>
+                  <span className="t-titulo font-bold text-center">{nombreSet}</span>
                 )}
                 {logo && (
-                  <span className="text-xs font-semibold ink-soft text-center">{nombreSet}</span>
+                  <span className="t-cuerpo-2 font-semibold ink-soft text-center">{nombreSet}</span>
                 )}
               </div>
 
@@ -1184,10 +1195,10 @@ export default function BoosterPack({
                 sin usar un mix-blend-mode, que está prohibido en esta
                 pantalla. */}
             <div className="sobre__tira">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={`w-3.5 h-3.5 shrink-0${conArte ? "" : " ink-faint"}`}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`w-4 h-4 shrink-0${conArte ? "" : " ink-faint"}`}>
                 <path d="m11 17-5-5 5-5M18 17l-5-5 5-5" />
               </svg>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={`w-3.5 h-3.5 shrink-0${conArte ? "" : " ink-faint"}`}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`w-4 h-4 shrink-0${conArte ? "" : " ink-faint"}`}>
                 <path d="m6 17 5-5-5-5M13 17l5-5-5-5" />
               </svg>
             </div>

@@ -66,18 +66,18 @@ function Accion({
       <span
         aria-hidden="true"
         className="surface-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
-        style={{ color: peligro ? "var(--danger)" : "var(--ink-soft)" }}
+        style={{ color: peligro ? "var(--danger-ink)" : "var(--ink-soft)" }}
       >
         {icono}
       </span>
       <span className="min-w-0">
         <span
-          className="block text-[14px] font-medium"
-          style={{ color: peligro ? "var(--danger)" : "var(--ink)" }}
+          className="block t-cuerpo font-medium"
+          style={{ color: peligro ? "var(--danger-ink)" : "var(--ink)" }}
         >
           {titulo}
         </span>
-        <span className="ink-faint block text-[11px] leading-tight">
+        <span className="ink-soft block t-meta leading-tight">
           {detalle}
         </span>
       </span>
@@ -120,13 +120,13 @@ export default function AccionesFunda({
                 <PokemonCard card={carta} reveal interactive={false} />
               </div>
               <div className="min-w-0">
-                <h2 className="ink truncate text-[16px] font-semibold">
+                <h2 className="ink truncate t-base font-semibold">
                   {nombre}
                 </h2>
-                <p className="ink-soft mt-0.5 text-[12px]">
+                <p className="ink-soft mt-0.5 t-cuerpo-2">
                   Hoja {funda.hoja + 1} · funda {funda.ranura + 1}
                 </p>
-                <p className="ink-faint tnum mt-0.5 text-[11px]">
+                <p className="ink-soft tnum mt-0.5 t-meta">
                   {carta.rarity || "Sin rareza"}
                   {carta.quantity > 0 &&
                     ` · ${carta.quantity} ${carta.quantity === 1 ? "copia" : "copias"} en tu colección`}
@@ -140,7 +140,7 @@ export default function AccionesFunda({
                 que la funda no se ha vaciado sola a propósito. */}
             {huerfana && (
               <p
-                className="mt-4 rounded-xl px-3 py-2.5 text-[11px] leading-relaxed"
+                className="mt-4 rounded-xl px-3 py-2.5 t-meta leading-relaxed"
                 style={{
                   background: "var(--surface-2)",
                   border: "1px solid var(--border)",
@@ -164,7 +164,10 @@ export default function AccionesFunda({
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
-                    strokeWidth="1.8"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
                     className="h-4 w-4"
                   >
                     <path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z" />
@@ -182,8 +185,10 @@ export default function AccionesFunda({
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
-                    strokeWidth="1.8"
+                    strokeWidth="2"
                     strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
                     className="h-4 w-4"
                   >
                     <path d="M3 8h13l-3.5-3.5M21 16H8l3.5 3.5" />
@@ -201,8 +206,10 @@ export default function AccionesFunda({
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
-                    strokeWidth="1.8"
+                    strokeWidth="2"
                     strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
                     className="h-4 w-4"
                   >
                     <path d="M5 12h14" />

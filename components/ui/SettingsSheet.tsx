@@ -17,6 +17,8 @@ import {
   type Idioma,
 } from "../../utils/settings";
 import { clearCollection } from "../../utils/storage";
+import { IconoMarca } from "../icons";
+import CabeceraDeHoja from "./CabeceraDeHoja";
 import ConfirmSheet from "./ConfirmSheet";
 import Sheet from "./Sheet";
 import { useToast } from "./Toast";
@@ -85,7 +87,7 @@ interface SettingsSheetProps {
 function Seccion({ titulo, children }: { titulo: string; children: ReactNode }) {
   return (
     <section className="mt-5 first:mt-0">
-      <h3 className="ink-faint px-1 pb-2 text-[11px] font-semibold uppercase tracking-[0.14em]">
+      <h3 className="ink-soft t-etiqueta px-1 pb-2">
         {titulo}
       </h3>
       {children}
@@ -110,9 +112,9 @@ function FilaInterruptor({ titulo, descripcion, activo, onToggle }: FilaInterrup
       className="touch-target flex w-full items-center justify-between gap-4 px-4 py-3 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--ink)_4%,transparent)]"
     >
       <span className="min-w-0">
-        <span className="ink block text-[14px] font-medium">{titulo}</span>
+        <span className="ink block t-cuerpo font-medium">{titulo}</span>
         {descripcion && (
-          <span className="ink-faint mt-0.5 block text-[12px] leading-snug">{descripcion}</span>
+          <span className="ink-faint mt-0.5 block t-cuerpo-2 leading-snug">{descripcion}</span>
         )}
       </span>
       {/* La píldora es decorativa: el estado real lo anuncia aria-checked. */}
@@ -125,7 +127,7 @@ function FilaInterruptor({ titulo, descripcion, activo, onToggle }: FilaInterrup
           background: activo
             ? "var(--accent)"
             : "color-mix(in srgb, var(--ink) 16%, transparent)",
-          transition: "background-color .22s ease",
+          transition: "background-color var(--d-base) var(--ease-out)",
         }}
       >
         <span
@@ -137,8 +139,17 @@ function FilaInterruptor({ titulo, descripcion, activo, onToggle }: FilaInterrup
             // Blanco fijo: debe contrastar sobre el acento y sobre el gris en
             // los dos temas, como el pomo nativo de iOS.
             background: "#fff",
+            // SOMBRA A MANO, Y NO ES UN OLVIDO DEL BARRIDO: --shadow-sm cambia
+            // con el tema porque está calculada para una superficie que también
+            // cambia, y este pomo es blanco fijo en los dos. En tema claro esa
+            // sombra es marrón al 7% y bajo un pomo blanco sobre el verde del
+            // acento no se vería: el pomo perdería su borde. Se queda el negro
+            // al 35%, que es lo único que le da relieve en los dos temas.
             boxShadow: "0 1px 3px rgba(0,0,0,.35)",
-            transition: "left .22s cubic-bezier(0.16,1,0.3,1)",
+            // Los .22s y la curva escritos a mano eran una copia de --d-base y
+            // --ease-out; aquí sí se pueden leer las variables porque esto es
+            // CSS de verdad, no framer.
+            transition: "left var(--d-base) var(--ease-out)",
           }}
         />
       </span>
@@ -152,7 +163,10 @@ const estiloOpcion = (activo: boolean): CSSProperties =>
     ? {
         background: "color-mix(in srgb, var(--accent) 14%, transparent)",
         border: "1px solid color-mix(in srgb, var(--accent) 32%, transparent)",
-        color: "var(--accent)",
+        // --ok y no --accent: el rótulo de la opción activa es TEXTO, y el verde
+        // del acento sobre este relleno al 14% se queda en 2,2:1 en tema claro.
+        // --ok es la pareja legible del mismo verde y no cambia el fondo.
+        color: "var(--ok)",
       }
     : { border: "1px solid transparent", color: "var(--ink-soft)" };
 
@@ -309,7 +323,9 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
         label="Ajustes"
       >
         <div className="px-5 pb-8">
-          <h2 className="ink pb-1 text-center text-[17px] font-semibold">Ajustes</h2>
+          {/* `pb-1`: la primera <Seccion> lleva `first:mt-0`, así que sin este
+              respiro el rótulo "APARIENCIA" queda pegado al título. */}
+          <CabeceraDeHoja titulo="Ajustes" className="pb-1" />
 
           <Seccion titulo="Apariencia">
             <div
@@ -322,10 +338,10 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                   type="button"
                   aria-pressed={tema === "light"}
                   onClick={() => cambiarTema("light")}
-                  className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-medium transition-colors"
+                  className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 t-cuerpo-2 font-medium transition-colors"
                   style={estiloOpcion(tema === "light")}
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-4 w-4" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
                     <circle cx="12" cy="12" r="4" />
                     <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
                   </svg>
@@ -335,10 +351,10 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                   type="button"
                   aria-pressed={tema === "dark"}
                   onClick={() => cambiarTema("dark")}
-                  className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-medium transition-colors"
+                  className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 t-cuerpo-2 font-medium transition-colors"
                   style={estiloOpcion(tema === "dark")}
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-4 w-4" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
                     <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z" />
                   </svg>
                   Oscuro
@@ -356,10 +372,10 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                     aria-pressed={idioma === "en"}
                     disabled={!isLoaded}
                     onClick={() => cambiarIdioma("en")}
-                    className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-medium transition-colors"
+                    className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 t-cuerpo-2 font-medium transition-colors"
                     style={estiloOpcion(idioma === "en")}
                   >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" className="h-4 w-4" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
                       <circle cx="12" cy="12" r="9" />
                       <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
                     </svg>
@@ -370,10 +386,10 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                     aria-pressed={idioma === "es"}
                     disabled={!isLoaded}
                     onClick={() => cambiarIdioma("es")}
-                    className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-medium transition-colors"
+                    className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 t-cuerpo-2 font-medium transition-colors"
                     style={estiloOpcion(idioma === "es")}
                   >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" className="h-4 w-4" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
                       <circle cx="12" cy="12" r="9" />
                       <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
                     </svg>
@@ -383,7 +399,7 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
               </div>
               {/* Sin promesas de más: hay expansiones enteras sin ilustración
                   española y detalles que sólo existen en inglés. */}
-              <p className="ink-faint border-t border-[var(--border)] px-4 py-3 text-[12px] leading-relaxed">
+              <p className="ink-faint border-t border-[var(--border)] px-4 py-3 t-cuerpo-2 leading-relaxed">
                 En español verás el nombre y, donde exista, la ilustración
                 española de la carta. Las expansiones recién salidas tardan un
                 tiempo en traducirse y se ven enteras en inglés: en la lista van
@@ -404,7 +420,7 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                 onToggle={() => alternar("sonido")}
               />
               <div className="flex items-center gap-3 border-t border-[var(--border)] px-4 py-1.5">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="ink-faint h-[18px] w-[18px] shrink-0" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="ink-faint h-5 w-5 shrink-0" aria-hidden="true">
                   <path d="M11 5 6 9H2v6h4l5 4z" />
                   <path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a9 9 0 0 1 0 14" />
                 </svg>
@@ -421,7 +437,7 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                   style={{ "--_lleno": `${porcentajeVolumen}%` } as CSSProperties}
                 />
                 <span
-                  className={`w-10 shrink-0 text-right text-[12px] font-medium tabular-nums ${
+                  className={`w-10 shrink-0 text-right t-cuerpo-2 font-medium tnum ${
                     ajustes.sonido ? "ink-soft" : "ink-faint"
                   }`}
                 >
@@ -460,10 +476,12 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
               <div className="surface overflow-hidden rounded-2xl">
                 {isSignedIn ? (
                   <div className="flex items-start gap-3 px-4 py-3.5">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="accent mt-0.5 h-[18px] w-[18px] shrink-0" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="accent mt-0.5 h-5 w-5 shrink-0" aria-hidden="true">
                       <path d="M17.5 19a4.5 4.5 0 0 0 .42-8.98 7 7 0 0 0-13.6 1.8A4 4 0 0 0 6 19z" />
                     </svg>
-                    <p className="ink-soft text-[13px] leading-relaxed">
+                    {/* t-cuerpo y no t-cuerpo-2: son dos frases que se leen de
+                        corrido, no un pie de una línea. */}
+                    <p className="ink-soft t-cuerpo leading-relaxed">
                       Tu colección y tus monedas se guardan en la nube con tu
                       cuenta, disponibles en cualquier dispositivo.
                     </p>
@@ -472,10 +490,15 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                   <button
                     type="button"
                     onClick={() => setConfirmarBorrado(true)}
-                    className="touch-target flex w-full items-center gap-3 px-4 py-3.5 text-left text-[14px] font-medium transition-colors hover:bg-[color-mix(in_srgb,var(--danger)_6%,transparent)]"
-                    style={{ color: "var(--danger)" }}
+                    className="touch-target flex w-full items-center gap-3 px-4 py-3.5 text-left t-cuerpo font-medium transition-colors hover:bg-[color-mix(in_srgb,var(--danger)_6%,transparent)]"
+                    // --danger-ink y no --danger: esto es texto sobre la
+                    // superficie, y --danger es el token de FONDO.
+                    style={{ color: "var(--danger-ink)" }}
                   >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px] shrink-0" aria-hidden="true">
+                    {/* Esta papelera NO es IconoPapelera: lleva además las dos
+                        rayas de dentro, y así queda dicho en components/icons.tsx.
+                        Se le unifica el trazo y el tamaño y se queda aquí. */}
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 shrink-0" aria-hidden="true">
                       <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
                       <path d="M10 11v6M14 11v6" />
                     </svg>
@@ -489,17 +512,16 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
           <Seccion titulo="Acerca de">
             <div className="surface flex items-center gap-3 rounded-2xl px-4 py-3.5">
               <div className="btn-accent flex h-9 w-9 shrink-0 items-center justify-center rounded-xl">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="h-5 w-5 text-[#04110c]" aria-hidden="true">
-                  <rect x="3" y="5" width="18" height="14" rx="3" />
-                  <path d="M3 12h18" />
-                  <circle cx="12" cy="12" r="2.4" fill="currentColor" />
-                </svg>
+                {/* Era el sobre de la marca copiado a mano, con trazo 2,2 y sin
+                    cabos redondos: es exactamente IconoMarca, el mismo que ya
+                    montan la barra superior y el menú lateral. */}
+                <IconoMarca tam={20} className="text-[#04110c]" />
               </div>
               <div className="min-w-0">
-                <p className="ink text-[14px] leading-tight font-semibold">
+                <p className="ink t-cuerpo leading-tight font-semibold">
                   Pokémon TCG Simulator
                 </p>
-                <p className="ink-faint mt-0.5 text-[12px]">
+                <p className="ink-faint mt-0.5 t-cuerpo-2">
                   Datos e imágenes de pokemontcg.io
                 </p>
               </div>

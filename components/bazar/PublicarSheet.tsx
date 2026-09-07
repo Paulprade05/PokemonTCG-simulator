@@ -20,6 +20,9 @@ import { copiasEntregables } from "../../utils/mercado";
 import { formatNumber } from "../../utils/format";
 import { useHaptics } from "../../hooks/useHaptics";
 import { useToast } from "../ui/Toast";
+import CabeceraDeHoja from "../ui/CabeceraDeHoja";
+import CampoBusqueda from "../ui/CampoBusqueda";
+import Segmentado from "../ui/Segmentado";
 import type { Publicable } from "./tipos";
 
 /* ==================================================================== *
@@ -357,75 +360,52 @@ export default function PublicarSheet({
         {/* ── PASO 1: QUÉ VENDO ─────────────────────────────────────────── */}
         {!elegida && (
           <>
-            <h2 className="ink text-center text-[17px] font-semibold">
-              Publicar una carta
-            </h2>
-            <p className="ink-soft mt-1.5 text-center text-[12px] leading-relaxed">
-              Sólo salen las copias que te sobran: de cada carta se queda siempre
-              una en tu álbum.
-            </p>
+            <CabeceraDeHoja
+              titulo="Publicar una carta"
+              descripcion="Sólo salen las copias que te sobran: de cada carta se queda siempre una en tu álbum."
+            />
 
-            <div className="mt-4 flex gap-2">
-              {(["sueltas", "graduadas"] as const).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => {
-                    haptic("tap");
-                    setPestana(p);
-                  }}
-                  aria-pressed={pestana === p}
-                  className={`press touch-target flex-1 rounded-xl text-[12px] font-semibold ${
-                    pestana === p ? "btn-primary" : "btn-ghost ink-soft"
-                  }`}
-                >
-                  {p === "sueltas"
-                    ? `Sueltas · ${sueltas.length}`
-                    : `Graduadas · ${graduadas.length}`}
-                </button>
-              ))}
-            </div>
+            <Segmentado
+              className="mt-4"
+              id="publicar-pestana"
+              etiqueta="Qué tipo de copia se vende"
+              valor={pestana}
+              onCambio={setPestana}
+              opciones={[
+                /* `detalle` y no `insignia`: aquí el número es un RECUENTO, no
+                   un aviso, y tiene que verse aunque sea cero. Ésta es la
+                   pantalla donde "Sueltas · 0" decide si merece la pena tocar
+                   la pestaña; escondiéndolo, la única forma de saber que está
+                   vacía es entrar. */
+                { id: "sueltas", rotulo: "Sueltas", detalle: sueltas.length },
+                { id: "graduadas", rotulo: "Graduadas", detalle: graduadas.length },
+              ]}
+            />
 
-            <label className="input-field mt-3 flex min-h-11 items-center gap-2 rounded-xl px-3 py-2">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ink-faint h-4 w-4 shrink-0" aria-hidden="true">
-                <circle cx="11" cy="11" r="8" />
-                <path d="m21 21-4.3-4.3" />
-              </svg>
-              <input
-                type="search"
-                inputMode="search"
-                enterKeyHint="search"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                aria-label="Buscar entre tus cartas"
-                placeholder="Buscar una carta…"
-                value={busqueda}
-                onChange={(e) => setBusqueda(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                }}
-                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:opacity-50 [&::-webkit-search-cancel-button]:hidden"
-              />
-            </label>
+            <CampoBusqueda
+              className="mt-3"
+              etiqueta="Buscar entre tus cartas"
+              marcador="Buscar una carta…"
+              valor={busqueda}
+              onCambio={setBusqueda}
+            />
 
             <div className="mt-4">
               {estado === "cargando" && (
-                <p className="ink-faint py-10 text-center text-[12px]">
+                <p className="ink-faint py-10 text-center t-cuerpo-2">
                   Buscando lo que puedes vender…
                 </p>
               )}
 
               {estado === "error" && (
-                <p className="ink-soft py-10 text-center text-[12px] leading-relaxed">
+                <p className="ink-soft py-10 text-center t-cuerpo-2 leading-relaxed">
                   No se pudo leer tu colección, así que no se puede calcular el
                   precio permitido. Cierra y vuelve a abrir.
                 </p>
               )}
 
               {estado === "listo" && filtradas.length === 0 && (
-                <p className="ink-soft py-10 text-center text-[12px] leading-relaxed">
+                <p className="ink-soft py-10 text-center t-cuerpo-2 leading-relaxed">
                   {busqueda.trim()
                     ? "Ninguna de tus cartas publicables se llama así."
                     : pestana === "sueltas"
@@ -467,17 +447,17 @@ export default function PublicarSheet({
                             interactive={false}
                           />
                         </div>
-                        <p className="ink mt-1.5 truncate text-[11px] font-medium">
+                        <p className="ink mt-1.5 truncate t-meta font-medium">
                           {p.name}
                         </p>
-                        <p className="ink-faint tnum truncate text-[10px]">
+                        <p className="ink-soft tnum truncate t-micro">
                           vale {formatNumber(p.valor)} · te sobran {p.sobrantes}
                         </p>
                       </button>
                     ))}
                   </div>
                   {filtradas.length > visibles.length && (
-                    <p className="ink-faint mt-3 text-center text-[11px]">
+                    <p className="ink-soft mt-3 text-center t-meta">
                       Se muestran {MAX_EN_LISTA} de{" "}
                       {formatNumber(filtradas.length)}
                       {pestana === "sueltas"
@@ -510,28 +490,17 @@ export default function PublicarSheet({
         {/* ── PASO 2: A CUÁNTO ──────────────────────────────────────────── */}
         {elegida && banda && (
           <>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  haptic("tap");
-                  setElegida(null);
-                }}
-                disabled={enviando}
-                aria-label="Elegir otra carta"
-                className="btn-ghost press touch-target flex h-11 w-11 shrink-0 items-center justify-center rounded-xl disabled:opacity-40"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
-                  <path d="m15 18-6-6 6-6" />
-                </svg>
-              </button>
-              <h2 className="ink flex-1 text-center text-[17px] font-semibold">
-                Ponle precio
-              </h2>
-              {/* Hueco simétrico al botón de volver para que el título quede
-                  centrado de verdad. */}
-              <div className="h-11 w-11 shrink-0" aria-hidden="true" />
-            </div>
+            {/* El hueco simétrico al botón de volver —el que mantiene el título
+                de verdad centrado— lo pone ya CabeceraDeHoja. */}
+            <CabeceraDeHoja
+              titulo="Ponle precio"
+              bloqueada={enviando}
+              rotuloVolver="Elegir otra carta"
+              onVolver={() => {
+                haptic("tap");
+                setElegida(null);
+              }}
+            />
 
             <div className="mt-4 flex items-center gap-3.5">
               <div className="w-[86px] shrink-0">
@@ -547,10 +516,10 @@ export default function PublicarSheet({
                 />
               </div>
               <div className="min-w-0">
-                <p className="ink text-[15px] leading-tight font-semibold">
+                <p className="ink t-cuerpo leading-tight font-semibold">
                   {elegida.name}
                 </p>
-                <p className="ink-faint mt-0.5 text-[11px]">{elegida.rarity}</p>
+                <p className="ink-soft mt-0.5 t-meta">{elegida.rarity}</p>
                 {elegida.nota !== null && (
                   <div className="mt-1.5">
                     <NotaGraduada
@@ -560,7 +529,7 @@ export default function PublicarSheet({
                     />
                   </div>
                 )}
-                <p className="ink-soft mt-2 text-[11px] leading-relaxed">
+                <p className="ink-soft mt-2 t-meta leading-relaxed">
                   Tienes {elegida.copias}{" "}
                   {elegida.copias === 1 ? "copia" : "copias"} y te{" "}
                   {elegida.sobrantes === 1 ? "sobra" : "sobran"}{" "}
@@ -578,15 +547,15 @@ export default function PublicarSheet({
                   onClick={() => ajustar(precio - 1)}
                   disabled={precio <= banda.min}
                   aria-label="Bajar el precio una moneda"
-                  className="btn-ghost press touch-target flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-lg leading-none font-semibold disabled:opacity-30"
+                  className="btn-ghost press touch-target flex h-11 w-11 shrink-0 items-center justify-center rounded-xl t-titulo leading-none font-semibold disabled:opacity-30"
                 >
                   −
                 </button>
                 <div className="min-w-0 text-center">
-                  <p className="ink tnum text-2xl leading-none font-bold">
+                  <p className="ink tnum t-display leading-none font-bold">
                     {formatNumber(precio)}
                   </p>
-                  <p className="ink-faint mt-1 text-[10px]">
+                  <p className="ink-soft mt-1 t-micro">
                     monedas que paga el comprador
                   </p>
                 </div>
@@ -595,7 +564,7 @@ export default function PublicarSheet({
                   onClick={() => ajustar(precio + 1)}
                   disabled={precio >= banda.max}
                   aria-label="Subir el precio una moneda"
-                  className="btn-ghost press touch-target flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-lg leading-none font-semibold disabled:opacity-30"
+                  className="btn-ghost press touch-target flex h-11 w-11 shrink-0 items-center justify-center rounded-xl t-titulo leading-none font-semibold disabled:opacity-30"
                 >
                   +
                 </button>
@@ -615,7 +584,7 @@ export default function PublicarSheet({
                 style={{ "--_lleno": `${porcentajeLleno}%` } as CSSProperties}
               />
 
-              <div className="ink-faint flex items-center justify-between gap-2 text-[10px]">
+              <div className="ink-soft flex items-center justify-between gap-2 t-micro">
                 <span className="tnum">mín {formatNumber(banda.min)}</span>
                 <span className="tnum">
                   vale {formatNumber(elegida.valor)}
@@ -623,25 +592,29 @@ export default function PublicarSheet({
                 <span className="tnum">máx {formatNumber(banda.max)}</span>
               </div>
 
+              {/* `.control-44`: eran los tres botones más pequeños de la
+                  aplicación —32px de alto— y son los que ponen el precio de una
+                  venta. Fallarlos con el pulgar no es un fallo cualquiera:
+                  "al mínimo" y "al máximo" están pegados a "lo que vale". */}
               <div className="mt-3 flex gap-2">
                 <button
                   type="button"
                   onClick={() => ajustar(banda.min)}
-                  className="btn-ghost press ink-soft flex-1 rounded-xl py-2 text-[11px] font-medium"
+                  className="btn-ghost press control-44 ink-soft t-meta flex-1 rounded-xl font-medium"
                 >
                   Al mínimo
                 </button>
                 <button
                   type="button"
                   onClick={() => ajustar(elegida.valor)}
-                  className="btn-ghost press ink-soft flex-1 rounded-xl py-2 text-[11px] font-medium"
+                  className="btn-ghost press control-44 ink-soft t-meta flex-1 rounded-xl font-medium"
                 >
                   Lo que vale
                 </button>
                 <button
                   type="button"
                   onClick={() => ajustar(banda.max)}
-                  className="btn-ghost press ink-soft flex-1 rounded-xl py-2 text-[11px] font-medium"
+                  className="btn-ghost press control-44 ink-soft t-meta flex-1 rounded-xl font-medium"
                 >
                   Al máximo
                 </button>
@@ -652,13 +625,13 @@ export default function PublicarSheet({
                 el vendedor cobra es otra cosa y enterarse después es lo que hace
                 que una comisión honesta parezca un timo. */}
             <div className="surface mt-3 flex flex-col gap-2 rounded-2xl px-4 py-3.5">
-              <div className="flex items-baseline justify-between gap-2 text-[12px]">
+              <div className="flex items-baseline justify-between gap-2 t-cuerpo-2">
                 <span className="ink-soft">El comprador paga</span>
                 <span className="tnum ink font-semibold">
                   {formatNumber(precio)}
                 </span>
               </div>
-              <div className="flex items-baseline justify-between gap-2 text-[12px]">
+              <div className="flex items-baseline justify-between gap-2 t-cuerpo-2">
                 <span className="ink-soft">
                   Comisión del bazar ({Math.round(COMISION * 100)} %)
                 </span>
@@ -668,9 +641,12 @@ export default function PublicarSheet({
                 className="mt-0.5 flex items-baseline justify-between gap-2 pt-2"
                 style={{ borderTop: "1px solid var(--border)" }}
               >
-                <span className="ink text-[13px] font-semibold">Tú recibes</span>
+                {/* t-cuerpo y no t-cuerpo-2: es la línea del total, y las dos
+                    de arriba ya son 12px. Igualarlas dejaría el desglose y su
+                    resultado con el mismo peso. */}
+                <span className="ink t-cuerpo font-semibold">Tú recibes</span>
                 <span
-                  className="tnum text-lg leading-none font-bold"
+                  className="tnum t-titulo leading-none font-bold"
                   style={{ color: "var(--ok)" }}
                 >
                   {formatNumber(cobras)}
@@ -683,7 +659,7 @@ export default function PublicarSheet({
               onClick={publicar}
               disabled={enviando}
               aria-busy={enviando}
-              className="btn-accent press touch-target mt-4 flex w-full items-center justify-center rounded-2xl py-3.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+              className="btn-accent press touch-target mt-4 flex w-full items-center justify-center rounded-2xl py-3.5 t-cuerpo font-semibold disabled:cursor-not-allowed disabled:opacity-50"
             >
               {enviando
                 ? "Publicando…"
@@ -694,7 +670,7 @@ export default function PublicarSheet({
               type="button"
               onClick={onClose}
               disabled={enviando}
-              className="btn-ghost press touch-target ink-soft mt-2.5 w-full rounded-2xl py-3.5 text-sm font-medium disabled:opacity-40"
+              className="btn-ghost press touch-target ink-soft mt-2.5 w-full rounded-2xl py-3.5 t-cuerpo font-medium disabled:opacity-40"
             >
               Cancelar
             </button>
@@ -730,6 +706,10 @@ export default function PublicarSheet({
           -webkit-appearance:none; appearance:none;
           width:26px; height:26px; margin-top:-10px; border-radius:999px;
           background:#fff; border:1px solid var(--border-strong);
+          /* Sombra a mano a propósito: el pomo es blanco fijo en los dos temas
+             y --shadow-sm está calculada para superficies que sí cambian; en
+             tema claro es marrón al 7% y sobre el verde del acento el pomo se
+             quedaría sin borde. Mismo caso que el interruptor de ajustes. */
           box-shadow:0 1px 4px rgba(0,0,0,.3);
         }
         .bazar-rango::-moz-range-track{

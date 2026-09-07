@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
+// `next/link` ya no se importa aquí: el único enlace que quedaba en esta
+// pantalla era el "Ir al inicio" del aviso de invitado, que ahora vive dentro
+// de components/ui/AvisoInvitado.
 import { useUser } from "@clerk/nextjs";
 import {
   comprarEnBazarAction,
@@ -19,6 +21,11 @@ import ConfirmSheet from "../../components/ui/ConfirmSheet";
 import PageHeader from "../../components/PageHeader";
 import Loader from "../../components/Loader";
 import HuecoCentrado from "../../components/HuecoCentrado";
+import AvisoInvitado from "../../components/ui/AvisoInvitado";
+import EstadoError from "../../components/ui/EstadoError";
+import EstadoVacio from "../../components/ui/EstadoVacio";
+import Segmentado from "../../components/ui/Segmentado";
+import { IconoAvanzar, IconoMas, IconoRefrescar, IconoVolver } from "../../components/icons";
 import MisAnuncios from "../../components/bazar/MisAnuncios";
 import PublicarSheet from "../../components/bazar/PublicarSheet";
 import ReglasBazar from "../../components/bazar/ReglasBazar";
@@ -329,41 +336,19 @@ export default function BazarPage() {
    * ramas: lo que le pasa a él no depende de que el servidor conteste.
    */
   const avisoInvitado = !isSignedIn ? (
-    <div
-      className="surface flex items-start gap-3 rounded-2xl p-4"
-      style={{ borderColor: "color-mix(in srgb, var(--warn) 40%, transparent)" }}
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="mt-0.5 h-5 w-5 shrink-0" style={{ color: "var(--warn)" }} aria-hidden="true">
-        <path d="M12 9v4" />
-        <path d="M12 17h.01" />
-        <circle cx="12" cy="12" r="9" />
-      </svg>
-      <div className="min-w-0">
-        <p className="text-sm font-semibold">Estás jugando como invitado</p>
-        <p className="ink-soft mt-1 text-xs leading-relaxed">
-          Puedes mirar el escaparate, pero comprar y vender mueven monedas
-          y cartas entre cuentas: eso ocurre en el servidor y las tuyas
-          viven sólo en este dispositivo.{" "}
-          <Link href="/" className="accent font-medium underline underline-offset-2">
-            Ir al inicio
-          </Link>
-        </p>
-      </div>
-    </div>
+    <AvisoInvitado>
+      Puedes mirar el escaparate, pero comprar y vender mueven monedas
+      y cartas entre cuentas: eso ocurre en el servidor y las tuyas
+      viven sólo en este dispositivo.
+    </AvisoInvitado>
   ) : null;
 
   if (estado === "error") {
     const cajaError = (
-      <div className="surface flex w-full flex-col items-center gap-4 rounded-2xl px-6 py-16 text-center">
-        <p className="ink-soft text-sm">No se pudo cargar el escaparate.</p>
-        <button
-          type="button"
-          onClick={() => cargarEscaparate(pagina)}
-          className="btn-accent press touch-target flex items-center justify-center rounded-xl px-6 text-sm font-semibold"
-        >
-          Reintentar
-        </button>
-      </div>
+      <EstadoError
+        titulo="No se pudo cargar el escaparate"
+        onReintentar={() => cargarEscaparate(pagina)}
+      />
     );
     return (
       <>
@@ -405,10 +390,7 @@ export default function BazarPage() {
               aria-label="Actualizar el escaparate"
               className="btn-ghost press touch-target flex h-11 w-11 items-center justify-center rounded-xl"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="h-4 w-4" aria-hidden="true">
-                <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-                <path d="M21 3v6h-6" />
-              </svg>
+              <IconoRefrescar tam={16} />
             </button>
             {isSignedIn && (
               <button
@@ -427,11 +409,9 @@ export default function BazarPage() {
                     ? "Publicar una carta en el bazar"
                     : `Te faltan ${faltanSobres} sobres para poder vender`
                 }
-                className="btn-accent press touch-target flex items-center justify-center gap-2 rounded-xl px-3 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+                className="btn-accent press touch-target flex items-center justify-center gap-2 rounded-xl px-3 t-cuerpo-2 font-semibold disabled:cursor-not-allowed disabled:opacity-40"
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-4 w-4" aria-hidden="true">
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
+                <IconoMas tam={16} />
                 <span className="hidden sm:inline">Vender</span>
               </button>
             )}
@@ -449,29 +429,24 @@ export default function BazarPage() {
         <ReglasBazar sobresAbiertos={sobres} />
 
         {isSignedIn && (
-          <div className="surface-2 flex gap-1.5 rounded-2xl p-1.5">
-            {(
-              [
-                ["escaparate", "Escaparate"],
-                ["mios", `Mis anuncios${anunciosAbiertos > 0 ? ` · ${anunciosAbiertos}` : ""}`],
-              ] as const
-            ).map(([clave, rotulo]) => (
-              <button
-                key={clave}
-                type="button"
-                onClick={() => {
-                  haptic("tap");
-                  setVista(clave);
-                }}
-                aria-pressed={vista === clave}
-                className={`press touch-target flex-1 rounded-xl text-[12px] font-semibold ${
-                  vista === clave ? "btn-primary" : "ink-soft"
-                }`}
-              >
-                {rotulo}
-              </button>
-            ))}
-          </div>
+          <Segmentado
+            id="bazar-vista"
+            etiqueta="Qué parte del bazar se ve"
+            valor={vista}
+            onCambio={setVista}
+            opciones={[
+              { id: "escaparate", rotulo: "Escaparate" },
+              {
+                id: "mios",
+                rotulo: "Mis anuncios",
+                // El recuento pasa de ir pegado al rótulo con un punto medio a
+                // ser la insignia del control: en el rótulo, "Mis anuncios · 3"
+                // crecía y encogía el botón cada vez que se publicaba o se
+                // vendía algo, y el interruptor bailaba.
+                insignia: anunciosAbiertos > 0 ? anunciosAbiertos : undefined,
+              },
+            ]}
+          />
         )}
 
         {vista === "mios" && isSignedIn ? (
@@ -487,25 +462,25 @@ export default function BazarPage() {
             puedePublicar={puedePublicar}
           />
         ) : anuncios.length === 0 ? (
-          <div className="surface flex flex-col items-center gap-3 rounded-2xl px-6 py-16 text-center">
-            <p className="text-sm font-semibold">
-              {pagina === 0 ? "El bazar está vacío" : "No hay más anuncios"}
-            </p>
-            <p className="ink-soft max-w-xs text-xs leading-relaxed">
-              {pagina === 0
+          <EstadoVacio
+            titulo={pagina === 0 ? "El bazar está vacío" : "No hay más anuncios"}
+            detalle={
+              pagina === 0
                 ? "Todavía no hay nadie vendiendo. Si tienes cartas repetidas, puedes ser el primero."
-                : "Has llegado al final de la lista."}
-            </p>
-            {pagina > 0 && (
-              <button
-                type="button"
-                onClick={() => irAPagina(pagina - 1)}
-                className="btn-ghost press touch-target flex items-center justify-center rounded-xl px-5 text-sm font-medium"
-              >
-                Volver
-              </button>
-            )}
-          </div>
+                : "Has llegado al final de la lista."
+            }
+            accion={
+              pagina > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => irAPagina(pagina - 1)}
+                  className="btn-ghost press control-44 t-cuerpo rounded-xl px-5 font-medium"
+                >
+                  Volver
+                </button>
+              ) : undefined
+            }
+          />
         ) : (
           <>
             {/* Dos columnas en móvil y no tres como la colección: aquí cada
@@ -542,11 +517,9 @@ export default function BazarPage() {
                   aria-label="Página anterior"
                   className="btn-ghost press touch-target flex h-11 w-11 items-center justify-center rounded-xl disabled:cursor-not-allowed disabled:opacity-30"
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
-                    <path d="m15 18-6-6 6-6" />
-                  </svg>
+                  <IconoVolver tam={16} />
                 </button>
-                <span className="chip ink tnum px-4 py-2 text-sm font-medium">
+                <span className="chip ink tnum px-4 py-2 t-cuerpo font-medium">
                   Página {pagina + 1}
                 </span>
                 <button
@@ -556,9 +529,7 @@ export default function BazarPage() {
                   aria-label="Página siguiente"
                   className="btn-ghost press touch-target flex h-11 w-11 items-center justify-center rounded-xl disabled:cursor-not-allowed disabled:opacity-30"
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
-                    <path d="m9 18 6-6-6-6" />
-                  </svg>
+                  <IconoAvanzar tam={16} />
                 </button>
               </div>
             )}

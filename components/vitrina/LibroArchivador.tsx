@@ -279,8 +279,14 @@ export default function LibroArchivador({
               background:
                 "var(--grain), linear-gradient(255deg, color-mix(in srgb, var(--ink) 6%, var(--surface)) 0%, var(--surface) 14%, var(--surface) 100%)",
               border: "1px solid var(--border)",
+              /* El inset se queda escrito a mano: es el doblez del lomo, una
+                 marca FÍSICA del papel que no debe aclararse con el tema. La
+                 sombra proyectada sí pasa al token —es la misma hoja levantada
+                 que en reposo lleva var(--shadow-md) en PaginaArchivador, y la
+                 escala de sombras existe justo para que "levantada" se lea
+                 igual en los dos temas. */
               boxShadow:
-                "inset -14px 0 22px -18px rgba(0,0,0,0.55), 0 10px 26px -14px rgba(0,0,0,0.5)",
+                "inset -14px 0 22px -18px rgba(0,0,0,0.55), var(--shadow-lg)",
             }}
           />
         </div>

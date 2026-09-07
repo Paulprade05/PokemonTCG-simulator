@@ -70,14 +70,14 @@ export default function NotaGraduada({
       >
         <span
           aria-hidden="true"
-          className="tnum text-[13px] leading-none font-bold"
+          className="tnum t-cuerpo-2 leading-none font-bold"
           style={{ color: tinta }}
         >
           {nota}
         </span>
         <span
           aria-hidden="true"
-          className="ink-soft text-[9px] leading-none font-semibold tracking-wide uppercase"
+          className="ink-soft t-etiqueta leading-none"
         >
           Nota
         </span>
@@ -87,7 +87,7 @@ export default function NotaGraduada({
 
   return (
     <span
-      className="chip inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold"
+      className="chip inline-flex items-center gap-1.5 px-2.5 py-1 t-meta font-semibold"
       style={{
         color: tinta,
         borderColor: `color-mix(in srgb, ${tinta} 40%, transparent)`,

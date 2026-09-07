@@ -9,6 +9,7 @@ import GlobalSearch from "./GlobalSearch";
 import DailyReward from "./DailyReward";
 import SettingsSheet from "./ui/SettingsSheet";
 import { formatNumber } from "../utils/format";
+import { IconoAjustes, IconoMarca, IconoMoneda } from "./icons";
 
 export default function TopBar() {
   // `loaded` del proveedor, no `isLoaded` de Clerk: lo que hay que esperar es a
@@ -125,9 +126,7 @@ export default function TopBar() {
           className="press flex h-11 min-w-0 shrink items-center gap-2 overflow-hidden rounded-xl md:hidden"
         >
           <span className="btn-accent flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="h-4 w-4 text-[#04110c]" aria-hidden="true">
-              <rect x="3" y="5" width="18" height="14" rx="3" /><path d="M3 12h18" /><circle cx="12" cy="12" r="2.4" fill="currentColor" />
-            </svg>
+            <IconoMarca tam={16} className="text-[#04110c]" />
           </span>
           {/* truncate: es lo primero que cede si el saldo crece, y al llegar a
               cero deja el icono intacto en lugar de empujar la fila.
@@ -135,7 +134,7 @@ export default function TopBar() {
               esconde una con CSS; da igual de cara al lector de pantalla
               porque el nombre accesible del enlace lo fija el aria-label de
               arriba, y un aria-label gana siempre al contenido. */}
-          <span className="truncate text-sm font-bold tracking-tight">
+          <span className="truncate t-cuerpo font-bold tracking-tight">
             <span className="hidden min-[420px]:inline">Pokémon TCG</span>
             <span className="hidden min-[360px]:inline min-[420px]:hidden">TCG</span>
           </span>
@@ -167,18 +166,20 @@ export default function TopBar() {
 
           {/* Monedas: dato, no botón. El icono no dice nada a un lector de
               pantalla, así que la etiqueta va en texto. */}
-          <div className="chip flex h-10 shrink-0 items-center gap-1.5 px-2.5 min-[360px]:px-3 md:h-11 md:px-3.5">
+          {/* `.control-44` en lugar de `h-10 md:h-11`: medía 40px en móvil, que
+              es donde importa, y quedaba 4px por debajo de los botones que
+              tiene a los lados — no sólo por debajo de la zona tocable mínima,
+              también desalineado con el resto de la fila. */}
+          <div className="chip control-44 flex shrink-0 items-center gap-1.5 px-2.5 min-[360px]:px-3 md:px-3.5">
             {/* Por debajo de 360px la moneda se cae: con buscador, recompensa,
                 ajustes y avatar, esos 22px son justo los que separan la barra
                 de desbordar la pantalla. Se sacrifica el adorno, nunca la
                 cifra, y el lector de pantalla sigue oyendo "Monedas". */}
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="accent hidden h-4 w-4 shrink-0 min-[360px]:block" aria-hidden="true">
-              <circle cx="12" cy="12" r="9" /><path d="M12 16v-8M9 12h6" />
-            </svg>
+            <IconoMoneda tam={16} className="accent hidden min-[360px]:block" />
             <span className="sr-only">Monedas:</span>
-            {/* tabular-nums + ancho mínimo: al pasar de "…" al saldo, y al
+            {/* tnum + ancho mínimo: al pasar de "…" al saldo, y al
                 cambiar de cifras, la barra no da un salto. */}
-            <span className="min-w-[2.5ch] text-xs font-semibold tabular-nums md:text-sm">
+            <span className="min-w-[2.5ch] t-cuerpo-2 font-semibold tnum md:t-cuerpo">
               {loaded ? formatNumber(coins) : "…"}
             </span>
           </div>
@@ -196,18 +197,15 @@ export default function TopBar() {
             title="Ajustes"
             className="touch-target press btn-ghost flex h-11 w-11 items-center justify-center rounded-xl"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]" aria-hidden="true">
-              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
+            <IconoAjustes tam={20} />
           </button>
 
           <SignedOut>
             <SignInButton mode="modal">
               {/* min-w-11: por debajo de sm el rótulo se oculta y el botón se
                   quedaba en 40px de ancho, por debajo de la zona táctil. */}
-              <button className="btn-accent press flex h-11 min-w-11 items-center justify-center gap-2 rounded-xl px-3 text-xs md:px-4 md:text-sm">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4" aria-hidden="true">
+              <button className="btn-accent press flex h-11 min-w-11 items-center justify-center gap-2 rounded-xl px-3 t-cuerpo-2 md:px-4 md:t-cuerpo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
                   <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
                 </svg>
                 <span className="hidden sm:inline">Entrar</span>

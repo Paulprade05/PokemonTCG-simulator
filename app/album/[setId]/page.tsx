@@ -13,7 +13,12 @@ import Loader from "../../../components/Loader";
 import Sheet from "../../../components/ui/Sheet";
 import CardZoom from "../../../components/ui/CardZoom";
 import CardDetailModal from "../../../components/CardDetailModal";
+import EstadoError from "../../../components/ui/EstadoError";
+import EstadoVacio from "../../../components/ui/EstadoVacio";
+import Segmentado from "../../../components/ui/Segmentado";
+import { IconoAvanzar, IconoVolver } from "../../../components/icons";
 import { useHaptics } from "../../../hooks/useHaptics";
+import { D, EASE_OUT } from "../../../utils/motion";
 import { useSwipe, touchActionFor } from "../../../hooks/useSwipe";
 import type { Carta, CartaEnColeccion, Expansion } from "../../../utils/tipos";
 
@@ -293,16 +298,10 @@ export default function SetAlbumPage() {
           logo={setInfo?.images?.logo}
           title={setInfo?.name || "Álbum"}
         />
-        <div className="surface rounded-2xl px-6 py-16 flex flex-col items-center gap-4 text-center">
-          <p className="text-sm ink-soft">No se pudo cargar esta expansión. Comprueba tu conexión.</p>
-          <button
-            type="button"
-            onClick={() => { haptic("tap"); fetchAlbumData(); }}
-            className="btn-accent press touch-target rounded-xl px-5 text-sm font-semibold flex items-center justify-center"
-          >
-            Reintentar
-          </button>
-        </div>
+        <EstadoError
+          titulo="No se pudo cargar esta expansión"
+          onReintentar={() => { haptic("tap"); fetchAlbumData(); }}
+        />
       </div>
     );
   }
@@ -338,9 +337,12 @@ export default function SetAlbumPage() {
     missing: sortedCards.length - ownedInBlueprint,
   };
 
+  // Sin `haptic` aquí: la vibración de elegir la dispara `Segmentado`, que es
+  // quien recibe el toque. Tenerla también en este lado hacía que el filtro del
+  // álbum vibrase DOS veces por pulsación —el resto de interruptores, una— y en
+  // un iPhone eso se nota: se siente como si el control hubiera rebotado.
   const changeFilter = (next: Filter) => {
     if (next === filter) return;
-    haptic("select");
     setFilter(next);
   };
 
@@ -368,13 +370,13 @@ export default function SetAlbumPage() {
         >
           <div className="min-w-0">
             <div className="flex items-center gap-2 min-w-0">
-              <h2 className="text-base sm:text-lg font-semibold ink truncate">
+              <h2 className="t-base sm:t-titulo font-semibold ink truncate">
                 {setInfo?.name || "Expansión"}
               </h2>
               {/* Mismo aviso que en la tienda: al álbum se llega por URL propia,
                   así que aquí también hay que decir por qué está en inglés. */}
               {setInfo?.tieneEs === false && (
-                <span className="shrink-0 chip ink-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] leading-none">
+                <span className="shrink-0 chip ink-soft px-1.5 py-0.5 t-etiqueta leading-none">
                   EN
                   <span className="sr-only"> · esta expansión todavía no está traducida al español</span>
                 </span>
@@ -382,7 +384,7 @@ export default function SetAlbumPage() {
             </div>
             {/* ink-soft y no ink-faint en los rótulos de 10-11 px: la tinta
                 tenue (3,66:1 en claro) no llega al mínimo a ese tamaño. */}
-            <p className="text-[11px] sm:text-xs ink-soft mt-1">
+            <p className="t-meta sm:t-cuerpo-2 ink-soft mt-1">
               <span className="tnum">{owned}</span> de <span className="tnum">{total}</span> cartas coleccionadas
               {setInfo?.releaseDate && <span className="ml-2">· {setInfo.releaseDate}</span>}
             </p>
@@ -400,68 +402,54 @@ export default function SetAlbumPage() {
               <motion.div
                 initial={{ width: 0 }}
                 animate={{ width: `${percent}%` }}
-                transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+                /* Los 0,8 s se quedan: no es una transición de interfaz sino
+                   la barra llenándose, que es un dato contándose solo. La
+                   curva sí sale ya del módulo. */
+                transition={{ duration: 0.8, ease: EASE_OUT }}
                 className={percent === 100 ? "progress-bar h-full" : "progress-bar-blue h-full"}
               />
             </div>
-            <span className="text-xl sm:text-2xl font-semibold ink tnum shrink-0">{percent}%</span>
+            <span className="t-titulo sm:t-display font-semibold ink tnum shrink-0">{percent}%</span>
           </div>
         </motion.div>
 
-        {/* FILTRO SEGMENTADO */}
-        <div
-          className="surface rounded-2xl p-1 grid grid-cols-3 gap-1"
-          role="group"
-          aria-label="Filtrar cartas del álbum"
-        >
-          {FILTERS.map((f) => {
-            const active = filter === f.id;
-            return (
-              <button
-                key={f.id}
-                type="button"
-                onClick={() => changeFilter(f.id)}
-                aria-pressed={active}
-                className={`press touch-target relative min-w-0 rounded-xl px-0.5 py-2 flex flex-col items-center justify-center gap-0.5 transition-colors ${
-                  active ? "ink" : "ink-soft"
-                }`}
-                style={
-                  active
-                    ? {
-                        background: "color-mix(in srgb, var(--ink) 9%, transparent)",
-                        border: "1px solid var(--border-strong)",
-                      }
-                    : { border: "1px solid transparent" }
-                }
-              >
-                <span className="text-[11px] sm:text-xs font-medium leading-tight">{f.label}</span>
-                <span className="text-[10px] tnum ink-soft leading-none">{counts[f.id]}</span>
-              </button>
-            );
-          })}
-        </div>
+        {/* FILTRO SEGMENTADO. `columnas` porque los tres rótulos miden distinto
+            y sus recuentos cambian al abrir sobres: con anchos elásticos, el
+            interruptor se redibujaba cada vez que entraba una carta nueva. */}
+        <Segmentado
+          id="album-filtro"
+          etiqueta="Filtrar cartas del álbum"
+          valor={filter}
+          onCambio={changeFilter}
+          columnas
+          opciones={FILTERS.map((f) => ({
+            id: f.id,
+            rotulo: f.label,
+            detalle: counts[f.id],
+          }))}
+        />
 
         {/* GRID 3x3 BLUEPRINT */}
         {visibleCards.length === 0 ? (
-          <div className="surface rounded-2xl py-14 px-6 text-center">
-            {/* «¡Álbum completo!» sólo es cierto con el filtro «Me faltan» vacío.
-                Con «Todas» vacío el blueprint no llegó (o el set no existe): no
-                se puede afirmar que esté completo. */}
-            <p className="text-sm font-medium ink">
-              {filter === "owned"
+          /* «¡Álbum completo!» sólo es cierto con el filtro «Me faltan» vacío.
+             Con «Todas» vacío el blueprint no llegó (o el set no existe): no se
+             puede afirmar que esté completo. */
+          <EstadoVacio
+            titulo={
+              filter === "owned"
                 ? "Aún no tienes cartas de esta expansión"
                 : filter === "missing"
                   ? "¡Álbum completo!"
-                  : "No hay cartas para mostrar"}
-            </p>
-            <p className="text-xs ink-faint mt-1">
-              {filter === "owned"
+                  : "No hay cartas para mostrar"
+            }
+            detalle={
+              filter === "owned"
                 ? "Abre sobres para empezar a rellenarlo"
                 : filter === "missing"
                   ? "No te falta ninguna carta aquí"
-                  : "Vuelve a intentarlo más tarde"}
-            </p>
-          </div>
+                  : "Vuelve a intentarlo más tarde"
+            }
+          />
         ) : (
           <div className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 md:gap-4 lg:grid-cols-6 w-full">
             {renderedCards.map((blueprintCard) => {
@@ -481,7 +469,7 @@ export default function SetAlbumPage() {
                   >
                     {ownedCard.quantity > 1 && (
                       <div
-                        className="absolute -top-1.5 -right-1.5 sm:-top-2 sm:-right-2 z-30 text-[10px] font-bold w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full tnum"
+                        className="absolute -top-1.5 -right-1.5 sm:-top-2 sm:-right-2 z-30 t-micro font-bold w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full tnum"
                         style={{
                           background: "var(--ink)",
                           color: "var(--bg)",
@@ -491,7 +479,7 @@ export default function SetAlbumPage() {
                         {ownedCard.quantity}
                       </div>
                     )}
-                    <div className="transition transform group-hover:-translate-y-1 duration-300 pointer-events-none">
+                    <div className="transition transform group-hover:-translate-y-1 duration-[var(--d-base)] pointer-events-none">
                       <PokemonCard card={ownedCard} reveal={true} interactive={false} />
                     </div>
                   </button>
@@ -514,7 +502,7 @@ export default function SetAlbumPage() {
                     borderColor: "var(--border-strong)",
                   }}
                 >
-                  <span className="ink-soft font-mono text-base sm:text-lg md:text-2xl tnum">
+                  <span className="ink-soft tnum t-base sm:t-titulo md:t-display">
                     {padNumber(blueprintCard.number)}
                   </span>
                 </div>
@@ -529,7 +517,7 @@ export default function SetAlbumPage() {
             ref={sentinelRef}
             className="flex flex-col items-center justify-center gap-2 py-3"
           >
-            <p className="text-[11px] ink-soft">
+            <p className="t-meta ink-soft">
               Mostrando <span className="tnum">{renderedCards.length}</span> de{" "}
               <span className="tnum">{visibleCards.length}</span>
             </p>
@@ -544,7 +532,7 @@ export default function SetAlbumPage() {
                   Math.min(current + BATCH, visibleCards.length),
                 )
               }
-              className="btn-ghost press touch-target rounded-xl px-5 text-xs font-medium"
+              className="btn-ghost press touch-target rounded-xl px-5 t-cuerpo-2 font-medium"
             >
               Ver más cartas
             </button>
@@ -633,7 +621,7 @@ export default function SetAlbumPage() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: hojaCargadaId === detail.id ? 1 : 0 }}
                   exit={{ opacity: 0 }}
-                  transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                  transition={{ duration: D.base, ease: EASE_OUT }}
                   onClick={() => {
                     // Un arrastre de navegación acaba en click sintético: no
                     // debe abrir el visor.
@@ -667,26 +655,14 @@ export default function SetAlbumPage() {
                     onClick={() => canPrev && step(-1)}
                     aria-disabled={!canPrev}
                     aria-label="Carta anterior"
-                    className={`press ink-soft shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${canPrev ? "" : "opacity-35"}`}
+                    className={`press ink-soft shrink-0 control-44 rounded-full ${canPrev ? "" : "opacity-35"}`}
                     style={{ border: "1px solid var(--border)" }}
                   >
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <path d="M15 18l-6-6 6-6" />
-                    </svg>
+                    <IconoVolver tam={16} />
                   </button>
                 )}
 
-                <p className="text-[11px] ink-soft text-center min-w-0" aria-live="polite">
+                <p className="t-meta ink-soft text-center min-w-0" aria-live="polite">
                   <span className="tnum">{detailIndex + 1}</span> de{" "}
                   <span className="tnum">{navCards.length}</span> conseguidas
                 </p>
@@ -697,22 +673,10 @@ export default function SetAlbumPage() {
                     onClick={() => canNext && step(1)}
                     aria-disabled={!canNext}
                     aria-label="Carta siguiente"
-                    className={`press ink-soft shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${canNext ? "" : "opacity-35"}`}
+                    className={`press ink-soft shrink-0 control-44 rounded-full ${canNext ? "" : "opacity-35"}`}
                     style={{ border: "1px solid var(--border)" }}
                   >
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <path d="M9 6l6 6-6 6" />
-                    </svg>
+                    <IconoAvanzar tam={16} />
                   </button>
                 )}
               </div>
@@ -723,29 +687,29 @@ export default function SetAlbumPage() {
                 key={detail.id}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                transition={{ duration: D.base, ease: EASE_OUT }}
                 className="flex flex-col gap-4"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-[11px] ink-soft font-mono tnum">
+                    <p className="t-meta ink-soft tnum">
                       #{padNumber(detail.number)}
                       {/* El "n / N" de la ficha usa el MISMO total que la barra
                           de progreso: enseñar aquí el declarado y allí el real
                           era la contradicción que hacía dudar del porcentaje. */}
                       {total > 1 ? ` / ${total}` : ""}
                     </p>
-                    <h3 className="text-lg font-semibold ink truncate">{detail.name}</h3>
+                    <h3 className="t-titulo font-semibold ink truncate">{detail.name}</h3>
                   </div>
-                  <span className="chip px-3 py-1.5 text-[11px] ink-soft shrink-0">
+                  <span className="chip px-3 py-1.5 t-meta ink-soft shrink-0">
                     x<span className="tnum">{detail.quantity || 1}</span>
                   </span>
                 </div>
 
                 <dl className="surface-2 rounded-2xl overflow-hidden">
                   <div className="flex items-center justify-between gap-3 px-4 py-3">
-                    <dt className="text-xs ink-faint shrink-0">Rareza</dt>
-                    <dd className="text-xs font-medium ink text-right truncate">
+                    <dt className="t-cuerpo-2 ink-faint shrink-0">Rareza</dt>
+                    <dd className="t-cuerpo-2 font-medium ink text-right truncate">
                       {detail.rarity || "Desconocida"}
                     </dd>
                   </div>
@@ -753,8 +717,8 @@ export default function SetAlbumPage() {
                     className="flex items-center justify-between gap-3 px-4 py-3"
                     style={{ borderTop: "1px solid var(--border)" }}
                   >
-                    <dt className="text-xs ink-faint shrink-0">Artista</dt>
-                    <dd className="text-xs font-medium ink text-right truncate">
+                    <dt className="t-cuerpo-2 ink-faint shrink-0">Artista</dt>
+                    <dd className="t-cuerpo-2 font-medium ink text-right truncate">
                       {detail.artist || "Desconocido"}
                     </dd>
                   </div>
@@ -762,8 +726,8 @@ export default function SetAlbumPage() {
                     className="flex items-center justify-between gap-3 px-4 py-3"
                     style={{ borderTop: "1px solid var(--border)" }}
                   >
-                    <dt className="text-xs ink-faint shrink-0">Copias</dt>
-                    <dd className="text-xs font-medium ink text-right tnum">{detail.quantity || 1}</dd>
+                    <dt className="t-cuerpo-2 ink-faint shrink-0">Copias</dt>
+                    <dd className="t-cuerpo-2 font-medium ink text-right tnum">{detail.quantity || 1}</dd>
                   </div>
                 </dl>
               </motion.div>
@@ -772,7 +736,7 @@ export default function SetAlbumPage() {
             <button
               type="button"
               onClick={() => setDetail(null)}
-              className="btn-ghost press touch-target w-full rounded-xl py-3 text-sm font-medium"
+              className="btn-ghost press touch-target w-full rounded-xl py-3 t-cuerpo font-medium"
             >
               Cerrar
             </button>

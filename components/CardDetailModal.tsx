@@ -16,9 +16,11 @@ import { precioDeCartaSuelta, valorDeVenta } from "../utils/constanst";
 import { etiquetaNota, valorGraduado } from "../utils/graduacion";
 import { getCardFromDB, toggleWishlist, getWishlistIds } from "../app/action";
 import { useHaptics } from "../hooks/useHaptics";
+import { D, EASE_OUT, MUELLE_PANEL } from "../utils/motion";
 import { useSwipe, touchActionFor } from "../hooks/useSwipe";
 import { RARITY_GLOW } from "../utils/rarityGlow";
 import CardZoom from "./ui/CardZoom";
+import { IconoAvanzar, IconoCerrar, IconoMoneda, IconoVolver } from "./icons";
 import Portal from "./ui/Portal";
 import { useToast } from "./ui/Toast";
 
@@ -425,14 +427,21 @@ export default function CardDetailModal({
             exit={isMobile ? { y: "100%" } : { opacity: 0, y: 12 }}
             transition={
               isMobile
-                ? { type: "spring", stiffness: 380, damping: 38, mass: 0.9 }
-                : { duration: 0.3, ease: [0.16, 1, 0.3, 1] }
+                ? MUELLE_PANEL
+                : { duration: D.base, ease: EASE_OUT }
             }
             /* Móvil: hoja inferior que se cierra arrastrando el asa (useSwipe).
                md+: diálogo centrado, sin gesto. */
-            className="relative w-full max-w-5xl bg-[var(--surface)] overflow-hidden border border-[var(--border)] shadow-2xl flex flex-col md:flex-row"
+            className="relative w-full max-w-5xl bg-[var(--surface)] overflow-hidden border border-[var(--border)] flex flex-col md:flex-row"
             style={{
-              borderRadius: isMobile ? "28px 28px 0 0" : "1.5rem",
+              /* 24 px, que es el escalón de hojas y modales de la escala de
+                 radios (y el que ya usa components/ui/Sheet.tsx en su
+                 `rounded-t-3xl`). Los 28 de antes eran el único radio del
+                 proyecto fuera de esa escala.
+                 La sombra sale del token por lo mismo: `shadow-2xl` es de la
+                 paleta de Tailwind y no se entera del tema. */
+              borderRadius: isMobile ? "24px 24px 0 0" : "24px",
+              boxShadow: "var(--shadow-lg)",
               /**
                * El alto disponible se publica como variable para que la imagen
                * se mida CONTRA EL PANEL y no contra el viewport.
@@ -486,12 +495,10 @@ export default function CardDetailModal({
             {/* CLOSE */}
             <button
               onClick={onClose}
-              className="absolute top-3 right-3 md:top-4 md:right-4 w-9 h-9 flex items-center justify-center z-50 btn-ghost rounded-full transition press"
+              className="absolute top-3 right-3 md:top-4 md:right-4 control-44 z-50 btn-ghost rounded-full transition press"
               aria-label="Cerrar"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                <path d="M18 6 6 18M6 6l12 12" />
-              </svg>
+              <IconoCerrar tam={16} />
             </button>
 
             {/* LEFT — CARD IMAGE PANEL */}
@@ -521,7 +528,7 @@ export default function CardDetailModal({
                 {!readOnly && onToggleFavorite && (
                   <button
                     onClick={afterSwipeGuard(onToggleFavorite)}
-                    className={`w-10 h-10 rounded-full border transition flex items-center justify-center press ${
+                    className={`control-44 rounded-full border transition press ${
                       c.is_favorite ? "" : "btn-ghost ink-soft hover:ink"
                     }`}
                     style={c.is_favorite ? ESTILO_FAVORITO : undefined}
@@ -532,7 +539,7 @@ export default function CardDetailModal({
                 )}
                 {readOnly && c.is_favorite && (
                   <div
-                    className="w-10 h-10 rounded-full border flex items-center justify-center"
+                    className="control-44 rounded-full border"
                     style={ESTILO_FAVORITO}
                   >
                     <Heart filled />
@@ -541,14 +548,14 @@ export default function CardDetailModal({
                 {isSignedIn && (
                   <button
                     onClick={afterSwipeGuard(handleToggleWishlist)}
-                    className={`w-10 h-10 rounded-full border transition flex items-center justify-center press ${
+                    className={`control-44 rounded-full border transition press ${
                       wishlisted ? "" : "btn-ghost ink-soft hover:ink"
                     }`}
                     style={wishlisted ? ESTILO_DESEADA : undefined}
                     aria-label="Deseos"
                     title={wishlisted ? "Quitar de deseos" : "Añadir a deseos"}
                   >
-                    <svg viewBox="0 0 24 24" fill={wishlisted ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                    <svg viewBox="0 0 24 24" fill={wishlisted ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="w-4 h-4">
                       <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
                     </svg>
                   </button>
@@ -602,7 +609,7 @@ export default function CardDetailModal({
                     initial={{ opacity: 0 }}
                     animate={{ opacity: cargadaId === c.id ? 1 : 0 }}
                     exit={{ opacity: 0 }}
-                    transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+                    transition={{ duration: D.base, ease: EASE_OUT }}
                   >
                   {(() => {
                     const imagen = (
@@ -724,27 +731,23 @@ export default function CardDetailModal({
                     onClick={afterSwipeGuard(goPrev)}
                     disabled={!canPrev}
                     aria-label="Carta anterior"
-                    className="absolute left-2 top-1/2 -translate-y-1/2 z-40 transform-gpu w-10 h-10 rounded-full btn-ghost press flex items-center justify-center disabled:opacity-25 disabled:cursor-not-allowed"
+                    className="absolute left-2 top-1/2 -translate-y-1/2 z-40 transform-gpu control-44 rounded-full btn-ghost press disabled:opacity-25 disabled:cursor-not-allowed"
                   >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                      <path d="m15 18-6-6 6-6" />
-                    </svg>
+                    <IconoVolver tam={16} />
                   </button>
                   <button
                     onClick={afterSwipeGuard(goNext)}
                     disabled={!canNext}
                     aria-label="Carta siguiente"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 z-40 transform-gpu w-10 h-10 rounded-full btn-ghost press flex items-center justify-center disabled:opacity-25 disabled:cursor-not-allowed"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 z-40 transform-gpu control-44 rounded-full btn-ghost press disabled:opacity-25 disabled:cursor-not-allowed"
                   >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                      <path d="m9 18 6-6-6-6" />
-                    </svg>
+                    <IconoAvanzar tam={16} />
                   </button>
                   {/* Contador en el hueco reservado bajo la carta (pb-12):
                       misma fila de posición que la hoja del álbum. */}
                   <span
                     aria-hidden="true"
-                    className="absolute bottom-3 left-1/2 -translate-x-1/2 z-40 transform-gpu chip ink-soft text-[11px] px-3 py-1 rounded-full tnum pointer-events-none"
+                    className="absolute bottom-3 left-1/2 -translate-x-1/2 z-40 transform-gpu chip ink-soft t-meta px-3 py-1 rounded-full tnum pointer-events-none"
                   >
                     {navIndex + 1} de {navList!.length}
                   </span>
@@ -767,14 +770,14 @@ export default function CardDetailModal({
                   {/* Rótulos de 9-11 px en ink-soft, no en ink-faint: a ese
                       tamaño la tinta tenue (3,66:1) no llega al mínimo. */}
                   <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <span className="text-[10px] uppercase tracking-[0.25em] ink-soft font-semibold">{c.supertype || "Pokémon"}</span>
+                    <span className="t-etiqueta ink-soft">{c.supertype || "Pokémon"}</span>
                     {c.subtypes?.slice(0, 3).map((s: string) => (
-                      <span key={s} className="text-[10px] uppercase tracking-wider ink-soft chip px-2 py-0.5">{s}</span>
+                      <span key={s} className="t-etiqueta ink-soft chip px-2 py-0.5">{s}</span>
                     ))}
                     {/* Fondo teñido con el halo de la rareza, texto en tinta. */}
                     {c.rarity && aura && (
                       <span
-                        className="text-[10px] uppercase tracking-wider font-semibold border rounded-full px-2 py-0.5 ink"
+                        className="t-etiqueta border rounded-full px-2 py-0.5 ink"
                         style={{ background: conAlfa(aura, 0.18), borderColor: conAlfa(aura, 0.4) }}
                       >
                         {c.rarity}
@@ -784,7 +787,7 @@ export default function CardDetailModal({
                   <div className="flex items-baseline justify-between gap-3">
                     <h2 className="text-2xl md:text-4xl font-bold tracking-tight">{c.name}</h2>
                     {c.hp && (
-                      <span className="font-mono text-base md:text-lg font-bold shrink-0" style={{ color: "var(--danger-ink)" }}>HP {c.hp}</span>
+                      <span className="tnum t-base md:t-titulo font-bold shrink-0" style={{ color: "var(--danger-ink)" }}>HP {c.hp}</span>
                     )}
                   </div>
                   {c.types?.length > 0 && (
@@ -878,7 +881,7 @@ export default function CardDetailModal({
                   <PriceTile
                     label={notaGraduada ? `Valor · ${etiquetaNota(notaGraduada)}` : "Valor de venta"}
                     value={`${getMarketPrice()}`}
-                    unit="💰"
+                    unit={<IconoMoneda tam={16} />}
                     color="var(--ok)"
                   />
                   {(() => {
@@ -896,13 +899,14 @@ export default function CardDetailModal({
                 {!readOnly && c.quantity > 1 && onSellAll && (
                   <button
                     onClick={onSellAll}
-                    className="btn-accent press w-full py-3 rounded-2xl font-semibold text-sm"
+                    className="btn-accent press w-full py-3 rounded-2xl font-semibold t-cuerpo flex items-center justify-center gap-1.5"
                   >
-                    Vender {c.quantity - 1} repetida{c.quantity - 1 > 1 ? "s" : ""} · +{valorDeVenta(c.rarity, c.quantity)} 💰
+                    Vender {c.quantity - 1} repetida{c.quantity - 1 > 1 ? "s" : ""} · +{valorDeVenta(c.rarity, c.quantity)}
+                    <IconoMoneda tam={16} />
                   </button>
                 )}
                 {readOnly && c.quantity != null && (
-                  <div className="text-center text-[11px] uppercase tracking-wider ink-soft">
+                  <div className="text-center t-etiqueta ink-soft">
                     {c.quantity > 1 ? `Posee ${c.quantity} copias` : "Copia única"}
                   </div>
                 )}
@@ -912,12 +916,12 @@ export default function CardDetailModal({
                     daba 2,6:1 en claro. */}
                 {c.abilities?.length > 0 && (
                   <div className="bg-gradient-to-br from-purple-500/10 to-transparent border border-purple-500/20 rounded-2xl p-4">
-                    <p className="ink-soft text-[10px] font-semibold uppercase tracking-wider mb-3">Habilidades</p>
+                    <p className="ink-soft t-etiqueta mb-3">Habilidades</p>
                     <div className="flex flex-col gap-3">
                       {c.abilities.map((ab: any, i: number) => (
                         <div key={i}>
-                          <span className="text-sm font-semibold">{ab.name}</span>
-                          <p className="text-[12px] ink-soft leading-relaxed mt-0.5">{ab.text}</p>
+                          <span className="t-cuerpo font-semibold">{ab.name}</span>
+                          <p className="t-cuerpo-2 ink-soft leading-relaxed mt-0.5">{ab.text}</p>
                         </div>
                       ))}
                     </div>
@@ -927,16 +931,16 @@ export default function CardDetailModal({
                 {/* ATTACKS */}
                 {c.attacks?.length > 0 && (
                   <div className="surface-2 rounded-2xl overflow-hidden">
-                    <p className="ink-soft text-[10px] font-semibold uppercase tracking-wider px-4 pt-3">Ataques</p>
+                    <p className="ink-soft t-etiqueta px-4 pt-3">Ataques</p>
                     <div className="flex flex-col divide-y divide-[var(--border)]">
                       {c.attacks.map((atk: any, i: number) => (
                         <div key={i} className="p-4 flex flex-col gap-2">
                           <div className="flex items-center gap-3">
                             <div className="shrink-0"><EnergyCost cost={atk.cost || []} /></div>
-                            <span className="text-sm font-semibold truncate flex-1">{atk.name}</span>
-                            {atk.damage && <span className="text-base font-mono font-bold shrink-0" style={{ color: "var(--danger-ink)" }}>{atk.damage}</span>}
+                            <span className="t-cuerpo font-semibold truncate flex-1">{atk.name}</span>
+                            {atk.damage && <span className="t-base tnum font-bold shrink-0" style={{ color: "var(--danger-ink)" }}>{atk.damage}</span>}
                           </div>
-                          {atk.text && <p className="text-[12px] ink-soft leading-snug">{atk.text}</p>}
+                          {atk.text && <p className="t-cuerpo-2 ink-soft leading-snug">{atk.text}</p>}
                         </div>
                       ))}
                     </div>
@@ -950,25 +954,25 @@ export default function CardDetailModal({
                       ? c.weaknesses.map((w: any, i: number) => (
                           <div key={i} className="flex items-center gap-1">
                             <TypeBadge type={w.type} size="xs" />
-                            <span className="text-[11px] font-semibold" style={{ color: "var(--danger-ink)" }}>{w.value}</span>
+                            <span className="t-meta font-semibold" style={{ color: "var(--danger-ink)" }}>{w.value}</span>
                           </div>
                         ))
-                      : <span className="ink-faint text-xs">—</span>}
+                      : <span className="ink-faint t-cuerpo-2">—</span>}
                   </StatTile>
                   <StatTile label="Resistencia">
                     {c.resistances?.length > 0
                       ? c.resistances.map((w: any, i: number) => (
                           <div key={i} className="flex items-center gap-1">
                             <TypeBadge type={w.type} size="xs" />
-                            <span className="text-[11px] font-semibold" style={{ color: "var(--ok)" }}>{w.value}</span>
+                            <span className="t-meta font-semibold" style={{ color: "var(--ok)" }}>{w.value}</span>
                           </div>
                         ))
-                      : <span className="ink-faint text-xs">—</span>}
+                      : <span className="ink-faint t-cuerpo-2">—</span>}
                   </StatTile>
                   <StatTile label="Retirada">
                     {c.retreatCost?.length > 0
                       ? <EnergyCost cost={c.retreatCost} />
-                      : <span className="ink-faint text-xs">—</span>}
+                      : <span className="ink-faint t-cuerpo-2">—</span>}
                   </StatTile>
                 </div>
 
@@ -978,9 +982,9 @@ export default function CardDetailModal({
                     {c.set.images?.logo && (
                       <img src={c.set.images.logo} alt="" loading="lazy" className="h-7 object-contain opacity-90" />
                     )}
-                    <div className="flex-1 min-w-0 text-[11px]">
+                    <div className="flex-1 min-w-0 t-meta">
                       <p className="font-medium truncate">{c.set.name}</p>
-                      <p className="ink-soft font-mono">
+                      <p className="ink-soft tnum">
                         #{c.number || "—"}{c.set.printedTotal ? `/${c.set.printedTotal}` : ""}
                         {c.artist ? ` · ${c.artist}` : ""}
                       </p>
@@ -989,7 +993,7 @@ export default function CardDetailModal({
                 )}
 
                 {loadingEnrich && (
-                  <p className="text-[9px] ink-soft uppercase tracking-wider animate-pulse text-center">Cargando detalles…</p>
+                  <p className="t-etiqueta ink-soft animate-pulse text-center">Cargando detalles…</p>
                 )}
               </div>
             </div>
@@ -1026,7 +1030,7 @@ export default function CardDetailModal({
 
 function Heart({ filled }: { filled?: boolean }) {
   return (
-    <svg viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+    <svg viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="w-4 h-4">
       <path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 5.5 5.5 5.5 0 0 1 21.5 12c-2.5 4.5-9.5 9-9.5 9z" />
     </svg>
   );
@@ -1049,13 +1053,15 @@ const ESTILO_DESEADA: React.CSSProperties = {
   color: "var(--warn-ink)",
 };
 
-/** `color` es un color CSS (un token del tema), no una clase de Tailwind. */
-function PriceTile({ label, value, unit, color }: { label: string; value: string; unit?: string; color: string }) {
+/** `color` es un color CSS (un token del tema), no una clase de Tailwind.
+ *  `unit` pasa a ser ReactNode porque la moneda dejó de ser el emoji 💰 y es el
+ *  icono de la casa: ver la nota de IconoMoneda en components/icons.tsx. */
+function PriceTile({ label, value, unit, color }: { label: string; value: string; unit?: React.ReactNode; color: string }) {
   return (
     <div className="surface-2 rounded-2xl px-3 py-2.5">
-      <p className="text-[9px] uppercase tracking-wider ink-soft font-semibold">{label}</p>
-      <p className="text-base md:text-lg font-bold tabular-nums leading-tight mt-0.5" style={{ color }}>
-        {value}{unit && <span className="text-xs ml-1">{unit}</span>}
+      <p className="t-etiqueta ink-soft">{label}</p>
+      <p className="t-base md:t-titulo font-bold tnum leading-tight mt-0.5" style={{ color }}>
+        {value}{unit && <span className="ml-1 inline-flex items-center align-middle t-cuerpo-2">{unit}</span>}
       </p>
     </div>
   );
@@ -1064,7 +1070,7 @@ function PriceTile({ label, value, unit, color }: { label: string; value: string
 function StatTile({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="surface-2 rounded-2xl p-3">
-      <p className="text-[9px] uppercase tracking-wider ink-soft font-semibold mb-1.5">{label}</p>
+      <p className="t-etiqueta ink-soft mb-1.5">{label}</p>
       <div className="flex flex-col gap-1">{children}</div>
     </div>
   );

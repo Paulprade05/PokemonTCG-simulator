@@ -45,7 +45,9 @@ import PokemonCard from "../components/PokemonCard";
 import MazoCartas from "../components/MazoCartas";
 import BoosterPack, { semillaDeSobre, type FaseSobre } from "../components/BoosterPack";
 import { formatNumber } from "../utils/format";
+import { D, EASE_OUT } from "../utils/motion";
 import Portal from "../components/ui/Portal";
+import { IconoDesplegar, IconoVolver } from "../components/icons";
 import type { Carta, Expansion } from "../utils/tipos";
 
 type PackType = "STANDARD" | "PREMIUM" | "GOLDEN" | "SPECIAL";
@@ -1675,7 +1677,9 @@ export default function Home() {
       // No llegó al umbral: la tira vuelve a su sitio con un muelle corto.
       const strip = tearStripRef.current;
       if (!strip) return;
-      strip.style.transition = "transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)";
+      // La curva escrita a mano era exactamente --ease-ios: es un retorno de
+      // arrastre, que es para lo que ese token existe.
+      strip.style.transition = "transform var(--d-base) var(--ease-ios)";
       strip.style.transform = "";
       window.clearTimeout(tearReturnTimerRef.current);
       tearReturnTimerRef.current = window.setTimeout(() => {
@@ -1852,10 +1856,14 @@ export default function Home() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -20 }}
               style={{ top: "calc(var(--sat) + var(--topbar-h) + 12px)" }}
-              className="fixed left-1/2 -translate-x-1/2 z-[200] bg-yellow-500/15 border border-yellow-500/30 backdrop-blur-xl px-6 py-4 rounded-2xl text-center max-w-sm"
+              className="fixed left-1/2 -translate-x-1/2 z-[200] bg-[color-mix(in_srgb,var(--warn)_15%,transparent)] border border-[color-mix(in_srgb,var(--warn)_30%,transparent)] backdrop-blur-xl px-6 py-4 rounded-2xl text-center max-w-sm"
             >
-              <p className="text-sm font-semibold" style={{ color: "var(--warn)" }}>¡Set completado!</p>
-              <p className="text-xs ink-soft mt-1">
+              {/* --warn-ink y no --warn: el token de aviso da 2,0-2,4:1 sobre el
+                  papel claro, o sea que el titular del cartel no se leía en
+                  tema claro. El fondo y el borde sí son --warn, que es donde
+                  ese token sirve. */}
+              <p className="t-cuerpo font-semibold" style={{ color: "var(--warn-ink)" }}>¡Set completado!</p>
+              <p className="t-cuerpo-2 ink-soft mt-1">
                 {setBonus.sets.join(", ")} · +{formatNumber(setBonus.granted)} monedas
               </p>
             </motion.div>
@@ -1871,11 +1879,11 @@ export default function Home() {
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+          transition={{ duration: D.slow, ease: EASE_OUT }}
           className="w-full max-w-6xl mb-10 text-center relative z-10"
         >
           <h1 className="text-4xl md:text-6xl font-bold text-gradient-ink tracking-tight">Abre. Colecciona. Completa.</h1>
-          <p className="ink-soft text-sm md:text-base mt-4 max-w-md mx-auto">
+          <p className="ink-soft t-cuerpo md:t-base mt-4 max-w-md mx-auto">
             Elige una expansión y abre sobres con probabilidades reales. Inicia sesión para guardar tu colección.
           </p>
         </motion.div>
@@ -1912,13 +1920,19 @@ export default function Home() {
           className="w-full max-w-7xl flex flex-col gap-4 pt-2 pb-24 relative z-10"
         >
           {/* Cabecera de sección: al irse el panel de estadísticas a Social, la
-              lista necesitaba un ancla visual que abriera la portada. */}
+              lista necesitaba un ancla visual que abriera la portada.
+
+              NO ES `t-etiqueta` aunque vaya en mayúsculas con espaciado: la
+              etiqueta de la casa mide 10px y sustituye rótulos, y esto es un
+              titular de sección de 14px en negrita. Lo que sí cambia es que el
+              tamaño sale ya de la escala (`t-cuerpo`) en vez de `text-sm`, que
+              es lo que dejaba a esta pantalla fuera del sistema. */}
           {dbSets.length > 0 && (
             <div className="flex items-baseline justify-between px-1 mb-1">
-              <h2 className="text-sm font-bold uppercase tracking-[0.2em]">
+              <h2 className="t-cuerpo font-bold uppercase tracking-[0.2em]">
                 Expansiones
               </h2>
-              <span className="tnum text-xs ink-faint">
+              <span className="tnum t-cuerpo-2 ink-faint">
                 {formatNumber(dbSets.length)} sets
               </span>
             </div>
@@ -1965,7 +1979,7 @@ export default function Home() {
               key={seriesName}
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: idx * 0.08, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+              transition={{ delay: idx * 0.08, duration: D.slow, ease: EASE_OUT }}
               className="flex flex-col gap-2"
             >
               <button
@@ -1999,17 +2013,19 @@ export default function Home() {
                 aria-expanded={!!openSeries[seriesName]}
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-sm font-bold uppercase tracking-[0.2em] truncate">{seriesName}</span>
-                  <span className="text-xs ink-soft font-mono chip px-2 py-0.5 shrink-0">{sets.length}</span>
+                  <span className="t-cuerpo font-bold uppercase tracking-[0.2em] truncate">{seriesName}</span>
+                  <span className="t-cuerpo-2 ink-soft tnum chip px-2 py-0.5 shrink-0">{sets.length}</span>
                 </div>
-                <motion.svg
+                {/* El giro va en un envoltorio: el dibujo sale del vocabulario
+                    común (components/icons.tsx). */}
+                <motion.span
                   animate={{ rotate: openSeries[seriesName] ? 180 : 0 }}
-                  transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-                  viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                  className="w-4 h-4 ink-soft"
+                  transition={{ duration: D.base, ease: EASE_OUT }}
+                  className="ink-soft flex shrink-0"
+                  aria-hidden="true"
                 >
-                  <path d="m6 9 6 6 6-6" />
-                </motion.svg>
+                  <IconoDesplegar tam={16} />
+                </motion.span>
               </button>
 
               <AnimatePresence initial={false}>
@@ -2018,7 +2034,7 @@ export default function Home() {
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: "auto", opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                    transition={{ duration: D.slow, ease: EASE_OUT }}
                     className="overflow-hidden"
                   >
                     {/* LA REJILLA DE LOGOS, RESTAURADA A PETICIÓN DEL DUEÑO.
@@ -2041,7 +2057,7 @@ export default function Home() {
                           key={set.id}
                           whileHover={{ y: -5 }}
                           whileTap={{ scale: 0.96 }}
-                          transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                          transition={{ duration: D.base, ease: EASE_OUT }}
                           onClick={() => handleSelectSet(set.id)}
                           className="group surface surface-hover p-3.5 md:p-8 rounded-2xl md:rounded-3xl flex flex-col items-center justify-between gap-2 md:gap-4 overflow-hidden relative min-h-[126px] md:min-h-[180px]"
                         >
@@ -2050,7 +2066,7 @@ export default function Home() {
                               puntero que se vaya), y el logo se quedaba
                               agrandado y la tarjeta iluminada hasta tocar
                               otra. En pantallas con ratón, todo igual. */}
-                          <div className="absolute inset-0 opacity-0 md:group-hover:opacity-100 transition-opacity duration-500 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.06),transparent_60%)] pointer-events-none" />
+                          <div className="absolute inset-0 opacity-0 md:group-hover:opacity-100 transition-opacity duration-[var(--d-slow)] bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.06),transparent_60%)] pointer-events-none" />
                           {/* Esta expansión todavía no tiene diccionario español
                               y se ve en inglés. El aviso existe porque el cron
                               trae expansiones nuevas y la lista va por fecha
@@ -2062,7 +2078,7 @@ export default function Home() {
                               Va como <span> y no como botón: la tarjeta ya es un
                               botón y anidarlos es HTML inválido. */}
                           {set.tieneEs === false && (
-                            <span className="absolute top-2 right-2 md:top-3 md:right-3 z-10 chip ink-soft px-1.5 py-0.5 text-[9px] md:text-[10px] font-semibold uppercase tracking-[0.12em] leading-none">
+                            <span className="absolute top-2 right-2 md:top-3 md:right-3 z-10 chip ink-soft px-1.5 py-0.5 t-etiqueta leading-none">
                               EN
                               <span className="sr-only"> · esta expansión todavía no está traducida al español</span>
                             </span>
@@ -2074,13 +2090,13 @@ export default function Home() {
                                 alt={set.name}
                                 loading="lazy"
                                 decoding="async"
-                                className="max-h-[58px] md:max-h-20 max-w-full object-contain md:group-hover:scale-110 transition-transform duration-500 opacity-90 md:group-hover:opacity-100 drop-shadow-lg"
+                                className="max-h-[58px] md:max-h-20 max-w-full object-contain md:group-hover:scale-110 transition-transform duration-[var(--d-slow)] opacity-90 md:group-hover:opacity-100 drop-shadow-lg"
                               />
                             ) : (
-                              <div className="ink-faint text-sm text-center">{set.name}</div>
+                              <div className="ink-faint t-cuerpo text-center">{set.name}</div>
                             )}
                           </div>
-                          <span className="font-medium text-[11px] md:text-xs ink-soft md:group-hover:ink transition-colors text-center tracking-wide truncate w-full relative z-10">
+                          <span className="font-medium t-meta md:t-cuerpo-2 ink-soft md:group-hover:ink transition-colors text-center tracking-wide truncate w-full relative z-10">
                             {set.name}
                           </span>
                         </motion.button>
@@ -2110,7 +2126,7 @@ export default function Home() {
              La regla, medida, está en components/PokemonCard.tsx. */
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+          transition={{ duration: D.slow, ease: EASE_OUT }}
           /* max-w-6xl y no 5xl. Los tres sobres de la tienda se quedaban en
              1024px mientras <main> ofrecía 1216: medido en una ventana de
              1600px, el contenedor pasa de 1004px a 1129px, o sea 125px más de
@@ -2123,11 +2139,9 @@ export default function Home() {
         >
           <button
             onClick={handleBackToMenu}
-            className="mb-5 md:mb-10 ink-soft hover:ink transition flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] chip touch-target px-4 py-2 press"
+            className="mb-5 md:mb-10 ink-soft hover:ink transition flex items-center gap-2 t-etiqueta chip touch-target px-4 py-2 press"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-              <path d="m15 18-6-6 6-6" />
-            </svg>
+            <IconoVolver tam={16} />
             Volver
           </button>
 
@@ -2139,13 +2153,13 @@ export default function Home() {
               en vez de enseñar una tienda que falla al pulsar comprar. */}
           {loadError && !loading ? (
             <div className="surface rounded-3xl w-full max-w-sm p-6 flex flex-col items-center gap-3 text-center">
-              <p className="text-sm font-semibold">No se han podido cargar las cartas</p>
-              <p className="text-xs ink-soft">
+              <p className="t-cuerpo font-semibold">No se han podido cargar las cartas</p>
+              <p className="t-cuerpo-2 ink-soft">
                 Comprueba tu conexión e inténtalo de nuevo.
               </p>
               <button
                 onClick={loadAndSync}
-                className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold"
+                className="btn-accent press touch-target px-6 py-2.5 rounded-xl t-cuerpo font-semibold"
               >
                 Reintentar
               </button>
@@ -2173,7 +2187,7 @@ export default function Home() {
                    reparto y no hay variantes que distribuir. */
                 foto={fotosDeSobre[0]}
                 icon={
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden="true" className="w-12 h-12 md:w-14 md:h-14">
                     <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
                   </svg>
                 }
@@ -2190,7 +2204,7 @@ export default function Home() {
                   odds={oddsPorTipo.STANDARD}
                   foto={fotosDeSobre[0]}
                   icon={
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden="true" className="w-12 h-12 md:w-14 md:h-14">
                       <rect width="12" height="16" x="2" y="6" rx="2" />
                       <path d="m22 16-2.5-9.4a2 2 0 0 0-2.4-1.4l-4.5 1.2" />
                     </svg>
@@ -2208,7 +2222,7 @@ export default function Home() {
                   odds={oddsPorTipo.PREMIUM}
                   foto={fotosDeSobre[1]}
                   icon={
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden="true" className="w-12 h-12 md:w-14 md:h-14">
                       <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
                     </svg>
                   }
@@ -2225,7 +2239,7 @@ export default function Home() {
                   odds={oddsPorTipo.GOLDEN}
                   foto={fotosDeSobre[2]}
                   icon={
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="w-12 h-12 md:w-14 md:h-14">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden="true" className="w-12 h-12 md:w-14 md:h-14">
                       <path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14" />
                     </svg>
                   }
@@ -2253,7 +2267,7 @@ export default function Home() {
                   className="w-10 h-10 border-2 rounded-full animate-spin mb-6"
                   style={{ borderColor: "var(--border)", borderTopColor: "var(--accent)" }}
                 ></div>
-                <h2 className="text-xs font-semibold ink-soft tracking-[0.3em] uppercase">Preparando cartas</h2>
+                <h2 className="t-etiqueta ink-soft">Preparando cartas</h2>
               </motion.div>
             )}
           </AnimatePresence>
@@ -2408,11 +2422,12 @@ export default function Home() {
             <button
               onClick={busy ? cerrarVistaSobre : finishPack}
               aria-label={busy ? "Salir de la apertura" : "Guardar el sobre y salir"}
-              className="chip press touch-target w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+              // `.control-44` en lugar de `w-10 h-10`: medía 40px y es la
+              // única salida de la vista de apertura, donde no hay barra de
+              // pestañas, ni gesto de retroceso, ni scroll.
+              className="chip press control-44 rounded-full shrink-0"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-4 h-4">
-                <path d="m15 18-6-6 6-6" />
-              </svg>
+              <IconoVolver tam={16} />
             </button>
 
             <div className="flex-1 flex items-center gap-1" aria-hidden="true">
@@ -2425,7 +2440,7 @@ export default function Home() {
                   <motion.div
                     initial={false}
                     animate={{ scaleX: i < maxRevealed ? 1 : 0 }}
-                    transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                    transition={{ duration: D.slow, ease: EASE_OUT }}
                     className="h-full w-full origin-left"
                     style={{ background: "var(--accent)" }}
                   />
@@ -2433,7 +2448,7 @@ export default function Home() {
               ))}
             </div>
 
-            <span className="tnum ink-soft font-mono text-[11px] tracking-[0.2em] shrink-0">
+            <span className="tnum ink-soft t-meta tracking-[0.2em] shrink-0">
               {packIndex + 1} / {cartasDelSobre}
             </span>
 
@@ -2451,7 +2466,11 @@ export default function Home() {
                   : "Activar los efectos de sonido"
               }
               aria-pressed={ajustes.sonido}
-              className="chip press touch-target w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+              // Mismo idioma que el botón de volver de esta misma fila:
+              // `.control-44` ya trae las dos medidas mínimas y el centrado,
+              // así que sobran `w-10 h-10` (40px, que el min-width subía a 44
+              // igualmente) y el `flex items-center justify-center` de al lado.
+              className="chip press control-44 rounded-full shrink-0"
             >
               <svg
                 viewBox="0 0 24 24"
@@ -2460,6 +2479,7 @@ export default function Home() {
                 strokeWidth="2"
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                aria-hidden="true"
                 className={`w-4 h-4 ${ajustes.sonido ? "" : "ink-faint"}`}
               >
                 <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
@@ -2496,7 +2516,12 @@ export default function Home() {
               <motion.div
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="absolute top-1 left-0 right-0 text-center accent text-[10px] md:text-xs font-semibold tracking-[0.3em] uppercase z-20"
+                /* --ok y no la clase `accent`: `.accent` pinta con --accent, que
+                   sobre el papel claro da 2,0-2,4:1 y aquí anuncia el premio de
+                   la pantalla. --ok es su versión legible, igual que ya hace el
+                   valor del resumen unas líneas más abajo. */
+                style={{ color: "var(--ok)" }}
+                className="absolute top-1 left-0 right-0 text-center t-etiqueta z-20"
               >
                 Carta garantizada
               </motion.div>
@@ -2557,7 +2582,7 @@ export default function Home() {
                 // pointer-events-none: se pinta por encima del sobre y sin
                 // esto se comería el pointerdown del arrastre de la tira.
                 // El pulso es adorno y respeta "reducir efectos".
-                className={`pointer-events-none absolute bottom-4 left-0 right-0 text-center text-[11px] ink-soft z-30${
+                className={`pointer-events-none absolute bottom-4 left-0 right-0 text-center t-meta ink-soft z-30${
                   efectosApagados ? "" : " animate-pulse"
                 }`}
               >
@@ -2633,13 +2658,13 @@ export default function Home() {
                     initial={efectosApagados ? false : { opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{
-                      duration: 0.2,
+                      duration: D.base,
                       delay:
                         !efectosApagados && fase !== "cartas"
                           ? (T_FANFARRIA - T_CARTA) / 1000
                           : 0,
                     }}
-                    className="absolute -top-3 -left-3 z-50 bg-emerald-500 text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider shadow-lg"
+                    className="absolute -top-3 -left-3 z-50 bg-[var(--accent)] text-white t-etiqueta font-bold px-3 py-1 rounded-full shadow-[var(--shadow-lg)]"
                   >
                     Nueva
                   </motion.div>
@@ -2707,7 +2732,9 @@ export default function Home() {
                   <motion.p
                     key="rasga"
                     exit={{ opacity: 0, transition: { duration: efectosApagados ? 0 : 0.15 } }}
-                    className="absolute inset-0 flex items-center justify-center ink-faint text-[11px] uppercase tracking-[0.2em]"
+                    /* ink-soft y no ink-faint: la etiqueta baja a 10px y
+                       --ink-faint (3,66:1) sólo se sostiene a partir de 12. */
+                    className="absolute inset-0 flex items-center justify-center ink-soft t-etiqueta"
                   >
                     {/* "Desliza" y no "rasga la tira": el gesto lo escucha el
                         sobre ENTERO (touchAction en components/BoosterPack.tsx),
@@ -2722,8 +2749,8 @@ export default function Home() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 0.6 }}
                     exit={{ opacity: 0, transition: { duration: 0.15 } }}
-                    transition={{ duration: 0.2 }}
-                    className="absolute inset-0 flex items-center justify-center ink-faint text-[11px] uppercase tracking-[0.2em]"
+                    transition={{ duration: D.base }}
+                    className="absolute inset-0 flex items-center justify-center ink-soft t-etiqueta"
                   >
                     Abriendo…
                   </motion.p>
@@ -2738,7 +2765,7 @@ export default function Home() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, transition: { duration: efectosApagados ? 0 : 0.15 } }}
                     transition={{
-                      duration: 0.2,
+                      duration: D.base,
                       delay:
                         !efectosApagados && fase !== "cartas"
                           ? (T_FANFARRIA - T_CARTA) / 1000
@@ -2748,10 +2775,10 @@ export default function Home() {
                   >
                     {/* Hasta ahora la vista no decía en ningún sitio qué había
                         salido salvo en el texto para lectores de pantalla. */}
-                    <p className="text-sm font-semibold ink leading-tight truncate max-w-full">
+                    <p className="t-cuerpo font-semibold ink leading-tight truncate max-w-full">
                       {currentCard.name}
                     </p>
-                    <p className="ink-faint text-[10px] uppercase tracking-[0.16em] leading-tight flex items-center gap-1.5">
+                    <p className="ink-soft t-etiqueta leading-tight flex items-center gap-1.5">
                       {RARITY_GLOW[currentCard.rarity] && (
                         // El color de rareza va como punto y no como color de
                         // texto: son rgba fijos y en tema claro no contrastan.
@@ -2789,10 +2816,10 @@ export default function Home() {
                     <button
                       onClick={handleNextCard}
                       disabled={busy}
-                      className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-60"
+                      className="btn-accent press touch-target px-6 py-2.5 rounded-xl t-cuerpo font-semibold disabled:opacity-60"
                     >
                       Abrir sobre{" "}
-                      <kbd className="ml-1 text-[10px] opacity-70 hidden sm:inline">espacio</kbd>
+                      <kbd className="ml-1 t-micro opacity-70 hidden sm:inline">espacio</kbd>
                     </button>
                   </motion.div>
                 )}
@@ -2801,20 +2828,20 @@ export default function Home() {
                     key="acciones"
                     initial={efectosApagados ? false : { opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.22 }}
+                    transition={{ duration: D.base }}
                     className="absolute inset-0 flex items-center justify-center gap-2"
                   >
                     <button
                       onClick={handleNextCard}
                       disabled={busy}
-                      className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-60"
+                      className="btn-accent press touch-target px-6 py-2.5 rounded-xl t-cuerpo font-semibold disabled:opacity-60"
                     >
                       {busy ? (
                         "Guardando..."
                       ) : (
                         <>
                           {packIndex < lastIndex ? "Siguiente" : "Guardar sobre"}{" "}
-                          <kbd className="ml-1 text-[10px] opacity-70 hidden sm:inline">espacio</kbd>
+                          <kbd className="ml-1 t-micro opacity-70 hidden sm:inline">espacio</kbd>
                         </>
                       )}
                     </button>
@@ -2824,10 +2851,10 @@ export default function Home() {
                     <button
                       onClick={handleRevealAll}
                       disabled={busy || maxRevealed >= currentPack.length}
-                      className="ink-soft hover:ink press touch-target px-4 py-2.5 rounded-xl text-sm font-medium transition flex items-center gap-2 disabled:opacity-50"
+                      className="ink-soft hover:ink press touch-target px-4 py-2.5 rounded-xl t-cuerpo font-medium transition flex items-center gap-2 disabled:opacity-50"
                     >
                       Revelar todo
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="w-4 h-4">
                         <path d="m13 17 5-5-5-5M6 17l5-5-5-5" />
                       </svg>
                     </button>
@@ -2845,13 +2872,13 @@ export default function Home() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
+          transition={{ duration: D.slow }}
           className="flex flex-col items-center w-full max-w-7xl pb-24 pt-4 relative z-10"
         >
           <div className="flex flex-col md:flex-row gap-4 mb-12 items-center w-full justify-between">
             <div>
-              <h2 className="text-3xl font-bold ink tracking-tight">Resumen</h2>
-              <p className="text-xs ink-soft mt-1">
+              <h2 className="t-display font-bold ink tracking-tight">Resumen</h2>
+              <p className="t-cuerpo-2 ink-soft mt-1">
                 {newCardsInPack > 0
                   ? `${newCardsInPack} carta${newCardsInPack > 1 ? "s" : ""} nueva${newCardsInPack > 1 ? "s" : ""} añadida${newCardsInPack > 1 ? "s" : ""} a tu colección`
                   : "Sin cartas nuevas en este sobre"}
@@ -2865,7 +2892,7 @@ export default function Home() {
                 <button
                   onClick={handleSellPackDupes}
                   disabled={sellingDupes}
-                  className="press touch-target px-5 py-2.5 rounded-xl text-sm font-medium transition disabled:opacity-50"
+                  className="press touch-target px-5 py-2.5 rounded-xl t-cuerpo font-medium transition disabled:opacity-50"
                   style={{
                     background: "var(--ok-weak)",
                     border: "1px solid color-mix(in srgb, var(--ok) 35%, transparent)",
@@ -2876,16 +2903,16 @@ export default function Home() {
                 </button>
               )}
               {soldInfo && (
-                <span className="text-sm font-medium px-3 py-2.5" style={{ color: "var(--ok)" }}>
+                <span className="t-cuerpo font-medium px-3 py-2.5" style={{ color: "var(--ok)" }}>
                   +{formatNumber(soldInfo.earned)} por {soldInfo.sold} repetidas
                 </span>
               )}
               {/* Vaciar currentPack a secas dejaba direction en -1 y la primera
                   carta del sobre siguiente entraba por el lado contrario. */}
-              <button onClick={resetPackState} className="btn-ghost press touch-target px-5 py-2.5 rounded-xl text-sm font-medium">
+              <button onClick={resetPackState} className="btn-ghost press touch-target px-5 py-2.5 rounded-xl t-cuerpo font-medium">
                 Cambiar de sobre
               </button>
-              <button onClick={handleBackToMenu} className="btn-ghost press touch-target px-5 py-2.5 rounded-xl text-sm font-medium">
+              <button onClick={handleBackToMenu} className="btn-ghost press touch-target px-5 py-2.5 rounded-xl t-cuerpo font-medium">
                 Finalizar
               </button>
               {currentPackType && (
@@ -2896,7 +2923,7 @@ export default function Home() {
                 <button
                   onClick={() => handleBuyPack(currentPackType)}
                   disabled={busy}
-                  className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-60"
+                  className="btn-accent press touch-target px-6 py-2.5 rounded-xl t-cuerpo font-semibold disabled:opacity-60"
                 >
                   {busy ? "Abriendo..." : `Otro sobre · ${formatNumber(PACK_PRICES[currentPackType])}`}
                 </button>
@@ -2909,7 +2936,7 @@ export default function Home() {
             {rarityBreakdown.map(([rarity, count]) => (
               <span
                 key={rarity}
-                className="chip px-3 py-1 text-[11px] ink-soft"
+                className="chip px-3 py-1 t-meta ink-soft"
               >
                 {count}× <span className="ink font-medium">{rarity}</span>
               </span>
@@ -2936,13 +2963,15 @@ export default function Home() {
                     crema del tema claro esos dos dan ~2:1 de contraste, y aquí
                     se lee lo que vale la carta. --warn-ink y --ok son su
                     versión legible (ver app/globals.css). */}
-                <p className="text-[9px] md:text-[10px] font-medium uppercase tracking-[0.2em]" style={{ color: "var(--warn-ink)" }}>Mejor carta del sobre</p>
-                <h3 className="text-base md:text-lg font-semibold ink truncate">{bestPull.name}</h3>
-                <p className="text-[11px] md:text-xs ink-faint">{bestPull.rarity}</p>
+                <p className="t-etiqueta" style={{ color: "var(--warn-ink)" }}>Mejor carta del sobre</p>
+                <h3 className="t-base md:t-titulo font-semibold ink truncate">{bestPull.name}</h3>
+                {/* ink-soft: en móvil esta línea son 11px y --ink-faint no llega
+                    al mínimo por debajo de 12. */}
+                <p className="t-meta md:t-cuerpo-2 ink-soft">{bestPull.rarity}</p>
               </div>
               <div className="text-right shrink-0">
-                <p className="ink-faint text-[9px] md:text-[10px] uppercase tracking-wider">Valor base</p>
-                <p className="text-xl md:text-2xl font-semibold tabular-nums" style={{ color: "var(--ok)" }}>{formatNumber(precioDeCartaSuelta(bestPull.rarity))}</p>
+                <p className="ink-soft t-etiqueta">Valor base</p>
+                <p className="t-titulo md:t-display font-semibold tnum" style={{ color: "var(--ok)" }}>{formatNumber(precioDeCartaSuelta(bestPull.rarity))}</p>
               </div>
             </motion.div>
           )}
@@ -2964,12 +2993,19 @@ export default function Home() {
                   className="relative"
                 >
                   {isNew && (
-                    <div className="absolute -top-2 -left-2 z-30 bg-emerald-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shadow-lg">
+                    <div className="absolute -top-2 -left-2 z-30 bg-[var(--accent)] text-white t-etiqueta font-bold px-2 py-0.5 rounded-full shadow-[var(--shadow-lg)]">
                       Nueva
                     </div>
                   )}
+                  {/* "Deseada" va en --warn, que es el color con el que la lista
+                      de deseos ya se pinta en el resto de la aplicación (ver
+                      ESTILO_DESEADA en components/CardDetailModal.tsx); el
+                      bg-pink-500 de antes no salía de ningún token. La tinta
+                      pasa a negra porque blanco sobre ámbar da 1,9:1, mientras
+                      que sobre el rosa de antes daba 3,7:1: mantenerla blanca
+                      habría sido perder legibilidad al cambiar de color. */}
                   {wishlistSet.has(card.id) && (
-                    <div className="absolute -top-2 -right-2 z-30 bg-pink-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shadow-lg">
+                    <div className="absolute -top-2 -right-2 z-30 bg-[var(--warn)] text-black t-etiqueta font-bold px-2 py-0.5 rounded-full shadow-[var(--shadow-lg)]">
                       Deseada
                     </div>
                   )}
@@ -3014,11 +3050,51 @@ interface PackCardProps {
 }
 
 function PackCard({ accent, badge, title, description, price, icon, foto, onClick, onMulti, multiCount = 10, odds, disabled = false }: PackCardProps) {
+  /*
+   * LOS COLORES DE LAS TRES VARIANTES, Y LO QUE FALTA AQUÍ.
+   *
+   * `yellow` (Leyenda) y `blue` (Promo) pasan a los tokens del tema: la paleta
+   * literal de Tailwind está pensada para fondo negro y sobre el papel crema
+   * del tema claro se caía. Medido antes del cambio: text-amber-300 y
+   * text-sky-300 sobre sus propios fondos al 15% daban ~1,9:1 y ~2,1:1, o sea
+   * un distintivo ilegible en la mitad de los temas.
+   *
+   * Y LOS DOS NO SE RESUELVEN IGUAL, que es la parte que hay que leer antes de
+   * "unificarlos". El ámbar tiene tinta propia (--warn-ink, 5,9:1 en claro y
+   * 10,8:1 en oscuro) y es además como se pinta la lista de deseos en el resto
+   * de la aplicación, así que el rótulo va en ella. El cian NO la tiene:
+   * --accent-2 es #06b6d4 y sobre la superficie clara da 2,30:1, o sea que
+   * usarlo de color de texto sería cambiar un rótulo ilegible por otro. Ahí el
+   * color de la familia se queda en el FONDO y el BORDE —que es donde un token
+   * saturado sí vale— y el rótulo va con la tinta normal, exactamente como ya
+   * hacía la variante neutra (`chip ink-soft`).
+   *
+   * `purple` (Premium) SE QUEDA EN PALETA LITERAL, y no por descuido: el tema
+   * no tiene ningún token morado —ni en :root ni en el bloque oscuro de
+   * app/globals.css— y este barrido no puede inventar uno (globals.css es base
+   * compartida y está cerrada). Es una decisión de quien lleve el tema: o
+   * aparece un token de familia morada, o Premium cambia de color. Hasta
+   * entonces su distintivo sigue con el mismo defecto de contraste que tenían
+   * los otros dos, y por eso queda anotado aquí y no escondido.
+   *
+   * El `hover` mezcla hacia el blanco porque es lo que hacían amber-500 →
+   * amber-400 y sky-600 → sky-500: el botón se aclara al pasar por encima.
+   */
   const accents: Record<string, { iconColor: string; btn: string; badgeBg: string; glow: string }> = {
     white:  { iconColor: "ink-soft",        btn: "btn-ghost",                                  badgeBg: "chip ink-soft",                       glow: "rgba(148,163,184,0.18)" },
     purple: { iconColor: "text-purple-400", btn: "bg-purple-600 hover:bg-purple-500 text-white", badgeBg: "bg-purple-500/15 text-purple-300 border border-purple-500/20", glow: "rgba(168,85,247,0.22)" },
-    yellow: { iconColor: "text-amber-400",  btn: "bg-amber-500 hover:bg-amber-400 text-black",   badgeBg: "bg-amber-500/15 text-amber-300 border border-amber-500/20",   glow: "rgba(245,158,11,0.22)" },
-    blue:   { iconColor: "text-sky-400",    btn: "bg-sky-600 hover:bg-sky-500 text-white",       badgeBg: "bg-sky-500/15 text-sky-300 border border-sky-500/20",         glow: "rgba(56,189,248,0.22)" },
+    yellow: {
+      iconColor: "text-[var(--warn-ink)]",
+      btn: "bg-[var(--warn)] hover:bg-[color-mix(in_srgb,var(--warn)_82%,white)] text-black",
+      badgeBg: "bg-[color-mix(in_srgb,var(--warn)_15%,transparent)] text-[var(--warn-ink)] border border-[color-mix(in_srgb,var(--warn)_20%,transparent)]",
+      glow: "rgba(245,158,11,0.22)",
+    },
+    blue:   {
+      iconColor: "text-[var(--accent-2)]",
+      btn: "bg-[var(--accent-2)] hover:bg-[color-mix(in_srgb,var(--accent-2)_85%,white)] text-white",
+      badgeBg: "bg-[color-mix(in_srgb,var(--accent-2)_15%,transparent)] ink border border-[color-mix(in_srgb,var(--accent-2)_20%,transparent)]",
+      glow: "rgba(56,189,248,0.22)",
+    },
   };
   const a = accents[accent];
 
@@ -3040,7 +3116,7 @@ function PackCard({ accent, badge, title, description, price, icon, foto, onClic
          components/SetPackTile.tsx, y aquí es más grave porque la foto ocupa
          180px y no 44. Un hundimiento de 2px acusa recibo igual. */
       whileTap={{ y: 2 }}
-      transition={{ duration: 0.25 }}
+      transition={{ duration: D.base }}
       className="surface surface-hover rounded-3xl p-5 md:p-8 flex flex-col items-center group relative overflow-hidden text-left w-[76vw] max-w-[300px] shrink-0 snap-center md:w-auto md:max-w-none md:shrink"
     >
       {/* EL RESPLANDOR ES HERMANO DE LA FOTO, NO ANCESTRO, y por eso su
@@ -3056,7 +3132,7 @@ function PackCard({ accent, badge, title, description, price, icon, foto, onClic
           tarjeta que acababas de tocar. */}
       <div className="absolute -top-16 left-1/2 -translate-x-1/2 w-40 h-40 rounded-full blur-3xl pointer-events-none opacity-60 md:group-hover:opacity-100 transition-opacity" style={{ background: `radial-gradient(circle, ${a.glow}, transparent 70%)` }} />
       {badge && (
-        <div className={`absolute top-0 left-0 right-0 ${a.badgeBg} text-[10px] uppercase font-semibold text-center py-1.5 tracking-[0.25em]`}>
+        <div className={`absolute top-0 left-0 right-0 ${a.badgeBg} t-etiqueta text-center py-1.5`}>
           {badge}
         </div>
       )}
@@ -3071,7 +3147,7 @@ function PackCard({ accent, badge, title, description, price, icon, foto, onClic
           `translate` de 4px, que está permitido porque no cambia la escala a la
           que se rasteriza nada; y la tarjeta entera ya sube 6px, así que el
           conjunto se lee como el sobre despegándose del estante. */}
-      <div className={`${a.iconColor} mb-3 md:mb-8 ${badge ? "mt-6" : ""} md:group-hover:-translate-y-1 transition-transform duration-500 relative z-10`}>
+      <div className={`${a.iconColor} mb-3 md:mb-8 ${badge ? "mt-6" : ""} md:group-hover:-translate-y-1 transition-transform duration-[var(--d-slow)] relative z-10`}>
         {fotoUsable ? (
           /* EL SOBRE ENTERO Y SIN RECORTAR, y las dos cosas a propósito.
              ALTURA FIJA Y ANCHO LIBRE (`h-[180px] w-auto object-contain`): las
@@ -3140,21 +3216,26 @@ function PackCard({ accent, badge, title, description, price, icon, foto, onClic
           icon
         )}
       </div>
-      <h3 className="text-lg md:text-xl font-bold mb-1.5 md:mb-3 relative z-10">{title}</h3>
-      <p className="text-[11px] md:text-xs ink-soft text-center mb-3 md:mb-4 leading-relaxed relative z-10">{description}</p>
+      <h3 className="t-titulo font-bold mb-1.5 md:mb-3 relative z-10">{title}</h3>
+      <p className="t-meta md:t-cuerpo-2 ink-soft text-center mb-3 md:mb-4 leading-relaxed relative z-10">{description}</p>
 
       {/* Las probabilidades van plegadas: interesan, pero no como para triplicar
           el alto de la tarjeta en un móvil. */}
       {odds && odds.length > 0 && (
         <details className="w-full mb-3 md:mb-5 relative z-10 group/odds">
-          <summary className="chip ink-faint touch-target flex items-center justify-center cursor-pointer list-none rounded-lg px-3 py-3 text-center text-[10px] font-semibold tracking-wide uppercase [&::-webkit-details-marker]:hidden">
+          <summary className="chip ink-soft touch-target flex items-center justify-center cursor-pointer list-none rounded-lg px-3 py-3 text-center t-etiqueta [&::-webkit-details-marker]:hidden">
             Probabilidades
           </summary>
           <div className="surface-2 mt-2 space-y-1 rounded-xl p-3">
             {odds.map(([label, pct]) => (
-              <div key={label} className="flex justify-between text-[10px]">
-                <span className="ink-faint">{label}</span>
-                <span className={`font-mono ${a.iconColor}`}>{pct}</span>
+              /* Los dos textos suben de tinta porque bajan a 10px, y por
+                 debajo de 12 ni --ink-faint (3,66:1) ni el color de familia
+                 —--warn/--accent-2/purple-400, todos por debajo de 3:1 sobre
+                 el papel claro— sostienen un texto. El porcentaje es el dato
+                 que se viene a leer: va en tinta normal. */
+              <div key={label} className="flex justify-between t-micro">
+                <span className="ink-soft">{label}</span>
+                <span className="tnum ink">{pct}</span>
               </div>
             ))}
           </div>
@@ -3165,7 +3246,7 @@ function PackCard({ accent, badge, title, description, price, icon, foto, onClic
         <button
           onClick={onClick}
           disabled={disabled}
-          className={`${a.btn} press touch-target font-semibold py-2.5 px-6 rounded-xl w-full text-center transition text-sm disabled:opacity-50 disabled:cursor-not-allowed`}
+          className={`${a.btn} press touch-target font-semibold py-2.5 px-6 rounded-xl w-full text-center transition t-cuerpo disabled:opacity-50 disabled:cursor-not-allowed`}
         >
           {disabled ? "Abriendo..." : `${formatNumber(price)} monedas`}
         </button>
@@ -3173,7 +3254,7 @@ function PackCard({ accent, badge, title, description, price, icon, foto, onClic
           <button
             onClick={onMulti}
             disabled={disabled}
-            className="press btn-ghost touch-target font-medium py-2 px-6 rounded-xl w-full text-center transition text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+            className="press btn-ghost touch-target font-medium py-2 px-6 rounded-xl w-full text-center transition t-cuerpo-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Abrir ×{multiCount} · {formatNumber(price * multiCount)}
           </button>

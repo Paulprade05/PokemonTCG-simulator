@@ -6,18 +6,26 @@ import { motion } from "framer-motion";
 import { SignedIn } from "@clerk/nextjs";
 import { NAV_ITEMS } from "./nav-items";
 import { useHaptics } from "../hooks/useHaptics";
+import { MUELLE_PILDORA } from "../utils/motion";
 
-/* Muelle del indicador. Es el mismo que el de Sidebar a propósito: son el
-   MISMO objeto en dos tamaños de pantalla y moverse distinto los delataría.
-   Ratio de amortiguación ~1,05 (34 / 2·√(360·0,8)): llega y se para, sin
-   rebote. Un indicador que rebota parece un juguete y, además, en un recorrido
-   tan corto el rebote sólo se lee como imprecisión. */
-export const MUELLE_INDICADOR = {
-  type: "spring" as const,
-  stiffness: 360,
-  damping: 34,
-  mass: 0.8,
-};
+/* EL INDICADOR ACTIVO, ESCRITO UNA VEZ PARA LAS DOS BARRAS.
+ *
+ * El muelle ya se compartía —MUELLE_INDICADOR vivía aquí y lo importaba
+ * Sidebar—, pero eran exactamente los tres números de MUELLE_PILDORA en
+ * utils/motion.ts, así que la copia se va y queda el original.
+ *
+ * EL ASPECTO, EN CAMBIO, NO SE COMPARTÍA, y el comentario de aquí abajo llevaba
+ * tiempo prometiendo que sí: esta barra pintaba 16px de radio y 13% de tinte sin
+ * borde, y el menú lateral 12px, 14% y un borde al 30%. Son el MISMO indicador
+ * en dos tamaños de pantalla, y al cruzar el salto de md cambiaba de forma.
+ *
+ * Gana la receta del menú lateral —12px (el escalón de control de la casa), 14%
+ * y borde— por dos motivos: el radio tiene que coincidir con el del enlace que
+ * envuelve (allí el indicador es `inset-0` sobre un `rounded-xl`, y 16px encima
+ * de 12px dejaba las esquinas descuadradas), y el borde es lo que separa el
+ * bloque del cristal de la barra sin subir el relleno. */
+export const CLASES_PILDORA_NAV =
+  "rounded-xl bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] border border-[color-mix(in_srgb,var(--accent)_30%,transparent)]";
 
 export default function BottomNav({ hidden = false }: { hidden?: boolean }) {
   const pathname = usePathname();
@@ -55,8 +63,8 @@ export default function BottomNav({ hidden = false }: { hidden?: boolean }) {
             // inset-x-2/inset-y-1 y no inset-0: dejando aire alrededor sigue
             // siendo una píldora y no una celda rellena, que con este tamaño
             // pesaría demasiado sobre el cristal de la barra.
-            className="absolute inset-x-2 inset-y-1 rounded-2xl bg-[color-mix(in_srgb,var(--accent)_13%,transparent)]"
-            transition={MUELLE_INDICADOR}
+            className={`absolute inset-x-2 inset-y-1 ${CLASES_PILDORA_NAV}`}
+            transition={MUELLE_PILDORA}
           />
         )}
         <span className={`relative z-10 transition-colors ${active ? "accent" : "ink-faint"}`}>
@@ -65,7 +73,7 @@ export default function BottomNav({ hidden = false }: { hidden?: boolean }) {
         {/* La etiqueta inactiva sube a ink-soft: a 10px, ink-faint (~3,6:1) no
             llega al mínimo AA de 4,5:1. El icono sí puede quedarse en ink-faint
             (gráfico: basta 3:1). */}
-        <span className={`relative z-10 text-[10px] font-medium transition-colors ${active ? "ink" : "ink-soft"}`}>
+        <span className={`relative z-10 t-micro font-medium transition-colors ${active ? "ink" : "ink-soft"}`}>
           {it.label}
         </span>
       </Link>

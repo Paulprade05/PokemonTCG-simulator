@@ -20,6 +20,7 @@ import ConfirmSheet from "../../components/ui/ConfirmSheet";
 import Sheet from "../../components/ui/Sheet";
 import { RARITY_RANK, valorDeVenta } from "../../utils/constanst";
 import { formatNumber } from "../../utils/format";
+import { D, EASE_OUT } from "../../utils/motion";
 import PokemonCard from "../../components/PokemonCard";
 // El estado físico de la copia. Se pinta también en la rejilla: sin esto, una
 // carta que en su detalle decía «ESTADO: DAÑADA» salía impecable aquí.
@@ -31,6 +32,10 @@ import InsigniaNota, { notaDeCarta } from "../../components/vitrina/InsigniaNota
 import PageHeader from "../../components/PageHeader";
 import Loader from "../../components/Loader";
 import CardDetailModal from "../../components/CardDetailModal";
+import CampoBusqueda from "../../components/ui/CampoBusqueda";
+import EstadoError from "../../components/ui/EstadoError";
+import EstadoVacio from "../../components/ui/EstadoVacio";
+import { IconoAvanzar, IconoDesplegar, IconoPapelera, IconoVolver } from "../../components/icons";
 import Link from "next/link";
 import type { CartaEnColeccion, Expansion } from "../../utils/tipos";
 
@@ -627,23 +632,10 @@ export default function CollectionPage() {
             hueco—, pero dejarlo era dejar puesta la trampa para el día que
             alguien le añada un botón. */}
         <PageHeader title="Mi Colección" />
-        <div className="surface rounded-2xl py-16 md:py-20 px-6 text-center flex flex-col items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl surface-2 flex items-center justify-center">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-7 h-7 ink-faint">
-              <circle cx="12" cy="12" r="9" /><path d="M12 7.5v5.5M12 16.5h.01" />
-            </svg>
-          </div>
-          <div>
-            <p className="ink font-medium">No se pudo cargar tu colección</p>
-            <p className="ink-soft text-sm mt-1">Comprueba tu conexión e inténtalo de nuevo.</p>
-          </div>
-          <button
-            onClick={() => { haptic("tap"); loadCollection(); }}
-            className="btn-primary press touch-target px-5 py-2.5 rounded-xl text-sm font-medium"
-          >
-            Reintentar
-          </button>
-        </div>
+        <EstadoError
+          titulo="No se pudo cargar tu colección"
+          onReintentar={() => { haptic("tap"); loadCollection(); }}
+        />
       </div>
     );
   }
@@ -703,9 +695,9 @@ export default function CollectionPage() {
             href="/vitrina"
             aria-label="Abrir la vitrina"
             title="Vitrina"
-            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press touch-target justify-center"
+            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl t-cuerpo-2 font-medium transition press touch-target justify-center"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="w-4 h-4">
               <rect x="3" y="3" width="18" height="18" rx="2" />
               <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
             </svg>
@@ -715,9 +707,9 @@ export default function CollectionPage() {
             href="/graduacion"
             aria-label="Graduar cartas"
             title="Graduar cartas"
-            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press touch-target justify-center"
+            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl t-cuerpo-2 font-medium transition press touch-target justify-center"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="w-4 h-4">
               <path d="M12 2 15 9l7 .6-5.3 4.6L18.2 21 12 17.3 5.8 21l1.5-6.8L2 9.6 9 9z" />
             </svg>
             <span className="hidden lg:inline">Graduar</span>
@@ -731,7 +723,7 @@ export default function CollectionPage() {
             // quedaría sin nombre para un lector de pantalla.
             aria-label={pendingSale === "duplicates" ? "Vendiendo duplicados" : "Limpiar duplicados"}
             title={pendingSale === "duplicates" ? "Vendiendo duplicados" : "Limpiar duplicados"}
-            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press touch-target justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl t-cuerpo-2 font-medium transition press touch-target justify-center disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {/* El vaciado es una sola petición, pero puede tardar un segundo
                 largo con una colección enorme: sin un "Vendiendo…" visible el
@@ -739,9 +731,7 @@ export default function CollectionPage() {
             {pendingSale === "duplicates" ? (
               <span className="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
             ) : (
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-              </svg>
+              <IconoPapelera tam={16} />
             )}
             <span className="hidden lg:inline">
               {pendingSale === "duplicates" ? "Vendiendo…" : "Limpiar duplicados"}
@@ -763,30 +753,33 @@ export default function CollectionPage() {
           >
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl surface-2 flex items-center justify-center shrink-0">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 accent">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="w-5 h-5 accent">
                   <path d="M3 3v18h18" />
                   <path d="M7 14l4-4 4 4 6-6" />
                 </svg>
               </div>
               <div className="text-left min-w-0">
-                <h3 className="font-semibold text-sm">Progreso de colección</h3>
+                <h3 className="font-semibold t-cuerpo">Progreso de colección</h3>
                 {/* El renglón que antes decía "Ver progreso por expansión" (una
                     instrucción que el chevrón ya da) ahora dice el recuento. Es
                     el hueco donde se ha mudado el subtítulo de la cabecera. */}
-                <p className="text-xs ink-soft tnum">
+                <p className="t-cuerpo-2 ink-soft tnum">
                   {resumenCartas.unicas === 0
                     ? "Aún no tienes cartas"
                     : `${formatNumber(resumenCartas.unicas)} cartas · ${formatNumber(resumenCartas.copias)} copias`}
                 </p>
               </div>
             </div>
-            <motion.svg
+            {/* El giro va en un envoltorio y no en el propio SVG: el dibujo
+                sale del vocabulario común (components/icons.tsx) y aquí sólo
+                queda lo que es de esta pantalla, que es el que gire. */}
+            <motion.span
               animate={{ rotate: showStats ? 180 : 0 }}
-              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-              className="w-4 h-4 ink-soft"
+              className="ink-soft flex shrink-0"
+              aria-hidden="true"
             >
-              <path d="m6 9 6 6 6-6" />
-            </motion.svg>
+              <IconoDesplegar tam={16} />
+            </motion.span>
           </button>
 
           <AnimatePresence>
@@ -795,11 +788,11 @@ export default function CollectionPage() {
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: "auto", opacity: 1 }}
                 exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                transition={{ duration: D.slow, ease: EASE_OUT }}
                 className="overflow-hidden"
               >
                 {setStatsVisibles.length === 0 ? (
-                  <p className="text-xs ink-faint text-center py-8">
+                  <p className="t-cuerpo-2 ink-faint text-center py-8">
                     Aún no tienes cartas de ninguna expansión. Abre un sobre para empezar.
                   </p>
                 ) : (
@@ -817,10 +810,10 @@ export default function CollectionPage() {
                         <div className="flex items-center gap-3 mb-3">
                           {stat.logo && <img src={stat.logo} alt={stat.name} loading="lazy" decoding="async" className="h-7 object-contain opacity-90" />}
                           <div className="flex-1 min-w-0">
-                            <h3 className="font-medium text-sm truncate">{stat.name}</h3>
-                            <p className="text-[10px] ink-faint font-mono tnum">{stat.owned}/{stat.totalInSet}</p>
+                            <h3 className="font-medium t-cuerpo truncate">{stat.name}</h3>
+                            <p className="t-micro ink-soft tnum">{stat.owned}/{stat.totalInSet}</p>
                           </div>
-                          <span className="text-xs font-semibold ink-soft tnum">{stat.percentage}%</span>
+                          <span className="t-cuerpo-2 font-semibold ink-soft tnum">{stat.percentage}%</span>
                         </div>
                         <div className="w-full h-1.5 surface-2 rounded-full overflow-hidden">
                           <div
@@ -842,7 +835,7 @@ export default function CollectionPage() {
                   <button
                     type="button"
                     onClick={() => setVerTodasLasExpansiones((v) => !v)}
-                    className="btn-ghost press touch-target mt-3 w-full rounded-xl text-xs font-medium"
+                    className="btn-ghost press touch-target mt-3 w-full rounded-xl t-cuerpo-2 font-medium"
                   >
                     {verTodasLasExpansiones
                       ? "Ver sólo las empezadas"
@@ -910,43 +903,17 @@ export default function CollectionPage() {
               campo vuelve a ser hijo directo del flex, o sea que la fila de
               escritorio queda exactamente como estaba. */}
           <div className="flex items-center gap-2 xl:contents">
-          {/* Etiqueta y no contenedor neutro: así tocar el icono o el relleno
-              enfoca el campo. min-h-11 son los 44px mínimos de zona táctil. */}
-          <label className="input-field flex min-h-11 items-center gap-2 px-3 py-2 rounded-xl flex-1 min-w-0 xl:min-w-[180px]">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint shrink-0">
-              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
-            </svg>
-            <input
-              type="search"
-              inputMode="search"
-              enterKeyHint="search"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              aria-label="Buscar en tu colección"
-              placeholder="Buscar..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-              className="bg-transparent outline-none text-sm flex-1 min-w-0 placeholder:opacity-50 [&::-webkit-search-cancel-button]:hidden"
-            />
-            {searchTerm && (
-              <button
-                type="button"
-                onClick={() => { haptic("tap"); setSearchTerm(""); }}
-                aria-label="Limpiar búsqueda"
-                // El área táctil es de 44px, pero los márgenes negativos la
-                // meten dentro del relleno del campo: sin ellos la barra da un
-                // salto de 18px al escribir la primera letra.
-                className="ink-faint hover:ink shrink-0 -mr-1.5 -my-2.5 press flex h-11 w-11 items-center justify-center rounded-full"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                  <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
-              </button>
-            )}
-          </label>
+          {/* Ésta era la copia más completa de las siete —etiqueta envolvente,
+              atributos de teclado completos y aspa de 44px con los márgenes
+              negativos que evitan el salto de la barra— y es la que se llevó a
+              components/ui/CampoBusqueda. */}
+          <CampoBusqueda
+            className="flex-1 min-w-0 xl:min-w-[180px]"
+            etiqueta="Buscar en tu colección"
+            marcador="Buscar..."
+            valor={searchTerm}
+            onCambio={setSearchTerm}
+          />
 
           {/* EL BOTÓN QUE PLIEGA LOS FILTROS. Sólo existe por debajo de `xl`;
               a partir de ahí los tres desplegables están siempre a la vista y
@@ -976,13 +943,13 @@ export default function CollectionPage() {
             }
             className="btn-ghost press touch-target relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl xl:hidden"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="w-[18px] h-[18px]" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4" aria-hidden="true">
               <path d="M4 6h16M7 12h10M10 18h4" />
             </svg>
             {filtrosActivos > 0 && (
               <span
                 aria-hidden="true"
-                className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold tnum"
+                className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 t-micro font-bold tnum"
                 style={{ background: "var(--accent)", color: "#04110c" }}
               >
                 {filtrosActivos}
@@ -1031,7 +998,7 @@ export default function CollectionPage() {
               // (Y no, este tope no decide ningún punto de ruptura: sólo existe
               // a partir de `xl`, que es justo donde la fila ya cabía. Por
               // debajo los tres desplegables son `w-full` y van apilados.)
-              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl text-xs cursor-pointer truncate xl:w-auto xl:max-w-[320px]"
+              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl t-cuerpo-2 cursor-pointer truncate xl:w-auto xl:max-w-[320px]"
             >
               <option value="all">Todas las expansiones</option>
               {dbSets.map((set) => (<option key={set.id} value={set.id}>{set.name}</option>))}
@@ -1040,7 +1007,7 @@ export default function CollectionPage() {
               value={filterRarity}
               onChange={(e) => { haptic("select"); setFilterRarity(e.target.value); }}
               aria-label="Filtrar por rareza"
-              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl text-xs cursor-pointer truncate xl:w-auto"
+              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl t-cuerpo-2 cursor-pointer truncate xl:w-auto"
             >
               {/* "Todas las rarezas" y no "Toda rareza": el paralelo con "Todas
                   las expansiones" deja claro de un vistazo que este es un filtro
@@ -1053,7 +1020,7 @@ export default function CollectionPage() {
               value={sortBy}
               onChange={(e) => { haptic("select"); setSortBy(e.target.value); }}
               aria-label="Ordenar por"
-              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl text-xs cursor-pointer truncate xl:w-auto"
+              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl t-cuerpo-2 cursor-pointer truncate xl:w-auto"
             >
               {/* El prefijo "Orden:" va DENTRO de las opciones, no en un rótulo
                   al lado: un <select> nativo no admite nada antes de su texto
@@ -1073,20 +1040,25 @@ export default function CollectionPage() {
 
         {/* GRID */}
         {processedCards.length === 0 ? (
-          <div className="surface rounded-2xl py-16 md:py-20 px-6 text-center flex flex-col items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl surface-2 flex items-center justify-center">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-7 h-7 ink-faint">
+          <EstadoVacio
+            titulo={cards.length === 0 ? "Aún no tienes cartas" : "Sin resultados"}
+            detalle={cards.length === 0 ? "Abre tu primer sobre para empezar" : "Prueba otros filtros"}
+            /* El álbum abierto: es el icono de esta pestaña en la barra de
+               navegación, así que el vacío enseña el dibujo del sitio en el que
+               se está. Sólo sale aquí, por eso se queda escrito aquí. */
+            icono={
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={24} height={24} aria-hidden="true">
                 <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
               </svg>
-            </div>
-            <div>
-              <p className="ink font-medium">{cards.length === 0 ? "Aún no tienes cartas" : "Sin resultados"}</p>
-              <p className="ink-soft text-sm mt-1">{cards.length === 0 ? "Abre tu primer sobre para empezar" : "Prueba otros filtros"}</p>
-            </div>
-            {cards.length === 0 && (
-              <Link href="/" className="btn-primary press px-5 py-2.5 rounded-xl text-sm font-medium">Abrir sobres</Link>
-            )}
-          </div>
+            }
+            accion={
+              cards.length === 0 ? (
+                // `.control-44`: medía 40px y es el único camino de salida de
+                // una colección vacía, o sea la primera pantalla del juego.
+                <Link href="/" className="btn-primary press control-44 t-cuerpo rounded-xl px-5 font-medium">Abrir sobres</Link>
+              ) : undefined
+            }
+          />
         ) : (
           // 3 columnas en móvil: a 2 las cartas salían enormes y apenas cabían
           // dos filas en pantalla.
@@ -1103,7 +1075,7 @@ export default function CollectionPage() {
               <div key={card.id} className="relative group">
                 {card.quantity > 1 && (
                   <div
-                    className="absolute -top-2 -right-2 z-30 text-[10px] font-bold w-6 h-6 flex items-center justify-center rounded-full tnum"
+                    className="absolute -top-2 -right-2 z-30 t-micro font-bold w-6 h-6 flex items-center justify-center rounded-full tnum"
                     style={{
                       background: "var(--ink)",
                       color: "var(--bg)",
@@ -1115,8 +1087,15 @@ export default function CollectionPage() {
                   </div>
                 )}
                 {card.is_favorite && (
-                  <div className="absolute -top-2 -left-2 z-30 bg-rose-500 w-5 h-5 rounded-full flex items-center justify-center shadow-lg">
-                    <svg viewBox="0 0 24 24" fill="white" className="w-3 h-3">
+                  <div
+                    className="absolute -top-2 -left-2 z-30 w-5 h-5 rounded-full flex items-center justify-center"
+                    style={{ background: "var(--danger)", color: "#fff", boxShadow: "var(--shadow-sm)" }}
+                  >
+                    {/* 12px: es el glifo de una insignia de 20, no un icono de
+                        control, y comparte esquina con el contador de copias,
+                        que también es un glifo pequeño. Misma insignia que la
+                        de components/vitrina/FundaCarta.tsx. */}
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="w-3 h-3">
                       <path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 5.5 5.5 5.5 0 0 1 21.5 12c-2.5 4.5-9.5 9-9.5 9z" />
                     </svg>
                   </div>
@@ -1170,7 +1149,7 @@ export default function CollectionPage() {
                    * caso normal, y entonces esto es exactamente el árbol de
                    * antes — la rejilla monta 24 cartas y no puede pagar dos
                    * nodos de más por cada una que está bien. */}
-                  <div className="transition transform group-hover:-translate-y-1 duration-300 pointer-events-none">
+                  <div className="transition transform group-hover:-translate-y-1 duration-[var(--d-base)] pointer-events-none">
                     {(() => {
                       const estado = estadoDeCopia(card);
                       if (!estado) {
@@ -1207,7 +1186,7 @@ export default function CollectionPage() {
                 )}
                 </div>
                 {/* En táctil no hay hover: la acción se muestra siempre en móvil */}
-                <div className="mt-2 flex justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity duration-300">
+                <div className="mt-2 flex justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity duration-[var(--d-base)]">
                   {card.quantity > 1 ? (
                     <button
                       onClick={(e) => handleSellCard(e, card.id, card.rarity)}
@@ -1216,12 +1195,12 @@ export default function CollectionPage() {
                       // confirmación del servidor.
                       disabled={isSelling}
                       aria-busy={pendingSale === card.id}
-                      className="chip ink text-[11px] min-h-11 px-4 rounded-full press hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:brightness-100"
+                      className="chip ink t-meta min-h-11 px-4 rounded-full press hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:brightness-100"
                     >
                       {pendingSale === card.id ? "Vendiendo…" : `Vender +${precioDeUna(card.rarity, card.quantity)}`}
                     </button>
                   ) : (
-                    <span className="chip ink-soft text-[10px] px-2 py-1 rounded-full">Única</span>
+                    <span className="chip ink-soft t-micro px-2 py-1 rounded-full">Única</span>
                   )}
                 </div>
               </div>
@@ -1239,13 +1218,11 @@ export default function CollectionPage() {
               className="btn-ghost press touch-target w-11 h-11 rounded-xl flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
               aria-label="Anterior"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                <path d="m15 18-6-6 6-6" />
-              </svg>
+              <IconoVolver tam={16} />
             </button>
-            <span className="chip ink px-4 py-2 text-sm font-medium tnum">
+            <span className="chip ink px-4 py-2 t-cuerpo font-medium tnum">
               {safePage} / {totalPages}
-              <span className="ink-soft text-xs ml-2">· {formatNumber(processedCards.length)} cartas</span>
+              <span className="ink-soft t-cuerpo-2 ml-2">· {formatNumber(processedCards.length)} cartas</span>
             </span>
             <button
               onClick={() => goToPage(Math.min(totalPages, safePage + 1))}
@@ -1253,9 +1230,7 @@ export default function CollectionPage() {
               className="btn-ghost press touch-target w-11 h-11 rounded-xl flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
               aria-label="Siguiente"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                <path d="m9 18 6-6-6-6" />
-              </svg>
+              <IconoAvanzar tam={16} />
             </button>
           </div>
         )}
@@ -1292,8 +1267,8 @@ export default function CollectionPage() {
                 />
               )}
               <div className="min-w-0">
-                <p className="ink font-semibold text-[15px] truncate">{actionCardLive.name}</p>
-                <p className="ink-faint text-[11px] truncate">
+                <p className="ink font-semibold t-cuerpo truncate">{actionCardLive.name}</p>
+                <p className="ink-soft t-meta truncate">
                   {actionCardLive.rarity || "Sin rareza"}
                   {actionCardLive.quantity > 1 ? ` · ${actionCardLive.quantity} copias` : " · copia única"}
                 </p>
@@ -1320,9 +1295,9 @@ export default function CollectionPage() {
                   setActionCard(null);
                   openCardDetail(actionCardLive);
                 }}
-                className="btn-ghost press rounded-2xl py-3.5 text-sm font-medium flex items-center justify-center gap-2 touch-target"
+                className="btn-ghost press rounded-2xl py-3.5 t-cuerpo font-medium flex items-center justify-center gap-2 touch-target"
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="w-4 h-4">
                   <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3M11 8v6M8 11h6" />
                 </svg>
                 Ver detalle
@@ -1338,9 +1313,9 @@ export default function CollectionPage() {
                     if (cobrado > 0) toast(`+${formatNumber(cobrado)} monedas por ${name}`, "success");
                   }}
                   disabled={isSelling}
-                  className="btn-ghost press rounded-2xl py-3.5 text-sm font-medium flex items-center justify-center gap-2 touch-target disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="btn-ghost press rounded-2xl py-3.5 t-cuerpo font-medium flex items-center justify-center gap-2 touch-target disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="w-4 h-4">
                     <circle cx="12" cy="12" r="9" /><path d="M12 7v10M9.5 9.5h4a1.8 1.8 0 0 1 0 3.5h-3a1.8 1.8 0 0 0 0 3.5h4" />
                   </svg>
                   Vender una copia · +{precioDeUna(actionCardLive.rarity, actionCardLive.quantity)}
@@ -1356,13 +1331,16 @@ export default function CollectionPage() {
                     setActionCard(null);
                     applyToggleFavorite(id, !!is_favorite);
                   }}
-                  className="btn-ghost press rounded-2xl py-3.5 text-sm font-medium flex items-center justify-center gap-2 touch-target"
+                  className="btn-ghost press rounded-2xl py-3.5 t-cuerpo font-medium flex items-center justify-center gap-2 touch-target"
                 >
                   <svg
                     viewBox="0 0 24 24"
                     fill={actionCardLive.is_favorite ? "currentColor" : "none"}
                     stroke="currentColor"
                     strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
                     className="w-4 h-4"
                   >
                     <path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 5.5 5.5 5.5 0 0 1 21.5 12c-2.5 4.5-9.5 9-9.5 9z" />
@@ -1373,7 +1351,7 @@ export default function CollectionPage() {
 
               <button
                 onClick={() => setActionCard(null)}
-                className="btn-ghost press rounded-2xl py-3.5 text-sm font-medium ink-soft touch-target"
+                className="btn-ghost press rounded-2xl py-3.5 t-cuerpo font-medium ink-soft touch-target"
               >
                 Cancelar
               </button>

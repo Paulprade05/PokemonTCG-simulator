@@ -164,17 +164,21 @@ export type Decision = "guardada" | "vendida";
  * Los cuatro tramos son los mismos que separa `etiquetaNota`, para que el color
  * y el rótulo no puedan contradecirse.
  *
- * SE USAN --ok, --warn-ink y --danger Y NO --accent NI --warn: los dos últimos
- * son colores de MARCA y viven fuera del tema, así que sobre el papel crema del
- * modo claro dan 2,2:1 — valen para un relleno, no para un número que hay que
- * leer. --ok y --warn-ink existen exactamente para esto y tienen un valor
- * propio en cada tema (ver la nota de app/globals.css).
+ * SE USAN LAS TINTAS Y NO LOS COLORES DE MARCA: --accent y --warn viven fuera
+ * del tema y sobre el papel crema del modo claro dan 2,2:1 — valen para un
+ * relleno, no para un número que hay que leer. --ok, --warn-ink y --danger-ink
+ * existen exactamente para esto y tienen un valor propio en cada tema (ver la
+ * nota de app/globals.css).
+ *
+ * El tramo bajo pasó de --danger a --danger-ink por esa misma regla: --danger
+ * es el rojo DE FONDO (3,1:1 sobre --surface) y esto es un número que se lee.
+ * Los otros tres tramos ya usaban su tinta; era el único que iba por libre.
  */
 export function tintaDeNota(nota: number): string {
   if (nota >= 9) return "var(--ok)";
   if (nota >= 7) return "var(--ink)";
   if (nota >= 4) return "var(--warn-ink)";
-  return "var(--danger)";
+  return "var(--danger-ink)";
 }
 
 /** Fondo tenue a juego con la tinta, para el sello y los distintivos. */
@@ -207,12 +211,19 @@ interface SelloProps {
  */
 export function SelloNota({ nota, tamano = "md", soloNumero = false }: SelloProps) {
   const tinta = tintaDeNota(nota);
+  /* Los tres tamaños salen ya de la escala tipográfica. Los dos sueltos que
+     había aquí —56 y 30 px— eran los únicos de todo el repositorio fuera de la
+     escala, y en ella el escalón grande es `t-display`; lo que separa la
+     ceremonia de la rejilla pasa a ser el aire de la caja, no la cifra.
+     El rótulo ya no viaja por tamaño: es el mismo rótulo en mayúsculas en los
+     tres, y eso es exactamente lo que `t-etiqueta` define de una vez (tamaño,
+     peso, caja y espaciado entre letras). */
   const medidas =
     tamano === "lg"
-      ? { numero: "text-[56px] leading-none", rotulo: "text-[13px]", caja: "px-5 py-4 rounded-3xl" }
+      ? { numero: "t-display leading-none", caja: "px-5 py-4 rounded-3xl" }
       : tamano === "md"
-        ? { numero: "text-[30px] leading-none", rotulo: "text-[11px]", caja: "px-3.5 py-2.5 rounded-2xl" }
-        : { numero: "text-[17px] leading-none", rotulo: "text-[10px]", caja: "px-2.5 py-1.5 rounded-xl" };
+        ? { numero: "t-display leading-none", caja: "px-3.5 py-2.5 rounded-2xl" }
+        : { numero: "t-titulo leading-none", caja: "px-2.5 py-1.5 rounded-xl" };
 
   return (
     <div
@@ -228,7 +239,7 @@ export function SelloNota({ nota, tamano = "md", soloNumero = false }: SelloProp
         {nota}
       </span>
       {!soloNumero && (
-        <span className={`font-semibold uppercase tracking-[0.14em] ${medidas.rotulo}`} style={{ color: tinta }}>
+        <span className="t-etiqueta" style={{ color: tinta }}>
           {etiquetaNota(nota)}
         </span>
       )}

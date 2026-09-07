@@ -168,6 +168,34 @@ html[data-theme="dark"] body {
      que font-sans resuelva a la fuente real y no caiga al system-ui. */
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* ============================================================
+     LAS DOS LÍNEAS QUE ENCHUFAN LA ESCALA DE MOVIMIENTO A TAILWIND
+     ============================================================
+     La escala de arriba (las variables --d- y --ease-) está escrita,
+     documentada y razonada desde hace tiempo, pero SÓLO LA LEÍAN CUATRO
+     FICHEROS: los
+     que escriben la transición a mano en un `style` o en una clase
+     arbitraria. Todo lo demás —unos 117 `transition` y unos 23
+     `transition-colors` sueltos repartidos por la aplicación— se quedaba
+     con los valores de fábrica de Tailwind: 150 ms y
+     cubic-bezier(.4, 0, .2, 1), que no es ninguna de nuestras dos curvas.
+     O sea que la mitad de la interfaz se movía con la escala de la casa y
+     la otra mitad con la de Tailwind, y nadie podía señalar dónde estaba
+     la costura.
+
+     `transition` y `transition-colors` a secas son SIEMPRE un cambio de
+     estado sin recorrido (color, borde, sombra, fondo de un hover), que es
+     literalmente el trabajo que la cabecera de la escala le asigna a
+     --d-fast. Y 140 ms cae al lado de los 150 que Tailwind traía, así que
+     esto NO cambia el ritmo de nada: lo pone en el sitio donde se puede
+     cambiar de una vez. La curva sí cambia, y a mejor: --ease-out es la
+     curva de este tema.
+
+     Quien necesite otra duración sigue teniendo `duration-*` y los tokens
+     a mano; esto es sólo el valor por defecto que antes no era nuestro. */
+  --default-transition-duration: var(--d-fast);
+  --default-transition-timing-function: var(--ease-out);
 }
 
 html { scroll-behavior: smooth; }
@@ -616,7 +644,189 @@ button, a, [role="button"] { touch-action: manipulation; }
     scrollbar-width: none;
   }
   .scroll-x::-webkit-scrollbar { display: none; }
+
+  /* LA ÚNICA FORMA DE PINTAR CIFRAS. Sustituyó a los `font-mono` y
+     `tabular-nums` sueltos que había repartidos por el código: lo que se pedía
+     en todos ellos era que las columnas de dígitos no bailasen al cambiar el
+     número, y de eso se encarga `font-variant-numeric`, no la familia.
+
+     Y NO HACE FALTA `font-mono` PARA UN <code> NI PARA UN <kbd>: el preflight
+     de Tailwind ya declara `code, kbd, samp, pre { font-family: <la mono> }`,
+     así que el ID de entrenador de social y los ejemplos de sintaxis del
+     buscador salen en monoespaciada por ser lo que son, sin una sola clase.
+     Los `font-mono` que llevaban encima eran redundantes desde el primer día.
+     Queda dicho aquí porque es justo el sitio donde alguien, viendo que el
+     barrido de cifras se los llevó, va a querer "devolverlos": no hay nada que
+     devolver, y ponerlos otra vez sólo reabre la puerta a usar la mono para
+     pintar precios, que es de donde venía todo esto.
+
+     Regla para los barridos, en una línea: si son CIFRAS, `.tnum`; si no lo
+     son, ninguna clase — y si tiene que verse como código, la etiqueta
+     correcta es <code>. */
   .tnum { font-variant-numeric: tabular-nums; }
+}
+
+/* ============================================================
+   LA ESCALA TIPOGRÁFICA — SIETE TALLAS CON NOMBRE DE OFICIO
+   ============================================================
+   Un recuento del código encontró ONCE tamaños escritos a mano en 265
+   sitios: text-[9px] (19 usos), [10px] (~13), [11px] (~10), [12px] (38),
+   [13px] (19), [14px] (5), [15px] (3), [16px] (1), [17px] (7) y dos
+   sueltos de 30 y 56, además de las utilidades text-xs/sm/base/lg de
+   Tailwind mezcladas con todo lo anterior. Once tallas no son una escala,
+   son once decisiones tomadas por separado: 12 y 13 px no se distinguen
+   de un vistazo pero sí obligan al ojo a reajustar, y dos rótulos
+   hermanos en dos pantallas acaban midiendo distinto sin que nadie lo
+   haya decidido.
+
+   Aquí quedan SIETE, y se nombran por el PAPEL que cumplen, no por lo que
+   miden. Eso no es cosmético, es lo que hace que el barrido posterior sea
+   mecánico y, sobre todo, que se pueda LEER: `t-meta` dice "esto es un
+   metadato" y sobrevive a que mañana el metadato mida 12 px; `text-[11px]`
+   no dice nada y hay que ir a mirar el diseño para saber si esos 11 px
+   eran una decisión o un despiste. El día que haya que retocar la escala
+   se retoca aquí y las 265 llamadas se enteran solas.
+
+   CADA UNA TRAE SU INTERLINEADO, y por eso son utilidades y no variables:
+   el interlineado correcto depende del tamaño (un rótulo de 10 px con el
+   1,5 del cuerpo se separa tanto que deja de leerse como una sola cosa, y
+   un título de 24 px con 1,5 se desparrama). Yendo juntos, no hay forma de
+   coger un tamaño y olvidarse del otro, que es de donde salen la mitad de
+   las 22 combinaciones de encabezado que hay contadas.
+
+   -----------------------------------------------------------------
+   MAPA DE CONVERSIÓN — el que usarán los tres barridos por pantalla:
+
+     text-[9px]  → t-micro     (9 y 10 se funden: a 9px la Inter empieza
+     text-[10px] → t-micro      a perder los remates en pantallas 2x)
+     text-[11px] → t-meta
+     text-[12px] → t-cuerpo-2
+     text-[13px] → t-cuerpo-2 o t-cuerpo, SEGÚN EL PAPEL: si es un apoyo
+                   de una línea (subtítulo, pie), t-cuerpo-2; si es texto
+                   que se lee de corrido (un párrafo explicativo, el
+                   cuerpo de un aviso), t-cuerpo. Es el único escalón del
+                   mapa que exige mirar qué hay alrededor.
+     text-[14px] → t-cuerpo
+     text-[15px] → t-cuerpo
+     text-[16px] → t-base
+     text-[17px] → t-titulo
+   -----------------------------------------------------------------
+
+   VAN CON `@utility` Y NO DENTRO DE UN `@layer utilities`, y esto NO es
+   un detalle de estilo: es la diferencia entre una utilidad de verdad y
+   una clase suelta que se parece a una. Escritas a mano dentro de la
+   capa pasaban dos cosas, las dos medidas compilando esta hoja:
+
+     · NO EXISTÍAN LAS VARIANTES. `md:t-cuerpo` o `sm:t-meta` no
+       generaban absolutamente nada —ni una regla, ni un aviso—, así que
+       un barrido que convirtiera `text-base md:text-lg` habría escrito
+       `t-base md:t-titulo` y el escalón grande habría desaparecido en
+       silencio. Hay 29 tamaños responsivos en uso hoy (el álbum, social,
+       la tesela de la portada); con `@utility` cada uno de estos ocho
+       nombres acepta los mismos prefijos que un `text-lg` de fábrica.
+     · Y GANABAN A LAS VARIANTES AJENAS. El bloque se emitía DESPUÉS de
+       las utilidades de Tailwind y con la misma especificidad, así que
+       `t-micro md:text-lg` se quedaba en 10 px a cualquier anchura.
+
+   EL INTERLINEADO SE DECLARA CON `var(--tw-leading, …)`, que es
+   exactamente como lo declaran los `text-*` de Tailwind. Sin eso, la
+   clase horneaba su interlineado y pisaba a cualquier `leading-*` que
+   tuviera al lado —da igual el orden en que se escriban las clases— y en
+   el código hay 71 atributos que llevan a la vez un tamaño y un
+   `leading-*`: son justo los que el barrido va a tocar. Con la variable,
+   `t-cuerpo leading-tight` da 14/17,5 como daría `text-sm leading-tight`,
+   y `t-cuerpo` a secas sigue dando su 1,5. Regla para el barrido: el
+   `leading-*` que ya estuviera escrito SE QUEDA; sólo se cambia el
+   tamaño.
+
+   Y OJO CON LOS CAMPOS DE ESCRITURA: la regla `input, select, textarea {
+   font-size: 16px }` vive fuera de toda capa (más arriba, con su porqué:
+   iOS hace zoom si baja de 16) y gana a cualquier utilidad de aquí. Sobre
+   un <input> estas clases no pintan nada, igual que no lo pintaban las
+   text-* de Tailwind.
+
+   UNA CONSECUENCIA DE SER UTILIDADES DE VERDAD, para que no asuste: como
+   cualquier clase de Tailwind, sólo se emiten LAS QUE ALGUIEN USA. Buscar
+   `.t-display` en la hoja compilada y no encontrarla no significa que
+   esté rota; significa que todavía no la usa nadie. Aparecerá sola en
+   cuanto el primer barrido la escriba. */
+@utility t-micro    { font-size: 10px; line-height: var(--tw-leading, 1.3); }
+@utility t-meta     { font-size: 11px; line-height: var(--tw-leading, 1.35); }
+@utility t-cuerpo-2 { font-size: 12px; line-height: var(--tw-leading, 1.45); }
+@utility t-cuerpo   { font-size: 14px; line-height: var(--tw-leading, 1.5); }
+@utility t-base     { font-size: 16px; line-height: var(--tw-leading, 1.5); }
+@utility t-titulo   { font-size: 20px; line-height: var(--tw-leading, 1.3); }
+@utility t-display  { font-size: 24px; line-height: var(--tw-leading, 1.2); }
+
+/* LA ETIQUETA EN MAYÚSCULAS, que es un caso aparte y por eso tiene clase
+   propia. Está contada 49 veces en el código repartida en VEINTE
+   combinaciones distintas: 9, 10 y 11 px; medium, semibold y bold; y el
+   espaciado entre letras saltando entre .1em, .12em, .14em, .15em, .2em
+   y `tracking-wider`. Son todas el mismo rótulo —"VALOR", "COPIAS",
+   "RAREZA"— y ninguna se parece a la de al lado.
+   El espaciado NO es un adorno: en mayúsculas y a 10 px las letras se
+   tocan, y .14em es lo que las separa sin que la palabra se deshaga.
+   No lleva color: el rótulo puede ser ink-faint en un sitio y accent en
+   otro, y eso sí es una decisión de cada pantalla. */
+@utility t-etiqueta {
+  font-size: 10px;
+  line-height: var(--tw-leading, 1.2);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+/* ============================================================
+   LOS 44 PÍXELES QUE PIDE UN DEDO
+   ============================================================
+   Medido en la aplicación: el chip de monedas 40, el disparador del
+   buscador 42, los enlaces del menú lateral 42, "Abrir sobres" 40, el
+   "Cerrar" del buscador 36, "Ver álbum" 36, "Enviar oferta" 38 y los
+   tres botones de precio de la hoja de publicar, 32. Ninguno de ellos
+   llega a los 44 px que Apple fija como zona tocable mínima —y que no
+   es una cifra de estilo: por debajo de eso el dedo falla y el fallo se
+   paga tocando otra cosa, que en esta aplicación puede ser vender una
+   carta.
+
+   Ya existía `.touch-target`, que pone las dos medidas mínimas y nada
+   más. Se queda como está —la usan decenas de sitios— y ésta añade lo
+   que allí faltaba: CENTRAR EL CONTENIDO. Estirar un botón a 44 px sin
+   centrar deja el icono pegado arriba a la izquierda dentro de una caja
+   más grande, que es peor que el botón pequeño, y por eso casi todos
+   los sitios que usan .touch-target repiten al lado
+   `flex items-center justify-center`.
+
+   QUÉ MANDA Y QUÉ CEDE, que es la parte que hay que leer antes de
+   ponerla en una fila:
+
+     · Las dos MEDIDAS MÍNIMAS van a peso, con especificidad de clase.
+       Son el motivo de existir de la clase. La única forma de pisarlas
+       es escribir al lado un `min-w-*`/`min-h-*` explícito, que Tailwind
+       emite después: eso es una decisión deliberada de quien lo escriba,
+       no un accidente, y por eso se deja pasar. Hoy no lo hace nadie.
+     · `display`, `align-items` y `justify-content` CEDEN ante cualquier
+       utilidad, los tres dentro de un `:where()` de especificidad cero.
+       Son comodidad, no la promesa. Antes sólo cedía el `display`, y las
+       otras dos se quedaban a peso: `control-44 justify-between` era
+       letra muerta —comprobado en la hoja compilada— y eso es una trampa
+       puesta justo delante de unos barridos que van a poner esta clase
+       en filas de icono+texto. Ahora `justify-between`, `items-start` o
+       `flex` ganan, y quien no pida nada sigue teniendo el icono
+       centrado.
+
+   Va con `@utility` por el mismo motivo que la escala de arriba: dentro
+   de un `@layer` no existían `md:control-44` ni ninguna otra variante. El
+   `:where(&)` anidado es lo que hace que la variante herede también los
+   tres valores que ceden; `.chip` y `.skeleton` usan la forma plana
+   porque no son utilidades y no tienen variantes que mantener. */
+@utility control-44 {
+  min-width: 44px;
+  min-height: 44px;
+  :where(&) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 /* ============================================================

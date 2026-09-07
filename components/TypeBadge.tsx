@@ -5,6 +5,13 @@
  * --ink para que la etiqueta se lea en los dos temas. Un tono fijo (los -300 de
  * antes) sólo funciona sobre fondo oscuro; sobre --surface blanco quedaba en
  * ~1,3:1 de contraste.
+ *
+ * `bg` y `border` SÍ se quedan en paleta literal de Tailwind, y no es un olvido
+ * del barrido de color: el veto a la paleta cruda es para el TEXTO, y aquí el
+ * verde de Planta o el rojo de Lucha son la identidad del tipo de Pokémon —no
+ * salen del tema y no cambian con él—. Ningún token del proyecto los nombra, y
+ * traducirlos a --accent/--warn borraría justo lo que distingue una etiqueta de
+ * la de al lado. Al 15 % de alfa son un relleno, no un color de lectura.
  */
 const TYPE_STYLES: Record<string, { bg: string; ink: string; border: string; emoji: string }> = {
   Grass:     { bg: "bg-emerald-500/15", ink: "#10b981", border: "border-emerald-500/30", emoji: "🌿" },
@@ -24,10 +31,15 @@ const typeInk = (color: string) => `color-mix(in srgb, ${color} 55%, var(--ink))
 
 export default function TypeBadge({ type, size = "sm" }: { type: string; size?: "xs" | "sm" }) {
   const style = TYPE_STYLES[type] || TYPE_STYLES.Colorless;
-  const cls = size === "xs" ? "text-[9px] px-1.5 py-0.5" : "text-[10px] px-2 py-0.5";
+  // `size` YA NO CAMBIA EL TAMAÑO DE LETRA, sólo el aire lateral. Antes eran
+  // 9px frente a 10px, y la escala funde los dos en `t-micro`: dejar el
+  // ternario escrito con la misma clase en las dos ramas hacía creer que
+  // seguían midiendo distinto. La chapa "xs" se sigue distinguiendo por ir
+  // más apretada, que es para lo que la usa la rejilla densa.
+  const cls = size === "xs" ? "px-1.5 py-0.5" : "px-2 py-0.5";
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full border ${cls} ${style.bg} ${style.border} font-medium`}
+      className={`inline-flex items-center gap-1 rounded-full border t-micro ${cls} ${style.bg} ${style.border} font-medium`}
       style={{ color: typeInk(style.ink) }}
     >
       <span className="leading-none">{style.emoji}</span>
@@ -37,13 +49,13 @@ export default function TypeBadge({ type, size = "sm" }: { type: string; size?: 
 }
 
 export function EnergyCost({ cost }: { cost: string[] }) {
-  if (!cost || cost.length === 0) return <span className="ink-faint text-xs">—</span>;
+  if (!cost || cost.length === 0) return <span className="ink-faint t-cuerpo-2">—</span>;
   return (
     <div className="flex gap-1 flex-wrap">
       {cost.map((c, i) => {
         const s = TYPE_STYLES[c] || TYPE_STYLES.Colorless;
         return (
-          <span key={i} className={`w-5 h-5 rounded-full border ${s.bg} ${s.border} flex items-center justify-center text-[10px]`}>
+          <span key={i} className={`w-5 h-5 rounded-full border ${s.bg} ${s.border} flex items-center justify-center t-micro`}>
             {s.emoji}
           </span>
         );

@@ -29,7 +29,11 @@ export default function GlobalErrorBoundary({
           "calc(var(--app-height) - var(--topbar-h) - var(--sat) - var(--content-bottom) - 1.5rem)",
       }}
     >
-      <div className="surface w-full max-w-sm rounded-[var(--radius)] px-6 py-8 flex flex-col items-center gap-4">
+      {/* `rounded-[var(--radius)]` resolvía a 18px, un escalón que no existe en
+          la escala de radios (8/12/16/24/999) y que sólo se usaba aquí y en el
+          404. Pasa a 16, que es el de superficie: --radius se queda declarado
+          en globals.css por si algo externo lo lee. */}
+      <div className="surface w-full max-w-sm rounded-2xl px-6 py-8 flex flex-col items-center gap-4">
         <div
           className="w-14 h-14 rounded-2xl flex items-center justify-center"
           style={{
@@ -45,7 +49,7 @@ export default function GlobalErrorBoundary({
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
-            className="w-7 h-7"
+            className="w-6 h-6"
           >
             <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
             <path d="M12 9v4" />
@@ -54,10 +58,10 @@ export default function GlobalErrorBoundary({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <h1 className="ink text-xl font-bold tracking-tight">
+          <h1 className="ink t-titulo font-bold tracking-tight">
             Algo ha salido mal
           </h1>
-          <p className="ink-soft text-sm leading-relaxed">
+          <p className="ink-soft t-cuerpo leading-relaxed">
             No hemos podido cargar esta pantalla. Puedes reintentarlo o volver a
             los sobres.
           </p>
@@ -67,20 +71,22 @@ export default function GlobalErrorBoundary({
           <button
             type="button"
             onClick={reset}
-            className="btn-accent touch-target flex-1 rounded-xl px-4 text-sm font-semibold flex items-center justify-center"
+            className="btn-accent touch-target flex-1 rounded-xl px-4 t-cuerpo font-semibold flex items-center justify-center"
           >
             Reintentar
           </button>
           <Link
             href="/"
-            className="btn-ghost press touch-target flex-1 rounded-xl px-4 text-sm font-semibold flex items-center justify-center"
+            className="btn-ghost press touch-target flex-1 rounded-xl px-4 t-cuerpo font-semibold flex items-center justify-center"
           >
             Ir a los sobres
           </Link>
         </div>
 
+        {/* ink-faint (3,66:1) sólo se permite de 12px en adelante; a los 11
+            de este pie de referencia baja a ink-soft. */}
         {error.digest && (
-          <p className="ink-faint text-[11px] tnum break-all">
+          <p className="ink-soft t-meta tnum break-all">
             Referencia: {error.digest}
           </p>
         )}

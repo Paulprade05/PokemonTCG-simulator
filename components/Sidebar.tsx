@@ -6,9 +6,11 @@ import { motion } from "framer-motion";
 import { SignedIn } from "@clerk/nextjs";
 import { useState, useSyncExternalStore } from "react";
 import { NAV_ITEMS } from "./nav-items";
-import { MUELLE_INDICADOR } from "./BottomNav";
+import { CLASES_PILDORA_NAV } from "./BottomNav";
 import SettingsSheet from "./ui/SettingsSheet";
 import SidebarExtras from "./SidebarExtras";
+import { IconoAjustes, IconoMarca } from "./icons";
+import { MUELLE_PILDORA } from "../utils/motion";
 
 /* Nada a lo que suscribirse: el año no cambia mientras la página está abierta.
    Vive fuera del componente porque useSyncExternalStore exige que la función de
@@ -48,16 +50,21 @@ export default function Sidebar() {
         // (Sin transition-colors aquí: el color lo animan los dos spans de
         // dentro. Puesto en el enlace pisaría la transición de .press-flat, que
         // declara el atajo `transition` completo.)
-        className="press-flat group relative flex items-center gap-3 px-3 py-2.5 rounded-xl"
+        // `min-h-11` y no `.control-44`: medían 42px y les faltaban dos para la
+        // zona tocable mínima, pero esto es una FILA de icono y texto alineada
+        // a la izquierda, y `.control-44` además centra su contenido — que es
+        // lo correcto en un botón cuadrado y lo contrario en un enlace de menú.
+        className="press-flat group relative flex min-h-11 items-center gap-3 px-3 py-2.5 rounded-xl"
       >
         {active && (
           <motion.span
             layoutId="sidebar-active"
-            className="absolute inset-0 rounded-xl bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] border border-[color-mix(in_srgb,var(--accent)_30%,transparent)]"
-            // El muelle es literalmente el mismo objeto que el de la barra
-            // inferior: son el mismo indicador en dos tamaños de pantalla, y
-            // que se movieran distinto se notaría al cambiar el ancho.
-            transition={MUELLE_INDICADOR}
+            // El aspecto y el muelle son literalmente los mismos objetos que los
+            // de la barra inferior: son el mismo indicador en dos tamaños de
+            // pantalla, y que se movieran o se pintaran distinto se notaría al
+            // cambiar el ancho. El porqué largo, en BottomNav.tsx.
+            className={`absolute inset-0 ${CLASES_PILDORA_NAV}`}
+            transition={MUELLE_PILDORA}
           />
         )}
         {/* CLASE CON VALOR ARBITRARIO Y NO `group-hover` sobre `ink`, que es lo
@@ -71,7 +78,7 @@ export default function Sidebar() {
         <span className={`relative z-10 transition-colors ${active ? "accent" : "ink-faint group-hover:text-[var(--ink)]"}`}>
           {it.icon}
         </span>
-        <span className={`relative z-10 text-sm font-medium transition-colors ${active ? "ink" : "ink-soft group-hover:text-[var(--ink)]"}`}>
+        <span className={`relative z-10 t-cuerpo font-medium transition-colors ${active ? "ink" : "ink-soft group-hover:text-[var(--ink)]"}`}>
           {it.label}
         </span>
       </Link>
@@ -79,17 +86,22 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="hidden md:flex fixed left-0 top-0 bottom-0 z-40 w-60 flex-col px-3 py-5 border-r border-[var(--border)] bg-[var(--surface)]/60 backdrop-blur-xl">
+    // `glass` y no la receta a mano que había aquí (superficie al 60% con
+    // `backdrop-blur-xl`, o sea 24px de desenfoque): el cristal de la casa está
+    // declarado una sola vez en globals.css —78% de opacidad y 8px de
+    // desenfoque, acabado mate— y es el que lleva la barra superior. Dos
+    // recetas distintas para el mismo material se notan justo donde se tocan,
+    // en la esquina de arriba a la izquierda. Aquí no hay ninguna carta debajo,
+    // así que el backdrop-filter es seguro (la prohibición es sobre las cartas).
+    <aside className="hidden md:flex fixed left-0 top-0 bottom-0 z-40 w-60 flex-col px-3 py-5 glass border-r border-[var(--border)]">
       {/* Brand */}
       <Link href="/" className="press-flat flex items-center gap-2.5 px-3 mb-8">
         <div className="w-9 h-9 rounded-xl btn-accent flex items-center justify-center shrink-0">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="w-5 h-5 text-[#04110c]">
-            <rect x="3" y="5" width="18" height="14" rx="3" /><path d="M3 12h18" /><circle cx="12" cy="12" r="2.4" fill="currentColor" />
-          </svg>
+          <IconoMarca tam={20} className="text-[#04110c]" />
         </div>
         <div className="leading-tight">
-          <p className="text-sm font-bold tracking-tight ink">Pokémon TCG</p>
-          <p className="text-[10px] ink-faint">Simulator</p>
+          <p className="t-cuerpo font-bold tracking-tight ink">Pokémon TCG</p>
+          <p className="t-micro ink-soft">Simulator</p>
         </div>
       </Link>
 
@@ -120,16 +132,13 @@ export default function Sidebar() {
           {/* Mismo caso que los enlaces de arriba: la variante de hover sobre
               .ink no se genera nunca. Ver la nota de renderItem. */}
           <span className="ink-faint transition-colors group-hover:text-[var(--ink)]">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-[22px] h-[22px]" aria-hidden="true">
-              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
+            <IconoAjustes tam={20} />
           </span>
-          <span className="ink-soft text-sm font-medium transition-colors group-hover:text-[var(--ink)]">
+          <span className="ink-soft t-cuerpo font-medium transition-colors group-hover:text-[var(--ink)]">
             Ajustes
           </span>
         </button>
-        <p className="px-3 pt-1 text-[10px] ink-faint">v2{year ? ` · ${year}` : ""}</p>
+        <p className="px-3 pt-1 t-micro ink-soft">v2{year ? ` · ${year}` : ""}</p>
       </div>
 
       <SettingsSheet open={ajustesAbiertos} onClose={() => setAjustesAbiertos(false)} />

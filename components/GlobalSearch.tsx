@@ -6,6 +6,8 @@ import { searchCardsInDB } from "../app/action";
 import CardDetailModal from "./CardDetailModal";
 import Portal from "./ui/Portal";
 import { useHaptics } from "../hooks/useHaptics";
+import { IconoAvanzar, IconoLupa, IconoVolver } from "./icons";
+import { D, EASE_OUT } from "../utils/motion";
 
 interface Hit {
   id: string;
@@ -115,25 +117,32 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
           ref={triggerRef}
           onClick={openSearch}
           title="Buscar carta (Ctrl+K)"
-          className="input-field w-full flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-sm ink-soft hover:ink transition"
+          // `.control-44`: medía 42px de alto, dos por debajo de la zona tocable
+          // mínima. Aquí no hay riesgo de descentrar nada porque el rótulo de
+          // dentro es `flex-1`: se come el espacio libre y no queda nada que
+          // repartir.
+          className="input-field control-44 w-full flex items-center gap-2.5 px-4 py-2.5 rounded-xl t-cuerpo ink-soft hover:ink transition"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint">
-            <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
-          </svg>
+          <IconoLupa tam={16} className="ink-faint" />
           <span className="flex-1 text-left">Buscar cualquier carta…</span>
-          <kbd className="text-[10px] chip px-1.5 py-0.5 font-mono">⌘K</kbd>
+          {/* Sin `.tnum`: aquí no hay ni un dígito, así que las cifras
+              tabulares no hacían nada. La monoespaciada la pone el preflight
+              por ser un <kbd>, igual que antes la ponía una clase de familia
+              que sobraba. */}
+          <kbd className="t-micro chip px-1.5 py-0.5">⌘K</kbd>
         </button>
       ) : (
         <button
           ref={triggerRef}
           onClick={openSearch}
           title="Buscar carta (Ctrl+K)"
-          className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center rounded-xl btn-ghost press"
+          // Nacía a 36px (40 en escritorio) y la barra superior lo estiraba
+          // desde fuera con `[&>button]:h-11`. Con `.control-44` el tamaño
+          // correcto lo trae ya el propio botón.
+          className="control-44 flex items-center justify-center rounded-xl btn-ghost press"
           aria-label="Buscar"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-            <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
-          </svg>
+          <IconoLupa tam={16} />
         </button>
       )}
 
@@ -163,7 +172,7 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                transition={{ duration: D.base, ease: EASE_OUT }}
                 onClick={(e) => e.stopPropagation()}
                 role="dialog"
                 aria-modal="true"
@@ -174,9 +183,7 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                 {/* pt-safe deja libre el notch cuando el panel va a pantalla completa */}
                 <div className="pt-safe md:pt-0 border-b border-[var(--border)] shrink-0">
                   <div className="px-4 py-3 flex items-center gap-3">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 ink-faint shrink-0">
-                      <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
-                    </svg>
+                    <IconoLupa tam={20} className="ink-faint" />
                     <input
                       ref={inputRef}
                       autoFocus
@@ -192,11 +199,13 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                       onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
                       placeholder="Buscar carta..."
                       aria-label="Buscar carta"
-                      className="bg-transparent ink outline-none flex-1 text-base placeholder:text-[var(--ink-faint)] min-w-0 [&::-webkit-search-cancel-button]:hidden"
+                      className="bg-transparent ink outline-none flex-1 t-base placeholder:text-[var(--ink-faint)] min-w-0 [&::-webkit-search-cancel-button]:hidden"
                     />
                     <button
                       onClick={closeSearch}
-                      className="btn-ghost ink-soft hover:ink text-xs px-3 min-h-9 rounded-lg shrink-0 press"
+                      // Medía 36px de alto: el botón para salir del buscador a
+                      // pantalla completa era el más pequeño de la pantalla.
+                      className="btn-ghost ink-soft hover:ink control-44 t-cuerpo-2 px-3 rounded-lg shrink-0 press"
                     >Cerrar</button>
                   </div>
                 </div>
@@ -206,19 +215,26 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                   data-lenis-prevent
                   style={{ paddingBottom: "max(1rem, calc(var(--sab) - var(--keyboard) + 1rem))" }}
                 >
-                  {loading && <p className="text-xs ink-faint text-center py-8">Buscando…</p>}
+                  {loading && <p className="t-cuerpo-2 ink-faint text-center py-8">Buscando…</p>}
                   {!loading && searchError && (
-                    <p className="text-xs text-center py-8" style={{ color: "var(--danger-ink)" }}>
+                    <p className="t-cuerpo-2 text-center py-8" style={{ color: "var(--danger-ink)" }}>
                       No se pudo buscar. Revisa tu conexión.
                     </p>
                   )}
                   {!loading && !searchError && query && results.length === 0 && (
-                    <p className="text-xs ink-faint text-center py-8">Sin resultados.</p>
+                    <p className="t-cuerpo-2 ink-faint text-center py-8">Sin resultados.</p>
                   )}
                   {!loading && !searchError && !query && (
-                    <div className="text-xs ink-faint px-2 py-4 leading-relaxed">
+                    <div className="t-cuerpo-2 ink-faint px-2 py-4 leading-relaxed">
                       <p className="mb-2">Ejemplos:</p>
-                      <ul className="space-y-1 font-mono">
+                      {/* Sin `.tnum` en la lista: esto es sintaxis de consulta,
+                          no una columna de cifras, y unas cifras tabulares
+                          sobre "name:pikachu" no hacían absolutamente nada. Los
+                          ejemplos siguen saliendo en monoespaciada por estar en
+                          un <code> —el preflight de Tailwind se la da—, y ahora
+                          los puntos que hacen de viñeta ya no, que era lo único
+                          que la clase de familia de la lista aportaba. */}
+                      <ul className="space-y-1">
                         <li>· <code className="ink-soft">charizard</code></li>
                         <li>· <code className="ink-soft">name:pikachu subtypes:vmax</code></li>
                         <li>· <code className="ink-soft">types:fire hp:[150 TO *]</code></li>
@@ -248,19 +264,27 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                               alt={c.name}
                               loading="lazy"
                               decoding="async"
-                              className="w-full h-auto rounded-md"
+                              // El radio de una carta es 4,5%, no 6px sueltos:
+                              // es el mismo que pintan PokemonCard, el álbum y
+                              // la vitrina, y el velo de debajo tiene que
+                              // llevarlo igual para no asomar por las esquinas.
+                              className="w-full h-auto rounded-[4.5%]"
                             />
                             {!c.owned && (
                               <div
                                 aria-hidden="true"
-                                className="absolute inset-0 rounded-md pointer-events-none transition-opacity opacity-55 group-hover:opacity-20"
+                                className="absolute inset-0 rounded-[4.5%] pointer-events-none transition-opacity opacity-55 group-hover:opacity-20"
                                 style={{ background: "var(--surface)" }}
                               />
                             )}
                           </div>
                         )}
-                        <p className={`text-[10px] truncate mt-1 ${c.owned ? "ink" : "ink-faint"}`}>{c.name}</p>
-                        <p className="text-[9px] ink-faint truncate">{c.set?.name}</p>
+                        {/* ink-soft y no ink-faint: a 10px, ink-faint se queda
+                            en 3,66:1 y la regla de la casa lo limita a 12px en
+                            adelante. Es el mismo ajuste que ya lleva la
+                            etiqueta de la barra de pestañas. */}
+                        <p className={`t-micro truncate mt-1 ${c.owned ? "ink" : "ink-soft"}`}>{c.name}</p>
+                        <p className="t-micro ink-soft truncate">{c.set?.name}</p>
                       </button>
                     ))}
                   </div>
@@ -274,11 +298,9 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                         className="w-11 h-11 rounded-xl btn-ghost disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition press"
                         aria-label="Anterior"
                       >
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-soft">
-                          <path d="m15 18-6-6 6-6" />
-                        </svg>
+                        <IconoVolver tam={16} className="ink-soft" />
                       </button>
-                      <span className="text-xs ink-soft tnum chip px-3 py-2">
+                      <span className="t-cuerpo-2 ink-soft tnum chip px-3 py-2">
                         {page} / {totalPages}
                         <span className="ink-faint ml-2">· {total}</span>
                       </span>
@@ -288,9 +310,7 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                         className="w-11 h-11 rounded-xl btn-ghost disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition press"
                         aria-label="Siguiente"
                       >
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-soft">
-                          <path d="m9 18 6-6-6-6" />
-                        </svg>
+                        <IconoAvanzar tam={16} className="ink-soft" />
                       </button>
                     </div>
                   )}

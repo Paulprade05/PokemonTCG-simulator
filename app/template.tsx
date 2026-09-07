@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { usePathname } from "next/navigation";
 import { RAICES_DE_PESTANA } from "../components/nav-items";
+import { D, EASE_IOS } from "../utils/motion";
 
 /**
  * TRANSICIÓN DE RUTA CON DIRECCIÓN.
@@ -51,11 +52,10 @@ import { RAICES_DE_PESTANA } from "../components/nav-items";
  * render— todavía la ve a `true`, o sea que servidor y cliente pintan lo mismo.
  */
 
-/* Espejo en JavaScript de la escala de app/globals.css: framer-motion no lee
-   variables CSS, así que --d-slow y --ease-ios se repiten aquí a propósito. Si
-   se tocan allí, hay que tocarlos aquí. */
-const D_SLOW = 0.34;
-const EASE_IOS: [number, number, number, number] = [0.32, 0.72, 0, 1];
+/* La escala de movimiento, importada y no copiada. framer-motion no lee
+   variables CSS, así que --d-slow y --ease-ios tienen que existir también como
+   números de JavaScript; lo que ya no hace falta es que cada pantalla se los
+   copie a mano. utils/motion.ts es ese espejo, con el porqué largo. */
 
 /**
  * Orden REAL de las pestañas en la barra inferior. Es lo que decide el signo del
@@ -173,7 +173,7 @@ export default function Template({ children }: { children: React.ReactNode }) {
         // llegar antes de lo que tarda. Al revés (opacidad lenta) se percibe
         // como una pantalla que va con retraso.
         opacity: { duration: 0.18, ease: "linear" },
-        default: { duration: D_SLOW, ease: EASE_IOS },
+        default: { duration: D.slow, ease: EASE_IOS },
       }}
       // El MotionConfig de AppShell lleva reducedMotion="user" (o "always" con
       // el ajuste "reducir efectos" de la app): en cualquiera de los dos casos

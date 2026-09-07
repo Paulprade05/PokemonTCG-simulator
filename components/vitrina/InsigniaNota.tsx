@@ -106,7 +106,7 @@ interface InsigniaNotaProps {
  *
  * El color lo pone `tintaDeNota` y son cuatro tramos, los mismos que separa
  * `etiquetaNota`: 9-10 en --ok, 7-8 en --ink, 4-6 en --warn-ink y 1-3 en
- * --danger. Eso ya separa un 7 de un 9 de un vistazo, pero deja al 10 y al 9
+ * --danger-ink. Eso ya separa un 7 de un 9 de un vistazo, pero deja al 10 y al 9
  * del mismo color, y el 10 —×3 sobre el valor, el premio gordo de todo el
  * sistema— no puede parecerse a nada.
  *
@@ -134,11 +134,11 @@ export default function InsigniaNota({
 
   const medidas =
     tamano === "md"
-      ? { caja: "gap-1 px-2 py-1", numero: "text-[15px]", extra: "text-[10px]" }
+      ? { caja: "gap-1 px-2 py-1", numero: "t-cuerpo", extra: "t-micro" }
       : {
           caja: "gap-0.5 px-1.5 py-1",
-          numero: "text-[12px]",
-          extra: "text-[9px]",
+          numero: "t-cuerpo-2",
+          extra: "t-micro",
         };
 
   return (

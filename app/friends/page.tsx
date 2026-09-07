@@ -16,10 +16,18 @@ import TradeBuilder from "../../components/social/TradeBuilder";
 import Sheet from "../../components/ui/Sheet";
 import ConfirmSheet from "../../components/ui/ConfirmSheet";
 import { useToast } from "../../components/ui/Toast";
+import AvisoInvitado from "../../components/ui/AvisoInvitado";
+import CabeceraDeHoja from "../../components/ui/CabeceraDeHoja";
+import CampoBusqueda from "../../components/ui/CampoBusqueda";
+import EstadoError from "../../components/ui/EstadoError";
+import EstadoVacio from "../../components/ui/EstadoVacio";
+import Segmentado from "../../components/ui/Segmentado";
+import { IconoMoneda, IconoPapelera } from "../../components/icons";
 import { useHaptics } from "../../hooks/useHaptics";
 import { useImmersive } from "../../components/AppShell";
 import { formatNumber } from "../../utils/format";
 import { getCollection } from "../../utils/storage";
+import { D, EASE_OUT } from "../../utils/motion";
 import { useCurrency, useSesionResuelta } from "../../hooks/useGameCurrency";
 
 type Tab = "perfil" | "amigos" | "recibidas" | "enviadas" | "historial";
@@ -247,11 +255,18 @@ export default function SocialPage() {
       <div className="w-full">
         <PageHeader title="Social" subtitle="Perfil, amigos e intercambios" />
         <GuestStats coins={coins} coinsLoaded={coinsLoaded} />
-        <div className="surface rounded-2xl flex flex-col items-center justify-center text-center py-14 px-6">
-          <h2 className="text-xl font-bold mb-2">Inicia sesión para conectar</h2>
-          <p className="ink-soft text-sm mb-5">Añade amigos e intercambia cartas.</p>
-          <Link href="/" className="btn-accent press touch-target px-6 py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center">Volver al inicio</Link>
-        </div>
+        {/* La misma pieza que en el mercado, el bazar y la graduación: es el
+            mismo aviso —"esto necesita cuenta"— y no tiene por qué verse
+            distinto sólo porque aquí se llegara escrito de otra manera. */}
+        <AvisoInvitado
+          variante="hueco"
+          titulo="Inicia sesión para conectar"
+          rotuloDestino="Volver al inicio"
+        >
+          Añade amigos e intercambia cartas: los perfiles, las peticiones y las
+          ofertas viven en el servidor, y como invitado tu progreso sólo existe
+          en este dispositivo.
+        </AvisoInvitado>
       </div>
     );
   }
@@ -264,16 +279,7 @@ export default function SocialPage() {
     return (
       <div className="w-full">
         <PageHeader title="Social" subtitle="Perfil, amigos e intercambios" />
-        <div className="surface rounded-2xl px-6 py-16 flex flex-col items-center gap-4 text-center">
-          <p className="ink font-medium">No se pudo cargar tu red social</p>
-          <p className="ink-soft text-sm -mt-2">Revisa tu conexión e inténtalo de nuevo.</p>
-          <button
-            onClick={load}
-            className="btn-accent press touch-target px-6 rounded-xl text-sm font-semibold flex items-center justify-center"
-          >
-            Reintentar
-          </button>
-        </div>
+        <EstadoError titulo="No se pudo cargar tu red social" onReintentar={load} />
       </div>
     );
   }
@@ -295,9 +301,9 @@ export default function SocialPage() {
           <button
             onClick={() => { haptic("tap"); setShowAdd(true); }}
             aria-label="Añadir amigo"
-            className="btn-accent press touch-target px-4 py-2 rounded-xl text-sm font-semibold flex items-center justify-center gap-2"
+            className="btn-accent press touch-target px-4 py-2 rounded-xl t-cuerpo font-semibold flex items-center justify-center gap-2"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4" aria-hidden="true">
               <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M19 8v6M22 11h-6" />
             </svg>
             <span className="hidden sm:inline">Añadir</span>
@@ -305,24 +311,25 @@ export default function SocialPage() {
         }
       />
 
-      {/* Tabs — scroll horizontal propio, hay que apartar a Lenis */}
-      <div data-lenis-prevent className="flex gap-1 p-1 surface rounded-2xl mb-6 overflow-x-auto no-scrollbar overscroll-x-contain">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => { if (t.id !== tab) haptic("select"); setTab(t.id); }}
-            aria-pressed={tab === t.id}
-            className={`relative flex-1 min-w-fit px-4 py-2.5 rounded-xl text-sm font-medium transition whitespace-nowrap ${tab === t.id ? "ink" : "ink-soft hover:ink"}`}
-          >
-            {tab === t.id && (
-              <motion.span layoutId="social-tab" className="absolute inset-0 rounded-xl bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] border border-[color-mix(in_srgb,var(--accent)_28%,transparent)]" transition={{ type: "spring", stiffness: 400, damping: 32 }} />
-            )}
-            <span className="relative z-10 flex items-center justify-center gap-2">
-              {t.label}
-              {t.badge ? <span className="bg-[var(--accent)] text-[#04110c] text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center tnum">{t.badge}</span> : null}
-            </span>
-          </button>
-        ))}
+      {/* LAS CINCO SECCIONES. Es el mismo control que el bazar, la hoja de
+          publicar, la graduación y el álbum, y de hecho ERA ÉSTE el que estaba
+          bien: la pastilla que se desliza y el tinte de acento salieron de aquí
+          y ahora los llevan los cinco.
+          `data-lenis-prevent` para que el scroll suave global no se coma el
+          desplazamiento horizontal propio de la fila. */}
+      <div data-lenis-prevent className="mb-6 overflow-x-auto no-scrollbar overscroll-x-contain">
+        <Segmentado
+          id="social-tab"
+          etiqueta="Sección de tu red social"
+          valor={tab}
+          onCambio={setTab}
+          className="min-w-max"
+          opciones={tabs.map((t) => ({
+            id: t.id,
+            rotulo: t.label,
+            insignia: t.badge,
+          }))}
+        />
       </div>
 
       {/* SIN ANIMACIÓN DE SALIDA. Iba en un AnimatePresence con mode="wait":
@@ -336,7 +343,10 @@ export default function SocialPage() {
         key={tab}
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25 }}
+        // D.base y EASE_OUT de utils/motion.ts: los 0,25 s sueltos y la curva
+        // por defecto de framer eran el único fundido de la app que no salía de
+        // la escala de la casa.
+        transition={{ duration: D.base, ease: EASE_OUT }}
       >
           {tab === "perfil" && (
             <PerfilTab
@@ -443,23 +453,17 @@ function PerfilTab({ stats, loading, error, onRetry }: any) {
           className="w-8 h-8 border-2 rounded-full animate-spin"
           style={{ borderColor: "var(--border)", borderTopColor: "var(--accent)" }}
         />
-        <p className="ink-soft text-sm">Cargando tu perfil…</p>
+        <p className="ink-soft t-cuerpo">Cargando tu perfil…</p>
       </div>
     );
   }
 
   if (error || !stats) {
     return (
-      <div className="surface rounded-2xl py-16 px-6 flex flex-col items-center text-center">
-        <p className="font-medium">No se pudieron cargar tus estadísticas</p>
-        <p className="ink-soft text-sm mt-1 mb-5">Revisa tu conexión e inténtalo de nuevo.</p>
-        <button
-          onClick={onRetry}
-          className="btn-accent press touch-target px-6 rounded-xl text-sm font-semibold flex items-center justify-center"
-        >
-          Reintentar
-        </button>
-      </div>
+      <EstadoError
+        titulo="No se pudieron cargar tus estadísticas"
+        onReintentar={onRetry}
+      />
     );
   }
 
@@ -469,10 +473,10 @@ function PerfilTab({ stats, loading, error, onRetry }: any) {
 
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-5 relative">
         <div>
-          <p className="text-[10px] uppercase tracking-[0.3em] ink-faint">Valor de tu colección</p>
-          <p className="text-3xl md:text-4xl font-bold text-gradient mt-1 tabular-nums">
+          <p className="t-etiqueta ink-soft">Valor de tu colección</p>
+          <p className="t-display font-bold text-gradient mt-1 tnum">
             {formatNumber(stats.totalValue)}
-            <span className="text-base ink-faint font-normal ml-2">monedas</span>
+            <span className="t-base ink-faint font-normal ml-2">monedas</span>
           </p>
         </div>
         <div className="grid grid-cols-3 gap-2 md:gap-3 md:w-auto">
@@ -482,9 +486,9 @@ function PerfilTab({ stats, loading, error, onRetry }: any) {
             { label: "Sets", value: `${stats.setsCompleted}/${stats.setsTotal}` },
           ].map((s) => (
             <div key={s.label} className="surface-2 rounded-2xl px-3 md:px-5 py-2.5 text-center md:text-left">
-              <p className="text-[9px] uppercase tracking-wider ink-faint">{s.label}</p>
+              <p className="t-etiqueta ink-soft">{s.label}</p>
               {/* "Sets" es la cadena "3/12" y no debe pasar por formatNumber. */}
-              <p className="text-base md:text-xl font-bold tabular-nums mt-0.5">
+              <p className="t-base md:t-titulo font-bold tnum mt-0.5">
                 {typeof s.value === "number" ? formatNumber(s.value) : s.value}
               </p>
             </div>
@@ -496,8 +500,8 @@ function PerfilTab({ stats, loading, error, onRetry }: any) {
           fila queda como seis cuadrados grises sin explicación. */}
       <div className="mt-5 pt-4 border-t border-[var(--border)]">
         <div className="mb-2 flex items-baseline justify-between gap-2">
-          <span className="text-[10px] uppercase tracking-wider ink-faint">Logros</span>
-          <span className="tnum text-[11px] font-semibold ink-soft">
+          <span className="t-etiqueta ink-soft">Logros</span>
+          <span className="tnum t-meta font-semibold ink-soft">
             {achievementsDone} de {achievements.length}
           </span>
         </div>
@@ -510,7 +514,7 @@ function PerfilTab({ stats, loading, error, onRetry }: any) {
               // lector de pantalla sólo leería el emoji.
               role="img"
               aria-label={`${ach.name}: ${ach.done ? "conseguido" : "pendiente"}`}
-              className={`flex aspect-square items-center justify-center rounded-xl border text-base transition sm:aspect-auto sm:h-9 sm:w-9 sm:text-lg ${
+              className={`flex aspect-square items-center justify-center rounded-xl border t-base transition sm:aspect-auto sm:h-9 sm:w-9 sm:t-titulo ${
                 ach.done ? "ring-accent border-transparent" : "surface-2 opacity-30 saturate-0"
               }`}
             >
@@ -545,12 +549,12 @@ function GuestStats({ coins, coinsLoaded }: { coins: number; coinsLoaded: boolea
   return (
     <div className="surface rounded-3xl p-5 mb-6 relative overflow-hidden">
       <div className="absolute -top-20 -right-20 w-56 h-56 rounded-full blur-3xl pointer-events-none" style={{ background: "radial-gradient(circle, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%)" }} />
-      <p className="text-[10px] uppercase tracking-[0.3em] ink-faint relative">Tu progreso en este dispositivo</p>
+      <p className="t-etiqueta ink-soft relative">Tu progreso en este dispositivo</p>
       <div className="grid grid-cols-3 gap-2 mt-3 relative">
         {tiles.map((t) => (
           <div key={t.label} className="surface-2 rounded-2xl px-3 py-2.5 text-center">
-            <p className="text-[9px] uppercase tracking-wider ink-faint">{t.label}</p>
-            <p className="text-base font-bold tabular-nums mt-0.5">{t.value}</p>
+            <p className="t-etiqueta ink-soft">{t.label}</p>
+            <p className="t-base font-bold tnum mt-0.5">{t.value}</p>
           </div>
         ))}
       </div>
@@ -565,23 +569,23 @@ function AmigosTab({ friends, requests, myId, onAccept, onRemove, onTrade, busyI
     <div className="flex flex-col gap-5">
       {requests.length > 0 && (
         <div className="surface rounded-2xl p-4">
-          <p className="text-xs font-semibold uppercase tracking-wider ink-soft mb-3">Peticiones · {requests.length}</p>
+          <p className="t-etiqueta ink-soft mb-3">Peticiones · {requests.length}</p>
           <div className="flex flex-col gap-2">
             {requests.map((r: any) => (
               <div key={r.id} className="surface-2 rounded-xl p-3 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
                   <Avatar name={r.requester_name} />
-                  <span className="font-medium text-sm truncate">{r.requester_name}</span>
+                  <span className="font-medium t-cuerpo truncate">{r.requester_name}</span>
                 </div>
                 <div className="flex gap-3 shrink-0">
                   <button
                     onClick={() => onAccept(r.id, r.requester_name)}
                     disabled={busyIds?.has(r.id)}
-                    className="btn-accent press touch-target px-3 py-2 rounded-lg text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="btn-accent press touch-target px-3 py-2 rounded-lg t-cuerpo-2 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {busyIds?.has(r.id) ? "Procesando…" : "Aceptar"}
                   </button>
-                  <button onClick={() => onRemove(r.id, r.requester_name, "request")} className="btn-ghost press touch-target px-3 py-2 rounded-lg text-xs">Ignorar</button>
+                  <button onClick={() => onRemove(r.id, r.requester_name, "request")} className="btn-ghost press touch-target px-3 py-2 rounded-lg t-cuerpo-2">Ignorar</button>
                 </div>
               </div>
             ))}
@@ -600,34 +604,44 @@ function AmigosTab({ friends, requests, myId, onAccept, onRemove, onTrade, busyI
             key={f.friend_id}
             className={`surface surface-hover rounded-2xl p-4 relative overflow-hidden ${f.isMe ? "ring-accent" : ""}`}
           >
-            {i < 3 && <span className="absolute top-3 right-3 text-lg">{medal[i]}</span>}
+            {i < 3 && <span className="absolute top-3 right-3 t-titulo">{medal[i]}</span>}
             <div className="flex items-center gap-3 mb-3">
               <Avatar name={f.friend_name} highlight={f.isMe} />
               <div className="min-w-0">
-                <p className="font-semibold text-sm truncate">{f.friend_name}{f.isMe && <span className="ink-faint font-normal"> · tú</span>}</p>
-                <p className="text-[11px] ink-faint tnum">{formatNumber(f.stats.unique)} únicas · {formatNumber(f.stats.cards)} cartas</p>
+                <p className="font-semibold t-cuerpo truncate">{f.friend_name}{f.isMe && <span className="ink-faint font-normal"> · tú</span>}</p>
+                <p className="t-meta ink-soft tnum">{formatNumber(f.stats.unique)} únicas · {formatNumber(f.stats.cards)} cartas</p>
               </div>
             </div>
             <div className="flex items-center justify-between mb-3">
-              <span className="text-[10px] uppercase tracking-wider ink-faint">Valor</span>
-              <span className="text-sm font-bold accent tabular-nums">{formatNumber(f.stats.value)} 💰</span>
+              <span className="t-etiqueta ink-soft">Valor</span>
+              {/* La moneda deja de ser el emoji 💰 —que lo dibuja el sistema y
+                  sale distinto en iPhone y en PC, sin heredar la tinta— y pasa
+                  a ser el icono de la casa, el mismo de la barra superior. */}
+              {/* --ok y no la clase de acento: el verde de marca es un token de
+                  FONDO y como tinta da 2,4:1 sobre el papel del tema claro.
+                  --ok es su pareja legible y no cambia el aspecto en oscuro. */}
+              <span className="t-cuerpo font-bold [color:var(--ok)] tnum flex items-center gap-1">
+                {formatNumber(f.stats.value)}
+                <IconoMoneda tam={16} />
+              </span>
             </div>
             <div className="flex gap-2">
-              <Link href={f.isMe ? "/collection" : `/trainer/${f.friend_id}`} className="flex-1 btn-ghost press text-center text-xs font-medium py-2.5 rounded-lg">
+              {/* `.control-44` en los dos: medían 36px de alto y son la salida
+                  de esta tarjeta hacia el álbum del amigo y hacia el
+                  intercambio, o sea las dos únicas cosas que se hacen aquí. */}
+              <Link href={f.isMe ? "/collection" : `/trainer/${f.friend_id}`} className="flex-1 btn-ghost press control-44 text-center t-cuerpo-2 font-medium rounded-lg">
                 Ver álbum
               </Link>
               {!f.isMe && (
                 <>
-                  <button onClick={() => onTrade(f)} className="flex-1 btn-accent press text-xs font-semibold py-2.5 rounded-lg">Intercambiar</button>
+                  <button onClick={() => onTrade(f)} className="flex-1 btn-accent press control-44 t-cuerpo-2 font-semibold rounded-lg">Intercambiar</button>
                   <button
                     onClick={() => onRemove(f.friendship_id, f.friend_name, "friend")}
-                    className="btn-ghost press touch-target px-3 py-2 rounded-lg flex items-center justify-center"
+                    className="btn-ghost press control-44 px-3 rounded-lg"
                     title="Eliminar"
                     aria-label={`Eliminar a ${f.friend_name}`}
                   >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
-                      <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                    </svg>
+                    <IconoPapelera tam={16} />
                   </button>
                 </>
               )}
@@ -637,23 +651,33 @@ function AmigosTab({ friends, requests, myId, onAccept, onRemove, onTrade, busyI
       </div>
 
       {friends.length <= 1 && requests.length === 0 && (
-        <div className="surface rounded-2xl py-16 text-center">
-          <p className="font-medium">Aún no tienes amigos</p>
-          <p className="ink-soft text-sm mt-1">Pulsa "Añadir" para buscar entrenadores.</p>
-        </div>
+        <EstadoVacio
+          titulo="Aún no tienes amigos"
+          detalle='Pulsa "Añadir" para buscar entrenadores.'
+        />
       )}
     </div>
   );
 }
 
 /* ---------- OFFER CARDS ---------- */
+/**
+ * LAS DOS TINTAS DE UN INTERCAMBIO, y por qué ya no son las que eran.
+ *
+ * Los dos lados llegaban con `accent` (el verde de marca) y con el cian de la
+ * paleta de Tailwind, que como TINTA dan 2,4:1 y 2,1:1 sobre el papel del tema
+ * claro. Son las mismas dos tintas que components/social/TradeBuilder.tsx ya
+ * había cambiado por --ok y --warn-ink al montar el intercambio: aquí se pinta
+ * ese mismo intercambio una vez enviado, así que los dos lados tienen que
+ * llegar del mismo color en las dos pantallas o parecen dos cosas distintas.
+ */
 function OfferCards({ cards, label, tint }: { cards: any[]; label: string; tint: string }) {
   return (
     <div className="flex-1 min-w-0">
-      <p className={`text-[10px] uppercase tracking-wider font-semibold mb-1.5 ${tint}`}>{label}</p>
+      <p className={`t-etiqueta mb-1.5 ${tint}`}>{label}</p>
       <div className="flex flex-wrap gap-1.5">
         {cards.map((c: any, i: number) => (
-          <img key={i} src={c?.images?.small} alt={c?.name} title={c?.name} loading="lazy" className="w-12 rounded-md" />
+          <img key={i} src={c?.images?.small} alt={c?.name} title={c?.name} loading="lazy" className="w-12 rounded-lg" />
         ))}
       </div>
     </div>
@@ -672,27 +696,27 @@ function IncomingTab({ offers, onAccept, onDecline, busyIds }: any) {
         <div key={o.id} className="surface rounded-2xl p-4">
           <div className="flex items-center gap-2 mb-3">
             <Avatar name={o.senderName} small />
-            <p className="text-sm"><strong>{o.senderName}</strong> <span className="ink-soft">te propone</span></p>
+            <p className="t-cuerpo"><strong>{o.senderName}</strong> <span className="ink-soft">te propone</span></p>
           </div>
           <div className="flex items-center gap-3 surface-2 rounded-xl p-3 mb-3">
-            <OfferCards cards={o.offered} label="Recibes" tint="accent" />
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 ink-faint shrink-0">
+            <OfferCards cards={o.offered} label="Recibes" tint="[color:var(--ok)]" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 ink-faint shrink-0" aria-hidden="true">
               <path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4" />
             </svg>
-            <OfferCards cards={o.requested} label="Entregas" tint="text-cyan-400" />
+            <OfferCards cards={o.requested} label="Entregas" tint="[color:var(--warn-ink)]" />
           </div>
           <div className="flex gap-2">
             <button
               onClick={() => onAccept(o.id)}
               disabled={busy}
-              className="flex-1 btn-accent press touch-target py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 btn-accent press touch-target py-2.5 rounded-xl t-cuerpo font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {busy ? "Procesando…" : "Aceptar"}
             </button>
             <button
               onClick={() => onDecline(o.id)}
               disabled={busy}
-              className="btn-ghost press touch-target px-5 py-2.5 rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-ghost press touch-target px-5 py-2.5 rounded-xl t-cuerpo disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Rechazar
             </button>
@@ -712,20 +736,20 @@ function OutgoingTab({ offers, onCancel, busyIds }: any) {
         <div key={o.id} className="surface rounded-2xl p-4">
           <div className="flex items-center gap-2 mb-3">
             <Avatar name={o.receiverName} small />
-            <p className="text-sm"><span className="ink-soft">Esperando a</span> <strong>{o.receiverName}</strong></p>
-            <span className="ml-auto chip text-[10px] px-2 py-0.5 ink-soft">Pendiente</span>
+            <p className="t-cuerpo"><span className="ink-soft">Esperando a</span> <strong>{o.receiverName}</strong></p>
+            <span className="ml-auto chip t-micro px-2 py-0.5 ink-soft">Pendiente</span>
           </div>
           <div className="flex items-center gap-3 surface-2 rounded-xl p-3 mb-3">
-            <OfferCards cards={o.offered} label="Ofreces" tint="accent" />
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 ink-faint shrink-0">
+            <OfferCards cards={o.offered} label="Ofreces" tint="[color:var(--ok)]" />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 ink-faint shrink-0" aria-hidden="true">
               <path d="M5 12h14M13 6l6 6-6 6" />
             </svg>
-            <OfferCards cards={o.requested} label="Pides" tint="text-cyan-400" />
+            <OfferCards cards={o.requested} label="Pides" tint="[color:var(--warn-ink)]" />
           </div>
           <button
             onClick={() => onCancel(o.id, o.receiverName)}
             disabled={busyIds?.has(o.id)}
-            className="btn-ghost press touch-target w-full py-2.5 rounded-xl text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            className="btn-ghost press touch-target w-full py-2.5 rounded-xl t-cuerpo disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {busyIds?.has(o.id) ? "Procesando…" : "Cancelar oferta"}
           </button>
@@ -737,23 +761,29 @@ function OutgoingTab({ offers, onCancel, busyIds }: any) {
 
 function HistoryTab({ items }: any) {
   if (items.length === 0) return <EmptyState text="Sin intercambios todavía" />;
+  /* Las tres tintas del estado salen de los tokens: --ok y --danger-ink son las
+     variantes LEGIBLES del verde y del rojo de marca (los de marca valen para un
+     relleno, no para texto), y el rojo de la paleta de Tailwind que había aquí
+     no sabía nada del tema claro ni del oscuro. */
   const label: Record<string, { t: string; c: string }> = {
-    accepted: { t: "Aceptado", c: "accent" },
-    declined: { t: "Rechazado", c: "text-rose-400" },
+    accepted: { t: "Aceptado", c: "[color:var(--ok)]" },
+    declined: { t: "Rechazado", c: "[color:var(--danger-ink)]" },
     cancelled: { t: "Cancelado", c: "ink-faint" },
   };
   return (
     <div className="surface rounded-2xl divide-y divide-[var(--border)]">
       {items.map((it: any) => (
         <div key={it.id} className="flex items-center gap-3 p-4">
-          <div className={`w-2 h-2 rounded-full shrink-0 ${it.status === "accepted" ? "bg-[var(--accent)]" : it.status === "declined" ? "bg-rose-400" : "bg-[var(--ink-faint)]"}`} />
+          {/* El punto es un RELLENO, así que aquí sí mandan los tokens de fondo
+              --accent y --danger; lo que se va es el rojo literal de Tailwind. */}
+          <div className={`w-2 h-2 rounded-full shrink-0 ${it.status === "accepted" ? "bg-[var(--accent)]" : it.status === "declined" ? "bg-[var(--danger)]" : "bg-[var(--ink-faint)]"}`} />
           <div className="flex-1 min-w-0">
-            <p className="text-sm truncate">
+            <p className="t-cuerpo truncate">
               {it.iAmSender ? "Enviaste a" : "Recibiste de"} <strong>{it.otherName}</strong>
             </p>
-            <p className="text-[11px] ink-faint tnum">{it.offeredCount} ↔ {it.requestedCount} cartas</p>
+            <p className="t-meta ink-soft tnum">{it.offeredCount} ↔ {it.requestedCount} cartas</p>
           </div>
-          <span className={`text-xs font-semibold shrink-0 ${label[it.status]?.c}`}>{label[it.status]?.t}</span>
+          <span className={`t-cuerpo-2 font-semibold shrink-0 ${label[it.status]?.c}`}>{label[it.status]?.t}</span>
         </div>
       ))}
     </div>
@@ -825,67 +855,47 @@ function AddFriendSheet({ open, onClose, onChanged, myId }: any) {
       {/* Sheet ya añade la safe area inferior (y la descuenta si sube el teclado),
           así que aquí basta con el respiro visual. */}
       <div className="px-5 pt-2 pb-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold ink">Añadir amigo</h3>
-          <button
-            onClick={onClose}
-            aria-label="Cerrar"
-            className="touch-target rounded-xl btn-ghost press flex items-center justify-center"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M18 6 6 18M6 6l12 12" /></svg>
-          </button>
-        </div>
+        {/* Es la ÚNICA hoja con aspa de cerrar, y sigue siéndolo: con el
+            teclado abierto (esta hoja lo abre sola al montarse) el asa de
+            arrastre queda a media pantalla y el fondo casi no se ve, así que
+            aquí el aspa es la única salida evidente. Ver la nota de
+            components/ui/CabeceraDeHoja. */}
+        <CabeceraDeHoja titulo="Añadir amigo" onCerrar={onClose} />
 
-        <div className="input-field rounded-xl px-3 py-2.5 flex items-center gap-2 mb-3">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint shrink-0">
-            <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
-          </svg>
-          <input
-            autoFocus
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-            placeholder="Nombre de entrenador…"
-            aria-label="Buscar entrenador"
-            type="search"
-            inputMode="search"
-            enterKeyHint="search"
-            autoComplete="off"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            className="bg-transparent outline-none text-base flex-1 min-w-0 ink"
-          />
-          {q && (
-            <button onClick={() => setQ("")} aria-label="Limpiar búsqueda" className="press ink-faint shrink-0 flex h-9 w-9 items-center justify-center rounded-full">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M18 6 6 18M6 6l12 12" /></svg>
-            </button>
-          )}
-        </div>
+        <CampoBusqueda
+          className="mt-4 mb-3"
+          autoFocus
+          etiqueta="Buscar entrenador"
+          marcador="Nombre de entrenador…"
+          valor={q}
+          onCambio={setQ}
+        />
 
         <div className="flex flex-col gap-1.5 min-h-[60px]">
-          {searching && <p className="text-xs ink-faint text-center py-3">Buscando…</p>}
+          {searching && <p className="t-cuerpo-2 ink-faint text-center py-3">Buscando…</p>}
           {!searching && searchError && (
-            <p className="text-xs text-center py-3" style={{ color: "var(--danger)" }}>
+            // --danger-ink: esto es texto, y --danger es el token de fondo. Es
+            // el mismo mensaje que ya pinta así el buscador global.
+            <p className="t-cuerpo-2 text-center py-3" style={{ color: "var(--danger-ink)" }}>
               No se pudo buscar. Revisa tu conexión.
             </p>
           )}
           {!searching && !searchError && q.length >= 2 && results.length === 0 && (
-            <p className="text-xs ink-faint text-center py-3">Sin resultados</p>
+            <p className="t-cuerpo-2 ink-faint text-center py-3">Sin resultados</p>
           )}
           {results.map((u: any) => (
             <div key={u.id} className="surface-2 rounded-xl p-2.5 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2.5 min-w-0">
                 <Avatar name={u.username} small />
-                <span className="text-sm font-medium truncate">{u.username}</span>
+                <span className="t-cuerpo font-medium truncate">{u.username}</span>
               </div>
-              {u.relation === "accepted" ? <span className="text-[10px] ink-faint shrink-0">Amigos</span>
-                : u.relation === "pending" ? <span className="text-[10px] ink-faint shrink-0">Pendiente</span>
+              {u.relation === "accepted" ? <span className="t-micro ink-soft shrink-0">Amigos</span>
+                : u.relation === "pending" ? <span className="t-micro ink-soft shrink-0">Pendiente</span>
                 : (
                   <button
                     onClick={() => doAdd(u.id, u.username)}
                     disabled={adding === u.id}
-                    className="btn-accent press touch-target px-3 py-2 rounded-lg text-xs font-semibold shrink-0 disabled:opacity-60"
+                    className="btn-accent press touch-target px-3 py-2 rounded-lg t-cuerpo-2 font-semibold shrink-0 disabled:opacity-60"
                   >
                     {adding === u.id ? "Enviando…" : "Añadir"}
                   </button>
@@ -895,10 +905,16 @@ function AddFriendSheet({ open, onClose, onChanged, myId }: any) {
         </div>
 
         <div className="mt-4 pt-4 border-t border-[var(--border)]">
-          <p className="text-[10px] uppercase tracking-wider ink-faint mb-2">Tu ID</p>
+          <p className="t-etiqueta ink-soft mb-2">Tu ID</p>
           <div className="flex items-center gap-2">
-            <code className="flex-1 surface-2 rounded-lg px-3 py-2 text-[11px] ink-soft truncate font-mono select-all">{myId}</code>
-            <button onClick={copyId} className="btn-ghost press touch-target px-3 py-2 rounded-lg text-xs shrink-0">Copiar</button>
+            {/* Sin `.tnum`: esto no es una cifra, es un identificador que se lee
+                y se dicta carácter a carácter, y las cifras tabulares no tocan
+                las letras. Tampoco hace falta pedir la monoespaciada: es un
+                <code>, y el preflight de Tailwind ya se la da (ver la nota de
+                `.tnum` en globals.css). Medido: 11px en ui-monospace, que es
+                exactamente lo que se veía antes. */}
+            <code className="flex-1 surface-2 rounded-lg px-3 py-2 t-meta ink-soft truncate select-all">{myId}</code>
+            <button onClick={copyId} className="btn-ghost press touch-target px-3 py-2 rounded-lg t-cuerpo-2 shrink-0">Copiar</button>
           </div>
         </div>
       </div>
@@ -909,7 +925,7 @@ function AddFriendSheet({ open, onClose, onChanged, myId }: any) {
 /* ---------- helpers ---------- */
 function Avatar({ name, highlight, small }: { name: string; highlight?: boolean; small?: boolean }) {
   const letter = (name || "?").charAt(0).toUpperCase();
-  const size = small ? "w-8 h-8 text-xs" : "w-10 h-10 text-sm";
+  const size = small ? "w-8 h-8 t-cuerpo-2" : "w-10 h-10 t-cuerpo";
   return (
     <div className={`${size} rounded-full flex items-center justify-center font-bold shrink-0 ${highlight ? "btn-accent" : "surface-2 ink-soft"}`}>
       {letter}
@@ -917,10 +933,9 @@ function Avatar({ name, highlight, small }: { name: string; highlight?: boolean;
   );
 }
 
+/** Envoltorio local: las listas de esta pantalla pasan una sola frase, y
+ *  EstadoVacio la quiere como titular. Se conserva el nombre para no tocar los
+ *  cuatro sitios que ya lo llaman. */
 function EmptyState({ text }: { text: string }) {
-  return (
-    <div className="surface rounded-2xl py-16 text-center">
-      <p className="ink-soft text-sm">{text}</p>
-    </div>
-  );
+  return <EstadoVacio titulo={text} />;
 }

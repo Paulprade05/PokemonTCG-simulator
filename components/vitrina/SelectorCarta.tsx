@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import PokemonCard from "../PokemonCard";
 import Sheet from "../ui/Sheet";
+import CabeceraDeHoja from "../ui/CabeceraDeHoja";
+import CampoBusqueda from "../ui/CampoBusqueda";
 import { useHaptics } from "../../hooks/useHaptics";
 import { formatNumber } from "../../utils/format";
 import { setDeCarta, type Destino } from "./modelo";
@@ -150,79 +152,54 @@ export default function SelectorCarta({
       label={actual ? "Cambiar la carta de la funda" : "Colocar una carta"}
     >
       <div className="px-4 pt-1 pb-6 sm:px-5">
-        <h2 className="ink text-center text-[17px] font-semibold">
-          {actual ? "Cambiar la carta" : "Colocar una carta"}
-        </h2>
         {/* Mientras se escribe, el rótulo lo dice: la hoja no se cierra hasta
             que la acción confirma, y sin este aviso ese momento se lee como
-            que el toque no ha hecho nada. */}
-        <p
-          aria-live="polite"
-          className="ink-soft mt-1.5 text-center text-[12px] leading-relaxed"
-        >
-          {guardando ? (
-            <span style={{ color: "var(--ok)" }}>Colocando la carta…</span>
-          ) : (
-            <>
-              {rotulo}
-              {" · "}
-              {cartas.length === 0
-                ? "todavía no tienes cartas"
-                : "elige de tu colección"}
-            </>
-          )}
-        </p>
+            que el toque no ha hecho nada. De ahí `descripcionViva`. */}
+        <CabeceraDeHoja
+          titulo={actual ? "Cambiar la carta" : "Colocar una carta"}
+          descripcionViva
+          descripcion={
+            guardando ? (
+              <span style={{ color: "var(--ok)" }}>Colocando la carta…</span>
+            ) : (
+              <>
+                {rotulo}
+                {" · "}
+                {cartas.length === 0
+                  ? "todavía no tienes cartas"
+                  : "elige de tu colección"}
+              </>
+            )
+          }
+        />
 
         {/* SIN CARTAS: el archivador no se puede montar sin colección, y decir
             sólo "no hay resultados" dejaría al jugador buscando un filtro que
             no existe. */}
         {cartas.length === 0 ? (
-          <p className="ink-soft py-12 text-center text-[12px] leading-relaxed">
+          <p className="ink-soft py-12 text-center t-cuerpo-2 leading-relaxed">
             Tu colección está vacía. Abre un sobre y vuelve: las cartas que
             consigas podrán colocarse en cualquier funda.
           </p>
         ) : (
           <>
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-              {/* Etiqueta y no contenedor neutro: así tocar el icono o el
-                  relleno enfoca el campo. min-h-11 son los 44px de zona
-                  táctil mínima. */}
-              <label className="input-field flex min-h-11 flex-1 items-center gap-2 rounded-xl px-3 py-2">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  className="ink-faint h-4 w-4 shrink-0"
-                  aria-hidden="true"
-                >
-                  <circle cx="11" cy="11" r="8" />
-                  <path d="m21 21-4.3-4.3" />
-                </svg>
-                <input
-                  type="search"
-                  inputMode="search"
-                  enterKeyHint="search"
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  aria-label="Buscar entre tus cartas"
-                  placeholder="Buscar una carta…"
-                  value={busqueda}
-                  onChange={(e) => {
-                    setBusqueda(e.target.value);
-                    // Cada búsqueda empieza por su primera tanda: sin esto,
-                    // buscar tras haber pedido tres tandas pintaría 108 cartas
-                    // de golpe dentro de la hoja.
-                    setTope(TANDA);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                  }}
-                  className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:opacity-50 [&::-webkit-search-cancel-button]:hidden"
-                />
-              </label>
+              {/* Ésta era la plantilla de la que salió
+                  components/ui/CampoBusqueda: etiqueta envolvente, los
+                  atributos de teclado completos y los 44px de zona táctil. */}
+              <CampoBusqueda
+                className="flex-1"
+                etiqueta="Buscar entre tus cartas"
+                marcador="Buscar una carta…"
+                valor={busqueda}
+                onCambio={(v) => {
+                  setBusqueda(v);
+                  // Cada búsqueda empieza por su primera tanda: sin esto,
+                  // buscar tras haber pedido tres tandas pintaría 108 cartas
+                  // de golpe dentro de la hoja.
+                  setTope(TANDA);
+                }}
+              />
 
               <select
                 value={filtroSet}
@@ -232,7 +209,7 @@ export default function SelectorCarta({
                   setTope(TANDA);
                 }}
                 aria-label="Filtrar por expansión"
-                className="input-field w-full min-w-0 cursor-pointer truncate rounded-xl px-3 py-2.5 text-xs sm:w-auto sm:max-w-[45%]"
+                className="input-field w-full min-w-0 cursor-pointer truncate rounded-xl px-3 py-2.5 t-cuerpo-2 sm:w-auto sm:max-w-[45%]"
               >
                 <option value="todas">
                   Todas · {formatNumber(cartas.length)}
@@ -246,7 +223,7 @@ export default function SelectorCarta({
             </div>
 
             {filtradas.length === 0 ? (
-              <p className="ink-soft py-12 text-center text-[12px] leading-relaxed">
+              <p className="ink-soft py-12 text-center t-cuerpo-2 leading-relaxed">
                 Ninguna de tus cartas encaja con esa búsqueda.
               </p>
             ) : (
@@ -298,7 +275,7 @@ export default function SelectorCarta({
                           {esLaDeAhora && (
                             <span
                               aria-hidden="true"
-                              className="absolute left-1 top-1 z-10 rounded-full px-1.5 py-0.5 text-[9px] font-bold leading-none"
+                              className="absolute left-1 top-1 z-10 rounded-full px-1.5 py-0.5 t-micro font-bold leading-none"
                               style={{
                                 background: "var(--ok-weak)",
                                 color: "var(--ok)",
@@ -310,15 +287,15 @@ export default function SelectorCarta({
                           )}
                         </div>
 
-                        <p className="ink mt-1.5 truncate text-[11px] font-medium">
+                        <p className="ink mt-1.5 truncate t-meta font-medium">
                           {c.name}
                         </p>
                         <p
-                          className="tnum truncate text-[10px]"
+                          className="tnum truncate t-micro"
                           style={{
                             color: agotada
                               ? "var(--warn-ink)"
-                              : "var(--ink-faint)",
+                              : "var(--ink-soft)",
                           }}
                         >
                           {agotada
@@ -339,7 +316,7 @@ export default function SelectorCarta({
                       haptic("tap");
                       setTope((t) => t + TANDA);
                     }}
-                    className="btn-ghost press touch-target mx-auto mt-4 block rounded-xl px-5 py-2.5 text-[12px] font-medium"
+                    className="btn-ghost press touch-target mx-auto mt-4 block rounded-xl px-5 py-2.5 t-cuerpo-2 font-medium"
                   >
                     Ver más ({formatNumber(filtradas.length - visibles.length)}{" "}
                     restantes)

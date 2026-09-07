@@ -34,6 +34,10 @@ import PokemonCard from "../PokemonCard";
 import { costeDeGraduar } from "../../utils/graduacion";
 import { formatNumber } from "../../utils/format";
 import { useHaptics } from "../../hooks/useHaptics";
+import { D } from "../../utils/motion";
+import CampoBusqueda from "../ui/CampoBusqueda";
+import EstadoVacio from "../ui/EstadoVacio";
+import { IconoMas } from "../icons";
 import type { CartaGraduable } from "./Comun";
 
 interface Props {
@@ -97,13 +101,10 @@ export default function ListaGraduables({
 
   if (cartas.length === 0) {
     return (
-      <div className="surface rounded-2xl py-14 px-6 text-center flex flex-col items-center gap-3">
-        <p className="ink font-medium text-sm">No te queda nada por graduar</p>
-        <p className="ink-soft text-xs max-w-xs leading-relaxed">
-          Todas tus copias tienen ya su nota, o aún no tienes cartas. Abre sobres para conseguir
-          copias nuevas: cada una llega con su propia nota esperando.
-        </p>
-      </div>
+      <EstadoVacio
+        titulo="No te queda nada por graduar"
+        detalle="Todas tus copias tienen ya su nota, o aún no tienes cartas. Abre sobres para conseguir copias nuevas: cada una llega con su propia nota esperando."
+      />
     );
   }
 
@@ -112,34 +113,18 @@ export default function ListaGraduables({
       {/* BUSCADOR Y ORDEN. Mismo patrón que la barra de la colección: la
           etiqueta envuelve al campo para que tocar el icono enfoque el input. */}
       <div className="flex flex-col sm:flex-row gap-2">
-        <label className="input-field flex min-h-11 items-center gap-2 px-3 py-2 rounded-xl flex-1">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 ink-faint shrink-0" aria-hidden="true">
-            <circle cx="11" cy="11" r="8" />
-            <path d="m21 21-4.3-4.3" />
-          </svg>
-          <input
-            type="search"
-            inputMode="search"
-            enterKeyHint="search"
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="none"
-            spellCheck={false}
-            aria-label="Buscar entre tus cartas graduables"
-            placeholder="Buscar carta..."
-            value={busqueda}
-            onChange={(e) => {
-              setBusqueda(e.target.value);
-              // La tanda se reinicia al filtrar: si no, buscar desde la fila 90
-              // dejaría "ver más" pintado sobre una lista de tres resultados.
-              setVisibles(TANDA);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-            className="bg-transparent outline-none text-sm flex-1 min-w-0 placeholder:opacity-50 [&::-webkit-search-cancel-button]:hidden"
-          />
-        </label>
+        <CampoBusqueda
+          className="flex-1"
+          etiqueta="Buscar entre tus cartas graduables"
+          marcador="Buscar carta..."
+          valor={busqueda}
+          onCambio={(v) => {
+            setBusqueda(v);
+            // La tanda se reinicia al filtrar: si no, buscar desde la fila 90
+            // dejaría "ver más" pintado sobre una lista de tres resultados.
+            setVisibles(TANDA);
+          }}
+        />
         <select
           value={orden}
           onChange={(e) => {
@@ -147,7 +132,7 @@ export default function ListaGraduables({
             setOrden(e.target.value as Orden);
           }}
           aria-label="Ordenar las cartas"
-          className="input-field w-full sm:w-auto min-w-0 px-3 py-2.5 rounded-xl text-xs cursor-pointer truncate"
+          className="input-field w-full sm:w-auto min-w-0 px-3 py-2.5 rounded-xl t-cuerpo-2 cursor-pointer truncate"
         >
           <option value="valor_desc">Las más valiosas</option>
           <option value="libres_desc">Las que más copias tengo</option>
@@ -156,7 +141,7 @@ export default function ListaGraduables({
       </div>
 
       {filtradas.length === 0 && (
-        <p className="ink-soft text-xs text-center py-8">
+        <p className="ink-soft t-cuerpo-2 text-center py-8">
           Ninguna carta con copias libres se llama así.
         </p>
       )}
@@ -180,7 +165,7 @@ export default function ListaGraduables({
               animate={{ opacity: 1, y: 0 }}
               // Tope al retardo, como en el resumen del sobre: sin él la fila
               // veinticuatro no aparecería hasta pasado un segundo largo.
-              transition={{ duration: 0.28, delay: Math.min(i, 10) * 0.025 }}
+              transition={{ duration: D.base, delay: Math.min(i, 10) * 0.025 }}
               className="surface rounded-2xl p-3 flex flex-wrap items-center gap-3"
               style={
                 elegidas > 0
@@ -196,11 +181,11 @@ export default function ListaGraduables({
               </div>
 
               <div className="flex-1 min-w-[7.5rem]">
-                <p className="text-sm font-semibold truncate">{carta.name}</p>
-                <p className="text-[11px] ink-soft truncate">
+                <p className="t-cuerpo font-semibold truncate">{carta.name}</p>
+                <p className="t-meta ink-soft truncate">
                   {carta.rarity} · vale {formatNumber(carta.valor)}
                 </p>
-                <p className="text-[11px] ink-faint tnum mt-0.5">
+                <p className="t-meta ink-soft tnum mt-0.5">
                   {formatNumber(carta.libres)} {carta.libres === 1 ? "copia libre" : "copias libres"}
                   {carta.graduadas > 0 && ` · ${formatNumber(carta.graduadas)} ya en la vitrina`}
                 </p>
@@ -208,15 +193,15 @@ export default function ListaGraduables({
 
               <div className="flex items-center gap-2 ml-auto">
                 <div className="text-right">
-                  <p className="text-[10px] ink-faint uppercase tracking-[0.12em]">Por copia</p>
-                  <p className="text-sm font-semibold tnum" style={rebajada ? { color: "var(--ok)" } : undefined}>
+                  <p className="t-etiqueta ink-soft">Por copia</p>
+                  <p className="t-cuerpo font-semibold tnum" style={rebajada ? { color: "var(--ok)" } : undefined}>
                     {formatNumber(precio)}
                   </p>
                   {rebajada && (
                     // El precio de tarifa tachado al lado del rebajado es la
                     // forma más corta de enseñar que el descuento existe sin
                     // tener que explicarlo en cada fila.
-                    <p className="text-[10px] ink-faint tnum line-through">
+                    <p className="t-micro ink-soft tnum line-through">
                       {formatNumber(sinDescuento)}
                     </p>
                   )}
@@ -237,11 +222,11 @@ export default function ListaGraduables({
                     aria-label={`Quitar una copia de ${carta.name}`}
                     className="btn-ghost press touch-target w-11 h-11 rounded-xl flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
                   >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" className="w-4 h-4" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4" aria-hidden="true">
                       <path d="M5 12h14" />
                     </svg>
                   </button>
-                  <span className="w-7 text-center text-sm font-bold tnum" aria-hidden="true">
+                  <span className="w-7 text-center t-cuerpo font-bold tnum" aria-hidden="true">
                     {elegidas}
                   </span>
                   <button
@@ -254,9 +239,7 @@ export default function ListaGraduables({
                     aria-label={`Añadir una copia de ${carta.name}`}
                     className="btn-ghost press touch-target w-11 h-11 rounded-xl flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
                   >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" className="w-4 h-4" aria-hidden="true">
-                      <path d="M12 5v14M5 12h14" />
-                    </svg>
+                    <IconoMas tam={16} />
                   </button>
                 </div>
               </div>
@@ -271,7 +254,7 @@ export default function ListaGraduables({
                     onFijar(carta.id, Math.min(carta.libres, elegidas + hueco));
                   }}
                   disabled={!puedeSubir}
-                  className="chip ink-soft text-[11px] px-3 py-1.5 press disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="chip ink-soft t-meta px-3 py-1.5 press disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   Todas las que quepan
                 </button>
@@ -288,7 +271,7 @@ export default function ListaGraduables({
             haptic("tap");
             setVisibles((v) => v + TANDA);
           }}
-          className="btn-ghost press touch-target w-full rounded-xl text-xs font-medium py-3"
+          className="btn-ghost press touch-target w-full rounded-xl t-cuerpo-2 font-medium py-3"
         >
           Ver {formatNumber(Math.min(TANDA, filtradas.length - visibles))} cartas más ·{" "}
           {formatNumber(filtradas.length - visibles)} sin mostrar

@@ -65,7 +65,7 @@ export default function TarjetaAnuncio({
         )}
         {anuncio.esMio && (
           <div
-            className="absolute top-1.5 right-1.5 z-20 rounded-full px-2 py-1 text-[10px] leading-none font-bold"
+            className="absolute top-1.5 right-1.5 z-20 rounded-full px-2 py-1 t-micro leading-none font-bold"
             style={{
               background: "var(--ink)",
               color: "var(--bg)",
@@ -82,7 +82,7 @@ export default function TarjetaAnuncio({
         {/* El realce cuelga del `group` de la tarjeta y no de este div: con
             `pointer-events-none` puesto (para que la ilustración no se pueda
             arrastrar) el `hover:` propio no llegaría a dispararse nunca. */}
-        <div className="pointer-events-none transition-transform duration-300 group-hover:-translate-y-1">
+        <div className="pointer-events-none transition-transform duration-[var(--d-base)] group-hover:-translate-y-1">
           <PokemonCard
             card={{
               id: anuncio.cardId,
@@ -97,10 +97,14 @@ export default function TarjetaAnuncio({
       </div>
 
       <div className="min-w-0">
-        <p className="ink truncate text-[13px] leading-tight font-semibold">
+        {/* t-cuerpo y no t-cuerpo-2: el nombre es el título de la tarjeta, no
+            un apoyo, y a 12px quedaría al mismo peso que el rótulo del botón. */}
+        <p className="ink truncate t-cuerpo leading-tight font-semibold">
           {anuncio.name}
         </p>
-        <p className="ink-faint mt-0.5 truncate text-[10px]">
+        {/* ink-soft: por debajo de 12px, ink-faint no llega al mínimo de
+            contraste (regla de la casa en app/globals.css). */}
+        <p className="ink-soft mt-0.5 truncate t-micro">
           {anuncio.rarity}
           {" · "}
           {anuncio.esMio ? "publicado por ti" : `de ${anuncio.vendedor}`}
@@ -109,10 +113,10 @@ export default function TarjetaAnuncio({
 
       <div className="mt-auto flex flex-col gap-1.5">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="tnum ink text-base leading-none font-bold">
+          <span className="tnum ink t-base leading-none font-bold">
             {formatNumber(anuncio.precio)}
           </span>
-          <span className="ink-faint text-[10px]">monedas</span>
+          <span className="ink-soft t-micro">monedas</span>
         </div>
 
         {/* En los anuncios propios la cifra que importa NO es el precio, es lo
@@ -121,12 +125,13 @@ export default function TarjetaAnuncio({
             sólo al publicar, porque el anuncio se mira muchas veces después. */}
         {anuncio.esMio ? (
           <>
-            <p className="ink-soft text-[11px] leading-snug">
+            <p className="ink-soft t-meta leading-snug">
               Cobrarás{" "}
               <span className="tnum font-semibold" style={{ color: "var(--ok)" }}>
                 {formatNumber(cobraElVendedor)}
               </span>{" "}
-              <span className="ink-faint">
+              {/* ink-soft, no ink-faint: esta línea mide 11px. */}
+              <span className="ink-soft">
                 (−{formatNumber(anuncio.comision)} de comisión)
               </span>
             </p>
@@ -135,7 +140,7 @@ export default function TarjetaAnuncio({
               onClick={onRetirar}
               disabled={enCurso || bloqueada}
               aria-busy={enCurso}
-              className="btn-ghost press touch-target ink-soft flex w-full items-center justify-center rounded-xl text-[12px] font-medium disabled:cursor-not-allowed disabled:opacity-40"
+              className="btn-ghost press control-44 ink-soft w-full rounded-xl t-cuerpo-2 font-medium disabled:cursor-not-allowed disabled:opacity-40"
             >
               {enCurso ? "Retirando…" : "Retirar"}
             </button>
@@ -144,7 +149,7 @@ export default function TarjetaAnuncio({
           <>
             {sinSaldo && (
               <p
-                className="text-[11px] leading-snug font-medium"
+                className="t-meta leading-snug font-medium"
                 style={{ color: "var(--warn-ink)" }}
               >
                 Te faltan {formatNumber(faltan)} monedas
@@ -161,7 +166,7 @@ export default function TarjetaAnuncio({
               onClick={onComprar}
               disabled={!puedeComprar || enCurso || bloqueada}
               aria-busy={enCurso}
-              className={`press touch-target flex w-full items-center justify-center rounded-xl text-[12px] font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${
+              className={`press control-44 w-full rounded-xl t-cuerpo-2 font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${
                 sinSaldo ? "btn-ghost ink-soft" : "btn-accent"
               }`}
             >

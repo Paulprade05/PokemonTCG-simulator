@@ -33,6 +33,7 @@
 
 import { useMemo } from "react";
 import { motion } from "framer-motion";
+import { D, EASE_OUT } from "../../utils/motion";
 import PokemonCard from "../PokemonCard";
 import DesperfectosCarta, { estiloDescentrado } from "../DesperfectosCarta";
 import type { Desperfectos, MarcasDeCarta } from "../../utils/graduacion";
@@ -95,7 +96,7 @@ export default function CartaConDesperfectos({
         className="pointer-events-none absolute inset-0 z-30"
         initial={false}
         animate={{ opacity: mostrarMarcas ? 1 : 0 }}
-        transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: D.slow, ease: EASE_OUT }}
         aria-hidden="true"
       >
         <DesperfectosCarta desperfectos={desperfectos} marcas={marcas} oculto={!mostrarMarcas} />

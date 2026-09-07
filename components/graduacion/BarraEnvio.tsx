@@ -35,6 +35,7 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { formatNumber } from "../../utils/format";
+import { D, EASE_OUT } from "../../utils/motion";
 import { porcentaje } from "./Comun";
 
 interface Props {
@@ -75,21 +76,21 @@ export default function BarraEnvio({
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 16 }}
-          transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+          transition={{ duration: D.base, ease: EASE_OUT }}
           className="sticky z-40 glass rounded-2xl p-3.5 flex flex-col gap-3"
           style={{ bottom: "calc(var(--content-bottom) - 4px)", boxShadow: "var(--shadow-lg)" }}
         >
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-sm font-semibold tnum">
+              <p className="t-cuerpo font-semibold tnum">
                 {formatNumber(totalCopias)} {totalCopias === 1 ? "copia" : "copias"} al graduador
               </p>
-              <p className="text-[11px] ink-soft tnum">
+              <p className="t-meta ink-soft tnum">
                 {formatNumber(totalCoste)} monedas
                 {ahorro > 0 && (
                   <>
                     {" · "}
-                    <span className="line-through ink-faint">{formatNumber(totalSinDescuento)}</span>{" "}
+                    <span className="line-through ink-soft">{formatNumber(totalSinDescuento)}</span>{" "}
                     <span style={{ color: "var(--ok)" }} className="font-semibold">
                       −{porcentaje(descuento, 0)}, ahorras {formatNumber(ahorro)}
                     </span>
@@ -101,7 +102,7 @@ export default function BarraEnvio({
               type="button"
               onClick={onVaciar}
               disabled={enCurso}
-              className="chip ink-soft text-[11px] px-3 py-2 press shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="chip ink-soft t-meta px-3 py-2 press shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Vaciar
             </button>
@@ -112,7 +113,7 @@ export default function BarraEnvio({
               que va a bajar más. */}
           {siguienteEscalon ? (
             <p
-              className="text-[11px] leading-snug rounded-xl px-3 py-2"
+              className="t-meta leading-snug rounded-xl px-3 py-2"
               style={{
                 background: "var(--ok-weak)",
                 color: "var(--ok)",
@@ -122,13 +123,13 @@ export default function BarraEnvio({
               baja un {porcentaje(siguienteEscalon.descuento, 0)}.
             </p>
           ) : descuento > 0 ? (
-            <p className="text-[11px] ink-faint">
+            <p className="t-meta ink-soft">
               Descuento máximo aplicado: −{porcentaje(descuento, 0)} en todo el envío.
             </p>
           ) : null}
 
           {sinSaldo && (
-            <p className="text-[11px] leading-snug" style={{ color: "var(--danger)" }}>
+            <p className="t-meta leading-snug" style={{ color: "var(--danger-ink)" }}>
               Te faltan {formatNumber(totalCoste - monedas)} monedas. Quita alguna copia o vende
               repetidas en tu colección.
             </p>
@@ -139,7 +140,7 @@ export default function BarraEnvio({
             onClick={onGraduar}
             disabled={enCurso || sinSaldo}
             aria-busy={enCurso}
-            className="btn-accent press touch-target w-full rounded-2xl py-3.5 text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="btn-accent press touch-target w-full rounded-2xl py-3.5 t-cuerpo font-semibold flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {enCurso ? (
               <>

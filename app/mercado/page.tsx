@@ -35,6 +35,11 @@ import { useToast } from "../../components/ui/Toast";
 import Sheet from "../../components/ui/Sheet";
 import PageHeader from "../../components/PageHeader";
 import Loader from "../../components/Loader";
+import AvisoInvitado from "../../components/ui/AvisoInvitado";
+import CabeceraDeHoja from "../../components/ui/CabeceraDeHoja";
+import CampoBusqueda from "../../components/ui/CampoBusqueda";
+import EstadoError from "../../components/ui/EstadoError";
+import { IconoRefrescar } from "../../components/icons";
 
 /* ------------------------------------------------------------------ *
  * RÓTULOS
@@ -381,15 +386,10 @@ export default function MercadoPage() {
     return (
       <>
         <PageHeader title="Mercado" subtitle="Lotes que alguien paga por encima de su precio" />
-        <div className="surface rounded-2xl py-16 px-6 flex flex-col items-center text-center gap-4">
-          <p className="text-sm ink-soft">No se pudo cargar el tablón de ofertas.</p>
-          <button
-            onClick={() => cargar()}
-            className="btn-accent press touch-target px-6 rounded-xl text-sm font-semibold flex items-center justify-center"
-          >
-            Reintentar
-          </button>
-        </div>
+        <EstadoError
+          titulo="No se pudo cargar el tablón de ofertas"
+          onReintentar={() => cargar()}
+        />
       </>
     );
   }
@@ -410,9 +410,9 @@ export default function MercadoPage() {
           <Link
             href="/bazar"
             aria-label="Ir al bazar entre jugadores"
-            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl text-xs font-medium transition press touch-target justify-center"
+            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl t-cuerpo-2 font-medium transition press touch-target justify-center"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4" aria-hidden="true">
               <path d="M3 21h18M5 21V10l7-5 7 5v11" />
               <path d="M9 21v-6h6v6" />
             </svg>
@@ -423,41 +423,29 @@ export default function MercadoPage() {
             aria-label="Actualizar el tablón"
             className="touch-target w-11 h-11 rounded-xl btn-ghost press flex items-center justify-center"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="w-4 h-4">
-              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-              <path d="M21 3v6h-6" />
-            </svg>
+            <IconoRefrescar tam={16} />
           </button>
           </>
         }
       />
 
       {!isSignedIn && (
-        <div
-          className="surface rounded-2xl p-4 mb-5 flex items-start gap-3"
-          style={{ borderColor: "color-mix(in srgb, var(--warn) 40%, transparent)" }}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="w-5 h-5 shrink-0 mt-0.5" style={{ color: "var(--warn)" }} aria-hidden="true">
-            <path d="M12 9v4" /><path d="M12 17h.01" /><circle cx="12" cy="12" r="9" />
-          </svg>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold">Estás jugando como invitado</p>
-            <p className="text-xs ink-soft mt-1">
-              Puedes ver el tablón y comprobar tu progreso, pero el cobro se hace en el servidor:
-              tus monedas y tus cartas viven sólo en este dispositivo. Inicia sesión para entregar
-              lotes.{" "}
-              <Link href="/" className="accent font-medium underline underline-offset-2">
-                Ir al inicio
-              </Link>
-            </p>
-          </div>
+        // El `mb-5` que llevaba la copia se queda aquí, fuera del componente:
+        // el margen es cosa de esta pantalla (el bazar lo resuelve con el `gap`
+        // de su columna), no del aviso.
+        <div className="mb-5">
+          <AvisoInvitado>
+            Puedes ver el tablón y comprobar tu progreso, pero el cobro se hace en el servidor:
+            tus monedas y tus cartas viven sólo en este dispositivo. Inicia sesión para entregar
+            lotes.
+          </AvisoInvitado>
         </div>
       )}
 
       {ofertas.length === 0 ? (
         <div className="surface rounded-2xl py-16 px-6 flex flex-col items-center text-center gap-3">
-          <p className="text-sm font-semibold">Hoy no hay encargos</p>
-          <p className="text-xs ink-soft max-w-xs">
+          <p className="t-cuerpo font-semibold">Hoy no hay encargos</p>
+          <p className="t-cuerpo-2 ink-soft max-w-xs">
             El comprador no ha dejado ninguna lista. Vuelve en el próximo ciclo.
           </p>
         </div>
@@ -485,7 +473,7 @@ export default function MercadoPage() {
         </div>
       )}
 
-      <p className="text-[11px] ink-faint text-center mt-6 mb-2 max-w-lg mx-auto leading-relaxed">
+      <p className="t-meta ink-soft text-center mt-6 mb-2 max-w-lg mx-auto leading-relaxed">
         Al mercado sólo van duplicados: de cada carta que entregues te queda siempre una copia en
         el álbum, así que ningún encargo te deja un hueco. El comprador paga su cuota entera sobre
         el precio de venta del lote, sin topes, y se proponen las cartas más baratas que cumplan
@@ -514,10 +502,28 @@ export default function MercadoPage() {
  * TARJETA
  * ------------------------------------------------------------------ */
 
+/**
+ * DOS MAPAS Y NO UNO, y ése es justo el reparto que hace la casa.
+ *
+ * Había uno solo, y con él se pintaban a la vez el RELLENO de la chapa de
+ * dificultad, su BORDE y su TEXTO —y encima el multiplicador grande y la cuota
+ * del desglose—. Pero --accent, --warn y --danger son tokens de FONDO: sobre el
+ * papel crema del tema claro dan entre 2,0 y 3,2:1 como tinta, o sea por debajo
+ * del mínimo para leerse. Sus parejas legibles ya existen (--ok, --warn-ink,
+ * --danger-ink) y es lo único que cambia aquí: el relleno y el borde de la
+ * chapa siguen saliendo de los de marca, que es donde sí valen.
+ */
 const COLOR_DIFICULTAD: Record<Oferta["dificultad"], string> = {
   facil: "var(--accent)",
   media: "var(--warn)",
   dificil: "var(--danger)",
+};
+
+/** La misma escala, en su versión legible sobre la superficie. */
+const TINTA_DIFICULTAD: Record<Oferta["dificultad"], string> = {
+  facil: "var(--ok)",
+  media: "var(--warn-ink)",
+  dificil: "var(--danger-ink)",
 };
 
 const ETIQUETA_DIFICULTAD: Record<Oferta["dificultad"], string> = {
@@ -556,6 +562,7 @@ function TarjetaOferta({
   onSoltarTodo: () => void;
 }) {
   const color = COLOR_DIFICULTAD[oferta.dificultad];
+  const tinta = TINTA_DIFICULTAD[oferta.dificultad];
   const completa = Boolean(reparto?.completa);
   const pago = completa && reparto ? pagoDelLote(oferta, reparto.valor) : 0;
   const prima = completa && reparto ? pago - reparto.valor : 0;
@@ -585,47 +592,47 @@ function TarjetaOferta({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1.5 flex-wrap">
             <span
-              className="chip text-[10px] font-semibold px-2 py-0.5 uppercase tracking-wide"
+              className="chip t-etiqueta px-2 py-0.5"
               style={{
-                color,
+                color: tinta,
                 borderColor: `color-mix(in srgb, ${color} 40%, transparent)`,
                 background: `color-mix(in srgb, ${color} 12%, transparent)`,
               }}
             >
               {ETIQUETA_DIFICULTAD[oferta.dificultad]}
             </span>
-            <span className="chip text-[10px] px-2 py-0.5 ink-soft truncate max-w-[60%]">
+            <span className="chip t-micro px-2 py-0.5 ink-soft truncate max-w-[60%]">
               {nombreDeSet(oferta.setId, nombresSet)}
             </span>
             {cumplida && (
-              <span className="chip text-[10px] px-2 py-0.5 accent font-semibold">Cumplida</span>
+              <span className="chip t-micro px-2 py-0.5 [color:var(--ok)] font-semibold">Cumplida</span>
             )}
           </div>
-          <h2 className="text-base font-bold tracking-tight">{oferta.titulo}</h2>
+          <h2 className="t-base font-bold tracking-tight">{oferta.titulo}</h2>
         </div>
         <div className="text-right shrink-0">
-          <p className="text-xl font-bold tnum" style={{ color }}>
+          <p className="t-titulo font-bold tnum" style={{ color: tinta }}>
             ×{oferta.multiplicador.toFixed(2).replace(".", ",")}
           </p>
           {/* Ya no hay presupuesto máximo: la cuota se aplica entera a todo el
               lote, así que lo que hay que explicar es sobre qué se aplica. */}
-          <p className="text-[10px] ink-faint">sobre el precio suelto</p>
+          <p className="t-micro ink-soft">sobre el precio suelto</p>
         </div>
       </header>
 
-      <p className="text-xs ink-soft leading-relaxed">{oferta.descripcion}</p>
+      <p className="t-cuerpo-2 ink-soft leading-relaxed">{oferta.descripcion}</p>
 
       <ul className="flex flex-col gap-2.5">
         {(reparto?.partes ?? []).map((parte, i) => (
           <li key={i} className="surface-2 rounded-2xl px-3.5 py-3">
             <div className="flex items-start justify-between gap-3 mb-2">
-              <p className="text-xs leading-snug flex-1">{parte.requisito.descripcion}</p>
+              <p className="t-cuerpo-2 leading-snug flex-1">{parte.requisito.descripcion}</p>
               <span
                 // El progreso está medido en DUPLICADOS, no en cartas poseídas:
                 // es la única cifra que casa con lo que el servidor aceptará.
                 title="Contando sólo las copias que te sobran"
-                className={`text-xs font-semibold tnum shrink-0 ${
-                  parte.completo ? "accent" : "ink-faint"
+                className={`t-cuerpo-2 font-semibold tnum shrink-0 ${
+                  parte.completo ? "[color:var(--ok)]" : "ink-faint"
                 }`}
               >
                 {parte.progreso}/{parte.requisito.cantidad}
@@ -647,7 +654,7 @@ function TarjetaOferta({
               <CopiasDeParte parte={parte} onTocar={(pos) => onTocarCopia(i, pos)} />
             ) : (
               parte.elegidas.length > 0 && (
-                <p className="text-[10px] ink-faint mt-2 leading-relaxed">
+                <p className="t-micro ink-soft mt-2 leading-relaxed">
                   Entregarías: {resumirCartas(parte.elegidas)}
                 </p>
               )
@@ -662,13 +669,13 @@ function TarjetaOferta({
           // el comprador y qué sale al final. Sin topes que explicar, las tres
           // cifras encajan y el jugador puede comprobar la cuenta.
           <div className="surface-2 rounded-2xl px-3.5 py-3 flex flex-col gap-1.5">
-            <div className="flex items-baseline justify-between gap-2 text-xs">
+            <div className="flex items-baseline justify-between gap-2 t-cuerpo-2">
               <span className="ink-soft">Precio suelto del lote</span>
               <span className="tnum">{formatNumber(reparto.valor)}</span>
             </div>
-            <div className="flex items-baseline justify-between gap-2 text-xs">
+            <div className="flex items-baseline justify-between gap-2 t-cuerpo-2">
               <span className="ink-soft">Cuota del comprador</span>
-              <span className="tnum" style={{ color }}>
+              <span className="tnum" style={{ color: tinta }}>
                 ×{oferta.multiplicador.toFixed(2).replace(".", ",")}
               </span>
             </div>
@@ -676,11 +683,11 @@ function TarjetaOferta({
               className="flex items-baseline justify-between gap-2 pt-1.5 mt-0.5"
               style={{ borderTop: "1px solid color-mix(in srgb, var(--ink) 10%, transparent)" }}
             >
-              <span className="text-xs font-semibold">
+              <span className="t-cuerpo-2 font-semibold">
                 Total{" "}
                 <span className="ink-faint font-normal">(+{formatNumber(prima)} de prima)</span>
               </span>
-              <span className="text-base font-bold accent tnum">
+              <span className="t-base font-bold [color:var(--ok)] tnum">
                 {formatNumber(pago)} monedas
               </span>
             </div>
@@ -688,7 +695,7 @@ function TarjetaOferta({
         )}
 
         {completa && reparto && (
-          <p className="text-[10px] ink-faint leading-relaxed">
+          <p className="t-micro ink-soft leading-relaxed">
             Entregas duplicados: de cada carta del lote te queda una copia en el álbum.
           </p>
         )}
@@ -703,12 +710,9 @@ function TarjetaOferta({
           <button
             type="button"
             onClick={onSoltarTodo}
-            className="w-full touch-target py-2.5 rounded-xl text-xs font-medium btn-ghost ink-soft press flex items-center justify-center gap-2"
+            className="w-full touch-target py-2.5 rounded-xl t-cuerpo-2 font-medium btn-ghost ink-soft press flex items-center justify-center gap-2"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="w-3.5 h-3.5 shrink-0" aria-hidden="true">
-              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-              <path d="M21 3v6h-6" />
-            </svg>
+            <IconoRefrescar tam={16} />
             Volver a la propuesta automática
           </button>
         )}
@@ -716,7 +720,7 @@ function TarjetaOferta({
         <button
           onClick={onCumplir}
           disabled={!completa || cumplida || !puedeCobrar || enCurso || bloqueada}
-          className={`w-full touch-target py-3 rounded-xl text-sm font-semibold press flex items-center justify-center gap-2 disabled:cursor-not-allowed ${
+          className={`w-full touch-target py-3 rounded-xl t-cuerpo font-semibold press flex items-center justify-center gap-2 disabled:cursor-not-allowed ${
             completa && !cumplida && puedeCobrar ? "btn-accent" : "btn-ghost ink-soft"
           } ${!completa || cumplida || !puedeCobrar ? "opacity-60" : ""}`}
         >
@@ -798,7 +802,7 @@ function CopiasDeParte({
      que decir por qué aquí no hay nada. */
   if (huecos.length === 0) {
     return (
-      <p className="text-[10px] ink-faint mt-2 leading-relaxed">
+      <p className="t-micro ink-soft mt-2 leading-relaxed">
         Con los duplicados que te sobran no se llena este requisito, así que
         todavía no hay copias que elegir.
       </p>
@@ -832,21 +836,25 @@ function CopiasDeParte({
                `:where()` de especificidad cero justo para esto— porque una
                píldora de 44px de alto parece un botón de acción y aquí lo que
                hay es una lista de cartas. */
-            className="chip press-flat min-h-11 rounded-xl px-2.5 py-1 flex items-center gap-1.5 text-[10px] max-w-full transition-colors hover:border-[var(--border-strong)]"
+            className="chip press-flat min-h-11 rounded-xl px-2.5 py-1 flex items-center gap-1.5 t-micro max-w-full transition-colors hover:border-[var(--border-strong)]"
             style={fija ? { borderColor: "var(--accent)" } : undefined}
           >
             {fija && (
               // El alfiler distingue "esto lo he puesto yo" de "esto lo propuso
               // la pantalla", que es lo único que hay que saber para decidir si
               // soltarlo. Un color no basta: se lee mal en la tarjeta cumplida.
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-3 h-3 shrink-0" style={{ color: "var(--accent)" }} aria-hidden="true">
+              // 16px, que es el escalón pequeño de la casa: nacía a 12, una
+              // medida que no existe en ninguna otra parte. El verde de marca sí
+              // vale aquí porque esto es un GRÁFICO sobre el relleno del chip, no
+              // texto — y va acompañado del borde de acento del propio chip.
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 shrink-0" style={{ color: "var(--accent)" }} aria-hidden="true">
                 <path d="M12 17v5" />
                 <path d="M9 10.76V5h6v5.76l2 2.24v2H7v-2z" />
               </svg>
             )}
             <span className="truncate max-w-[9rem]">{nombreDe(c)}</span>
-            {copias > 1 && <span className="tnum ink-faint">×{copias}</span>}
-            <span className="tnum ink-faint">{formatNumber(c.precio * copias)}</span>
+            {copias > 1 && <span className="tnum ink-soft">×{copias}</span>}
+            <span className="tnum ink-soft">{formatNumber(c.precio * copias)}</span>
           </button>
         );
       })}
@@ -854,7 +862,7 @@ function CopiasDeParte({
         <button
           type="button"
           onClick={() => setDesplegado((v) => !v)}
-          className="chip press-flat min-h-11 rounded-xl px-2.5 py-1 flex items-center text-[10px] ink-soft transition-colors hover:border-[var(--border-strong)]"
+          className="chip press-flat min-h-11 rounded-xl px-2.5 py-1 flex items-center t-micro ink-soft transition-colors hover:border-[var(--border-strong)]"
         >
           {desplegado ? "Ver menos" : `y ${ocultas} más`}
         </button>
@@ -974,12 +982,11 @@ function SelectorEntrega({
   return (
     <Sheet open={destino !== null} onClose={onCerrar} label="Elegir qué carta entregas">
       <div className="px-4 pt-1 pb-6 sm:px-5">
-        <h2 className="ink text-center text-[17px] font-semibold">
-          {playset ? "Elegir el playset" : "Elegir la carta que entregas"}
-        </h2>
-        <p aria-live="polite" className="ink-soft mt-1.5 text-center text-[12px] leading-relaxed">
-          {requisito?.descripcion ?? ""}
-        </p>
+        <CabeceraDeHoja
+          titulo={playset ? "Elegir el playset" : "Elegir la carta que entregas"}
+          descripcion={requisito?.descripcion ?? ""}
+          descripcionViva
+        />
         {/* QUÉ COPIA SE ESTÁ CAMBIANDO, con su nombre y su precio.
             Antes el único subtítulo era la descripción del requisito, que dice
             lo mismo para los ocho chips: fallar el chip de al lado con el pulgar
@@ -992,7 +999,7 @@ function SelectorEntrega({
             copia cara que el jugador clavó puede estar fuera de la primera
             tanda. Sabiendo cómo se llama la encuentra con el buscador. */}
         {actual && (
-          <p className="ink-faint mt-1 text-center text-[11px] leading-relaxed">
+          <p className="ink-soft mt-1 text-center t-meta leading-relaxed">
             Cambias <span className="ink-soft font-medium">{nombreDe(actual)}</span>
             {playset ? ` ×${requisito?.cantidad ?? 1}` : ""} ·{" "}
             {formatNumber(actual.precio * (playset ? (requisito?.cantidad ?? 1) : 1))} monedas
@@ -1009,12 +1016,9 @@ function SelectorEntrega({
           <button
             type="button"
             onClick={onSoltar}
-            className="btn-ghost press touch-target mx-auto mt-3 flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[12px] font-medium"
+            className="btn-ghost press touch-target mx-auto mt-3 flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 t-cuerpo-2 font-medium"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
-              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-              <path d="M21 3v6h-6" />
-            </svg>
+            <IconoRefrescar tam={16} />
             {playset ? "Que lo elija la pantalla" : "Que esta copia la elija la pantalla"}
           </button>
         )}
@@ -1023,41 +1027,26 @@ function SelectorEntrega({
           /* SIN OPCIONES no se dice "no hay resultados": el jugador se pondría
              a buscar un filtro inexistente. Lo que pasa es que no le sobra
              ninguna otra carta que valga aquí, y eso hay que decirlo. */
-          <p className="ink-soft py-12 text-center text-[12px] leading-relaxed">
+          <p className="ink-soft py-12 text-center t-cuerpo-2 leading-relaxed">
             No te sobra ninguna otra carta que valga para este requisito. Sólo se pueden
             entregar duplicados, y las que ya está usando el resto del lote no cuentan.
           </p>
         ) : (
           <>
-            <label className="input-field mt-4 flex min-h-11 items-center gap-2 rounded-xl px-3 py-2">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="ink-faint h-4 w-4 shrink-0" aria-hidden="true">
-                <circle cx="11" cy="11" r="8" />
-                <path d="m21 21-4.3-4.3" />
-              </svg>
-              <input
-                type="search"
-                inputMode="search"
-                enterKeyHint="search"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                aria-label="Buscar entre las cartas que valen"
-                placeholder="Buscar una carta…"
-                value={busqueda}
-                onChange={(e) => {
-                  setBusqueda(e.target.value);
-                  setTope(TANDA_OPCIONES);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                }}
-                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:opacity-50 [&::-webkit-search-cancel-button]:hidden"
-              />
-            </label>
+            <CampoBusqueda
+              className="mt-4"
+              etiqueta="Buscar entre las cartas que valen"
+              marcador="Buscar una carta…"
+              valor={busqueda}
+              onCambio={(v) => {
+                setBusqueda(v);
+                // Cada búsqueda empieza por su primera tanda.
+                setTope(TANDA_OPCIONES);
+              }}
+            />
 
             {filtradas.length === 0 ? (
-              <p className="ink-soft py-12 text-center text-[12px] leading-relaxed">
+              <p className="ink-soft py-12 text-center t-cuerpo-2 leading-relaxed">
                 Ninguna de las que valen aquí encaja con esa búsqueda.
               </p>
             ) : (
@@ -1086,10 +1075,10 @@ function SelectorEntrega({
                           style={esLaDeAhora ? { borderColor: "var(--accent)" } : undefined}
                         >
                           <div className="flex items-baseline justify-between gap-3">
-                            <span className="truncate text-[13px] font-medium">
+                            <span className="truncate t-cuerpo-2 font-medium">
                               {nombreDe(carta)}
                             </span>
-                            <span className="tnum accent shrink-0 text-[13px] font-semibold">
+                            <span className="tnum [color:var(--ok)] shrink-0 t-cuerpo-2 font-semibold">
                               {/* El "×N" del playset va aquí y no sólo en el chip:
                                   sin él la fila enseña un número cuatro veces
                                   mayor que el precio de la carta y nada que los
@@ -1101,11 +1090,11 @@ function SelectorEntrega({
                             </span>
                           </div>
                           <div className="mt-0.5 flex items-baseline justify-between gap-3">
-                            <span className="ink-faint truncate text-[10px]">
+                            <span className="ink-soft truncate t-micro">
                               {carta.rarity ?? "Sin rareza"}
                               {esLaDeAhora ? " · la de ahora" : ""}
                             </span>
-                            <span className="tnum ink-faint shrink-0 text-[10px]">
+                            <span className="tnum ink-soft shrink-0 t-micro">
                               {/* "Libres" y no "copias": son las que sobran
                                   DESPUÉS de dejar la del álbum y de descontar
                                   las que ya usa el resto del lote. */}
@@ -1122,7 +1111,7 @@ function SelectorEntrega({
                   <button
                     type="button"
                     onClick={() => setTope((t) => t + TANDA_OPCIONES)}
-                    className="btn-ghost press touch-target mx-auto mt-4 block rounded-xl px-5 py-2.5 text-[12px] font-medium"
+                    className="btn-ghost press touch-target mx-auto mt-4 block rounded-xl px-5 py-2.5 t-cuerpo-2 font-medium"
                   >
                     Ver más ({formatNumber(filtradas.length - visibles.length)} restantes)
                   </button>

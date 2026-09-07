@@ -107,7 +107,11 @@ export default function DailyReward() {
       // botón se quedaría sin nombre para un lector de pantalla.
       aria-label={rotulo}
       title={rotulo}
-      className={`press flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium transition ${
+      // `control-44` porque el botón medía 34 px de alto y vive en la barra
+      // superior, pegado a otros controles: es el sitio donde un fallo del dedo
+      // toca lo de al lado. El `flex` propio gana al del `:where()` de la
+      // utilidad, así que sólo añade las dos medidas mínimas.
+      className={`press control-44 flex items-center gap-2 rounded-xl border px-3 py-2 t-cuerpo-2 font-medium transition ${
         available ? "" : "cursor-not-allowed"
       }`}
       style={
@@ -124,7 +128,19 @@ export default function DailyReward() {
             }
       }
     >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4" aria-hidden="true">
+      {/* No hay icono de calendario en components/icons.tsx, así que este se
+          queda inline; lo que se unifica es el trazo (redondeado, como el
+          resto de la familia) y el tamaño, que ya era uno de la escala. */}
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="w-4 h-4"
+        aria-hidden="true"
+      >
         <rect x="3" y="4" width="18" height="18" rx="2" />
         <path d="M16 2v4M8 2v4M3 10h18" />
       </svg>
@@ -133,7 +149,7 @@ export default function DailyReward() {
       </span>
       {streak > 0 && (
         <span
-          className="tnum rounded-full px-1.5 py-0.5 text-[10px]"
+          className="tnum rounded-full px-1.5 py-0.5 t-micro"
           style={{ background: "color-mix(in srgb, var(--ink) 10%, transparent)" }}
         >
           ×{streak}

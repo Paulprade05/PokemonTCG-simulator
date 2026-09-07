@@ -52,8 +52,8 @@ interface ReglasBazarProps {
 function Ficha({ titulo, detalle }: { titulo: string; detalle: string }) {
   return (
     <div className="surface-2 min-w-0 flex-1 rounded-2xl px-3 py-2.5">
-      <p className="ink text-[12px] leading-tight font-semibold">{titulo}</p>
-      <p className="ink-soft mt-1 text-[11px] leading-snug">{detalle}</p>
+      <p className="ink t-cuerpo-2 leading-tight font-semibold">{titulo}</p>
+      <p className="ink-soft mt-1 t-meta leading-snug">{detalle}</p>
     </div>
   );
 }
@@ -77,8 +77,10 @@ function Regla({
         {icono}
       </div>
       <div className="min-w-0">
-        <p className="ink text-[13px] leading-tight font-semibold">{titulo}</p>
-        <p className="ink-soft mt-1 text-[12px] leading-relaxed">{children}</p>
+        {/* t-cuerpo y no t-cuerpo-2: es el título de la regla y lo que tiene
+            debajo ya son 12px; igualarlos borraría la jerarquía de la fila. */}
+        <p className="ink t-cuerpo leading-tight font-semibold">{titulo}</p>
+        <p className="ink-soft mt-1 t-cuerpo-2 leading-relaxed">{children}</p>
       </div>
     </li>
   );
@@ -127,7 +129,7 @@ export default function ReglasBazar({
       <Regla
         titulo="El precio no lo eliges del todo"
         icono={
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={ICONO} aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={ICONO} aria-hidden="true">
             <path d="M4 12h16" /><path d="M7 8v8" /><path d="M17 8v8" />
           </svg>
         }
@@ -141,7 +143,7 @@ export default function ReglasBazar({
       <Regla
         titulo={`La casa se queda el ${pct(COMISION)}`}
         icono={
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={ICONO} aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={ICONO} aria-hidden="true">
             <circle cx="12" cy="12" r="9" />
             <path d="M12 7v10M9.5 9.5h4a1.8 1.8 0 0 1 0 3.5h-3a1.8 1.8 0 0 0 0 3.5h4" />
           </svg>
@@ -155,7 +157,7 @@ export default function ReglasBazar({
       <Regla
         titulo={`Hacen falta ${SOBRES_PARA_VENDER} sobres abiertos`}
         icono={
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={ICONO} aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={ICONO} aria-hidden="true">
             <path d="M4 7h16v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z" />
             <path d="M4 7 7 3h10l3 4" /><path d="M12 3v18" />
           </svg>
@@ -173,7 +175,9 @@ export default function ReglasBazar({
           letra pequeña, porque el mensaje del servidor ("sin-copias",
           "demasiados-anuncios") no se explica solo. */}
       <li
-        className="ink-faint pt-1 text-[11px] leading-relaxed"
+        // ink-soft y no ink-faint: la línea mide 11px y ink-faint sólo vale de
+        // 12 en adelante.
+        className="ink-soft pt-1 t-meta leading-relaxed"
         style={{ borderTop: "1px solid var(--border)" }}
       >
         <span className="pt-3 block">

@@ -9,7 +9,10 @@ export interface NavItem {
 }
 
 const I = (d: ReactNode) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-[22px] h-[22px]">
+  // Trazo 2 y 20px, como el resto del vocabulario de iconos. Eran 1,8 y 22px,
+  // los únicos del proyecto: al salir de aquí los cinco iconos de la barra de
+  // pestañas, la desviación se veía en las cinco a la vez.
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
     {d}
   </svg>
 );

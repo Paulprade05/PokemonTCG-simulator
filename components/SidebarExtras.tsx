@@ -202,7 +202,7 @@ export default function SidebarExtras() {
 
   return (
     <div className="mt-7 flex flex-col gap-1">
-      <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] ink-faint">
+      <p className="px-3 pb-1 t-etiqueta ink-soft">
         Atajos
       </p>
 
@@ -244,11 +244,15 @@ export default function SidebarExtras() {
                 nunca y no pinta nada. Por eso aquí el color de hover se escribe
                 con el valor arbitrario, que sí se emite. */}
             <span className={`transition-colors ${activo ? "accent" : "ink-faint group-hover:text-[var(--ink-soft)]"}`}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]" aria-hidden="true">
+              {/* 20px y trazo 2, que es el escalón de la casa: nacían a 18px
+                  con trazo 1,8, dos valores que no existen en ninguna otra
+                  parte. Siguen siendo más pequeños que los 22px de las pestañas
+                  de arriba, que es lo que estos atajos quieren decir. */}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5" aria-hidden="true">
                 {a.icon}
               </svg>
             </span>
-            <span className={`text-[13px] transition-colors ${activo ? "ink font-medium" : "ink-soft group-hover:text-[var(--ink)]"}`}>
+            <span className={`t-cuerpo-2 transition-colors ${activo ? "ink font-medium" : "ink-soft group-hover:text-[var(--ink)]"}`}>
               {a.label}
             </span>
           </Link>
@@ -260,12 +264,12 @@ export default function SidebarExtras() {
           href="/collection"
           className="press-flat surface surface-hover mt-6 block rounded-xl px-3 py-2.5"
         >
-          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] ink-faint">
+          <p className="t-etiqueta ink-soft">
             Tu colección
           </p>
           {/* tnum: las cifras no bailan de ancho cuando el número cambia al
               volver de abrir un sobre. */}
-          <p className="mt-0.5 text-[13px] font-medium ink tnum">{resumenLocal}</p>
+          <p className="mt-0.5 t-cuerpo-2 font-medium ink tnum">{resumenLocal}</p>
         </Link>
       )}
     </div>

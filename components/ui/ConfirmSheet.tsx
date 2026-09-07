@@ -1,5 +1,6 @@
 "use client";
 
+import CabeceraDeHoja from "./CabeceraDeHoja";
 import Sheet from "./Sheet";
 
 interface ConfirmSheetProps {
@@ -13,7 +14,19 @@ interface ConfirmSheetProps {
   onClose: () => void;
 }
 
-/** Alternativa a `confirm()` que no rompe el aspecto de app instalada. */
+/**
+ * Alternativa a `confirm()` que no rompe el aspecto de app instalada.
+ *
+ * POR QUÉ LA DESCRIPCIÓN NO VA DENTRO DE `CabeceraDeHoja`. Ahí el hueco de
+ * descripción es un SUBTÍTULO —una línea de contexto, 12px— y lo que se pinta
+ * aquí no lo es: es la única explicación que hay antes de una acción que no se
+ * puede deshacer ("Se venderán 1.234 cartas repetidas por 5.678 monedas. Cada
+ * copia extra vale menos que la anterior. Las favoritas no se tocan."). Son tres
+ * frases que se leen de corrido, y el mapa de la escala tipográfica manda ahí
+ * `t-cuerpo`, no `t-cuerpo-2`. Al unificar las siete cabeceras de hoja esto se
+ * había ido a 12px, un punto por debajo de los 13 que tenía, y encima había
+ * perdido el `leading-relaxed`: se recupera aquí, que es su sitio.
+ */
 export default function ConfirmSheet({
   open,
   title,
@@ -27,9 +40,9 @@ export default function ConfirmSheet({
   return (
     <Sheet open={open} onClose={onClose} label={title}>
       <div className="px-5 pt-3 pb-6">
-        <h2 className="ink text-center text-[17px] font-semibold">{title}</h2>
+        <CabeceraDeHoja titulo={title} />
         {description && (
-          <p className="ink-soft mt-2 text-center text-[13px] leading-relaxed">
+          <p className="ink-soft t-cuerpo mt-2 text-center leading-relaxed">
             {description}
           </p>
         )}
@@ -54,7 +67,7 @@ export default function ConfirmSheet({
               onClose();
               requestAnimationFrame(() => onConfirm());
             }}
-            className={`press rounded-2xl py-3.5 text-sm font-semibold ${
+            className={`press rounded-2xl py-3.5 t-cuerpo font-semibold ${
               destructive ? "" : "btn-accent"
             }`}
             style={
@@ -64,7 +77,11 @@ export default function ConfirmSheet({
                       "color-mix(in srgb, var(--danger) 16%, transparent)",
                     border:
                       "1px solid color-mix(in srgb, var(--danger) 35%, transparent)",
-                    color: "var(--danger)",
+                    // --danger-ink y no --danger: el rótulo de un botón es
+                    // texto, y --danger es el token de FONDO. Sobre este relleno
+                    // al 16% en tema claro el rojo vivo se queda corto de
+                    // contraste; --danger-ink es su pareja legible.
+                    color: "var(--danger-ink)",
                   }
                 : undefined
             }
@@ -73,7 +90,7 @@ export default function ConfirmSheet({
           </button>
           <button
             onClick={onClose}
-            className="btn-ghost press rounded-2xl py-3.5 text-sm font-medium"
+            className="btn-ghost press rounded-2xl py-3.5 t-cuerpo font-medium"
           >
             {cancelLabel}
           </button>
