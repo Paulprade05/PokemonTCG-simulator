@@ -776,12 +776,55 @@
        * con filas de esa misma tabla, pero se comprueba el recuento por si acaso.
        * ---------------------------------------------------------------- */
       const { rows } = await sql.query(
-        `WITH cobro AS (
+        `WITH bloqueo AS MATERIALIZED (
+           /* EL CANDADO DE LA COLECCIÓN VA DELANTE DEL DE users, Y ESTO NO ES
+            * UNA MEJORA: ES CERRAR UNA INVERSIÓN QUE YA HACÍA DAÑO.
+            *
+            * Ésta era la ÚNICA sentencia del repositorio que pedía los dos
+            * candados al revés: primero la fila de users (en 'cobro') y después
+            * las de user_collection (en 'abono'). Todas las demás que tocan las
+            * dos tablas —graduarCartasAction, venderGraduadaAction,
+            * comprarEnBazarAction, sellPackDuplicates— bloquean user_collection
+            * primero. Mientras la graduación tomaba la fila de users en su
+            * ÚLTIMO CTE, la inversión casi no se notaba; desde que el CTE
+            * 'solvente' la toma antes de insertar —que es justo lo que impide
+            * graduar sin pagar— se abrazan de verdad.
+            *
+            * MEDIDO contra PostgreSQL 18 real, con el mismo usuario graduando y
+            * comprando sobres a la vez (8 sesiones, 2.700 operaciones por
+            * variante, deadlock_timeout por defecto, nueve vueltas rotando el
+            * orden de medida): 13,6 % de las operaciones morían con 40P01. Sin
+            * el candado de 'solvente' ya morían el 4,5 %, o sea que la inversión
+            * hacía daño por su cuenta. Con este CTE delante: 0 de 2.700, las
+            * nueve vueltas, y el duelo pasa de 318 s a 10 s.
+            *
+            * NO CAMBIA LO QUE HACE LA SENTENCIA. Toma antes las MISMAS filas que
+            * 'abono' va a tocar de todos modos, y en el orden (user_id, card_id)
+            * que es el invariante global del repositorio. Una carta que el
+            * usuario todavía no tiene no tiene fila que bloquear, y de ésa se
+            * sigue encargando el ON CONFLICT de 'abono'. */
+           SELECT uc.user_id, uc.card_id
+           FROM user_collection uc
+           WHERE uc.user_id = $1 AND uc.card_id = ANY($8::text[])
+           ORDER BY uc.user_id, uc.card_id
+           FOR UPDATE OF uc
+         ),
+         cobro AS (
            UPDATE users
               SET coins        = coins - $3,
                   packs_opened = COALESCE(packs_opened, 0) + $4,
                   money_spent  = COALESCE(money_spent, 0) + $3
             WHERE id = $1
+              /* LA REFERENCIA A 'bloqueo' ES LO QUE FUERZA EL ORDEN, y por eso
+               * está aquí una condición que siempre es cierta: un count(*) nunca
+               * es negativo. Un CTE que nadie lee no se ejecuta, así que sin esta
+               * línea el candado de la colección ni se pediría antes ni se
+               * pediría. Al ser parte del filtro del escaneo se evalúa por debajo
+               * del nodo que bloquea la fila de users, que es exactamente la
+               * garantía que hace falta. Si el saldo o el recibo ya fallan, el
+               * CTE no llega a ejecutarse y no se bloquea nada: tampoco hace
+               * falta, porque la compra no ocurre. */
+              AND (SELECT count(*) FROM bloqueo) >= 0
               AND coins >= $3
               AND NOT EXISTS (
                     SELECT 1 FROM pack_purchases WHERE user_id = $1 AND clave = $2
@@ -2199,15 +2242,42 @@ export async function claimSetCompletionBonuses() {
       // Siembra a medias: ni se paga ni se quema la fila de set_rewards.
       if (meta.total > 0 && meta.reales < meta.total * CATALOGO_FIABLE) continue;
       if (row.owned >= meta.reales && !rewarded.has(row.set_id)) {
-        // El abono se condiciona a que el INSERT insertara DE VERDAD: la clave
-        // primaria (user_id, set_id) arbitra la carrera. Antes se sumaba el bonus
-        // aunque el ON CONFLICT DO NOTHING no tocara nada, así que dos pestañas
-        // completando el set a la vez cobraban el bonus dos veces.
-        const ins = await sql`
-          INSERT INTO set_rewards (user_id, set_id) VALUES (${userId}, ${row.set_id})
-          ON CONFLICT DO NOTHING
+        /* MARCA Y ABONO EN UNA SOLA SENTENCIA, Y ESTO ERA UNA FUGA.
+         *
+         * El INSERT ya arbitraba la carrera —la clave primaria (user_id,
+         * set_id) sólo deja pasar a uno, así que dos pestañas completando el set
+         * a la vez no cobran dos veces— pero el pago iba en OTRA sentencia, al
+         * final del bucle. Entre una y otra no hay transacción: si la petición
+         * moría ahí (timeout, deploy, corte de red), la fila del premio quedaba
+         * escrita y las 1.000 monedas no se pagaban nunca. Y como esa fila es la
+         * que impide cobrarlo dos veces, el bono se perdía PARA SIEMPRE — el
+         * jugador no tenía forma de volver a completar la expansión.
+         *
+         * Ahora el INSERT es el árbitro y el UPDATE cuelga de él por EXISTS,
+         * dentro de la misma sentencia: es el patrón que ya usan el `cobro` de
+         * comprarSobreAction y la `marca` de cumplirOferta. O se queman las dos
+         * filas o no se quema ninguna.
+         *
+         * El guard de `users` va DENTRO del INSERT por el mismo motivo que en
+         * cumplirOferta: sin fila en users el UPDATE no tocaría nada y la marca
+         * dejaría el premio quemado sin haberlo pagado.
+         *
+         * COALESCE en el abono porque `users.coins` admite NULL a propósito
+         * (app/migrate-core lo documenta): `coins + 1000` sobre NULL da NULL, o
+         * sea borrarle el saldo al jugador al pagarle el bono. */
+        const { rows: pagado } = await sql`
+          WITH premio AS (
+            INSERT INTO set_rewards (user_id, set_id)
+            SELECT ${userId}, ${row.set_id}
+            WHERE EXISTS (SELECT 1 FROM users WHERE id = ${userId})
+            ON CONFLICT DO NOTHING
+            RETURNING 1
+          )
+          UPDATE users SET coins = COALESCE(coins, 0) + ${BONUS}
+          WHERE id = ${userId} AND EXISTS (SELECT 1 FROM premio)
+          RETURNING coins
         `;
-        if ((ins.rowCount ?? 0) > 0) {
+        if (pagado.length > 0) {
           granted += BONUS;
           completedSets.push(capa.nombreSet(row.set_id) ?? meta.name);
         }
@@ -2215,7 +2285,6 @@ export async function claimSetCompletionBonuses() {
     }
 
     if (granted > 0) {
-      await sql`UPDATE users SET coins = coins + ${granted} WHERE id = ${userId}`;
       revalidatePath('/');
     }
     return { granted, sets: completedSets, bonusPerSet: BONUS };
@@ -3655,9 +3724,15 @@ export async function graduarCartasAction(
      *
      * `posibles` vuelve a comprobar contra la base —posesión y que la copia
      * siga libre— para que el importe salga de lo que se puede hacer AHORA y no
-     * de lo que se leyó hace dos consultas. `cobro` es el árbitro: si no hay
-     * saldo no devuelve fila y el INSERT no se ejecuta. Y el ON CONFLICT DO
-     * NOTHING cubre la carrera entre dos pestañas: la perdedora no duplica.
+     * de lo que se leyó hace dos consultas. Y el ON CONFLICT DO NOTHING cubre
+     * la carrera entre dos pestañas: la perdedora no duplica.
+     *
+     * QUIÉN ARBITRA QUÉ, porque aquí hay dos puertas y no una. Este párrafo
+     * decía que el árbitro era `cobro`, y dejó de ser verdad cuando se invirtió
+     * el orden: hoy el árbitro del ALTA es `solvente` —la puerta del saldo, con
+     * su FOR UPDATE— y `cobro` va detrás, colgado de `facturado`, cobrando
+     * exactamente las filas que entraron. El porqué de cada una está en su
+     * propio CTE.
      */
     const { rows: res } = await sql.query(
       `WITH candidatas AS (
@@ -3667,8 +3742,20 @@ export async function graduarCartasAction(
        /* CUÁNTAS HAY YA GRADUADAS DE CADA CARTA, sobre las filas bloqueadas.
         * Va aquí dentro y no en JavaScript: el recuento decide cuántas caben
         * todavía, y leerlo antes de la sentencia dejaría abierta la ventana
-        * entre lectura y escritura. */
-       bloqueo AS (
+        * entre lectura y escritura.
+        *
+        * MATERIALIZED no es cosmético desde que solvente bloquea users: el
+        * argumento de por qué esta sentencia no se abraza con las demás
+        * descansa en que estas filas se tomen ANTES, y en el orden global que
+        * da el ORDER BY. Sin MATERIALIZED, el planificador puede incrustar este
+        * CTE en el nested loop de posibles y reescanearlo, y entonces el
+        * ORDER BY sólo ordena dentro de cada reescaneo: el orden global se
+        * pierde justo en el caso que importa, dos graduaciones a la vez sobre
+        * las mismas cartas. Es una palabra y quita la dependencia del plan.
+        *
+        * (Sin acentos graves aquí dentro: este comentario vive DENTRO del
+        * literal de plantilla del SQL y uno solo lo cerraría.) */
+       bloqueo AS MATERIALIZED (
          SELECT uc.card_id, uc.quantity
          FROM user_collection uc
          WHERE uc.user_id = $1
@@ -3724,15 +3811,46 @@ export async function graduarCartasAction(
         * copia— y el jugador pagaba por notas que no recibía. Ahora se inserta
         * primero, se cuenta lo que de verdad entró y se cobra EXACTAMENTE eso.
         *
-        * El riesgo inverso (dar cartas sin cobrar) lo cierra el CTE solvente:
-        * el INSERT sólo ocurre si hay saldo para el peor caso, que es pagar por
-        * todas las posibles. Como lo que se cobra es siempre menor o igual, el
-        * saldo nunca se queda corto. */
-       solvente AS (
-         SELECT 1 FROM users
-         WHERE id = $1
+        * El riesgo inverso —dar cartas sin cobrar— lo cierra 'solvente', pero
+        * SÓLO desde que lleva FOR UPDATE. Lo que decía aquí antes era falso y
+        * lo aprovechaba una fuga: ver el comentario del propio CTE. */
+       /* EL CANDADO DEL SALDO, Y NO ES DECORACIÓN.
+        *
+        * Esto era un SELECT a secas, o sea la INSTANTÁNEA del principio de la
+        * sentencia. Con dos peticiones simultáneas (dos pestañas o dos
+        * dispositivos; desde la misma pestaña no, porque el router de Next
+        * serializa las server actions de un cliente), las dos leían el mismo
+        * saldo, las dos daban por bueno el alta, y el 'cobro' —que sí releía la
+        * fila ya bloqueada— sólo cobraba a una. La otra graduaba gratis: el
+        * INSERT ya estaba hecho y la sentencia se confirmaba igual.
+        *
+        * Con FOR UPDATE la fila de users se bloquea y, si otra transacción la
+        * cambió, Postgres reevalúa la condición sobre la versión CONFIRMADA
+        * (EvalPlanQual): la segunda petición ve el saldo ya gastado, 'solvente'
+        * no devuelve fila y el alta no ocurre. Que es justo lo que el comentario
+        * de arriba llevaba prometiendo sin cumplirlo.
+        *
+        * MATERIALIZED para que el planificador no lo meta dentro del EXISTS de
+        * 'alta' y acabe ejecutando el bloqueo más de una vez o fuera de orden.
+        * Es el mismo motivo por el que lo llevan los 'bloqueo' de
+        * venderGraduadaAction y comprarEnBazarAction.
+        *
+        * ORDEN DE CANDADOS: user_collection ANTES que users, que es el orden que
+        * siguen las tres sentencias que bloquean las dos tablas
+        * (comprarEnBazarAction, venderGraduadaAction y cumplirOferta). Aquí sale
+        * solo y no por casualidad: para decidir si devuelve fila, este CTE tiene
+        * que evaluar antes 'total', que cuelga de 'posibles', que cuelga de
+        * 'bloqueo' —el FOR UPDATE sobre user_collection—. El filtro se evalúa en
+        * el escaneo y el bloqueo de users va por encima de él, así que las filas
+        * de la colección están tomadas antes de pedir la de users. Invertirlo
+        * abrazaría esta sentencia con una compra en el bazar del mismo usuario
+        * sobre una carta que estuviera graduando. */
+       solvente AS MATERIALIZED (
+         SELECT 1 FROM users u
+         WHERE u.id = $1
            AND (SELECT n FROM total) > 0
-           AND COALESCE(coins, 0) >= (SELECT coste FROM total)
+           AND COALESCE(u.coins, 0) >= (SELECT coste FROM total)
+         FOR UPDATE OF u
        ),
        alta AS (
          INSERT INTO graded_cards (user_id, card_id, copia, nota, coste)
@@ -4339,7 +4457,8 @@ export async function retirarDelBazarAction(anuncioId: number) {
  *              orden (user_id, card_id), que es el orden global del repositorio.
  *   `via`      la puerta: anuncio vivo, vendedor con copia y comprador con saldo.
  *   el resto   cierre del anuncio, cobro, abono, traspaso de la carta y —si era
- *              graduada— traspaso de la fila de graded_cards al comprador.
+ *              graduada— baja de la fila del vendedor y alta de una NUEVA para
+ *              el comprador (la fila no se mueve nunca: ver el CTE `traspaso`).
  *
  * LA COMISIÓN SE DESTRUYE: al vendedor se le abona `pagoAlVendedor(precio)` y al
  * comprador se le cobra `precio`. La diferencia no va a ninguna cuenta. Es
@@ -4486,30 +4605,77 @@ export async function comprarEnBazarAction(anuncioId: number) {
          RETURNING 1
        ),
        traspaso AS (
-         /* SI ERA UNA GRADUADA, SU NOTA VIAJA CON ELLA. Es la misma carta
-          * física: sería absurdo que cambiara de estado al cambiar de dueño.
+         /* SI ERA UNA GRADUADA, SU NOTA VIAJA CON ELLA, PERO LA FILA NO SE MUEVE.
           *
-          * EL ÍNDICE DE COPIA SE RECALCULA Y NO PUEDE CHOCAR. El comprador
-          * puede tener ya copias graduadas de esa carta, así que se le asigna
-          * el siguiente hueco por encima de TODOS sus índices —activos y
-          * vendidos, porque el índice único no distingue— y no un MAX de los
-          * activos, que sí podría colisionar. La nota NO se recalcula: está
-          * guardada en la fila, que es justo por lo que se guarda.
+          * ESTO ERA UNA IMPRENTA DE NOTAS. Antes esta fila se MOVÍA: se le
+          * cambiaba el user_id al comprador y se le recalculaba la copia. Al
+          * hacerlo, el hueco (vendedor, carta, copia) quedaba LIBRE — y ese
+          * hueco es exactamente lo que el índice único de graded_cards existe
+          * para no soltar jamás (services/esquemaMejoras.ts:70-86 lo documenta,
+          * y por eso el índice NO filtra por estado). Como la nota es
+          * determinista a partir del índice (semilla secreto|usuario|carta|copia),
+          * con el hueco libre el vendedor volvía a graduar, el bucle de
+          * graduarCartasAction volvía a tomar el índice más bajo libre y salía
+          * OTRA VEZ LA MISMA NOTA: un 10 se repetía indefinidamente vendiéndolo
+          * en el bazar y consiguiendo otra copia. Es la misma fuga que
+          * venderGraduadaAction ya cerraba marcando en vez de borrar; por el
+          * bazar seguía abierta.
+          *
+          * AHORA SE CIERRA IGUAL QUE UNA VENTA A LA TIENDA: la fila del vendedor
+          * se marca 'vendida' CONSERVANDO su user_id y su copia, así que su
+          * hueco queda ocupado para siempre, y al comprador se le da una fila
+          * NUEVA (CTE 'entrega').
+          *
+          * bazar_listings.graded_id SIGUE APUNTANDO A LA FILA DEL VENDEDOR, que
+          * ya está 'vendida', y es lo correcto: ese campo dice QUÉ COPIA se
+          * publicó, no quién la tiene hoy. Ninguna consulta se rompe —getBazar
+          * sólo mira si es NULL para pintar "graduada", el índice único parcial
+          * de bazar_listings sólo cubre anuncios 'activa' (y éste queda
+          * 'vendida'), el 'retirada' de venderGraduadaAction busca anuncios
+          * activos y aquí no queda ninguno, y publicarEnBazarAction exige
+          * estado='activa' en la graduada, así que el vendedor no puede
+          * republicar la que acaba de vender.
           *
           * El guard de propiedad va aquí dentro: si la fila ya no fuera del
           * vendedor, no se traspasa nada. */
          UPDATE graded_cards g
-         SET user_id = $2,
-             copia = (
-               SELECT COALESCE(MAX(g2.copia), 0) + 1
-               FROM graded_cards g2
-               WHERE g2.user_id = $2 AND g2.card_id = g.card_id
-             )
+         SET estado = 'vendida', closed_at = NOW()
          FROM anuncio a
          WHERE g.id = a.graded_id
            AND g.user_id = a.seller_id
            AND g.estado = 'activa'
            AND EXISTS (SELECT 1 FROM pon)
+         RETURNING g.card_id, g.nota, g.coste
+       ),
+       entrega AS (
+         /* LA COPIA DEL COMPRADOR. Lee de 'traspaso', así que cuelga de él: si
+          * la baja del vendedor no tocó fila, aquí no se inserta nada. Una nota
+          * no puede duplicarse ni aparecer de la nada.
+          *
+          * NOTA Y COSTE SE COPIAN TAL CUAL: es la misma carta física, sería
+          * absurdo que cambiara de estado al cambiar de dueño, y la nota está
+          * guardada en la fila justo para no recalcularla (recalcularla con la
+          * semilla del COMPRADOR daría otra nota distinta de la que compró).
+          *
+          * EL ÍNDICE DE COPIA ES EL SIGUIENTE POR ENCIMA DE TODOS LOS DEL
+          * COMPRADOR para esa carta —activos y vendidos, porque el índice único
+          * no distingue— y no un MAX de los activos, que sí podría colisionar.
+          *
+          * Y NO LLEVA ON CONFLICT A PROPÓSITO: si otra sentencia concurrente le
+          * hubiera dado al comprador ese mismo índice entre medias, el choque
+          * revienta la sentencia ENTERA y no se mueve ni una moneda. Un
+          * DO NOTHING haría lo contrario: cobrar la compra y dejar al comprador
+          * sin la nota que pagó. Mejor una compra que falla y se reintenta.
+          *
+          * graded_at se queda en su DEFAULT NOW(): es cuándo entró en ESTA
+          * vitrina, y no lo lee nadie para calcular dinero. */
+         INSERT INTO graded_cards (user_id, card_id, copia, nota, coste)
+         SELECT $2, t.card_id,
+                (SELECT COALESCE(MAX(g2.copia), 0) + 1
+                   FROM graded_cards g2
+                  WHERE g2.user_id = $2 AND g2.card_id = t.card_id),
+                t.nota, t.coste
+         FROM traspaso t
          RETURNING 1
        )
        SELECT (SELECT coins FROM cobro) AS coins,

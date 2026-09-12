@@ -2398,6 +2398,668 @@ comprueba(
   );
 }
 
+/* ==================================================================== *
+ * LAS TRES FUGAS DE MONEDAS QUE SE CERRARON EN app/action.ts
+ * ====================================================================
+ *
+ * POR QUÉ ESTA SECCIÓN NO SE PARECE A NINGUNA DE LAS DE ARRIBA. Todo lo demás
+ * de este fichero se puede EJECUTAR: se llama a la función, se mira lo que
+ * devuelve y se acabó. Las tres fugas que se vigilan aquí no viven en
+ * JavaScript sino DENTRO DE SENTENCIAS SQL, y para ejecutarlas haría falta un
+ * Postgres —dos sesiones a la vez, además, porque dos de las tres son
+ * carreras—. Esto es `npm test`: catorce segundos, sin red, sin base de datos
+ * y sin reloj. Aquí no se puede ejecutar ese SQL, y no se va a poder.
+ *
+ * ASÍ QUE LO QUE SE COMPRUEBA ES LA FORMA DEL CÓDIGO FUENTE, y conviene decirlo
+ * en voz alta: UN INVARIANTE ESTÁTICO NO DEMUESTRA NADA. No prueba que Postgres
+ * bloquee la fila, ni que el planificador tome los candados en el orden que
+ * promete el comentario, ni que la sentencia haga lo que dice. Sólo prueba que
+ * la FORMA de la que depende ese razonamiento sigue estando ahí. Es una red, no
+ * un teorema.
+ *
+ * Y MERECE LA PENA IGUALMENTE, por cómo vuelven estas tres cosas: no vuelven
+ * porque alguien decida reabrirlas, vuelven de una limpieza. Un FOR UPDATE que
+ * "sobra porque el UPDATE de abajo ya comprueba el saldo". Un UPDATE que le
+ * cambia el user_id a la fila porque es lo obvio —la carta cambia de dueño,
+ * ¿no?—. Dos sentencias que se separan al meter un `if` en medio. Los tres son
+ * cambios que se leen bien, que pasan una revisión, que no rompen ningún test y
+ * que dejan el código EXACTAMENTE como estaba antes del arreglo. Contra eso una
+ * red vale, porque el agujero no se abre de nuevo: se REABRE, y reabrirlo tiene
+ * una forma reconocible.
+ *
+ * Lo que sí es una demostración está al final de la sección: un invariante
+ * CERRADO que ejecuta las funciones de verdad —`semillaDeCopia` y
+ * `notaDeCopia`— y enseña que un hueco de copia reciclado devuelve la MISMA
+ * nota, que es la propiedad económica entera. Los estáticos son el suelo.
+ */
+{
+  seccion("Servidor: las tres fugas de monedas no se pueden reabrir");
+
+  /* ------------------------------------------------------------------ *
+   * EL ESCÁNER DE SQL
+   * ------------------------------------------------------------------
+   *
+   * Un grep de una línea no vale aquí, y no por pereza:
+   *
+   *   · el SQL vive en plantillas de VARIAS LÍNEAS y la cláusula SET se parte
+   *     donde caiga ("SET user_id = $2,\n  copia = (…)");
+   *   · app/action.ts está lleno de comentarios que NOMBRAN la fuga que
+   *     cerraron ("antes esta fila se movía y se le cambiaba el user_id"), así
+   *     que un grep ingenuo caza el comentario y no la sentencia;
+   *   · y mencionar `user_id` a la derecha del igual —dentro de un WHERE o de
+   *     una subconsulta— no es asignarlo.
+   *
+   * Así que se saca el SQL de verdad: se recorre el fichero saltándose
+   * comentarios, cadenas y expresiones regulares, se quedan las plantillas que
+   * son SQL, se les quitan sus propios comentarios, se normalizan los espacios
+   * y sólo entonces se mira la cláusula SET, coma a coma y con las paréntesis
+   * contadas. Más abajo hay una autoprueba con fugas escritas a mano, porque un
+   * escáner que no cazara nada también saldría en verde.
+   *
+   * SE MIRA EL ÁRBOL VIVO (app, services, utils, components, hooks) y no la
+   * raíz entera: en la raíz hay dos copias descomprimidas de ramas viejas
+   * (PokemonTCG-simulator-*) que no son el juego y que nadie ejecuta.
+   */
+  const DIRS_CON_SQL = ["app", "services", "utils", "components", "hooks"];
+
+  function ficherosDeCodigo() {
+    const salida = [];
+    const anda = (dir) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.name === "node_modules" || e.name === ".next") continue;
+        const p = join(dir, e.name);
+        if (e.isDirectory()) anda(p);
+        else if (/\.tsx?$/.test(e.name)) salida.push(p);
+      }
+    };
+    for (const d of DIRS_CON_SQL) anda(join(raiz, d));
+    return salida.sort();
+  }
+  const rotulo = (f) => f.slice(raiz.length + 1).replace(/\\/g, "/");
+
+  /* Las plantillas `…` de un fichero TypeScript. La barra puede abrir una
+   * expresión regular o ser una división, y hay que distinguirlas: sin eso, el
+   * /['’]/ de services/sobresEmparejar.ts abre una cadena que se come el resto
+   * del fichero y el escáner se queda ciego sin decirlo. */
+  const ABRE_REGEXP = /[([{,;:=!&|?+\-*%^~<>]$/;
+  const PALABRA_REGEXP = /\b(return|typeof|case|in|of|delete|void|instanceof|yield|await|do|else)$/;
+
+  function plantillasDe(codigo) {
+    const salida = [];
+    const n = codigo.length;
+    let i = 0;
+    let previo = ""; // cola de lo último que cuenta, para decidir la barra
+    while (i < n) {
+      const c = codigo[i];
+      const d = codigo[i + 1];
+      if (c === "/" && d === "/") {
+        while (i < n && codigo[i] !== "\n") i++;
+        continue;
+      }
+      if (c === "/" && d === "*") {
+        i += 2;
+        while (i < n && !(codigo[i] === "*" && codigo[i + 1] === "/")) i++;
+        i += 2;
+        continue;
+      }
+      if (c === "'" || c === '"') {
+        i++;
+        while (i < n && codigo[i] !== c) {
+          if (codigo[i] === "\\") i++;
+          i++;
+        }
+        i++;
+        previo = c;
+        continue;
+      }
+      if (c === "/" && (previo === "" || ABRE_REGEXP.test(previo) || PALABRA_REGEXP.test(previo))) {
+        i++;
+        let clase = false;
+        while (i < n) {
+          const x = codigo[i];
+          if (x === "\\") { i += 2; continue; }
+          if (x === "\n") break;
+          if (x === "[") clase = true;
+          else if (x === "]") clase = false;
+          else if (x === "/" && !clase) break;
+          i++;
+        }
+        i++;
+        previo = "/";
+        continue;
+      }
+      if (c === "`") {
+        i++;
+        const desde = i;
+        let llaves = 0; // las ${…} pueden traer llaves y backticks dentro
+        while (i < n) {
+          const x = codigo[i];
+          if (x === "\\") { i += 2; continue; }
+          if (x === "$" && codigo[i + 1] === "{") { llaves++; i += 2; continue; }
+          if (llaves > 0 && x === "}") { llaves--; i++; continue; }
+          if (llaves === 0 && x === "`") break;
+          i++;
+        }
+        salida.push(codigo.slice(desde, i));
+        i++;
+        previo = "`";
+        continue;
+      }
+      if (!/\s/.test(c)) previo = (previo + c).slice(-12);
+      i++;
+    }
+    return salida;
+  }
+
+  /* Las interpolaciones se sustituyen por "?": lo que hay dentro es JavaScript
+   * y puede traer comas y paréntesis que descuadrarían el recuento del SET. */
+  function sinInterpolaciones(t) {
+    let salida = "";
+    let i = 0;
+    while (i < t.length) {
+      if (t[i] === "$" && t[i + 1] === "{") {
+        let prof = 1;
+        i += 2;
+        while (i < t.length && prof > 0) {
+          if (t[i] === "{") prof++;
+          else if (t[i] === "}") prof--;
+          i++;
+        }
+        salida += "?";
+        continue;
+      }
+      salida += t[i++];
+    }
+    return salida;
+  }
+
+  const normalizaSql = (t) =>
+    sinInterpolaciones(t)
+      .replace(/--[^\n]*/g, " ")          // comentario SQL de línea
+      .replace(/\/\*[\s\S]*?\*\//g, " ")  // comentario SQL de bloque
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const ESSQL = /\b(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|CREATE\s+TABLE|ALTER\s+TABLE)\b/i;
+  const sentenciasSql = (codigo) =>
+    plantillasDe(codigo).filter((p) => ESSQL.test(p)).map(normalizaSql);
+
+  /* La cláusula SET que empieza en `desde`, cortada donde de verdad acaba: en
+   * el primer WHERE / FROM / RETURNING / ON CONFLICT de primer nivel, o en el
+   * paréntesis que cierra el CTE. Los de dentro de una subconsulta no cuentan. */
+  function clausulaSet(sql, desde) {
+    let prof = 0;
+    let i = desde;
+    while (i < sql.length) {
+      const c = sql[i];
+      if (c === "(") prof++;
+      else if (c === ")") {
+        if (prof === 0) break;
+        prof--;
+      } else if (prof === 0 && /[A-Za-z]/.test(c) && !/[\w$]/.test(sql[i - 1] ?? " ")) {
+        if (/^(WHERE|FROM|RETURNING|ON\s+CONFLICT)\b/i.test(sql.slice(i))) break;
+      }
+      i++;
+    }
+    return sql.slice(desde, i);
+  }
+
+  /* Los DESTINOS de una cláusula SET: se parte por las comas de primer nivel y
+   * de cada trozo se toma lo que hay ANTES del igual. Así "nota = (SELECT …
+   * WHERE user_id = $1)" no cuenta como tocar user_id, y la forma de lista
+   * "(user_id, copia) = (…)" sí. */
+  function destinosSet(clausula) {
+    const trozos = [];
+    let prof = 0;
+    let ini = 0;
+    for (let i = 0; i < clausula.length; i++) {
+      const c = clausula[i];
+      if (c === "(") prof++;
+      else if (c === ")") prof--;
+      else if (c === "," && prof === 0) {
+        trozos.push(clausula.slice(ini, i));
+        ini = i + 1;
+      }
+    }
+    trozos.push(clausula.slice(ini));
+    return trozos.map((t) => {
+      let p = 0;
+      for (let i = 0; i < t.length; i++) {
+        const c = t[i];
+        if (c === "(") p++;
+        else if (c === ")") p--;
+        else if (c === "=" && p === 0 && t[i + 1] !== "=" && !"!<>".includes(t[i - 1] ?? "")) {
+          return t.slice(0, i).trim();
+        }
+      }
+      return t.trim();
+    });
+  }
+
+  /* Toda asignación de una sentencia: el UPDATE de siempre y también el
+   * "ON CONFLICT … DO UPDATE SET", que es la puerta de atrás para reescribir
+   * una fila sin escribir la palabra UPDATE delante de la tabla. */
+  function asignacionesDe(sql) {
+    const salida = [];
+    let m;
+    const reUpdate = /\bUPDATE\s+(?:ONLY\s+)?([A-Za-z_][\w$]*)\s+(?:(?:AS\s+)?(?!SET\b)[A-Za-z_][\w$]*\s+)?SET\b/gi;
+    while ((m = reUpdate.exec(sql))) {
+      salida.push({ tabla: m[1].toLowerCase(), destinos: destinosSet(clausulaSet(sql, m.index + m[0].length)) });
+    }
+    const reUpsert = /\bINSERT\s+INTO\s+([A-Za-z_][\w$]*)\b(?:(?!\bINSERT\s+INTO\b)[\s\S])*?\bDO\s+UPDATE\s+SET\b/gi;
+    while ((m = reUpsert.exec(sql))) {
+      salida.push({ tabla: m[1].toLowerCase(), destinos: destinosSet(clausulaSet(sql, m.index + m[0].length)) });
+    }
+    return salida;
+  }
+
+  /* Los CTE de una sentencia y lo que queda después de ellos. Se recorre la
+   * lista en orden contando paréntesis, en vez de buscar ", algo AS (" por todo
+   * el texto: una coma dentro del cuerpo de un CTE no abre otro CTE. */
+  function ctesDe(sql) {
+    const lista = new Map();
+    const cabecera = /^\s*WITH\s+(?:RECURSIVE\s+)?/i.exec(sql);
+    if (!cabecera) return { lista, principal: sql };
+    let i = cabecera[0].length;
+    for (;;) {
+      const cab = /^\s*([A-Za-z_][\w$]*)\s*(?:\([^)]*\)\s*)?AS\s+(?:(?:NOT\s+)?MATERIALIZED\s+)?\(/i.exec(sql.slice(i));
+      if (!cab) break;
+      const desde = i + cab[0].length;
+      let j = desde;
+      let prof = 1;
+      while (j < sql.length && prof > 0) {
+        if (sql[j] === "(") prof++;
+        else if (sql[j] === ")") prof--;
+        j++;
+      }
+      lista.set(cab[1].toLowerCase(), sql.slice(desde, j - 1));
+      i = j;
+      const coma = /^\s*,/.exec(sql.slice(i));
+      if (!coma) break;
+      i += coma[0].length;
+    }
+    return { lista, principal: sql.slice(i) };
+  }
+
+  /* El cuerpo de una server action, para poder decir "en ESTA función" y no
+   * "en algún sitio del fichero". Va de su declaración al siguiente `export`. */
+  function cuerpoDeFuncion(codigo, nombre) {
+    const m = new RegExp("^export\\s+async\\s+function\\s+" + nombre + "\\b", "m").exec(codigo);
+    if (!m) return null;
+    const resto = codigo.slice(m.index + m[0].length);
+    const fin = /^export\s/m.exec(resto);
+    return resto.slice(0, fin ? fin.index : resto.length);
+  }
+
+  /* Una fuga es: una asignación sobre graded_cards cuyo destino es user_id o
+   * copia. Se usa igual sobre el repositorio y sobre los casos de mentira de la
+   * autoprueba, que es lo que hace que la autoprueba signifique algo. */
+  const sueltaElHueco = (sql) =>
+    asignacionesDe(sql)
+      .filter((a) => a.tabla === "graded_cards")
+      .flatMap((a) => a.destinos.filter((d) => /\b(user_id|copia)\b/i.test(d)));
+
+  const SENTENCIAS = [];
+  const FICHEROS = ficherosDeCodigo();
+  for (const f of FICHEROS) {
+    for (const sql of sentenciasSql(readFileSync(f, "utf8"))) {
+      SENTENCIAS.push({ fichero: rotulo(f), sql });
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * AUTOPRUEBA DEL ESCÁNER
+   * ------------------------------------------------------------------
+   * Sin esto, un escáner roto —una plantilla que no se extrae, un SET que se
+   * corta donde no— pasaría el invariante de abajo en verde para siempre y sin
+   * mirar nada. Los casos son la fuga REAL que se cerró y sus dos disfraces. */
+  {
+    const FUGAS = [
+      // La que hubo: el bazar movía la fila de la graduada al comprador.
+      `UPDATE graded_cards g
+          SET user_id = $2,
+              copia = (SELECT COALESCE(MAX(copia), 0) + 1
+                         FROM graded_cards WHERE user_id = $2)
+         FROM anuncio a
+        WHERE g.id = a.graded_id
+        RETURNING 1`,
+      // La misma, en forma de lista de columnas.
+      `UPDATE graded_cards SET (user_id, copia) = (SELECT $2, 1) WHERE id = $1`,
+      // Y por la puerta de atrás, sin escribir UPDATE delante de la tabla.
+      `INSERT INTO graded_cards (user_id, card_id, copia, nota, coste)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (user_id, card_id, copia) DO UPDATE
+         SET copia = graded_cards.copia + 1
+       RETURNING 1`,
+    ];
+    const LIMPIAS = [
+      // Lo que hace hoy el bazar: marcar, conservando user_id y copia.
+      `UPDATE graded_cards g SET estado = 'vendida', closed_at = NOW()
+         FROM anuncio a
+        WHERE g.id = a.graded_id AND g.user_id = a.seller_id AND g.estado = 'activa'
+        RETURNING g.card_id, g.nota, g.coste`,
+      // Nombrar la columna a la DERECHA del igual no es asignarla.
+      `UPDATE graded_cards SET nota = (SELECT nota FROM graded_cards g2
+          WHERE g2.user_id = $1 AND g2.copia = 1) WHERE id = $2`,
+      // Y la regla es sobre graded_cards, no sobre cualquier tabla.
+      `UPDATE binder_slots SET user_id = $2 WHERE id = $1`,
+    ];
+    const ciegas = FUGAS.filter((s) => sueltaElHueco(normalizaSql(s)).length === 0).length;
+    const falsas = LIMPIAS.filter((s) => sueltaElHueco(normalizaSql(s)).length > 0);
+    comprueba(
+      ciegas === 0,
+      `el escáner caza las ${FUGAS.length} formas de la fuga: SET partido en varias líneas, lista de columnas y ON CONFLICT DO UPDATE`,
+      `${ciegas} se le escapan. El invariante de abajo estaría en verde sin mirar nada.`,
+    );
+    comprueba(
+      falsas.length === 0,
+      "y no confunde con una fuga ni la baja de hoy ni un user_id mencionado a la derecha del igual",
+      falsas.map((s) => normalizaSql(s).slice(0, 90)).join(" · "),
+    );
+  }
+
+  // Y que haya leído el repositorio de verdad: un escáner que no encuentra SQL
+  // no encuentra fugas tampoco.
+  {
+    const conSql = new Set(SENTENCIAS.map((s) => s.fichero));
+    const deGraduadas = SENTENCIAS.filter((s) => /\bgraded_cards\b/i.test(s.sql)).length;
+    const bajas = SENTENCIAS.filter((s) => asignacionesDe(s.sql).some((a) => a.tabla === "graded_cards")).length;
+    comprueba(
+      SENTENCIAS.length > 100 && conSql.size >= 8 && deGraduadas >= 10 && bajas >= 2,
+      `el escáner ve el SQL del repositorio (${SENTENCIAS.length} sentencias en ${conSql.size} ficheros, ${deGraduadas} tocan graded_cards)`,
+      `sentencias ${SENTENCIAS.length}, ficheros ${conSql.size}, con graduadas ${deGraduadas}, con UPDATE sobre graduadas ${bajas}.` +
+        " Faltan las dos bajas de una graduada (venderGraduadaAction y comprarEnBazarAction): o se han quitado, o el escáner se ha quedado ciego y hay que arreglarlo ANTES de fiarse del invariante siguiente.",
+    );
+  }
+
+  /* ------------------------------------------------------------------ *
+   * FUGA 1 · NINGÚN ÍNDICE DE COPIA SE RECICLA
+   * ------------------------------------------------------------------
+   *
+   * La nota de una copia graduada NO se sortea al graduar: se deriva de la
+   * semilla `secreto|usuario|carta|ÍNDICE` (utils/graduacion.ts). O sea que el
+   * hueco (usuario, carta, copia) no es un detalle de almacenamiento: ES la
+   * nota. Si una fila lo suelta —porque se borra, o porque cambia de user_id o
+   * de copia— el hueco vuelve a estar libre, `graduarCartasAction` vuelve a
+   * tomar el índice libre más bajo y sale OTRA VEZ LA MISMA NOTA. Un 10 se
+   * repite indefinidamente: se vende, se consigue otra copia y se regradúa.
+   *
+   * Por eso la regla no es "el bazar no mueve la fila", que es sólo el sitio
+   * donde estuvo la fuga: es que NINGUNA sentencia del repositorio puede
+   * cambiarle a una fila de graded_cards el user_id o la copia. La fila que se
+   * va se MARCA ('vendida' + closed_at) conservando las dos, y al que la recibe
+   * se le da una fila NUEVA con el siguiente índice suyo.
+   */
+  {
+    const reciclan = [];
+    for (const { fichero, sql } of SENTENCIAS) {
+      for (const destino of sueltaElHueco(sql)) {
+        reciclan.push(`${fichero}: SET ${destino} …`);
+      }
+    }
+    comprueba(
+      reciclan.length === 0,
+      "ninguna sentencia del repositorio cambia el user_id ni la copia de una graduada",
+      reciclan.join("\n          ") +
+        "\n          Eso suelta el hueco (usuario, carta, copia), y el hueco ES la nota:" +
+        " la semilla es secreto|usuario|carta|índice, así que el dueño vuelve a graduar," +
+        " graduarCartasAction toma otra vez el índice libre más bajo y sale la MISMA nota." +
+        " Un 10 se reimprime sin límite. QUÉ TOCAR: esa sentencia — la fila de una" +
+        " graduada que cambia de manos se marca 'vendida' conservando user_id y copia," +
+        " y al comprador se le INSERTA una fila nueva (CTE 'entrega' de comprarEnBazarAction).",
+    );
+
+    // Borrarla suelta el hueco igual de bien, y sin escribir un SET.
+    const borran = SENTENCIAS.filter((s) =>
+      /\b(DELETE\s+FROM|TRUNCATE(\s+TABLE)?)\s+(ONLY\s+)?graded_cards\b/i.test(s.sql));
+    comprueba(
+      borran.length === 0,
+      "ni ninguna borra la fila, que es la otra forma de soltar el hueco",
+      borran.map((s) => s.fichero + ": " + s.sql.slice(0, 80)).join("\n          ") +
+        "\n          La fila de una graduada no se borra NUNCA, ni al venderla ni al" +
+        " retirarla: ocupa su índice para siempre. Si sobran filas cerradas, se filtran" +
+        " por estado='activa' al leer, que es lo que ya hacen todas las lecturas que" +
+        " cuentan copias vivas en app/action.ts.",
+    );
+  }
+
+  /* ------------------------------------------------------------------ *
+   * FUGA 2 · EL ALTA DE UNA GRADUADA CUELGA DE UNA LECTURA CON CANDADO
+   * ------------------------------------------------------------------
+   *
+   * El INSERT en graded_cards de `graduarCartasAction` cuelga por EXISTS de un
+   * CTE que comprueba el saldo. Mientras ese CTE fue un SELECT a secas, leía la
+   * INSTANTÁNEA del principio de la sentencia: dos peticiones simultáneas veían
+   * las dos el mismo saldo, las dos insertaban, y el UPDATE del cobro —que sí
+   * relee la fila que bloquea— sólo cobraba a una. La otra graduaba gratis.
+   *
+   * Lo que lo cierra es el FOR UPDATE de esa puerta, y es una línea: se quita
+   * "simplificando" y no se nota en nada. Así que el invariante sigue la cadena
+   * de verdad —qué CTE tiene el INSERT, de qué CTE cuelga, cuál de ésos mira
+   * users.coins— y exige el candado en el que hace de puerta. No comprueba que
+   * el fichero contenga las palabras FOR UPDATE en algún sitio, que es lo que
+   * un grep podría decir y no significaría nada.
+   */
+  {
+    const codigoAccion = readFileSync(join(raiz, "app", "action.ts"), "utf8");
+    const cuerpo = cuerpoDeFuncion(codigoAccion, "graduarCartasAction");
+    const altas = cuerpo === null
+      ? []
+      : sentenciasSql(cuerpo).filter((s) => /\bINSERT\s+INTO\s+graded_cards\b/i.test(s));
+
+    let pega = "";
+    let puertas = [];
+    if (cuerpo === null) {
+      pega = "graduarCartasAction ya no está en app/action.ts (¿se ha renombrado?)";
+    } else if (altas.length !== 1) {
+      pega = `se esperaba UNA sentencia que dé de alta graduadas en graduarCartasAction y hay ${altas.length}`;
+    } else {
+      const { lista } = ctesDe(altas[0]);
+      const alta = [...lista].find(([, c]) => /\bINSERT\s+INTO\s+graded_cards\b/i.test(c));
+      if (!alta) {
+        pega = "el INSERT ya no está dentro de un CTE, así que no cuelga de ninguna comprobación";
+      } else {
+        const refs = [...alta[1].matchAll(/\b(?:FROM|JOIN)\s+([A-Za-z_][\w$]*)/gi)].map((m) => m[1].toLowerCase());
+        puertas = [...new Set(refs)].filter(
+          (r) => lista.has(r) && /\busers\b/i.test(lista.get(r)) && /\bcoins\b/i.test(lista.get(r)),
+        );
+        if (puertas.length === 0) {
+          pega = `el CTE "${alta[0]}" ya no cuelga de ninguna puerta de saldo:` +
+            ` de los CTE que lee (${[...new Set(refs)].join(", ") || "ninguno"}) ninguno mira users.coins`;
+        } else {
+          const sinCandado = puertas.filter((p) => !/\bFOR\s+UPDATE\b/i.test(lista.get(p)));
+          if (sinCandado.length > 0) {
+            pega = `la puerta de saldo "${sinCandado.join('", "')}" ya no lleva FOR UPDATE`;
+          }
+        }
+      }
+    }
+    comprueba(
+      pega === "",
+      `el alta de una graduada cuelga de una lectura de saldo CON candado (${puertas.join(", ") || "—"})`,
+      pega +
+        ". Sin FOR UPDATE esa puerta lee la instantánea del principio de la sentencia:" +
+        " dos peticiones a la vez la pasan las dos, las dos insertan la fila y el cobro" +
+        " sólo se le hace a una — la otra gradúa gratis, y la sentencia se confirma igual." +
+        " QUÉ TOCAR: el CTE de graduarCartasAction que mira users.coins (hoy 'solvente')" +
+        " tiene que seguir siendo un SELECT … FROM users … FOR UPDATE OF u, y el INSERT" +
+        " tiene que seguir colgando de él por EXISTS.",
+    );
+  }
+
+  /* ------------------------------------------------------------------ *
+   * FUGA 3 · EL BONO SE PAGA EN LA MISMA SENTENCIA EN QUE SE QUEMA
+   * ------------------------------------------------------------------
+   *
+   * La fila de `set_rewards` es lo que impide cobrar dos veces el bono de una
+   * expansión. Mientras el INSERT y el pago fueron dos sentencias, entre una y
+   * otra no había transacción: si la petición moría ahí, el premio quedaba
+   * quemado y las monedas no se pagaban NUNCA — y como la marca ya estaba, el
+   * jugador no podía volver a cobrarlo. Perdía el bono para siempre.
+   *
+   * El arreglo es de forma pura: el INSERT es un CTE, el UPDATE del pago cuelga
+   * de él por EXISTS, todo en una llamada. Eso se deshace solo con separarlo
+   * otra vez —por ejemplo al meter un `if` en medio del bucle—, así que lo que
+   * se comprueba es la cadena entera: que el premio sea un CTE, que el pago vaya
+   * en la sentencia principal y que nombre al CTE del premio.
+   */
+  {
+    const codigoAccion = readFileSync(join(raiz, "app", "action.ts"), "utf8");
+    const cuerpo = cuerpoDeFuncion(codigoAccion, "claimSetCompletionBonuses");
+    const todas = cuerpo === null ? [] : sentenciasSql(cuerpo);
+    const conPremio = todas.filter((s) => /\bINSERT\s+INTO\s+set_rewards\b/i.test(s));
+    const paga = (sql) =>
+      asignacionesDe(sql).some((a) => a.tabla === "users" && a.destinos.some((d) => /\bcoins\b/i.test(d)));
+
+    let pega = "";
+    if (cuerpo === null) {
+      pega = "claimSetCompletionBonuses ya no está en app/action.ts (¿se ha renombrado?)";
+    } else if (conPremio.length !== 1) {
+      pega = `se esperaba UNA sentencia que escriba en set_rewards y hay ${conPremio.length}`;
+    } else {
+      const { lista, principal } = ctesDe(conPremio[0]);
+      const premio = [...lista].find(([, c]) => /\bINSERT\s+INTO\s+set_rewards\b/i.test(c));
+      if (!premio) {
+        pega = "el INSERT en set_rewards ya no es un CTE, así que el pago no puede colgar de él";
+      } else if (!paga(principal)) {
+        pega = "la sentencia que quema el premio ya no paga: no hay UPDATE de users.coins colgando del INSERT";
+      } else if (!new RegExp("EXISTS\\s*\\(\\s*SELECT[^()]*FROM\\s+" + premio[0] + "\\b", "i").test(principal)) {
+        pega = `el pago va en la misma sentencia pero no cuelga del premio: falta EXISTS (SELECT 1 FROM ${premio[0]})`;
+      } else {
+        const sueltos = todas.filter((s) => !/\bset_rewards\b/i.test(s) && paga(s));
+        if (sueltos.length > 0) {
+          pega = `hay ${sueltos.length} pago(s) de users.coins en OTRA sentencia dentro de claimSetCompletionBonuses`;
+        }
+      }
+    }
+    comprueba(
+      pega === "",
+      "el bono de expansión se paga en la misma sentencia en la que se quema",
+      pega +
+        ". Separarlos deja una ventana sin transacción: si la petición muere entre las" +
+        " dos, la fila de set_rewards queda escrita y las monedas no se pagan — y esa" +
+        " fila es justo la que impide volver a cobrarlo, así que el bono se pierde PARA" +
+        " SIEMPRE. QUÉ TOCAR: el INSERT en set_rewards tiene que seguir siendo el CTE" +
+        " ('premio') del que cuelga por EXISTS el UPDATE de users.coins, en una sola" +
+        " llamada a sql`…`, y no puede quedar ningún abono suelto fuera del bucle.",
+    );
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Y LA PROPIEDAD ECONÓMICA, ESTA VEZ DEMOSTRADA
+   * ------------------------------------------------------------------
+   *
+   * Los tres de arriba son forma. Éste no: ejecuta `semillaDeCopia` y
+   * `notaDeCopia` de verdad y enseña qué se lleva el jugador según el hueco de
+   * copia se recicle o no.
+   *
+   * Lo único replicado aquí es el REPARTO DE ÍNDICES —"el índice libre más bajo
+   * que quepa en las copias que tienes"—, que en producción es un bucle dentro
+   * de graduarCartasAction y no se puede importar (app/action.ts arrastra Next
+   * y Clerk). Es una réplica deliberada, como la de `admiteOfertaAtada` o la de
+   * `repartoIngenuo` más arriba; lo que impide que se quede vieja mintiendo es
+   * el invariante estático de la FUGA 1, que vigila la otra mitad: que la fila
+   * vendida siga ocupando su hueco en la base.
+   */
+  {
+    const { notaDeCopia, semillaDeCopia, MULTIPLICADOR_NOTA, COSTE_FRACCION,
+            costeDeGraduar, valorGraduado } = graduacion;
+
+    const SECRETO = "secreto-de-prueba-para-los-invariantes";
+    const CARTA = "sv8-32";
+    const VUELTAS = 200;
+    const TECHO = 1 + COSTE_FRACCION; // el mismo de la sección de graduación
+
+    // El reparto de índices de graduarCartasAction, replicado.
+    const indiceLibre = (ocupadas, copias) => {
+      for (let i = 1; i <= copias; i++) if (!ocupadas.has(i)) return i;
+      return null;
+    };
+
+    /* El jugador que va a explotarlo no es cualquiera: es el que sacó un 10 en
+     * su primera copia. Se busca con el generador real para que el caso siga
+     * valiendo si cambian la tabla o el secreto. */
+    let elegido = null;
+    for (let k = 0; k < 5000 && elegido === null; k++) {
+      const u = "jugador_" + k;
+      if (notaDeCopia(semillaDeCopia(u, CARTA, 1, SECRETO)) === 10) elegido = u;
+    }
+
+    const vueltas = (recicla) => {
+      const ocupadas = new Set();
+      const salida = [];
+      for (let v = 0; v < VUELTAS; v++) {
+        // Con reciclaje le basta UNA copia siempre: la vende y consigue otra.
+        // Sin reciclaje su hueco sigue ocupado, así que para volver a graduar
+        // necesita una copia más — y la nota sale de un índice nuevo.
+        const copias = recicla ? 1 : v + 1;
+        const indice = indiceLibre(ocupadas, copias);
+        salida.push({ indice, nota: notaDeCopia(semillaDeCopia(elegido, CARTA, indice, SECRETO)) });
+        if (!recicla) ocupadas.add(indice);
+      }
+      return salida;
+    };
+    const medio = (l) => l.reduce((t, x) => t + MULTIPLICADOR_NOTA[x.nota], 0) / l.length;
+
+    const conFuga = elegido === null ? [] : vueltas(true);
+    const comoEsta = elegido === null ? [] : vueltas(false);
+
+    comprueba(
+      elegido !== null,
+      "hay un jugador cuya primera copia de una carta saca un 10 (el que explotaría la fuga)",
+      "no se ha encontrado ninguno en 5.000: la tabla de notas o la semilla han cambiado" +
+        " tanto que este caso ya no prueba lo que dice; hay que rehacerlo.",
+    );
+
+    /* LO QUE PASABA CON EL HUECO RECICLADO, medido: las 200 vueltas dan el
+     * MISMO índice y por tanto la MISMA nota. El jugador deja de tirar y pasa a
+     * ELEGIR, y la tabla de multiplicadores —que es lo único que sostiene que
+     * graduar no imprima dinero— deja de significar nada. */
+    const notasConFuga = new Set(conFuga.map((x) => x.nota));
+    comprueba(
+      conFuga.length === VUELTAS &&
+        new Set(conFuga.map((x) => x.indice)).size === 1 &&
+        notasConFuga.size === 1 && notasConFuga.has(10) &&
+        medio(conFuga) > TECHO,
+      `reciclar el hueco convierte la nota en una ELECCIÓN: ${VUELTAS} vueltas, ${VUELTAS} dieces (×${medio(conFuga).toFixed(2)} contra un techo de ×${TECHO.toFixed(2)})`,
+      `índices distintos ${new Set(conFuga.map((x) => x.indice)).size}, notas distintas ${notasConFuga.size}.` +
+        " Si esto deja de cumplirse, el caso ya no demuestra la fuga y el invariante" +
+        " de abajo se queda sin contraste: hay que rehacerlo, no borrarlo.",
+    );
+
+    /* Y CON LA FILA VENDIDA OCUPANDO SU HUECO —que es lo que hace hoy el
+     * código— cada vuelta es un índice nuevo, o sea una tirada nueva. */
+    const dieces = comoEsta.filter((x) => x.nota === 10).length;
+    comprueba(
+      new Set(comoEsta.map((x) => x.indice)).size === VUELTAS &&
+        new Set(comoEsta.map((x) => x.nota)).size > 1,
+      `conservando el hueco, cada vuelta es una tirada nueva: ${VUELTAS} índices distintos y ${new Set(comoEsta.map((x) => x.nota)).size} notas distintas`,
+      `índices distintos ${new Set(comoEsta.map((x) => x.indice)).size} de ${VUELTAS}.` +
+        " El reparto de índices ha dejado de avanzar: si vuelve a repetir uno, la nota" +
+        " se repite con él.",
+    );
+    comprueba(
+      medio(comoEsta) <= TECHO,
+      `y lo que se lleva de verdad no pasa del techo (×${medio(comoEsta).toFixed(3)} de ×${TECHO.toFixed(2)}, ${dieces} dieces en ${VUELTAS} vueltas)`,
+      `×${medio(comoEsta).toFixed(3)} contra el techo ×${TECHO.toFixed(2)}: graduar en bucle vuelve a salir a cuenta.`,
+    );
+
+    /* El precio de la fuga, en monedas, para que el número esté escrito: una
+     * Hyper Rare vale 250 y con un 10 garantizado cada vuelta deja limpio
+     * valorGraduado(250,10) - 250 - coste. Por eso esto no era un detalle de
+     * almacenamiento. */
+    const V = precioDeCartaSuelta("Hyper Rare");
+    const porVuelta = valorGraduado(V, 10) - V - costeDeGraduar(V, 1);
+    comprueba(
+      porVuelta > 0,
+      `y la cuenta de la fuga está escrita: con un 10 garantizado, cada vuelta dejaba +${porVuelta.toFixed(0)} monedas limpias sobre una Hyper Rare (${V})`,
+      "con la tabla de hoy repetir un 10 ya no sale a cuenta, así que este número ha" +
+        " dejado de medir la fuga; el invariante de arriba (el del hueco) sigue siendo" +
+        " el que importa.",
+    );
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* VEREDICTO                                                           */
 /* ------------------------------------------------------------------ */
