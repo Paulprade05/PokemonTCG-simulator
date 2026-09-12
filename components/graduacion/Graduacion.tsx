@@ -145,6 +145,18 @@ export default function Graduacion() {
   /** Lo que ha vuelto del graduador. Con algo aquí, manda la ceremonia. */
   const [resultados, setResultados] = useState<Resultado[]>([]);
   const [decisiones, setDecisiones] = useState<Record<string, Decision>>({});
+  /**
+   * Lo que el servidor dijo haber pagado por cada copia vendida, por
+   * `claveCopia`.
+   *
+   * No basta con guardar "vendida": la ceremonia escribe después «Vendida por
+   * X», y ese X tiene que ser el importe REAL. Recalcularlo sería volver a
+   * tener dos cifras —la del rótulo y la del abono— que pueden separarse, que
+   * es el defecto que se está cerrando. Además, vender una copia mueve la curva
+   * de las hermanas de la misma carta: la que se vende en segundo lugar cobra
+   * más que la primera, y sin anotar el importe el rótulo diría el de antes.
+   */
+  const [cobradoPorCopia, setCobradoPorCopia] = useState<Record<string, number>>({});
   const [cobrado, setCobrado] = useState(0);
   const [descuentoCobrado, setDescuentoCobrado] = useState(0);
 
@@ -241,9 +253,21 @@ export default function Graduacion() {
   }, [cargar]);
 
   /**
-   * Cuando vuelve la vitrina, las copias recién reveladas adoptan su `gradedId`,
-   * que es lo único que la respuesta de graduar no puede traer (la fila aún no
-   * existía cuando se compuso) y sin lo cual no se puede vender.
+   * Cuando vuelve la vitrina, las copias recién reveladas adoptan su `gradedId`
+   * —que es lo único que la respuesta de graduar no puede traer, porque la fila
+   * aún no existía cuando se compuso, y sin lo cual no se puede vender— y
+   * TAMBIÉN `valorDeVentaAhora`, que es lo que el servidor abonará por ella.
+   *
+   * LOS DOS VIENEN DE LA MISMA FILA A PROPÓSITO. El importe podría calcularse
+   * aquí, pero entonces el botón volvería a tener su propia fórmula del dinero
+   * y podría separarse del abono: es exactamente lo que hacía que dijera
+   * "Vender por 488" y el aviso "+417". Se adopta el número del servidor, y
+   * mientras no ha llegado el botón no promete ninguna cifra (tampoco podría
+   * vender: le falta el `gradedId`).
+   *
+   * Se re-adopta en CADA vuelta de la vitrina, no sólo la primera: al vender una
+   * copia, las hermanas de la misma carta pasan a valer más (una repetida menos
+   * en el montón) y el precio de hace un minuto se quedaría corto.
    *
    * LOS DESPERFECTOS YA NO SE ADOPTAN: llegan con la propia respuesta de
    * graduar, calculados por el servidor. Antes se recomponían en el cliente a
@@ -259,11 +283,13 @@ export default function Graduacion() {
     setResultados((prev) => {
       let cambia = false;
       const siguiente = prev.map((r) => {
-        if (r.gradedId !== undefined) return r;
         const fila = vitrina.find((v) => v.id === r.cardId && v.copia === r.copia);
         if (!fila) return r;
+        if (r.gradedId === fila.gradedId && r.valorDeVentaAhora === fila.valorDeVentaAhora) {
+          return r;
+        }
         cambia = true;
-        return { ...r, gradedId: fila.gradedId };
+        return { ...r, gradedId: fila.gradedId, valorDeVentaAhora: fila.valorDeVentaAhora };
       });
       return cambia ? siguiente : prev;
     });
@@ -288,6 +314,12 @@ export default function Graduacion() {
    * servidor—, y por eso añadir la quinta copia abarata también las cuatro
    * anteriores. `carta.coste` es la tarifa sin descuento que devolvió la acción,
    * y sirve de referencia tachada.
+   *
+   * Y LA BASE ES `valorDeReferencia`, LA TARIFA PLANA, nunca la curva: es lo que
+   * cobra `graduarCartasAction` (`costeDeGraduar(precioDeCartaSuelta(...))`). Si
+   * el coste se calculara sobre `valorDeVentaAhora`, la barra de envío prometería
+   * un precio y el servidor cobraría otro — la misma mentira del botón de
+   * vender, pero del revés.
    */
   const { totalCoste, totalSinDescuento } = useMemo(() => {
     let con = 0;
@@ -295,7 +327,7 @@ export default function Graduacion() {
     for (const carta of cartas) {
       const n = seleccion[carta.id] ?? 0;
       if (n <= 0) continue;
-      con += n * costeDeGraduar(carta.valor, totalCopias);
+      con += n * costeDeGraduar(carta.valorDeReferencia, totalCopias);
       sin += n * carta.coste;
     }
     return { totalCoste: con, totalSinDescuento: sin };
@@ -380,12 +412,20 @@ export default function Graduacion() {
           carta,
           desperfectos: g.desperfectos,
           marcas: g.marcas,
-          valor: valorGraduado(carta.valor, g.nota),
+          /* El "Ahora vale" de la ceremonia: la TARIFA de la carta por el
+           * multiplicador de la nota. Es una comparación —lo que valía antes,
+           * lo que vale después— y por eso va sobre el plano, que es el mismo
+           * número que la ceremonia enseña como "sobre X".
+           * LO QUE SE COBRA AL VENDERLA NO ES ESTO: es `valorDeVentaAhora`, que
+           * llega con la vitrina un instante después (ver el efecto de arriba). */
+          valor: valorGraduado(carta.valorDeReferencia, g.nota),
         });
       }
 
       setResultados(nuevos);
       setDecisiones({});
+      // Empieza una ceremonia nueva: lo cobrado en la anterior no cuenta aquí.
+      setCobradoPorCopia({});
       setSeleccion({});
       haptic("success");
 
@@ -439,12 +479,11 @@ export default function Graduacion() {
         setCoins(res.coins);
         toast(`+${formatNumber(res.earned)} monedas por un ${res.nota}`, "success");
 
-        /* BAJA LOCAL, SIN RECARGA.
-         * El servidor ya ha dicho exactamente qué ha pasado y una recarga
-         * completa aquí tiraría la ceremonia a medias (los resultados que
-         * quedan por decidir viven en memoria). Se toca lo mismo que tocó la
-         * sentencia: la fila se va de la vitrina, la carta pierde una copia y
-         * una graduada, y la decisión queda anotada. */
+        /* BAJA LOCAL INMEDIATA. El servidor ya ha dicho exactamente qué ha
+         * pasado, así que se toca lo mismo que tocó la sentencia: la fila se va
+         * de la vitrina, la carta pierde una copia y una graduada, y la decisión
+         * queda anotada junto con LO QUE SE COBRÓ DE VERDAD. Es lo que hace que
+         * la pantalla responda en el acto y que la ceremonia no parpadee. */
         setVitrina((prev) => prev.filter((v) => v.gradedId !== gradedId));
         setCopiasPorCarta((prev) => ({
           ...prev,
@@ -462,6 +501,24 @@ export default function Graduacion() {
           ),
         );
         setDecisiones((prev) => ({ ...prev, [claveCopia(cardId, copia)]: "vendida" }));
+        setCobradoPorCopia((prev) => ({ ...prev, [claveCopia(cardId, copia)]: res.earned }));
+
+        /* Y DESPUÉS SE RELEE, aunque la baja local ya deje la pantalla bien.
+         *
+         * No es por la fila vendida —ésa ya no está— sino por las que QUEDAN:
+         * vender una copia baja `quantity`, y con una repetida menos en el
+         * montón todas las hermanas de esa misma carta pasan a valer MÁS. Sus
+         * botones seguirían diciendo el precio de antes, que es de nuevo un
+         * botón que promete una cifra distinta de la que se abona.
+         *
+         * El precio no se recalcula aquí: se vuelve a pedir. Ésa es la regla de
+         * toda esta pantalla — el dinero lo dice quien lo paga.
+         *
+         * Y NO SE LLEVA POR DELANTE LA CEREMONIA: `cargar` no toca `resultados`
+         * ni `decisiones`, que es donde vive lo que queda por decidir; sólo
+         * repone las listas y el saldo. Es la misma llamada que ya se hace justo
+         * después de graduar. */
+        cargar(false);
       } catch (e) {
         console.error("Error vendiendo una graduada:", e);
         haptic("warning");
@@ -514,6 +571,7 @@ export default function Graduacion() {
         <Revelacion
           resultados={resultados}
           decisiones={decisiones}
+          cobradoPorCopia={cobradoPorCopia}
           copiasPorCarta={copiasPorCarta}
           vendiendoId={vendiendoId}
           onVender={(r) => {
@@ -524,6 +582,9 @@ export default function Graduacion() {
           onTerminar={() => {
             setResultados([]);
             setDecisiones({});
+            // Los importes cobrados se van con la ceremonia: son suyos, y
+            // dejarlos crecería un mapa que ya no lee nadie.
+            setCobradoPorCopia({});
             setPestana("enviar");
           }}
           cobrado={cobrado}

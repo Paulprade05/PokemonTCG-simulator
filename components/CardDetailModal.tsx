@@ -359,6 +359,25 @@ export default function CardDetailModal({
   const estado = c ? estadoDeCopia(c) : null;
 
   /* ==================================================================== *
+   * COPIAS QUE DE VERDAD SE PUEDEN VENDER
+   * ====================================================================
+   *
+   * El botón de abajo ofrecía `quantity - 1` repetidas, y eso no es lo que
+   * vende `sellAllDuplicatesAction`: las copias graduadas están en la vitrina y
+   * la acción las descuenta antes de decidir (deja `1 + graduadas`). Con 4
+   * copias y 2 graduadas el botón prometía "Vender 3 repetidas" y el servidor
+   * vendía UNA.
+   *
+   * `graduadas` viaja con la carta desde `getFullCollection`; falta en las
+   * cartas que llegan del álbum, del bazar o del invitado, y ahí el `?? 0` deja
+   * el comportamiento de siempre.
+   */
+  const copiasLibres = c
+    ? Math.max(0, (Number(c.quantity) || 0) - (Number(c.graduadas) || 0))
+    : 0;
+  const repetidasVendibles = Math.max(0, copiasLibres - 1);
+
+  /* ==================================================================== *
    * EL VALOR DE VENTA, Y POR QUE ANTES MENTIA CON LAS GRADUADAS
    * ====================================================================
    *
@@ -378,7 +397,32 @@ export default function CardDetailModal({
     const n = Number((c as { mejor_nota?: unknown } | null)?.mejor_nota);
     return Number.isInteger(n) && n >= 1 && n <= 10 ? n : null;
   })();
-  const precioBase = () => precioDeCartaSuelta(c?.rarity, (c as { precioEur?: number | null } | null)?.precioEur);
+  /* ==================================================================== *
+   * LOS IMPORTES LOS MANDA HECHOS QUIEN COBRA, CUANDO PUEDE MANDARLOS
+   * ====================================================================
+   *
+   * `getFullCollection` devuelve ahora por carta `valorDeReferencia` (la tarifa
+   * con su ajuste por el precio real de Cardmarket) y `valorDeVentaRepetidas`
+   * (lo que abona `sellAllDuplicatesAction`). Se prefieren SIEMPRE a rehacer la
+   * cuenta aquí, porque el ajuste en euros sólo existe en Postgres y sin él este
+   * modal prometía menos de lo que la tienda paga: con una Hyper Rare, 3 copias
+   * y la carta a 200 €, el botón de "Vender 2 repetidas" decía 464 y el servidor
+   * abonaba 557 (y la casilla "Valor de la carta" decía 250 valiendo 300).
+   *
+   * EL RESPALDO SIGUE HACIENDO FALTA y no es el mismo caso: a este modal llegan
+   * cartas del ÁLBUM, del BAZAR y del INVITADO, que no pasan por esa consulta.
+   *   · Las del sobre recién abierto traen `precioEur` pegado (cartasDelSet se
+   *     lo pone al catálogo), así que ahí la tarifa sale exacta igual.
+   *   · Las demás no tienen dato de euros en ninguna parte, y entonces la tarifa
+   *     por rareza ES el número correcto.
+   * Se mira `typeof === "number"` y no si es verdadero: 0 es legítimo —significa
+   * "no queda nada que vender"— y un `??` caería al respaldo justo ahí.
+   */
+  const delServidor = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  const precioBase = () =>
+    delServidor((c as { valorDeReferencia?: number | null } | null)?.valorDeReferencia) ??
+    precioDeCartaSuelta(c?.rarity, (c as { precioEur?: number | null } | null)?.precioEur);
   const getMarketPrice = () =>
     notaGraduada ? valorGraduado(precioBase(), notaGraduada) : precioBase();
   const getTcgPrice = (): number | null => {
@@ -877,9 +921,18 @@ export default function CardDetailModal({
                 {/* --ok y no --accent para el dinero: --accent es color de
                     marca y sobre el papel claro da 2,4:1 (app/globals.css lo
                     avisa); --ok es su versión de tinta, 6,1:1. */}
+                {/* "VALOR DE LA CARTA" Y NO "VALOR DE VENTA", y no es un matiz.
+                    Esta casilla pinta la TARIFA de la carta (SELL_PRICES con su
+                    ajuste, por el multiplicador de la nota si está graduada), que
+                    es el número de referencia —el mismo contra el que el bazar
+                    valida la banda de precio de un anuncio— y NO lo que abona la
+                    tienda por una repetida: eso baja con cada copia que tienes y
+                    lo dice el botón de aquí abajo. Mientras el rótulo decía
+                    "venta", la casilla y el botón daban dos cifras distintas
+                    para la misma carta y las dos se leían como una promesa. */}
                 <div className="grid grid-cols-2 gap-2">
                   <PriceTile
-                    label={notaGraduada ? `Valor · ${etiquetaNota(notaGraduada)}` : "Valor de venta"}
+                    label={notaGraduada ? `Valor · ${etiquetaNota(notaGraduada)}` : "Valor de la carta"}
                     value={`${getMarketPrice()}`}
                     unit={<IconoMoneda tam={16} />}
                     color="var(--ok)"
@@ -893,15 +946,21 @@ export default function CardDetailModal({
                 </div>
 
                 {/* SELL CTA */}
-                {/* El importe sale de valorDeVenta, la misma función que cobra el
-                    servidor: el precio por copia baja con las copias que tienes, así
-                    que "repetidas × tarifa" prometía más de lo que se acaba pagando. */}
-                {!readOnly && c.quantity > 1 && onSellAll && (
+                {/* EL IMPORTE ES EL QUE MANDA EL SERVIDOR, que lo calculó con la
+                    misma función que cobra sellAllDuplicatesAction. El respaldo
+                    —para las cartas que no vienen de la colección— es esa misma
+                    función: la CANTIDAD son las repetidas LIBRES (ver arriba) y la
+                    CURVA se mide sobre el montón entero, graduadas incluidas.
+                    Lo que el respaldo no puede llevar es el ajuste en euros de
+                    Cardmarket, que sólo existe en la base; por eso se prefiere
+                    siempre el número de arriba y el aviso posterior dice lo que
+                    abonó el servidor. */}
+                {!readOnly && repetidasVendibles > 0 && onSellAll && (
                   <button
                     onClick={onSellAll}
                     className="btn-accent press w-full py-3 rounded-2xl font-semibold t-cuerpo flex items-center justify-center gap-1.5"
                   >
-                    Vender {c.quantity - 1} repetida{c.quantity - 1 > 1 ? "s" : ""} · +{valorDeVenta(c.rarity, c.quantity)}
+                    Vender {repetidasVendibles} repetida{repetidasVendibles > 1 ? "s" : ""} · +{delServidor((c as { valorDeVentaRepetidas?: number | null }).valorDeVentaRepetidas) ?? valorDeVenta(c.rarity, c.quantity, repetidasVendibles)}
                     <IconoMoneda tam={16} />
                   </button>
                 )}

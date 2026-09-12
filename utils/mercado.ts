@@ -642,14 +642,100 @@ export function setDeCarta(carta: CartaMinima): string | null {
   return corte > 0 ? carta.id.slice(0, corte) : null;
 }
 
+/* ------------------------------------------------------------------ *
+ * LAS RAREZAS QUE ESTE JUEGO NO CONOCE
+ * ------------------------------------------------------------------
+ *
+ * EL AGUJERO QUE CIERRA ESTE BLOQUE, y era de los caros: los dos respaldos de
+ * aquí abajo se contradecían. `rangoDeRareza` mandaba lo desconocido al rango 1
+ * —o sea, a la banda de morralla, con las Comunes— y `precioDeVenta` le ponía
+ * una tarifa de 10, casi el doble que una Rara barata y cinco veces una Común.
+ * Como el pago es `multiplicador × Σ precios` y el multiplicador de morralla se
+ * calcula contra un precio de referencia de 2 (B_MORRALLA), la prima se
+ * multiplicaba por el mismo factor: medido, una oferta que paga 68 entregando
+ * Comunes pagaba 342 entregando cartas de rareza desconocida.
+ *
+ * Y NO ES UN CASO DE LABORATORIO. En los 38 JSON del repositorio no hay ni una
+ * —lo comprueba un invariante de scripts/test-invariantes.mjs—, pero la BD de
+ * producción la llena el cron con 171 expansiones, y ahí viven 'Rare Holo LV.X',
+ * 'Rare Holo EX', 'LEGEND', 'Rare Prime', 'Rare Holo GX'... Ninguna está en
+ * RARITY_RANK ni en SELL_PRICES, que se consultan por nombre EXACTO.
+ *
+ * LA DECISIÓN: una rareza desconocida NO CUMPLE NINGUNA BANDA (ver
+ * `cumpleFiltro`). No es un recorte de precio, es que la banda es una
+ * afirmación sobre el rango de la carta —"de Común a Infrecuente"— y de una
+ * rareza que no está en la tabla no se puede afirmar nada. Colocarla en el
+ * suelo era una suposición, y la suposición salía cara.
+ *
+ * POR QUÉ NO LA OTRA SALIDA (pagarla al suelo de su banda, 2 monedas): porque
+ * el reparto automático entrega SIEMPRE LO MÁS BARATO PRIMERO
+ * (utils/repartoMercado.ts, "barata primero"). Con la tarifa en 2, una
+ * 'Rare Holo LV.X' pasaría de ordenarse la última —hoy vale 10, así que el
+ * reparto la esquiva— a ordenarse la PRIMERA, y el juego le propondría al
+ * jugador regalar una LEGEND por dos monedas. Cerrar una fuga abriendo una
+ * trampa no es cerrarla.
+ *
+ * QUÉ PIERDE EL JUGADOR LEGÍTIMO QUE TIENE ESAS CARTAS, dicho claro: esas
+ * copias ya no cuentan para ninguna oferta del mercado. No quedan inservibles
+ * —se venden en la tienda por su tarifa de respaldo, se publican en el bazar,
+ * se gradúan y cuentan para el álbum y para el bono de expansión igual que
+ * antes—, pero el tablón deja de verlas. La forma de devolvérselas al mercado
+ * es DARLES SU SITIO: añadirlas a RARITY_RANK y a SELL_PRICES en utils/constanst.ts
+ * (las dos a la vez: hay un invariante que exige que toda rareza con rango
+ * tenga precio y al revés), y entonces entran por la puerta buena, en la banda
+ * que de verdad les toca y cobrando lo que valen.
+ */
+
+/** Rango al que van a parar las rarezas que RARITY_RANK no conoce. */
+const RANGO_DESCONOCIDO = 1;
+
+/**
+ * Tarifa de una rareza desconocida DENTRO DEL MERCADO: la de la carta más
+ * barata que comparte su rango (hoy la Común, 2).
+ *
+ * SE DERIVA, NO SE ESCRIBE, para que no se pueda volver a separar del rango:
+ * mientras `rangoDeRareza` coloque lo desconocido con las Comunes, su precio es
+ * el de una Común pase lo que pase con las tablas. Es la segunda cerradura del
+ * bloque de arriba: hoy `cumpleFiltro` ya impide que una carta así entre en un
+ * lote, pero todos los requisitos de este módulo llevan banda y una plantilla
+ * NUEVA podría no llevarla — si eso pasa, lo peor que ocurre es que cobre como
+ * una Común, no cinco veces más.
+ *
+ * OJO: esto es sólo el mercado. Lo que la tienda paga por vender una carta de
+ * rareza desconocida sigue saliendo de `precioDeCartaSuelta`
+ * (utils/constanst.ts), con su respaldo de 10 intacto.
+ */
+const PRECIO_RAREZA_DESCONOCIDA = (() => {
+  const delRango = Object.keys(RARITY_RANK)
+    .filter((r) => RARITY_RANK[r] === RANGO_DESCONOCIDO)
+    .map((r) => SELL_PRICES[r])
+    .filter((p): p is number => typeof p === "number");
+  // Sin ninguna rareza en ese rango (tablas vacías), 1: nada se regala.
+  return delRango.length > 0 ? Math.min(...delRango) : 1;
+})();
+
 /** Rango de rareza; las rarezas desconocidas caen al suelo, no al techo. */
 export function rangoDeRareza(carta: CartaMinima): number {
-  return RARITY_RANK[carta.rarity ?? ""] ?? 1;
+  return RARITY_RANK[carta.rarity ?? ""] ?? RANGO_DESCONOCIDO;
+}
+
+/**
+ * ¿Sabe el juego qué es esta rareza? Es la pregunta que separa "está en el
+ * suelo" de "no sabemos dónde está", y de la que depende que una carta pueda
+ * cumplir una banda (ver el bloque de arriba).
+ *
+ * `typeof … === "number"` y no `in`: RARITY_RANK es un objeto literal, así que
+ * una rareza llamada "constructor" o "toString" pasaría un `in` por la cadena
+ * de prototipos y entraría con un rango que ni siquiera es un número.
+ */
+export function rarezaConocida(carta: CartaMinima): boolean {
+  return typeof RARITY_RANK[carta.rarity ?? ""] === "number";
 }
 
 /** Mismo respaldo que usa la app al vender (getPrice): 10 si no hay tarifa. */
 export function precioDeVenta(carta: CartaMinima): number {
-  return SELL_PRICES[carta.rarity ?? ""] ?? 10;
+  const tarifa = SELL_PRICES[carta.rarity ?? ""];
+  return typeof tarifa === "number" ? tarifa : PRECIO_RAREZA_DESCONOCIDA;
 }
 
 /**
@@ -708,6 +794,11 @@ export function cumpleFiltro(carta: CartaMinima, f: Filtro): boolean {
   // garantiza que el lote no pueda llenarse de cartas caras, y por eso el pago
   // ya no necesita tope.
   if (f.rarMin !== undefined || f.rarMax !== undefined) {
+    // Una rareza que las tablas no conocen no cumple NINGUNA banda: la banda
+    // afirma en qué escalón está la carta, y de ésta no se sabe. Colocarla en el
+    // suelo por respaldo era la suposición que pagaba de más (ver el bloque
+    // "LAS RAREZAS QUE ESTE JUEGO NO CONOCE").
+    if (!rarezaConocida(carta)) return false;
     const r = rangoDeRareza(carta);
     if (f.rarMin !== undefined && r < f.rarMin) return false;
     if (f.rarMax !== undefined && r > f.rarMax) return false;

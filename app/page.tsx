@@ -12,6 +12,7 @@ import {
   claimSetCompletionBonuses,
   sellPackDuplicates,
   getWishlistIds,
+  getComposicionDeSobres,
 } from "./action";
 import { getCardsFromSet } from "../services/pokemon";
 // La ilustración real del sobre, para precargarla en cuanto se elige la
@@ -22,6 +23,7 @@ import {
   openPremiumPack,
   openGoldenPack,
   composicionDelSobre,
+  eraDeSerie,
   RELLENO_PREMIUM,
 } from "../utils/packLogic";
 import { saveToCollection, getCollection, saveCollectionRaw } from "../utils/storage";
@@ -71,9 +73,11 @@ const AURA_RANK = 70;
  * decir algo y diez es lo que trae un sobre normal.
  *
  * En cuanto hay catálogo manda `cartasPorTipo`, que sale de la calibración real
- * (`composicionDelSobre`): las expansiones a las que se les retira un hueco para
- * que el sobre no valga más de lo que cuesta —hoy swsh35, que se queda en nueve—
- * ya anuncian nueve desde el principio en vez de desmentirse a mitad de apertura.
+ * —del servidor si hay sesión, porque es quien reparte y quien tiene los precios
+ * reales, y si no de `composicionDelSobre` aquí mismo—: las expansiones a las que
+ * se les retira un hueco para que el sobre no valga más de lo que cuesta —hoy
+ * swsh35, que se queda en nueve— ya anuncian nueve desde el principio en vez de
+ * desmentirse a mitad de apertura.
  */
 const CARTAS_POR_SOBRE = 10;
 
@@ -763,26 +767,156 @@ export default function Home() {
    * Ahora los tres se derivan de `composicionDelSobre`, que resuelve la tabla
    * de premio contra los pools REALES de esta expansión. Las ramas cuyo escalón
    * no existe se marcan y se pintan diciendo a dónde caen de verdad.
+   *
+   * Y AHORA, ADEMÁS, LO ANUNCIA QUIEN REPARTE. El bloque de abajo. */
+
+  /* ==================================================================== *
+   * ANUNCIA QUIEN REPARTE, Y NO SIEMPRE ES EL MISMO
+   * ====================================================================
+   *
+   * EL PROBLEMA QUE CIERRA: esta pantalla llamaba a `composicionDelSobre(cartas,
+   * tipo)` SIN el tercer argumento, la era, así que anunciaba la tabla 'media' a
+   * todo el mundo. Con sesión el sobre lo reparte `comprarSobreAction` con la era
+   * de la expansión, y son tres tablas distintas: en Escarlata y Púrpura la
+   * tienda prometía un 5% de dorada y el servidor repartía un 8%. Medido por el
+   * servidor sobre las 38 expansiones locales: CATORCE anunciaban un Premium que
+   * no era el suyo. Sólo el Premium —en el Estándar las tres eras comparten
+   * tabla— y sólo las probabilidades, no el número de cartas.
+   *
+   * QUIÉN REPARTE DECIDE QUÉ ES VERDAD, y aquí hay dos repartidores:
+   *
+   *   · CON SESIÓN reparte el SERVIDOR, con la era de la ficha y con `precioEur`
+   *     —el precio real de Cardmarket— pegado al catálogo. Y ese precio NO baja
+   *     al navegador: `getCardsFromSet` no lo trae, vive en `card_prices`. Como
+   *     la calibración que decide CUÁNTAS cartas trae el sobre entra por
+   *     `precioDeCartaSuelta(rareza, precioEur)`, este cálculo local no puede
+   *     reproducir el número por más datos que se le manden. Lo que sí puede es
+   *     PEDIRLO: `getComposicionDeSobres` lo devuelve ya hecho, filas de la tabla
+   *     desplegable incluidas. Es el mismo patrón que PublicarSheet con la banda
+   *     del bazar.
+   *   · SIN SESIÓN reparte ESTE navegador (`openStandardPack` y compañía, en
+   *     handleBuyPack), con `allCards` y con `eraDelReparto`. Su verdad es la que
+   *     se calcula aquí abajo con ESA MISMA lista y ESA MISMA era, así que no se
+   *     le pregunta al servidor: la respuesta no aportaría nada —para el invitado
+   *     calcula con la era por defecto y sin precios, que es justo esto— y sí
+   *     abriría la única rendija por la que anuncio y reparto pueden volver a
+   *     separarse (que el servidor mire un catálogo distinto del que tiene el
+   *     navegador en la mano). Al invitado le anuncia quien le reparte, y es éste.
+   *
+   * El cálculo local NO sobra con sesión: es lo que se pinta mientras la
+   * respuesta viaja y si la petición falla. Con la era ya puesta, ese respaldo
+   * sólo puede equivocarse en el número de cartas de las expansiones con precio
+   * real, no en la tabla de premio.
    */
+
+  /**
+   * La era con la que se sortea el sobre de QUIEN ESTÁ MIRANDO. Sale de
+   * `series`, que llega en INGLÉS de la API y que la capa de idioma no traduce
+   * (guarda el nombre español aparte, en `serieEs`), así que `eraDeSerie` casa
+   * con sus claves tal cual.
+   *
+   * SIN SESIÓN ES LA ERA POR DEFECTO, y no por descuido: el invitado sortea en
+   * el navegador y `openStandardPack` la usa al no recibir ninguna. Que lo que
+   * se anuncia y lo que se saca lean esta MISMA constante es lo que impide que
+   * vuelvan a separarse: el día que se quiera que el invitado reparta por era,
+   * se quita el `isSignedIn` de aquí y las dos cosas se mueven a la vez.
+   */
+  const eraDelReparto = useMemo(
+    () => eraDeSerie(isSignedIn ? currentSetObj?.series : null),
+    [isSignedIn, currentSetObj?.series],
+  );
+
+  /** La ficha de los cuatro sobres tal y como la calcula quien los reparte. */
+  type SobresAnunciados = Extract<
+    Awaited<ReturnType<typeof getComposicionDeSobres>>,
+    { ok: true }
+  >["sobres"];
+
+  /**
+   * Lo que ha contestado el servidor, CON la expansión a la que corresponde.
+   * El id va pegado a propósito: entre que se toca otra expansión y que corren
+   * los efectos hay un render, y sin él ese render pintaría los números de la
+   * expansión anterior sobre el nombre de la nueva.
+   */
+  const [anuncioServidor, setAnuncioServidor] = useState<
+    { setId: string; sobres: SobresAnunciados } | null
+  >(null);
+  /**
+   * Una llamada por expansión y ya nunca más: la respuesta no depende de nada
+   * que cambie mientras se navega (ni del saldo, ni de la colección), así que
+   * volver a una expansión ya vista no vuelve a pedirla. Sólo se guardan
+   * respuestas CON sesión, que son las únicas que se piden: por eso basta el id
+   * como clave y no hace falta meter la sesión dentro.
+   */
+  const anunciosRef = useRef(new Map<string, SobresAnunciados>());
+
+  useEffect(() => {
+    // Al invitado le reparte su propio navegador: no hay nada que preguntar.
+    if (!isSignedIn || !selectedSet) return;
+    const memorizado = anunciosRef.current.get(selectedSet);
+    if (memorizado) {
+      setAnuncioServidor({ setId: selectedSet, sobres: memorizado });
+      return;
+    }
+    /* `vigente` cierra la carrera de siempre: cambiar de expansión mientras esto
+       viaja dejaría la respuesta vieja pisando a la nueva. Se memoriza igual
+       —el trabajo ya está hecho y sirve si se vuelve—, lo único que se descarta
+       es pintarla. */
+    let vigente = true;
+    getComposicionDeSobres(selectedSet)
+      .then((res) => {
+        if (!res.ok) {
+          // Sin respuesta manda el cálculo local, que ya lleva la era: se anota
+          // y no se molesta al jugador con un aviso por una tabla informativa.
+          console.warn("No se pudo pedir la composición del sobre:", res.motivo);
+          return;
+        }
+        anunciosRef.current.set(res.setId, res.sobres);
+        if (vigente) setAnuncioServidor({ setId: res.setId, sobres: res.sobres });
+      })
+      .catch((err) => console.error("Error pidiendo la composición del sobre:", err));
+    return () => {
+      vigente = false;
+    };
+  }, [isSignedIn, selectedSet]);
+
+  /**
+   * La ficha del servidor sólo cuenta si es la de la expansión en pantalla Y si
+   * el servidor sigue siendo quien reparte: cerrar la sesión sin salir de la
+   * tienda devuelve el sorteo a este navegador, y con él el derecho a anunciar.
+   */
+  const sobresServidor =
+    isSignedIn && anuncioServidor && anuncioServidor.setId === selectedSet
+      ? anuncioServidor.sobres
+      : null;
+
   const composiciones = useMemo(() => {
     if (!allCards || allCards.length === 0) return null;
     return {
-      STANDARD: composicionDelSobre(allCards, "STANDARD"),
-      PREMIUM: composicionDelSobre(allCards, "PREMIUM"),
-      GOLDEN: composicionDelSobre(allCards, "GOLDEN"),
-      SPECIAL: composicionDelSobre(allCards, "SPECIAL"),
+      STANDARD: composicionDelSobre(allCards, "STANDARD", eraDelReparto),
+      PREMIUM: composicionDelSobre(allCards, "PREMIUM", eraDelReparto),
+      GOLDEN: composicionDelSobre(allCards, "GOLDEN", eraDelReparto),
+      SPECIAL: composicionDelSobre(allCards, "SPECIAL", eraDelReparto),
     };
-  }, [allCards]);
+  }, [allCards, eraDelReparto]);
 
-  /** Cartas que trae de verdad cada sobre de esta expansión. */
+  /**
+   * Cartas que trae de verdad cada sobre de esta expansión. Manda el servidor
+   * cuando ha contestado: es el único que calibra con los precios reales, y por
+   * tanto el único que puede saber si a esta expansión le retira un hueco.
+   */
   const cartasPorTipo = useMemo(
     () => ({
-      STANDARD: composiciones?.STANDARD.cartas ?? CARTAS_POR_SOBRE,
-      PREMIUM: composiciones?.PREMIUM.cartas ?? CARTAS_POR_SOBRE,
-      GOLDEN: composiciones?.GOLDEN.cartas ?? CARTAS_POR_SOBRE,
-      SPECIAL: composiciones?.SPECIAL.cartas ?? CARTAS_POR_SOBRE,
+      STANDARD:
+        sobresServidor?.STANDARD.cartas ?? composiciones?.STANDARD.cartas ?? CARTAS_POR_SOBRE,
+      PREMIUM:
+        sobresServidor?.PREMIUM.cartas ?? composiciones?.PREMIUM.cartas ?? CARTAS_POR_SOBRE,
+      GOLDEN:
+        sobresServidor?.GOLDEN.cartas ?? composiciones?.GOLDEN.cartas ?? CARTAS_POR_SOBRE,
+      SPECIAL:
+        sobresServidor?.SPECIAL.cartas ?? composiciones?.SPECIAL.cartas ?? CARTAS_POR_SOBRE,
     }),
-    [composiciones],
+    [composiciones, sobresServidor],
   );
 
   /**
@@ -798,6 +932,7 @@ export default function Home() {
 
   /** Raras garantizadas del Premium, ya calibradas. */
   const rarasPremium =
+    sobresServidor?.PREMIUM.rarasGarantizadas ??
     composiciones?.PREMIUM.huecos.find((h) => h.pool === "rare")?.cantidad ??
     RELLENO_PREMIUM.raras;
 
@@ -808,6 +943,10 @@ export default function Home() {
    */
   const oddsPorTipo = useMemo(() => {
     const filas = (tipo: "STANDARD" | "PREMIUM" | "GOLDEN" | "SPECIAL"): [string, string][] => {
+      // Con sesión, la tabla viene MONTADA del servidor: qué rótulo lleva una
+      // rama que no existe en este set se decide una sola vez y donde se sabe.
+      const delServidor = sobresServidor?.[tipo].filas;
+      if (delServidor) return delServidor;
       const comp = composiciones?.[tipo];
       if (!comp) return [];
       const pct = (n: number) => `${Number(n.toFixed(2))}%`;
@@ -836,7 +975,7 @@ export default function Home() {
       GOLDEN: filas("GOLDEN"),
       SPECIAL: filas("SPECIAL"),
     };
-  }, [composiciones]);
+  }, [composiciones, sobresServidor]);
 
   /**
    * Un set "abrible" tiene la pirámide normal de rarezas. Los subsets
@@ -1253,10 +1392,18 @@ export default function Home() {
       }
 
       /* MODO INVITADO: no hay cuenta que defraudar, así que el sobre se sortea
-       * y se guarda aquí mismo, en local, exactamente igual que siempre. */
+       * y se guarda aquí mismo, en local, exactamente igual que siempre.
+       *
+       * LA ERA VA EXPLÍCITA Y ES LA MISMA QUE SE ANUNCIA. Aquí no cambia nada
+       * hoy —sin sesión `eraDelReparto` es la era por defecto, que es la que
+       * `openStandardPack` ya usaba al no recibir ninguna—, pero deja escrito lo
+       * que antes sólo coincidía por casualidad: la tabla que se pinta en la
+       * tienda y la que sortea esta línea salen del MISMO valor. El Leyenda no
+       * la lleva porque no tiene hueco de premio: su promesa es una carta que no
+       * tengas, y eso no depende de la era. */
       let newPack: Carta[] = [];
-      if (type === "STANDARD") newPack = openStandardPack(allCards);
-      else if (type === "PREMIUM") newPack = openPremiumPack(allCards);
+      if (type === "STANDARD") newPack = openStandardPack(allCards, eraDelReparto);
+      else if (type === "PREMIUM") newPack = openPremiumPack(allCards, eraDelReparto);
       else newPack = openGoldenPack(allCards, userCollectionIds);
 
       for (const card of newPack.slice(0, 2)) {
@@ -1382,12 +1529,13 @@ export default function Home() {
         setCoins(res.coins);
         await refreshAfterPack();
       } else {
-        /* INVITADO: sorteo y guardado en local, como siempre. */
+        /* INVITADO: sorteo y guardado en local, como siempre. La era es la
+         * misma que anuncia la tienda, por lo dicho en handleBuyPack. */
         const owned = new Set(ownedSnapshot);
         for (let i = 0; i < count; i++) {
           let p: Carta[] = [];
-          if (type === "STANDARD") p = openStandardPack(allCards);
-          else if (type === "PREMIUM") p = openPremiumPack(allCards);
+          if (type === "STANDARD") p = openStandardPack(allCards, eraDelReparto);
+          else if (type === "PREMIUM") p = openPremiumPack(allCards, eraDelReparto);
           else p = openGoldenPack(allCards, Array.from(owned));
           combined.push(...p);
           p.forEach((c) => owned.add(c.id)); // golden garantiza nuevas distintas

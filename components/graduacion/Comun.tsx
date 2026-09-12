@@ -84,9 +84,38 @@ export interface CartaGraduable {
   cantidad: number;
   /** Copias que ya tienen nota y viven en la vitrina. */
   graduadas: number;
-  /** `cantidad - graduadas`. Son las únicas que se pueden mandar. */
+  /**
+   * `cantidad - graduadas`. Son las únicas que se pueden mandar, y el número que
+   * la lista enseña como "N copias libres".
+   *
+   * COINCIDE EXACTAMENTE CON LO QUE ADMITE EL SERVIDOR, que es lo que no pasaba
+   * antes: `graduarCartasAction` corta por `c.puesto <= quantity - activas`
+   * sobre la fila ya bloqueada, o sea por este mismo recuento. El bucle que
+   * elegía los índices sí tenía un tope de más —se paraba en `quantity` y cada
+   * graduada vendida se comía un índice de ese rango—, y por eso la pantalla
+   * podía ofrecer una copia que la acción rechazaba con "nada-que-graduar" sin
+   * salida posible. Eso se arregló en el servidor; aquí no hay que descontar
+   * nada por cuenta propia, y hacerlo volvería a separar las dos cuentas.
+   */
   libres: number;
-  /** Lo que vale UNA copia suelta hoy. Sobre esto multiplica la nota. */
+  /**
+   * TARIFA de la carta: el precio plano de su rareza (con el ajuste del precio
+   * real, si lo hay). NO es lo que la tienda paga por una repetida.
+   *
+   * Es la base de dos cosas y por eso tiene que ser este número y no otro: el
+   * COSTE de graduar (`graduarCartasAction` cobra `costeDeGraduar` de esto) y la
+   * banda de precio con la que `publicarEnBazarAction` valida un anuncio. Si la
+   * pantalla calculara el coste sobre la curva, el botón volvería a prometer una
+   * cifra y el servidor a cobrar otra.
+   */
+  valorDeReferencia: number;
+  /**
+   * Lo que abona la tienda HOY por UNA copia sobrante sin graduar: la curva de
+   * repetidas con las copias que se tienen (`sellCardAction` usa exactamente
+   * esta expresión). Es 0 cuando sólo queda una copia, porque esa no se vende.
+   */
+  valorDeVentaAhora: number;
+  /** Alias histórico de `valorDeReferencia`. No mezclar con la curva. */
   valor: number;
   /** Coste unitario SIN descuento por volumen: `costeDeGraduar(valor, 1)`. */
   coste: number;
@@ -114,7 +143,26 @@ export interface CopiaGraduada {
    */
   desperfectos: Desperfectos;
   marcas: MarcasDeCarta;
-  /** Ya multiplicado por la nota: es lo que pagarían por ella. */
+  /* ------------------------------------------------------------------ *
+   * LOS DOS VALORES, Y NO SON INTERCAMBIABLES
+   * ------------------------------------------------------------------
+   *
+   * Aquí vivía la mentira del botón: la vitrina pintaba "Vender por 488" con la
+   * tarifa plana por la nota, y `venderGraduadaAction` abonaba 417 porque el
+   * abono sale de la CURVA de repetidas. Ahora el servidor devuelve los dos
+   * números con su nombre y cada uno tiene su sitio:
+   *
+   *  · `valorDeVentaAhora` es una PROMESA DE PAGO. Sale de la misma función que
+   *    abona el servidor, así que el botón y el aviso no pueden separarse.
+   *  · `valorDeReferencia` es lo que la carta VALE. No lo paga la tienda, pero
+   *    es el número contra el que el bazar valida la banda del anuncio y el que
+   *    no se hunde a 0 por ser la última copia.
+   */
+  /** Lo que abona `venderGraduadaAction` si se vende AHORA. 0 con una sola copia. */
+  valorDeVentaAhora: number;
+  /** Tarifa plana × nota. El de la banda del bazar. */
+  valorDeReferencia: number;
+  /** Alias histórico de `valorDeReferencia`. */
   valor: number;
   coste: number;
   /** Copias de esa carta en la colección. Con 1 no se puede vender. */
@@ -140,7 +188,11 @@ export interface Resultado {
   /** Estado de la copia, calculado por el servidor. Ver CopiaGraduada. */
   desperfectos: Desperfectos;
   marcas: MarcasDeCarta;
-  /** `valorGraduado(carta.valor, nota)`: lo que vale ya graduada. */
+  /**
+   * `valorGraduado(carta.valorDeReferencia, nota)`: lo que vale ya graduada.
+   * Es el número del "Ahora vale" —la comparación con lo que valía antes—, NO
+   * lo que se cobra al venderla: para eso está `valorDeVentaAhora`.
+   */
   valor: number;
   /**
    * Identificador de la fila de `graded_cards`. Llega DESPUÉS que el resto,
@@ -149,6 +201,19 @@ export interface Resultado {
    * vender espera en vez de mentir.
    */
   gradedId?: number;
+  /**
+   * LO QUE ABONARÁ EL SERVIDOR, y no se calcula aquí: se ADOPTA de la fila de la
+   * vitrina, en el mismo momento y por el mismo camino que `gradedId`.
+   *
+   * Podría derivarse en el cliente (`valorGraduado(carta.valorDeVentaAhora,
+   * nota)`) y daría el mismo número hoy, pero sería otra copia de la fórmula del
+   * dinero fuera del servidor — que es justo lo que dejó al botón prometiendo
+   * 488 mientras se abonaban 417. Viene del mismo sitio que el abono o no viene.
+   *
+   * Mientras es `undefined` el botón no dice ninguna cifra; da igual, porque
+   * hasta que no llega `gradedId` tampoco se puede vender.
+   */
+  valorDeVentaAhora?: number;
 }
 
 /** Clave estable de una copia concreta. Las copias no tienen id propio aquí. */

@@ -3060,6 +3060,1276 @@ comprueba(
   }
 }
 
+/* ==================================================================== *
+ * LO QUE LA PANTALLA PROMETE Y LO QUE EL SERVIDOR CUMPLE
+ * ====================================================================
+ *
+ * POR QUÉ HACE FALTA OTRA SECCIÓN Y NO BASTA CON LAS DE ARRIBA. Todo lo de
+ * este fichero vigila que el juego no se rompa ni imprima dinero. Lo que se
+ * vigila aquí es distinto y no lo cazaba nada: que el número que el jugador LEE
+ * antes de pulsar sea el que va a recibir después.
+ *
+ * Ese fallo no rompe nada. No hay excepción, no hay fuga, no hay hueco: las dos
+ * mitades funcionan perfectamente, cada una con su cuenta. Sólo que una de las
+ * dos se pinta y la otra se cobra. Se ha colado CUATRO veces seguidas y siempre
+ * con la misma forma —dos sitios calculando por su cuenta lo que uno solo sabe—:
+ *
+ *   · la tienda anunciaba el Premium con la tabla de la era 'media' y el
+ *     servidor lo repartía con la de la expansión (14 expansiones afectadas);
+ *   · la vitrina decía "Vender por 488" y la venta abonaba 417;
+ *   · la lista de graduables ofrecía copias que la acción rechazaba;
+ *   · el mercado colocaba una rareza desconocida en la banda de la morralla y
+ *     le pagaba cinco veces su precio.
+ *
+ * Y todos se arreglaron igual: EL QUE SABE MANDA EL NÚMERO YA HECHO, y la
+ * pantalla lo pinta. Lo que se ata aquí es eso, con el criterio del fichero: lo
+ * cerrado antes que lo estático. Lo estático es la red para las dos cosas que no
+ * se pueden ejecutar desde aquí —app/action.ts arrastra Next y Clerk, y
+ * app/social.ts la base— y no demuestra nada por sí solo; lo dice también la
+ * sección anterior y vale igual aquí.
+ */
+{
+  seccion("Anuncio contra realidad: la tienda dice lo que el servidor reparte");
+
+  /* ------------------------------------------------------------------ *
+   * HERRAMIENTAS DE ESTA SECCIÓN
+   * ------------------------------------------------------------------
+   * `sinComentarios` es lo que separa mirar el CÓDIGO de mirar lo que alguien
+   * escribió SOBRE el código, y aquí no es un detalle: app/action.ts explica en
+   * un comentario la llamada sin era que causó el fallo ("openStandardPack
+   * (allCards) a secas") y app/page.tsx hace lo mismo. Un grep las caza y cree
+   * haber encontrado el fallo que ya está arreglado.
+   *
+   * Los saltos de línea de los comentarios SÍ se conservan: si no, el número de
+   * línea del mensaje de fallo no sería el del fichero y habría que buscar a
+   * mano justo lo que el mensaje promete.
+   *
+   * No se comparte con el escáner de SQL de la sección anterior porque hace
+   * otra cosa: aquél extrae plantillas `…` y éste devuelve el fichero entero.
+   */
+  const ABRE_EXPRESION = /[([{,;:=!&|?+\-*%^~<>]$/;
+  const PALABRA_EXPRESION = /\b(return|typeof|case|in|of|delete|void|instanceof|yield|await|do|else)$/;
+
+  function sinComentarios(codigo) {
+    let salida = "";
+    const n = codigo.length;
+    let i = 0;
+    let previo = ""; // lo último que cuenta, para decidir si una barra abre regexp
+    while (i < n) {
+      const c = codigo[i];
+      const d = codigo[i + 1];
+      if (c === "/" && d === "/") {
+        while (i < n && codigo[i] !== "\n") i++;
+        continue;
+      }
+      if (c === "/" && d === "*") {
+        const desde = i;
+        i += 2;
+        while (i < n && !(codigo[i] === "*" && codigo[i + 1] === "/")) i++;
+        i += 2;
+        salida += codigo.slice(desde, i).replace(/[^\n]/g, "");
+        continue;
+      }
+      if (c === "'" || c === '"') {
+        const desde = i;
+        i++;
+        while (i < n && codigo[i] !== c) {
+          if (codigo[i] === "\\") i++;
+          i++;
+        }
+        i++;
+        salida += codigo.slice(desde, i);
+        previo = c;
+        continue;
+      }
+      if (c === "`") {
+        const desde = i;
+        i++;
+        let llaves = 0;
+        while (i < n) {
+          const x = codigo[i];
+          if (x === "\\") { i += 2; continue; }
+          if (x === "$" && codigo[i + 1] === "{") { llaves++; i += 2; continue; }
+          if (llaves > 0 && x === "}") { llaves--; i++; continue; }
+          if (llaves === 0 && x === "`") break;
+          i++;
+        }
+        i++;
+        salida += codigo.slice(desde, i);
+        previo = "`";
+        continue;
+      }
+      if (c === "/" && (previo === "" || ABRE_EXPRESION.test(previo) || PALABRA_EXPRESION.test(previo))) {
+        const desde = i;
+        i++;
+        let clase = false;
+        while (i < n) {
+          const x = codigo[i];
+          if (x === "\\") { i += 2; continue; }
+          if (x === "\n") break;
+          if (x === "[") clase = true;
+          else if (x === "]") clase = false;
+          else if (x === "/" && !clase) break;
+          i++;
+        }
+        i++;
+        salida += codigo.slice(desde, i);
+        previo = "/";
+        continue;
+      }
+      salida += c;
+      if (!/\s/.test(c)) previo = (previo + c).slice(-12);
+      i++;
+    }
+    return salida;
+  }
+
+  /* El cuerpo de una server action. Mismo corte que el `cuerpoDeFuncion` de la
+   * sección anterior —de su declaración al siguiente `export`—, repetido porque
+   * aquél vive dentro de su bloque y no se ve desde aquí. */
+  function cuerpoDeAccion(codigo, nombre) {
+    const m = new RegExp("^export\\s+async\\s+function\\s+" + nombre + "\\b", "m").exec(codigo);
+    if (!m) return null;
+    const resto = codigo.slice(m.index + m[0].length);
+    const fin = /^export\s/m.exec(resto);
+    return resto.slice(0, fin ? fin.index : resto.length);
+  }
+
+  /* Cuántos argumentos lleva cada llamada a `nombre(`. Se cuentan las comas de
+   * PRIMER NIVEL saltando cadenas y paréntesis anidados: `f(a, g(b, c))` son
+   * dos, no tres. Las definiciones no salen aquí, y es gratis: se escriben
+   * `export const composicionDelSobre = (`, con el igual en medio. */
+  function llamadasA(codigo, nombre) {
+    const salida = [];
+    const re = new RegExp("\\b" + nombre + "\\(", "g");
+    let m;
+    while ((m = re.exec(codigo))) {
+      let i = m.index + m[0].length;
+      let prof = 1;
+      let comas = 0;
+      let vacio = true;
+      while (i < codigo.length && prof > 0) {
+        const c = codigo[i];
+        if (c === "'" || c === '"' || c === "`") {
+          i++;
+          while (i < codigo.length && codigo[i] !== c) {
+            if (codigo[i] === "\\") i++;
+            i++;
+          }
+          vacio = false;
+          i++;
+          continue;
+        }
+        if (c === "(" || c === "[" || c === "{") prof++;
+        else if (c === ")" || c === "]" || c === "}") prof--;
+        else if (c === "," && prof === 1) comas++;
+        if (prof > 0 && !/\s/.test(c)) vacio = false;
+        i++;
+      }
+      salida.push({ desde: m.index, argumentos: vacio ? 0 : comas + 1 });
+    }
+    return salida;
+  }
+
+  const DIRS_VIVOS = ["app", "services", "utils", "components", "hooks"];
+  function ficherosVivos() {
+    const salida = [];
+    const anda = (dir) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.name === "node_modules" || e.name === ".next") continue;
+        const p = join(dir, e.name);
+        if (e.isDirectory()) anda(p);
+        else if (/\.tsx?$/.test(e.name)) salida.push(p);
+      }
+    };
+    for (const d of DIRS_VIVOS) anda(join(raiz, d));
+    return salida.sort();
+  }
+  const nombreCorto = (f) => f.slice(raiz.length + 1).replace(/\\/g, "/");
+  const codigoDe = (rel) => sinComentarios(readFileSync(join(raiz, rel), "utf8"));
+
+  const ERAS = ["moderna", "media", "clasica"];
+
+  /* ================================================================
+   * A. EL SOBRE: SE ANUNCIA CON LA ERA CON LA QUE SE REPARTE
+   * ================================================================
+   *
+   * EL FALLO, MEDIDO: app/page.tsx llamaba a `composicionDelSobre(cartas, tipo)`
+   * sin el tercer argumento. La era no es un adorno: es la tabla del hueco de
+   * premio del Premium, y son tres distintas (utils/packLogic.ts):
+   *
+   *     moderna  8 / 15 / 30 / 47      <- Escarlata y Púrpura, Mega Evolución
+   *     media    5 / 10 / 25 / 60      <- lo que anunciaba la tienda SIEMPRE
+   *     clasica  3 /  7 / 20 / 70      <- XY hacia atrás
+   *
+   * En una expansión moderna la tienda prometía un 5% de dorada y el servidor
+   * repartía un 8%; en una clásica prometía 5% y repartía 3%.
+   *
+   * Y EL INVARIANTE DE MÁS ARRIBA NO LO VIO, porque compara el anuncio y el
+   * reparto SIN ERA: los dos caen entonces en la tabla por defecto, coinciden, y
+   * la comprobación se pone verde mirando justo el caso que no fallaba. Por eso
+   * esto no sustituye a aquél, lo completa: aquél mide el reparto de siempre y
+   * éste las tres eras.
+   */
+
+  {
+    // Lo primero, el número de cartas, que es lo que promete la tarjeta: en las
+    // TRES eras. La era puede cambiar QUÉ sale; cuántas salen lo decide el
+    // calibrado, y el calibrado también mira la era.
+    const generadores = {
+      STANDARD: (c, era) => openStandardPack(c, era),
+      PREMIUM: (c, era) => openPremiumPack(c, era),
+      GOLDEN: (c) => openGoldenPack(c, []),
+      SPECIAL: (c) => openGoldenPack(c, []),
+    };
+    const malos = [];
+    for (const [setId, cartas] of CARTAS) {
+      for (const era of ERAS) {
+        for (const tipo of Object.keys(generadores)) {
+          const anunciado = cartasDelSobre(cartas, tipo, era);
+          const real = generadores[tipo](cartas, era).length;
+          if (anunciado !== real) {
+            malos.push(`${setId} ${tipo} (${era}): anuncia ${anunciado} y reparte ${real}`);
+          }
+        }
+      }
+    }
+    comprueba(
+      malos.length === 0,
+      `el número de cartas anunciado es el repartido en las tres eras (${CARTAS.size} expansiones x 4 sobres x ${ERAS.length})`,
+      malos.slice(0, 5).join("\n          ") +
+        "\n          QUÉ TOCAR: `composicionDelSobre` y el generador del mismo tipo tienen" +
+        " que calibrar con los MISMOS argumentos. Si uno recibe la era y el otro no, la" +
+        " tarjeta promete diez cartas donde el sobre trae ocho.",
+    );
+  }
+
+  /* EL PORCENTAJE ANUNCIADO ES EL QUE REPARTE, Y ESTO SÍ SE EJECUTA.
+   *
+   * Cómo se mide sin azar: `sacarPremio` hace `Math.random() * 100` y va
+   * acumulando probabilidades, así que el sorteo es una PARTICIÓN del intervalo
+   * [0,100). Se barre ese intervalo con 400 puntos fijos —nunca sobre un borde,
+   * para que ningún redondeo decida por nosotros— y se cuenta en qué escalón cae
+   * cada uno. Con las probabilidades declaradas, cada rama tiene que llevarse
+   * EXACTAMENTE su parte de los 400: es una igualdad, no una estimación, y no
+   * hace falta ni una tirada al azar.
+   *
+   * El catálogo es de mentira a propósito: UNA carta por escalón, así que la
+   * carta que sale dice de qué pool salió sin tener que replicar el
+   * clasificador de rarezas. Y se corre también con catálogos MUTILADOS, que es
+   * donde vive la otra promesa de la tienda: cuando una expansión no tiene ese
+   * escalón, el desplegable pinta "(no hay) → Ultra Rare", y eso es una
+   * afirmación sobre a dónde cae de verdad el sobre.
+   */
+  {
+    const POOLS = [
+      ["common", "Common"],
+      ["uncommon", "Uncommon"],
+      ["rare", "Rare"],
+      ["doubleRare", "Double Rare"],
+      ["illustrationRare", "Illustration Rare"],
+      ["ultraRare", "Ultra Rare"],
+      ["specialIllustrationRare", "Special Illustration Rare"],
+      ["hyperRare", "Hyper Rare"],
+    ];
+    const deMentira = ([pool, rarity]) => ({
+      id: "pool-" + pool, name: pool, rarity, images: { small: "", large: "" },
+    });
+    const salvo = (...fuera) => POOLS.filter(([p]) => !fuera.includes(p)).map(deMentira);
+    const CATALOGOS = [
+      ["con todos los escalones", POOLS.map(deMentira)],
+      ["sin Hyper Rare (la rama cae a Ultra)", salvo("hyperRare")],
+      ["a la manera de Espada y Escudo (sin Ultra ni Illustration)", salvo("ultraRare", "illustrationRare")],
+    ];
+    const PASOS = 400;
+    const ANCHO = 100 / PASOS;
+    const malos = [];
+    let ramas = 0;
+
+    for (const [mote, catalogo] of CATALOGOS) {
+      for (const era of ERAS) {
+        for (const tipo of ["STANDARD", "PREMIUM"]) {
+          const comp = composicionDelSobre(catalogo, tipo, era);
+          // "todas" es el tercer respaldo de draw() —ni el escalón ni su
+          // respaldo existen— y entonces sale cualquier carta del set: no hay
+          // nada que predecir. Los tres catálogos están elegidos para no caer
+          // ahí; si alguien los cambia, esto lo dice en vez de mentir.
+          if (comp.premio.some((r) => r.real === "todas")) {
+            malos.push(`${mote} · ${tipo}: alguna rama cae en "cualquier carta del set"`);
+            continue;
+          }
+          // Varias ramas pueden caer en el MISMO escalón real (es justo lo que
+          // pasa en los catálogos mutilados), así que se suman.
+          const esperado = new Map();
+          for (const r of comp.premio) {
+            esperado.set(r.real, (esperado.get(r.real) ?? 0) + Math.round((r.prob / 100) * PASOS));
+          }
+          const cuenta = new Map();
+          const azarDeVerdad = Math.random;
+          try {
+            for (let k = 0; k < PASOS; k++) {
+              const punto = (k + 0.5) * ANCHO;
+              Math.random = () => punto / 100;
+              const sobre = tipo === "STANDARD"
+                ? openStandardPack(catalogo, era)
+                : openPremiumPack(catalogo, era);
+              // El premio es SIEMPRE el último que se empuja (ver open*Pack).
+              const pool = String(sobre[sobre.length - 1].id).slice("pool-".length);
+              cuenta.set(pool, (cuenta.get(pool) ?? 0) + 1);
+            }
+          } finally {
+            Math.random = azarDeVerdad;
+          }
+          ramas += comp.premio.length;
+          for (const [pool, n] of esperado) {
+            const visto = cuenta.get(pool) ?? 0;
+            if (visto !== n) {
+              malos.push(`${mote} · ${tipo} (${era}) ${pool}: anuncia ${n} de cada ${PASOS} y salen ${visto}`);
+            }
+          }
+          for (const [pool, n] of cuenta) {
+            if (!esperado.has(pool)) {
+              malos.push(`${mote} · ${tipo} (${era}): ${n} de cada ${PASOS} premian ${pool}, que no se anuncia`);
+            }
+          }
+        }
+      }
+    }
+    comprueba(
+      malos.length === 0,
+      `el premio anunciado es el que sale, escalón a escalón y era por era (${ramas} ramas, ${PASOS} puntos del sorteo cada una)`,
+      malos.slice(0, 5).join("\n          ") +
+        "\n          QUÉ TOCAR: la tabla con la que se ANUNCIA y la tabla con la que se" +
+        " SORTEA son la misma (PREMIO_*_POR_ERA de utils/packLogic.ts) y las dos las elige" +
+        " el argumento `era`. Este fallo vuelve en cuanto uno de los dos lados deja de" +
+        " pasarla: `composicionDelSobre(cartas, tipo)` anuncia la era por defecto y" +
+        " `openPremiumPack(cartas, era)` reparte la de la expansión.",
+    );
+  }
+
+  /* Y EL CASO PRUEBA ALGO. Si las tres eras repartieran igual —como hoy pasa en
+   * el sobre ESTÁNDAR, a propósito y explicado en packLogic— el invariante de
+   * arriba seguiría verde sin vigilar nada, porque olvidarse de la era no
+   * cambiaría ningún número. Esto mide cuántas expansiones REALES anuncian otra
+   * cosa si se olvida, que es el tamaño de lo que se está protegiendo. */
+  {
+    const serieDe = new Map(
+      JSON.parse(readFileSync(join(raiz, "src", "data", "all-sets.json"), "utf8"))
+        .map((s) => [s.id, s.series]),
+    );
+    const cambian = [];
+    for (const [setId, cartas] of CARTAS) {
+      const era = eraDeSerie(serieDe.get(setId));
+      const conSuEra = JSON.stringify(composicionDelSobre(cartas, "PREMIUM", era).premio);
+      const sinEra = JSON.stringify(composicionDelSobre(cartas, "PREMIUM").premio);
+      if (conSuEra !== sinEra) cambian.push(`${setId} (${era})`);
+    }
+    comprueba(
+      cambian.length > 0,
+      `olvidarse de la era cambia lo que se anuncia en ${cambian.length} de las ${CARTAS.size} expansiones (${cambian.slice(0, 3).join(", ")}…)`,
+      "ninguna expansión cambia de anuncio al pasarle su era, así que el invariante de" +
+        " arriba ya no vigila nada: alguien ha igualado las tres tablas de" +
+        " PREMIO_PREMIUM_POR_ERA. Si es a propósito, este invariante hay que rehacerlo" +
+        " contra lo que se quiera vigilar ahora; taparlo deja el de arriba de adorno.",
+    );
+  }
+
+  /* LA RED ESTÁTICA: NADIE ANUNCIA NI SORTEA SIN DECIR CON QUÉ ERA.
+   *
+   * Es la forma exacta que tenía el fallo —una llamada con un argumento de
+   * menos— y es la que vuelve, porque el argumento es opcional y omitirlo
+   * compila, pasa la revisión y no rompe ningún test. Vale para las dos
+   * mitades: el que reparte, el que anuncia y también el que DECIDE SI SE VENDE
+   * (`admiteSobre*` calibra contra el precio, y una era mejor sube el valor
+   * esperado: midiendo con una era y repartiendo con otra, la tienda ofrecería
+   * sobres que el calibrado ya había rechazado).
+   */
+  {
+    const EXIGEN_ERA = {
+      composicionDelSobre: 3,
+      cartasDelSobre: 3,
+      openStandardPack: 2,
+      openPremiumPack: 2,
+      admiteSobreEstandar: 2,
+      admiteSobrePremium: 2,
+      valorEsperadoEstandar: 2,
+      valorEsperadoPremium: 2,
+    };
+    const malos = [];
+    let llamadas = 0;
+    for (const f of ficherosVivos()) {
+      const codigo = sinComentarios(readFileSync(f, "utf8"));
+      for (const [nombre, minimo] of Object.entries(EXIGEN_ERA)) {
+        for (const ll of llamadasA(codigo, nombre)) {
+          llamadas++;
+          if (ll.argumentos < minimo) {
+            const linea = codigo.slice(0, ll.desde).split("\n").length;
+            malos.push(`${nombreCorto(f)}:${linea} → ${nombre} con ${ll.argumentos} argumento(s)`);
+          }
+        }
+      }
+    }
+    comprueba(
+      malos.length === 0 && llamadas >= 10,
+      `ninguna pantalla anuncia ni sortea un sobre sin decir con qué era (${llamadas} llamadas en el árbol vivo)`,
+      (malos.join("\n          ") || `sólo se han encontrado ${llamadas} llamadas: el escáner se ha quedado ciego`) +
+        "\n          La era es un argumento OPCIONAL, así que omitirla compila y cae en la" +
+        " era por defecto en silencio. QUÉ TOCAR: pasarle la era a esa llamada. Si es una" +
+        " pantalla, la era tiene que ser la MISMA variable que usa el sorteo de esa misma" +
+        " pantalla (app/page.tsx la llama `eraDelReparto` justo para eso); si es el" +
+        " servidor, `eraDeSerie(ficha.series)`.",
+    );
+  }
+
+  /* ================================================================
+   * B. "VENDER POR X" ES LO QUE PAGA LA VENTA
+   * ================================================================
+   *
+   * EL FALLO, MEDIDO: el botón de la vitrina decía "Vender por 488" y el
+   * servidor abonaba 417. No era un redondeo: eran dos fórmulas distintas en dos
+   * funciones distintas. La vitrina pintaba la TARIFA PLANA por el multiplicador
+   * de la nota, y la venta cobraba la CURVA DE REPETIDAS por ese mismo
+   * multiplicador. Con 2 copias coincidían —la curva aún no ha empezado a
+   * bajar—, con 3 decía 488 y pagaba 417, y con 20 decía 488 y pagaba 123.
+   *
+   * Y LAS DOS CIFRAS HACEN FALTA, que es lo que hace que esto no se arregle
+   * borrando una: la banda de precio del bazar y el coste de graduar se calculan
+   * contra la tarifa PLANA a propósito (si dependieran de cuántas copias tiene
+   * el vendedor, la misma carta valdría cosas distintas según quién la
+   * publique). Lo que no se puede es prometer un pago con la que no paga.
+   */
+
+  const codigoAccion = codigoDe("app/action.ts");
+  const { valorGraduado, MULTIPLICADOR_NOTA } = graduacion;
+  const NOTAS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const RAREZAS_CON_PRECIO = Object.keys(SELL_PRICES);
+
+  /* LAS DOS EXPRESIONES DEL SERVIDOR, REPLICADAS. Son las de
+   * `valorDeVenderGraduada` y `valorDeReferenciaGraduada` (app/action.ts), que
+   * no se pueden importar desde aquí. Es una réplica deliberada, como la de
+   * `admiteOfertaAtada` o la de `repartoIngenuo`, y NO se queda vieja en
+   * silencio: el invariante de más abajo saca la expresión del fichero y la
+   * compara carácter a carácter con éstas. */
+  const valorDeVenderGraduada = (rareza, copiasQueTengo, nota, euros) =>
+    valorGraduado(valorDeVenta(rareza, copiasQueTengo, 1, euros), nota);
+  const valorDeReferenciaGraduada = (rareza, nota, euros) =>
+    valorGraduado(precioDeCartaSuelta(rareza, euros), nota);
+
+  {
+    // Los dos números no son intercambiables, y en qué dirección: el de
+    // referencia NUNCA es menor, así que pintarlo donde se promete un pago es
+    // prometer de más. Barrido completo de rarezas, notas y montones.
+    const malos = [];
+    let peor = 0;
+    let peorCaso = "";
+    for (const rareza of RAREZAS_CON_PRECIO) {
+      for (const nota of NOTAS) {
+        for (const copias of [1, 2, 3, 5, 10, 20, 50]) {
+          const paga = valorDeVenderGraduada(rareza, copias, nota);
+          const referencia = valorDeReferenciaGraduada(rareza, nota);
+          if (paga > referencia) {
+            malos.push(`${rareza} nota ${nota} x${copias}: paga ${paga} y la referencia es ${referencia}`);
+          }
+          // Con dos copias la curva todavía paga el 100%, así que las dos
+          // cifras tienen que ser LA MISMA. Es lo que hacía que el fallo
+          // pareciera un redondeo y no una fórmula distinta.
+          if (copias === 2 && paga !== referencia) {
+            malos.push(`${rareza} nota ${nota}: con 2 copias tenían que coincidir (${paga} y ${referencia})`);
+          }
+          if (copias > 1 && referencia - paga > peor) {
+            peor = referencia - paga;
+            peorCaso = `${rareza} nota ${nota} con ${copias} copias: la referencia dice ${referencia} y se cobran ${paga}`;
+          }
+        }
+      }
+    }
+    comprueba(
+      malos.length === 0 && peor > 0,
+      `la tarifa de referencia y lo que se cobra se separan hasta ${peor} monedas (${peorCaso})`,
+      malos.slice(0, 4).join("\n          ") +
+        "\n          QUÉ TOCAR: `valorDeVentaAhora` es lo que abona la tienda y" +
+        " `valorDeReferencia` la tarifa plana. Toda PROMESA DE PAGO (el botón, el" +
+        " \"Vendida por\") pinta el primero; toda afirmación de cuánto vale (la banda del" +
+        " bazar, el coste de graduar) el segundo. Si se separan al revés —la curva pagando" +
+        " más que la tarifa— lo roto es la curva de utils/constanst.ts.",
+    );
+  }
+
+  {
+    /* EL BOTÓN ENSEÑA 0 EXACTAMENTE DONDE LA ACCIÓN SE NIEGA A PAGAR.
+     *
+     * `venderGraduadaAction` tiene dos negativas: "ultima-copia" (queda una
+     * copia, y el álbum no se vacía) y "sin-valor" (el importe sale 0, que es lo
+     * que pasa con un 1, que multiplica por cero). Las dos tienen que verse
+     * ANTES de pulsar, y la única forma de que se vean es que el número del
+     * botón sea 0 justo ahí: un botón que dice "Vender por 1" y contesta que no
+     * se puede es el mismo fallo con otra cara. */
+    const malos = [];
+    for (const rareza of RAREZAS_CON_PRECIO) {
+      for (const nota of NOTAS) {
+        const ultima = valorDeVenderGraduada(rareza, 1, nota);
+        if (ultima !== 0) malos.push(`${rareza} nota ${nota}: la última copia promete ${ultima} y la acción contesta "ultima-copia"`);
+        if (MULTIPLICADOR_NOTA[nota] === 0) {
+          const conNotaCero = valorDeVenderGraduada(rareza, 5, nota);
+          if (conNotaCero !== 0) malos.push(`${rareza} nota ${nota}: multiplica por 0 y el botón promete ${conNotaCero}`);
+        }
+      }
+    }
+    comprueba(
+      malos.length === 0,
+      "el botón enseña 0 exactamente en los dos casos en que la venta se niega (última copia y nota sin valor)",
+      malos.slice(0, 4).join("\n          ") +
+        "\n          QUÉ TOCAR: `valorGraduado` tiene que poder valer 0 y `valorDeVenta`" +
+        " tiene que devolver 0 con una sola copia. Un suelo de 1 en cualquiera de las dos" +
+        " pone precio a un botón que el servidor va a rechazar.",
+    );
+  }
+
+  {
+    /* LA AMARRA DE LA RÉPLICA. Las dos expresiones de arriba son una copia a
+     * mano de app/action.ts; en cuanto el servidor cambie una, la copia se queda
+     * vieja y los dos invariantes anteriores seguirían en verde midiendo una
+     * fórmula que ya no cobra nadie. Así que se saca del fichero la expresión de
+     * verdad y se comparan sin espacios. */
+    const expresionDe = (nombre) => {
+      const m = new RegExp("function\\s+" + nombre + "\\b[\\s\\S]*?\\breturn\\s+([^;]+);").exec(codigoAccion);
+      return m ? m[1].replace(/\s+/g, "") : null;
+    };
+    const replicaDe = (f) => String(f).slice(String(f).indexOf("=>") + 2).replace(/\s+/g, "");
+
+    const servidorVende = expresionDe("valorDeVenderGraduada");
+    const servidorReferencia = expresionDe("valorDeReferenciaGraduada");
+    comprueba(
+      servidorVende === replicaDe(valorDeVenderGraduada) &&
+        servidorReferencia === replicaDe(valorDeReferenciaGraduada),
+      "y las dos fórmulas replicadas aquí son, carácter a carácter, las del servidor",
+      `servidor:  ${servidorVende ?? "(no se encuentra valorDeVenderGraduada)"}\n` +
+        `          réplica:   ${replicaDe(valorDeVenderGraduada)}\n` +
+        `          servidor:  ${servidorReferencia ?? "(no se encuentra valorDeReferenciaGraduada)"}\n` +
+        `          réplica:   ${replicaDe(valorDeReferenciaGraduada)}\n` +
+        "          QUÉ TOCAR: si la fórmula del servidor ha cambiado a propósito, hay que" +
+        " traer el cambio a la réplica de scripts/test-invariantes.mjs — si no, los dos" +
+        " invariantes de arriba se quedan midiendo una fórmula que ya no existe.",
+    );
+  }
+
+  {
+    /* Y QUE SIGAN SALIENDO DE UNA SOLA FUNCIÓN. Mientras el botón y el cobro
+     * fueron dos expresiones copiadas, se separaron. Ahora cada número sale de
+     * UNA función y la vigilancia es doble: que los cuatro sitios llamen a la
+     * que les toca, y que `valorGraduado` —la pieza con la que se montan las
+     * dos— no se llame desde ningún otro sitio de app/action.ts, que es como
+     * nace la tercera copia. */
+    const vitrina = cuerpoDeAccion(codigoAccion, "getVitrina");
+    const venta = cuerpoDeAccion(codigoAccion, "venderGraduadaAction");
+    const bazar = cuerpoDeAccion(codigoAccion, "publicarEnBazarAction");
+    const graduables = cuerpoDeAccion(codigoAccion, "getCartasGraduables");
+
+    const pegas = [];
+    if (!vitrina) pegas.push("getVitrina ya no está en app/action.ts");
+    if (!venta) pegas.push("venderGraduadaAction ya no está en app/action.ts");
+    if (!bazar) pegas.push("publicarEnBazarAction ya no está en app/action.ts");
+    if (!graduables) pegas.push("getCartasGraduables ya no está en app/action.ts");
+    if (vitrina && !vitrina.includes("valorDeVenderGraduada(")) {
+      pegas.push("getVitrina ya no pinta el botón con `valorDeVenderGraduada`");
+    }
+    if (venta && !venta.includes("valorDeVenderGraduada(")) {
+      pegas.push("venderGraduadaAction ya no cobra con `valorDeVenderGraduada`");
+    }
+    if (vitrina && !vitrina.includes("valorDeReferenciaGraduada(")) {
+      pegas.push("getVitrina ya no manda el valor de referencia que necesita la banda del bazar");
+    }
+    if (bazar && !bazar.includes("valorDeReferenciaGraduada(")) {
+      pegas.push("publicarEnBazarAction ya no valida la banda contra el valor de referencia");
+    }
+    if (graduables && !graduables.includes("costeDeGraduar(valorDeReferencia)")) {
+      pegas.push("el coste de graduar ha dejado de salir de la tarifa plana");
+    }
+    const sueltas = [...codigoAccion.matchAll(/\bvalorGraduado\(/g)].length;
+    if (sueltas !== 2) {
+      pegas.push(`valorGraduado se llama ${sueltas} veces en app/action.ts y tenían que ser 2 (las dos funciones compartidas)`);
+    }
+
+    comprueba(
+      pegas.length === 0,
+      "el botón y el cobro salen de la misma función, y la banda del bazar de la otra",
+      pegas.join("\n          ") +
+        "\n          QUÉ TOCAR: `valorDeVenderGraduada` la llaman getVitrina (para pintar) y" +
+        " venderGraduadaAction (para cobrar); `valorDeReferenciaGraduada` la llaman" +
+        " getVitrina (para la banda) y publicarEnBazarAction (para validarla). Escribir la" +
+        " fórmula por tercera vez es exactamente como volvió el \"Vender por 488\" que" +
+        " abonaba 417.",
+    );
+  }
+
+  /* ================================================================
+   * C. UNA RAREZA QUE EL JUEGO NO CONOCE NO COBRA COMO SI LA CONOCIERA
+   * ================================================================
+   *
+   * EL FALLO, MEDIDO: los dos respaldos del mercado se contradecían.
+   * `rangoDeRareza` mandaba lo desconocido al rango 1 —la banda de la morralla,
+   * con las Comunes, precio de referencia 2— y `precioDeVenta` le ponía una
+   * tarifa de 10. Como el pago es multiplicador × Σ precios y el multiplicador
+   * se calcula contra el precio de referencia de la banda, la prima se
+   * multiplicaba igual: una oferta que paga 72 entregando Comunes pagaba 361
+   * entregando cartas de rareza desconocida.
+   *
+   * NO ES UN CASO DE LABORATORIO, y por eso las rarezas de la lista de abajo son
+   * REALES: en los JSON del repositorio no hay ninguna —hay un invariante más
+   * arriba que lo exige— pero la base de producción la llena el cron con 171
+   * expansiones, y ahí viven 'Rare Holo LV.X', 'LEGEND', 'Rare Prime'… Ninguna
+   * está en RARITY_RANK ni en SELL_PRICES, que se consultan por nombre EXACTO.
+   * O sea que este invariante vigila algo que SÓLO pasa en producción, que es
+   * justo lo que ningún test de los datos locales puede ver.
+   */
+
+  const RAREZAS_DE_LA_API = [
+    "Rare Holo LV.X", "Rare Holo EX", "LEGEND", "Rare Prime", "Rare Holo GX",
+    "Rare Holo Star", "Rare BREAK", "Rare ACE", "Shining Rare",
+  ];
+
+  comprueba(
+    RAREZAS_DE_LA_API.every((r) => !(r in RARITY_RANK) && !(r in SELL_PRICES)),
+    `las ${RAREZAS_DE_LA_API.length} rarezas de la API con las que se prueba esto siguen sin estar en las tablas`,
+    "alguna ya tiene rango y precio: " +
+      RAREZAS_DE_LA_API.filter((r) => r in RARITY_RANK || r in SELL_PRICES).join(", ") +
+      ". Eso es una BUENA noticia (entra por la puerta buena y cobra lo que vale), pero" +
+      " deja de servir para probar esto: hay que sacarla de la lista y poner otra que el" +
+      " juego siga sin conocer.",
+  );
+
+  {
+    /* NINGUNA CUMPLE NINGUNA BANDA, y se prueba con el catálogo REAL: se busca
+     * una carta que SÍ cumple el requisito y se le cambia SOLO la rareza. Todo
+     * lo demás —tipo, etapa, ilustrador, expansión, HP— se queda igual, así que
+     * si deja de cumplir es por la rareza y por nada más. */
+    const { cumpleFiltro, VARIANTES } = mercado;
+
+    const catalogoEntero = [];
+    for (const id of setIds) {
+      const crudo = JSON.parse(readFileSync(join(DATA, id + ".json"), "utf8"));
+      const lista = Array.isArray(crudo) ? crudo : crudo.data || [];
+      for (const c of lista) {
+        catalogoEntero.push({
+          id: c.id, name: c.name, rarity: c.rarity || "Common", supertype: c.supertype,
+          subtypes: c.subtypes ?? [], types: c.types ?? [], evolvesFrom: c.evolvesFrom,
+          hp: c.hp, artist: c.artist,
+          nationalPokedexNumbers: c.nationalPokedexNumbers ?? [], set: { id },
+        });
+      }
+    }
+
+    const malos = [];
+    let probadas = 0;
+    let conBanda = 0;
+    for (const v of VARIANTES) {
+      const filtro = { ...v.filtro };
+      // Los requisitos de expansión llevan el set puesto al montar la oferta.
+      if (filtro.categoria === "set") filtro.valor = setIds[0];
+      if (filtro.rarMin !== undefined || filtro.rarMax !== undefined) conBanda++;
+      const cumple = catalogoEntero.find((c) => cumpleFiltro(c, filtro));
+      if (!cumple) continue;
+      for (const rareza of RAREZAS_DE_LA_API) {
+        probadas++;
+        if (cumpleFiltro({ ...cumple, rarity: rareza }, filtro)) {
+          malos.push(`${v.clave}: ${cumple.id} sigue cumpliendo con la rareza "${rareza}"`);
+        }
+      }
+    }
+    comprueba(
+      malos.length === 0 && probadas > 100,
+      `ninguna rareza desconocida cumple ningún requisito del tablón (${probadas} pruebas sobre ${VARIANTES.length} variantes, ${conBanda} con banda)`,
+      malos.slice(0, 4).join("\n          ") +
+        "\n          QUÉ TOCAR: la primera línea de la banda en `cumpleFiltro`" +
+        " (utils/mercado.ts): `if (!rarezaConocida(carta)) return false`. Sin ella lo" +
+        " desconocido cae al rango 1 por respaldo, entra en la banda de la morralla y" +
+        " cobra la prima de la morralla con una tarifa que no es la de la morralla.",
+    );
+  }
+
+  {
+    /* LA SEGUNDA CERRADURA, que es la que aguanta si alguien escribe una
+     * plantilla nueva SIN banda: aunque entre, cobra el suelo del rango en el
+     * que se la coloca y no una tarifa inventada. Se compara con la tarifa de la
+     * TIENDA a propósito: son dos respaldos distintos para dos preguntas
+     * distintas, y separarlos fue exactamente el fallo. */
+    const { precioDeVenta, rangoDeRareza, rarezaConocida } = mercado;
+    const rango = rangoDeRareza({ id: "x-1", rarity: RAREZAS_DE_LA_API[0] });
+    const delRango = Object.keys(RARITY_RANK).filter((r) => RARITY_RANK[r] === rango);
+    const suelo = Math.min(...delRango.map((r) => precioDeVenta({ id: "y-1", rarity: r })));
+    const enLaTienda = precioDeCartaSuelta(RAREZAS_DE_LA_API[0]);
+
+    const malos = [];
+    for (const rareza of RAREZAS_DE_LA_API) {
+      const carta = { id: "z-1", rarity: rareza };
+      if (rarezaConocida(carta)) malos.push(`${rareza} se da por conocida`);
+      const precio = precioDeVenta(carta);
+      if (!(precio <= suelo)) malos.push(`${rareza} cobra ${precio} y el suelo del rango ${rango} es ${suelo}`);
+    }
+    comprueba(
+      malos.length === 0,
+      `en el mercado una rareza desconocida cobra el suelo de su banda (${suelo}), no el respaldo de la tienda (${enLaTienda}, que es x${(enLaTienda / suelo).toFixed(0)})`,
+      malos.join("\n          ") +
+        "\n          QUÉ TOCAR: `PRECIO_RAREZA_DESCONOCIDA` (utils/mercado.ts) se DERIVA de" +
+        " las tablas —el mínimo de las rarezas que comparten el rango de respaldo— justo" +
+        " para que no se pueda volver a separar del rango. Escribirlo a mano es como" +
+        " empezó esto. Y ojo con bajarlo por debajo del suelo: el reparto del lote entrega" +
+        " lo más barato primero (utils/repartoMercado.ts), así que una tarifa de saldo" +
+        " haría que el juego propusiera regalar una LEGEND.",
+    );
+  }
+
+  {
+    /* Y LA TRAMPA DEL `in`. RARITY_RANK y SELL_PRICES son objetos literales: una
+     * carta con rareza "constructor" o "toString" pasa un `in` por la cadena de
+     * prototipos y entra con un "rango" que ni siquiera es un número. No hace
+     * falta que exista esa carta para que importe: lo que se afirma aquí es que
+     * la pregunta se hace bien, y hacerla con `in` costaba una comparación con
+     * `undefined` que siempre sale a favor de quien la trae. */
+    const { precioDeVenta, rarezaConocida, cumpleFiltro } = mercado;
+    const suelo = Math.min(...Object.values(SELL_PRICES));
+    const malos = [];
+    for (const nombre of ["constructor", "toString", "hasOwnProperty", "__proto__", "valueOf"]) {
+      const carta = { id: "t-1", rarity: nombre, types: ["Fire"] };
+      if (rarezaConocida(carta)) malos.push(`"${nombre}" pasa por rareza conocida`);
+      const precio = precioDeVenta(carta);
+      if (typeof precio !== "number" || !Number.isFinite(precio) || precio > suelo) {
+        malos.push(`"${nombre}" cobra ${JSON.stringify(precio)}`);
+      }
+      if (cumpleFiltro(carta, { categoria: "tipo", valor: "Fire", rarMin: 1, rarMax: 5 })) {
+        malos.push(`"${nombre}" cumple una banda`);
+      }
+    }
+    comprueba(
+      malos.length === 0,
+      "una rareza que se llama como un método de Object no se cuela por la cadena de prototipos",
+      malos.join("\n          ") +
+        "\n          QUÉ TOCAR: `rarezaConocida` tiene que preguntar" +
+        ' `typeof RARITY_RANK[...] === "number"`, no `in`.',
+    );
+  }
+
+  /* ================================================================
+   * D. LA GRADUACIÓN OFRECE LAS COPIAS QUE LUEGO ADMITE
+   * ================================================================
+   *
+   * EL FALLO, REPRODUCIDO: el bucle que elige índices de copia tenía tope
+   * `copia <= cantidad`. Y cada graduada VENDIDA se come un índice de ese rango
+   * —su fila conserva el índice para siempre, porque el índice ES la nota, pero
+   * `quantity` baja—, así que con 3 copias: gradúas la 1 y la vendes, gradúas la
+   * 2 y la vendes, y te quedas con 1 copia libre, los índices {1,2} ocupados y
+   * el rango mirando sólo {1}. La pantalla ofrecía esa copia —cuenta
+   * `quantity - activas`, y una vendida no es activa— y la acción contestaba
+   * "nada-que-graduar". Sin salida: ni graduando ni vendiendo se recupera un
+   * índice, porque no se recupera NUNCA ninguno.
+   *
+   * LAS DOS COSAS QUE HAY QUE SOSTENER A LA VEZ, y son las que se atan aquí:
+   *   (1) lo que la pantalla OFRECE es lo que la acción SIRVE;
+   *   (2) ningún índice se reutiliza jamás, porque reutilizarlo repite la nota
+   *       (la sección anterior mide lo que costaría: un 10 reimprimible).
+   * La tentación de arreglar (1) es tocar (2), y por eso van juntas.
+   *
+   * SE REPLICAN DOS COSAS, y las dos a propósito: el reparto de índices (un
+   * bucle dentro de graduarCartasAction, que no se puede importar) y el corte
+   * del CTE `posibles` —`c.puesto <= b.quantity - activas`—, que es quien decide
+   * de verdad cuántas entran. La mitad que no se puede replicar —que la fila
+   * vendida siga ocupando su hueco en la base— la vigila el invariante estático
+   * de la FUGA 1 de la sección anterior.
+   */
+  {
+    const { notaDeCopia, semillaDeCopia } = graduacion;
+    const SECRETO = "secreto-de-prueba-para-los-invariantes";
+    const CARTA = "sv8-32";
+
+    // El reparto de índices de hoy: se sube por los enteros saltando los
+    // ocupados hasta reunir los que se piden.
+    const indicesLibres = (tomadas, quiere) => {
+      const salida = [];
+      const tope = tomadas.size + quiere;
+      for (let copia = 1; copia <= tope && salida.length < quiere; copia++) {
+        if (tomadas.has(copia)) continue;
+        salida.push(copia);
+      }
+      return salida;
+    };
+    // El de antes, con su tope `copia <= cantidad`. Está aquí por lo mismo que
+    // `repartoIngenuo` en la sección del mercado: sin él, un caso que el bucle
+    // viejo TAMBIÉN resolvía no vigilaría nada.
+    const indicesAlaVieja = (tomadas, quiere, cantidad) => {
+      const salida = [];
+      for (let copia = 1; copia <= cantidad && salida.length < quiere; copia++) {
+        if (tomadas.has(copia)) continue;
+        salida.push(copia);
+      }
+      return salida;
+    };
+    // El corte del CTE `posibles`: de las candidatas entran las que quepan en el
+    // RECUENTO, no en el índice.
+    const lasQueEntran = (candidatas, cantidad, activas) =>
+      candidatas.slice(0, Math.max(0, cantidad - activas));
+
+    const malos = [];
+    let estados = 0;
+    let atascados = 0;
+    // Barrido exhaustivo del estado de un montón: `graduadas` copias graduadas
+    // alguna vez (índices 1..graduadas, que es lo que reparte el bucle),
+    // `vendidas` de ellas ya vendidas, y `cantidad` copias en propiedad ahora.
+    for (let graduadas = 0; graduadas <= 8; graduadas++) {
+      for (let vendidas = 0; vendidas <= graduadas; vendidas++) {
+        const activas = graduadas - vendidas;
+        for (let cantidad = Math.max(1, activas); cantidad <= 8; cantidad++) {
+          const libres = cantidad - activas; // lo que anuncia getCartasGraduables
+          if (libres <= 0) continue;
+          estados++;
+          const tomadas = new Set(Array.from({ length: graduadas }, (_, i) => i + 1));
+          const mote = `${cantidad} copias, ${activas} en vitrina, ${vendidas} vendidas`;
+
+          const candidatas = indicesLibres(tomadas, libres);
+          if (candidatas.length !== libres) malos.push(`${mote}: se ofrecen ${libres} y el bucle propone ${candidatas.length}`);
+          if (candidatas.some((i) => tomadas.has(i))) malos.push(`${mote}: propone un índice ya usado`);
+          if (new Set(candidatas).size !== candidatas.length) malos.push(`${mote}: repite un índice dentro de la misma tanda`);
+          if (lasQueEntran(candidatas, cantidad, activas).length !== libres) {
+            malos.push(`${mote}: se ofrecen ${libres} y entran ${lasQueEntran(candidatas, cantidad, activas).length}`);
+          }
+          // Y pedir de más no gradúa de más: quien corta es el recuento de la
+          // base, no el bucle que propone.
+          const pidiendoDeMas = lasQueEntran(indicesLibres(tomadas, libres + 3), cantidad, activas);
+          if (pidiendoDeMas.length !== libres) {
+            malos.push(`${mote}: pidiendo ${libres + 3} entran ${pidiendoDeMas.length} y sólo caben ${libres}`);
+          }
+
+          if (lasQueEntran(indicesAlaVieja(tomadas, libres, cantidad), cantidad, activas).length < libres) atascados++;
+        }
+      }
+    }
+    comprueba(
+      malos.length === 0,
+      `la graduación sirve exactamente las copias que la pantalla ofrece (${estados} estados de un montón)`,
+      malos.slice(0, 4).join("\n          ") +
+        "\n          Las dos cuentas tienen que ser la MISMA: `getCartasGraduables` anuncia" +
+        " `quantity - graduadas activas` y el CTE `posibles` corta por" +
+        " `c.puesto <= b.quantity - activas`. QUÉ TOCAR: el bucle de índices de" +
+        " `graduarCartasAction` propone candidatas y nada más; si sirve de menos, es que le" +
+        " han vuelto a poner un tope que cuenta POSICIONES en vez de saltar ocupados.",
+    );
+
+    {
+      // El caso literal, para que el número esté escrito: tres copias, dos
+      // graduadas y vendidas, una copia libre y ningún índice recuperable.
+      const tomadas = new Set([1, 2]);
+      const hoy = indicesLibres(tomadas, 1);
+      const antes = indicesAlaVieja(tomadas, 1, 1);
+      comprueba(
+        hoy.length === 1 && hoy[0] === 3 && antes.length === 0 && atascados > 0,
+        `y el caso prueba algo: con los índices {1,2} vendidos y 1 copia libre hoy sale el índice ${hoy[0]} y con el tope viejo no salía ninguno (${atascados} de ${estados} estados servían de menos)`,
+        `hoy propone ${hoy.join(",") || "(nada)"} y el bucle viejo ${antes.join(",") || "(nada)"}, y se atascaban ${atascados}.` +
+          " Si el bucle viejo resolviera lo mismo que el nuevo, el invariante de arriba no" +
+          " estaría vigilando nada y habría que rehacerlo.",
+      );
+    }
+
+    {
+      /* LA VIDA ENTERA DE UN MONTÓN, con sus ventas y sus copias nuevas: 300
+       * vueltas de graduar y vender. Lo que se mira es que ningún índice vuelva
+       * JAMÁS —porque volvería con su nota— y que la nota de cada índice siga
+       * siendo la suya al final del recorrido. */
+      const notaDe = new Map();
+      let repetidos = 0;
+      let cantidad = 3;
+      const tomadas = new Set();
+      const activas = new Set();
+      for (let vuelta = 0; vuelta < 300; vuelta++) {
+        const libres = cantidad - activas.size;
+        if (libres > 0) {
+          for (const i of indicesLibres(tomadas, Math.min(libres, 2))) {
+            if (notaDe.has(i)) repetidos++;
+            else notaDe.set(i, notaDeCopia(semillaDeCopia("u", CARTA, i, SECRETO)));
+            tomadas.add(i);
+            activas.add(i);
+          }
+        }
+        // Vende la graduada más baja (su fila conserva el índice) y de vez en
+        // cuando consigue otra copia.
+        const laMasBaja = [...activas].sort((a, b) => a - b)[0];
+        if (laMasBaja !== undefined) {
+          activas.delete(laMasBaja);
+          cantidad--;
+        }
+        if (vuelta % 2 === 0) cantidad++;
+        if (cantidad < 1) cantidad = 1;
+      }
+      let cambiadas = 0;
+      for (const [i, nota] of notaDe) {
+        if (notaDeCopia(semillaDeCopia("u", CARTA, i, SECRETO)) !== nota) cambiadas++;
+      }
+      comprueba(
+        repetidos === 0 && cambiadas === 0 && notaDe.size > 50,
+        `en 300 vueltas de graduar y vender no se repite ni un índice (${notaDe.size} índices, ${new Set(notaDe.values()).size} notas distintas)`,
+        `${repetidos} índices repetidos y ${cambiadas} notas cambiadas.` +
+          " Un índice que vuelve es una nota que vuelve: la semilla es" +
+          " secreto|usuario|carta|índice. QUÉ TOCAR: `ocupadas` se llena con TODAS las filas" +
+          " de graded_cards de esa carta, sin filtrar por estado — una fila 'vendida' sigue" +
+          " ocupando su hueco, y por eso no se borra nunca.",
+      );
+    }
+  }
+
+  /* ================================================================
+   * E. LO QUE SÓLO SE PUEDE MIRAR EN EL CÓDIGO
+   * ================================================================
+   *
+   * Las dos últimas promesas de este grupo viven en sitios que desde aquí no se
+   * pueden ejecutar: app/social.ts habla con la base en cada función y
+   * app/seed-database/route.ts es una ruta de Next. Así que esto es forma, con
+   * la misma advertencia que la sección anterior: un invariante estático no
+   * demuestra nada, sólo impide que la forma de la que depende el razonamiento
+   * desaparezca en una limpieza.
+   */
+
+  {
+    /* UN ID DE CARTA ES EL MISMO EN TODO EL REPOSITORIO. `app/social.ts` valida
+     * los ids de un trueque con una copia literal de la expresión de
+     * `app/action.ts` (no puede importarla: action.ts es "use server" y no
+     * exporta constantes). Dos copias de una regla se separan, y separadas
+     * significan que el trueque acepta ids que el mercado rechaza o al revés:
+     * una oferta que se crea y no se puede aceptar nunca. */
+    const deFichero = (rel) => {
+      const m = /const\s+ID_CARTA\s*=\s*(\/.*?\/[a-z]*)\s*;/.exec(codigoDe(rel));
+      return m ? m[1] : null;
+    };
+    const enAccion = deFichero("app/action.ts");
+    const enSocial = deFichero("app/social.ts");
+    comprueba(
+      enAccion !== null && enAccion === enSocial,
+      `el trueque acepta exactamente los ids de carta que aceptan el mercado y el bazar (${enAccion ?? "?"})`,
+      `app/action.ts: ${enAccion ?? "(no se encuentra ID_CARTA)"}\n` +
+        `          app/social.ts: ${enSocial ?? "(no se encuentra ID_CARTA)"}\n` +
+        "          QUÉ TOCAR: las dos son la misma regla escrita dos veces, y esto existe" +
+        " para que no se separen. Si hace falta cambiarla, se cambian las dos; si alguien" +
+        " la mueve a utils/, este invariante sobra y se quita con ella.",
+    );
+  }
+
+  {
+    /* LA PUERTA DEL TRUEQUE SE CIERRA ANTES DE TOCAR LA BASE. `createTradeOffer`
+     * es una server action: la firma la escribe TypeScript para el compilador,
+     * pero al otro lado hay HTTP y ahí cabe cualquier cosa. El agujero concreto
+     * era de ORDEN: se miraba `offeredIds.length` antes de saber si era un
+     * array, y una cadena tiene `.length` — "x" pasaba el guard, se guardaba, y
+     * la fila corrupta cegaba la bandeja del destinatario ENTERA. */
+    const cuerpo = cuerpoDeAccion(codigoDe("app/social.ts"), "createTradeOffer");
+    const pegas = [];
+    if (!cuerpo) {
+      pegas.push("createTradeOffer ya no está en app/social.ts (¿se ha renombrado?)");
+    } else {
+      for (const lista of ["offeredIds", "requestedIds"]) {
+        const esArray = cuerpo.indexOf(`Array.isArray(${lista})`);
+        const mideLargo = cuerpo.indexOf(`${lista}.length`);
+        if (esArray < 0) pegas.push(`no se comprueba Array.isArray(${lista})`);
+        else if (mideLargo >= 0 && esArray > mideLargo) {
+          pegas.push(`se mira ${lista}.length antes de saber si es un array: una cadena lo pasa`);
+        }
+      }
+      if (!/ID_CARTA\.test\(/.test(cuerpo)) pegas.push("los ids ya no se validan uno a uno");
+      if (!/MAX_CARTAS_POR_LADO/.test(cuerpo)) pegas.push("no queda tope de cartas por lado");
+      if (!/MAX_MENSAJE/.test(cuerpo)) pegas.push("el mensaje ha vuelto a quedarse sin tope");
+    }
+    comprueba(
+      pegas.length === 0,
+      "la oferta de trueque se valida entera antes de escribir una fila",
+      pegas.join("\n          ") +
+        "\n          QUÉ TOCAR: el orden de los guards de `createTradeOffer`. `Array.isArray`" +
+        " va ANTES de `.length` —ése fue el agujero— y los ids, el tope por lado y el tope" +
+        " del mensaje van todos antes del primer sql`…`. Una fila corrupta en trade_offers" +
+        " no es un error que se ve: es una bandeja de entrada que desaparece.",
+    );
+  }
+
+  {
+    /* LA SIEMBRA ESCRIBE LAS MISMAS COLUMNAS QUE LA INGESTA, y la única forma de
+     * garantizarlo es que no tenga una lista propia. La tuvo: escribía 14 de las
+     * 28 columnas de `cards` y tiraba `supertype` y `subtypes`, que los 6.779
+     * JSON locales SÍ traen. Eso no era cosmético — los requisitos del mercado
+     * por supertipo, etapa y evolución no casaban con NINGUNA carta, o sea
+     * ofertas imposibles de cumplir, que es justo lo que otro invariante de este
+     * fichero da por sentado. */
+    const codigo = codigoDe("app/seed-database/route.ts");
+    const pegas = [];
+    if (!/upsertCards\s*\(/.test(codigo)) pegas.push("la siembra ya no escribe las cartas con `upsertCards`");
+    if (!/upsertSets\s*\(/.test(codigo)) pegas.push("la siembra ya no escribe las fichas con `upsertSets`");
+    const propias = [...codigo.matchAll(/INSERT\s+INTO\s+(cards|sets)\b/gi)].map((m) => m[1]);
+    if (propias.length > 0) pegas.push(`la siembra tiene ${propias.length} INSERT propio(s) sobre ${[...new Set(propias)].join(" y ")}`);
+    comprueba(
+      pegas.length === 0,
+      "la siembra escribe por la ingesta, así que escribe sus mismas columnas",
+      pegas.join("\n          ") +
+        "\n          QUÉ TOCAR: app/seed-database/route.ts tiene que seguir escribiendo por" +
+        " `upsertCards`/`upsertSets` (services/ingest.ts). Una segunda lista de columnas es" +
+        " una lista que se queda atrás: la anterior perdió 14 y nadie lo vio hasta que el" +
+        " mercado empezó a repartir ofertas imposibles.",
+    );
+  }
+
+  {
+    /* Y LA PREMISA DE LA QUE DEPENDE ESA REUTILIZACIÓN: `valoresCarta` lee
+     * `c.set?.id`, y los JSON locales NO traen el campo `set`. Sin inyectarlo,
+     * reutilizar la ingesta escribiría `set_id` NULL en TODO el catálogo —peor
+     * que la lista corta que había—, así que el `set: { id: setId }` de la ruta
+     * no es un adorno: es la condición para que lo de arriba funcione. */
+    let conSet = 0;
+    let total = 0;
+    for (const id of setIds) {
+      const crudo = JSON.parse(readFileSync(join(DATA, id + ".json"), "utf8"));
+      const lista = Array.isArray(crudo) ? crudo : crudo.data || [];
+      for (const c of lista) {
+        total++;
+        if (c?.set?.id) conSet++;
+      }
+    }
+    const inyecta = /set:\s*\{\s*id:/.test(codigoDe("app/seed-database/route.ts"));
+    comprueba(
+      conSet === 0 && inyecta,
+      `los JSON locales no traen expansión (${conSet} de ${total} cartas) y la siembra se la pone`,
+      (conSet > 0
+        ? `${conSet} de ${total} cartas SÍ traen \`set\`: la inyección ya no es imprescindible, pero tampoco estorba.`
+        : "la ruta ya no inyecta `set: { id: setId }`.") +
+        " QUÉ TOCAR: `valoresCarta` (services/ingest.ts) lee `c.set?.id`, así que sin esa" +
+        " inyección la siembra deja `set_id` NULL en las 6.779 cartas y ninguna aparece en" +
+        " su expansión.",
+    );
+  }
+
+  /* ================================================================
+   * G. LA COLECCIÓN ENSEÑA LO QUE LA VENTA PAGA
+   * ================================================================
+   *
+   * EL FALLO, MEDIDO: el botón "Vender +X" de la colección llamaba a
+   * `valorDeVenta(rareza, copias, 1)` SIN el cuarto argumento —el precio real de
+   * Cardmarket—, porque `getFullCollection` no devolvía ningún dato de euros. El
+   * servidor sí lo aplica (`euroDeCarta` en las tres rutas de venta). Con una
+   * Hyper Rare y 3 copias: sin precio conocido decía 214 y pagaba 214; con la
+   * carta a 50 € decía 214 y abonaba 225; con 200 €, decía 214 y abonaba 257.
+   *
+   * ES EL MISMO FALLO QUE LA SECCIÓN B, con otra cara: dos cuentas del dinero en
+   * dos sitios, una en la pantalla y otra en quien cobra. Allí eran dos fórmulas
+   * distintas; aquí es la misma fórmula con un argumento de menos, que es la
+   * variante que compila, pasa la revisión y no rompe ningún test.
+   *
+   * LA FORMA DEL ARREGLO, Y POR QUÉ SE VIGILA ASÍ: `getFullCollection` manda los
+   * IMPORTES ya hechos —no `precioEur` en crudo, que sería la fórmula escrita
+   * dos veces otra vez— y la pantalla los pinta. Así que hay tres cosas que
+   * comprobar y las tres están abajo, en un solo invariante porque son una sola
+   * promesa: que los números cuadren con los de las tres rutas de venta, que la
+   * réplica de aquí siga siendo la del servidor, y que nadie haya vuelto a
+   * calcular el dinero en la pantalla.
+   */
+  {
+    seccion("Colección: lo que enseña el botón es lo que paga la venta");
+
+    /* El cuerpo LITERAL de una función, con sus llaves, emparejándolas. Hace
+     * falta uno propio y no el `cuerpoDeAccion` de más arriba: aquél corta hasta
+     * el siguiente `export` de la primera columna, y estas funciones viven en la
+     * mitad indentada de app/action.ts con funciones sueltas (`euroDeCarta`,
+     * `copiasGraduadas`) entre medias — el recorte se comería justo el
+     * `preciosEnEuros([cardId])` de otra función y daría por buena una
+     * colección que ya no pide precios. */
+    function cuerpoLiteral(codigo, nombre) {
+      const m = new RegExp("function\\s+" + nombre + "\\s*\\(").exec(codigo);
+      if (!m) return null;
+      let i = m.index + m[0].length;
+      let prof = 1;
+      while (i < codigo.length && prof > 0) {
+        if (codigo[i] === "(") prof++;
+        else if (codigo[i] === ")") prof--;
+        i++;
+      }
+      const abre = codigo.indexOf("{", i);
+      if (abre < 0) return null;
+      let j = abre;
+      prof = 0;
+      do {
+        if (codigo[j] === "{") prof++;
+        else if (codigo[j] === "}") prof--;
+        j++;
+      } while (j < codigo.length && prof > 0);
+      return { texto: codigo.slice(abre, j), desde: abre, hasta: j };
+    }
+
+    /* LA RÉPLICA DE LO QUE MANDA EL SERVIDOR. Es `valoresDeVentaDelMonton` de
+     * app/action.ts, que este cargador no puede importar (app/action.ts arrastra
+     * Clerk y Next). SIN COMENTARIOS DENTRO a propósito: la amarra de más abajo
+     * compara este cuerpo con el del fichero carácter a carácter, y el del
+     * fichero llega ya sin comentarios. */
+    const valoresDeVentaDelMonton = (rareza, copiasQueTengo, graduadas, euros) => {
+      const repetidasLibres = Math.max(0, copiasQueTengo - graduadas - 1);
+      return {
+        valorDeVentaAhora: valorDeVenta(rareza, copiasQueTengo, Math.min(1, repetidasLibres), euros),
+        valorDeVentaRepetidas: valorDeVenta(rareza, copiasQueTengo, repetidasLibres, euros),
+      };
+    };
+
+    /* LAS TRES RUTAS DE VENTA, REPLICADAS DESDE SU PROPIO CÓDIGO. Cada una
+     * decide con sus palabras cuántas copias vende y cuándo se niega, y las tres
+     * tienen que acabar en el mismo número que enseña la colección:
+     *
+     *   · sellCardAction        vendibles = quantity - graduadas; si <= 1
+     *                           devuelve null (0 monedas), si no cobra UNA copia.
+     *   · sellAllDuplicatesAction  duplicates = vendibles - 1; si <= 0 contesta
+     *                           "No tienes duplicados", si no cobra esas copias.
+     *   · sellAllDuplicatesBulkAction  selecciona quantity > 1 + graduadas y
+     *                           cobra quantity - 1 - graduadas por carta.
+     */
+    const pagaVenderUna = (rareza, copias, graduadas, eur) =>
+      copias - graduadas <= 1 ? 0 : valorDeVenta(rareza, copias, 1, eur);
+    const pagaVenderRepetidas = (rareza, copias, graduadas, eur) =>
+      copias - graduadas - 1 <= 0 ? 0 : valorDeVenta(rareza, copias, copias - graduadas - 1, eur);
+    const pagaElLote = (rareza, copias, graduadas, eur) =>
+      copias > 1 + graduadas ? valorDeVenta(rareza, copias, copias - 1 - graduadas, eur) : 0;
+
+    const RAREZAS_DE_LA_TIENDA = Object.keys(SELL_PRICES);
+    const MONTONES = [1, 2, 3, 4, 5, 7, 8, 12, 20, 43, 50, 120];
+    const GRADUADAS = [0, 1, 2, 5];
+    /* Precios reales del catálogo, de la carta de céntimos a la más cara medida
+     * (271 €, +27%). El `undefined` es el caso NORMAL —179 de 252 cartas de sv08
+     * no llegan al euro y la inmensa mayoría no ha pasado nunca por el cron— y
+     * es justo el que hacía que el fallo pareciera inexistente: sin euro las dos
+     * cuentas coinciden y el botón parece honrado. */
+    const EUROS = [undefined, 0.15, 1, 5, 20, 50, 120, 200, 271];
+
+    const malos = [];
+    let combinaciones = 0;
+    /* El desvío se mide en MONEDAS y no en porcentaje: sobre una Common de 1
+     * moneda cualquier redondeo es un 100% y no dice nada, mientras que las
+     * monedas dicen exactamente cuánto se estaba prometiendo de menos. */
+    let peorMonedas = 0;
+    let peorCaso = "";
+
+    for (const rareza of RAREZAS_DE_LA_TIENDA) {
+      for (const copias of MONTONES) {
+        for (const graduadas of GRADUADAS) {
+          if (graduadas > copias) continue;
+          for (const eur of EUROS) {
+            combinaciones++;
+            const enseña = valoresDeVentaDelMonton(rareza, copias, graduadas, eur);
+            const una = pagaVenderUna(rareza, copias, graduadas, eur);
+            const todas = pagaVenderRepetidas(rareza, copias, graduadas, eur);
+            const lote = pagaElLote(rareza, copias, graduadas, eur);
+            const caso = `${rareza} x${copias} (${graduadas} graduadas, ${eur ?? "sin"} €)`;
+            if (enseña.valorDeVentaAhora !== una) {
+              malos.push(`${caso}: el botón dice ${enseña.valorDeVentaAhora} y sellCardAction abona ${una}`);
+            }
+            if (enseña.valorDeVentaRepetidas !== todas) {
+              malos.push(`${caso}: "vender repetidas" dice ${enseña.valorDeVentaRepetidas} y sellAllDuplicatesAction abona ${todas}`);
+            }
+            /* El total de la hoja de "Limpiar duplicados" es la SUMA de estos
+             * sumandos, así que cuadra con el lote si y sólo si cuadra carta a
+             * carta. Las favoritas y las cartas sin repetidas no entran en la
+             * suma, y tampoco en el SELECT del servidor: mismo filtro. */
+            if (todas !== lote) {
+              malos.push(`${caso}: la venta de una carta abona ${todas} y el lote ${lote} por las mismas copias`);
+            }
+            // Y cuánto se dejaba en el camino el botón sin el cuarto argumento.
+            const sinEuro = valoresDeVentaDelMonton(rareza, copias, graduadas).valorDeVentaRepetidas;
+            const desvio = enseña.valorDeVentaRepetidas - sinEuro;
+            if (eur && sinEuro > 0 && desvio > peorMonedas) {
+              peorMonedas = desvio;
+              const porcentaje = ((desvio / sinEuro) * 100).toFixed(0);
+              peorCaso = `${caso}: enseñaría ${sinEuro} y la tienda abona ${enseña.valorDeVentaRepetidas}, +${porcentaje}%`;
+            }
+          }
+        }
+      }
+    }
+
+    /* LA AMARRA DE LA RÉPLICA, igual que en la sección B: en cuanto el servidor
+     * cambie la fórmula, la copia de aquí arriba se queda vieja y el barrido
+     * seguiría en verde midiendo un dinero que ya no paga nadie. */
+    const codigoColeccion = codigoDe("app/action.ts");
+    const enElServidor = cuerpoLiteral(codigoColeccion, "valoresDeVentaDelMonton");
+    const replica = String(valoresDeVentaDelMonton);
+    const sinEspacios = (s) => String(s).replace(/\s+/g, "");
+    const cuerpoReplica = sinEspacios(replica.slice(replica.indexOf("{")));
+    const cuerpoServidor = enElServidor ? sinEspacios(enElServidor.texto) : null;
+    if (cuerpoServidor !== cuerpoReplica) {
+      malos.push(
+        "la réplica ya no es la del servidor\n          servidor: " +
+          (cuerpoServidor ?? "(no se encuentra valoresDeVentaDelMonton en app/action.ts)") +
+          "\n          réplica:  " +
+          cuerpoReplica,
+      );
+    }
+
+    /* LA RED ESTÁTICA. El barrido de arriba mide fórmulas; esto mide que sigan
+     * conectadas, que es la mitad por la que el fallo entró: la fórmula estaba
+     * bien y lo que faltaba era el DATO. */
+    const coleccion = cuerpoLiteral(codigoColeccion, "getFullCollection");
+    const ventaDeUna = cuerpoLiteral(codigoColeccion, "sellCardAction");
+    if (!coleccion) malos.push("getFullCollection ya no está en app/action.ts");
+    if (!ventaDeUna) malos.push("sellCardAction ya no está en app/action.ts");
+    if (coleccion && !coleccion.texto.includes("preciosEnEuros(")) {
+      malos.push("getFullCollection ya no pide los precios reales: es EXACTAMENTE el fallo, la fórmula sin el dato");
+    }
+    if (coleccion && !coleccion.texto.includes("valoresDeVentaDelMonton(")) {
+      malos.push("getFullCollection ya no manda los importes de venta calculados");
+    }
+    if (coleccion && !coleccion.texto.includes("precioDeCartaSuelta(")) {
+      malos.push("getFullCollection ya no manda `valorDeReferencia`, que es la casilla \"Valor de la carta\"");
+    }
+    if (coleccion && coleccion.texto.includes("precioEur")) {
+      malos.push("getFullCollection manda `precioEur` en crudo: eso devuelve la fórmula a la pantalla");
+    }
+    if (ventaDeUna && !ventaDeUna.texto.includes("valoresDeVentaDelMonton(")) {
+      malos.push("sellCardAction ya no devuelve los importes del montón que queda: tras vender una copia el botón se queda con el precio viejo");
+    }
+
+    /* Y QUE LA PANTALLA NO VUELVA A CALCULAR EL DINERO. En la colección sólo
+     * puede quedar `valorDeVenta` dentro de los dos respaldos del modo invitado;
+     * cualquier otra llamada es la cuenta de la pantalla volviendo. */
+    const codigoPantalla = codigoDe("app/collection/page.tsx");
+    const respaldos = ["ventaDeUnaCopia", "ventaDeRepetidas"]
+      .map((n) => cuerpoLiteral(codigoPantalla, n))
+      .filter(Boolean);
+    if (respaldos.length !== 2) {
+      malos.push("app/collection/page.tsx ya no tiene los dos respaldos (`ventaDeUnaCopia` y `ventaDeRepetidas`)");
+    }
+    let llamadasEnLaPantalla = 0;
+    for (const ll of llamadasA(codigoPantalla, "valorDeVenta")) {
+      llamadasEnLaPantalla++;
+      if (!respaldos.some((r) => ll.desde > r.desde && ll.desde < r.hasta)) {
+        const linea = codigoPantalla.slice(0, ll.desde).split("\n").length;
+        malos.push(`app/collection/page.tsx:${linea} calcula el precio por su cuenta, fuera de los respaldos del invitado`);
+      }
+    }
+    /* El detalle de la carta pinta dos cosas que también manda el servidor: el
+     * botón de repetidas y la casilla "Valor de la carta". Si dejara de leer
+     * esos campos volvería a pintar la tarifa sin ajuste. */
+    const codigoModal = codigoDe("components/CardDetailModal.tsx");
+    if (!codigoModal.includes("valorDeVentaRepetidas")) {
+      malos.push("components/CardDetailModal.tsx ya no lee el importe del servidor para el botón de repetidas");
+    }
+    if (!codigoModal.includes("valorDeReferencia")) {
+      malos.push("components/CardDetailModal.tsx ya no lee `valorDeReferencia` para la casilla \"Valor de la carta\"");
+    }
+
+    comprueba(
+      malos.length === 0 && combinaciones > 1000 && llamadasEnLaPantalla > 0 && peorMonedas > 0,
+      `la colección enseña lo que pagan las tres rutas de venta (${combinaciones} combinaciones de rareza, copias, graduadas y euros; sin el precio real se quedaría corta hasta ${peorMonedas} monedas — ${peorCaso})`,
+      (malos.slice(0, 6).join("\n          ") ||
+        (peorMonedas === 0
+          ? "ninguna combinación cambia al conocer el precio real, así que el barrido ya no vigila nada:" +
+            " alguien ha desactivado el ajuste (DIVISOR_EUROS de utils/constanst.ts). Si es a propósito," +
+            " este invariante hay que rehacerlo; dejarlo así lo deja de adorno."
+          : `sólo se han encontrado ${llamadasEnLaPantalla} llamadas y ${combinaciones} combinaciones: el escáner se ha quedado ciego`)) +
+        "\n          QUÉ TOCAR: el dinero lo calcula quien lo paga. `getFullCollection` manda" +
+        " `valorDeVentaAhora` (una copia), `valorDeVentaRepetidas` (todas las libres) y" +
+        " `valorDeReferencia` (la tarifa), los tres con el precio real de Cardmarket ya" +
+        " dentro; la pantalla los PINTA. Mandar `precioEur` para que el navegador rehaga la" +
+        " cuenta es el mismo fallo con otra ropa: la fórmula acaba escrita dos veces y se" +
+        " separan, que es lo que documenta la sección B.",
+    );
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* VEREDICTO                                                           */
 /* ------------------------------------------------------------------ */

@@ -23,9 +23,56 @@ function countById(ids: string[]): Record<string, number> {
   return m;
 }
 
-function parseIds(v: any): string[] {
-  if (!v) return [];
-  return typeof v === "string" ? JSON.parse(v) : v;
+/**
+ * Lee una lista de ids de una columna JSONB SIN FIARSE DE LO QUE HAYA DENTRO.
+ *
+ * POR QUÉ ES TOTAL Y NO LANZA NUNCA. `offered_ids`/`requested_ids` son JSONB, y
+ * hasta hoy se guardaba ahí lo que llegara del cliente sin mirarlo: bastaba
+ * mandar una CADENA en vez de un array (`createTradeOffer(v, ["sv8-1"], "x")`,
+ * que pasaba el guard de tamaño porque "x" mide 1) para dejar un escalar JSON
+ * en la fila. El driver devuelve ese escalar como cadena de JS, el `JSON.parse`
+ * de la versión anterior reventaba con ella, y como el parseo ocurría dentro
+ * del `flatMap` de `getIncomingTradeOffers`, el catch de la función se tragaba
+ * la bandeja ENTERA: la víctima dejaba de ver también las ofertas legítimas,
+ * sin ninguna pista y sin arreglo posible desde la interfaz (quitar al amigo no
+ * toca la fila, que sigue 'pending').
+ *
+ * Ahora todo lo que no sea un array de cadenas sale como lista vacía. Una fila
+ * mala se queda en una oferta rara —visible y rechazable— en vez de esconder
+ * las demás.
+ */
+function parseIds(v: unknown): string[] {
+  let valor: unknown = v;
+  if (typeof valor === "string") {
+    try {
+      valor = JSON.parse(valor);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(valor)) return [];
+  if (!valor.every((id) => typeof id === "string")) return [];
+  return valor as string[];
+}
+
+/**
+ * Las dos listas de UNA fila de `trade_offers`, cada una por su cuenta.
+ *
+ * El parseo va fila a fila —y no en un `flatMap` sobre todas— porque ése era el
+ * mecanismo del daño: una fila corrupta no puede llevarse por delante a las
+ * buenas si nadie las parsea juntas. Lo ilegible queda anotado con el id de la
+ * oferta, que es por dónde hay que empezar a mirar cuando alguien dice que le
+ * falta una oferta en la bandeja.
+ */
+function idsDeOferta(fila: any): { offered: string[]; requested: string[] } {
+  const offered = parseIds(fila?.offered_ids);
+  const requested = parseIds(fila?.requested_ids);
+  // Una oferta legítima nunca nace con un lado vacío: `createTradeOffer` exige
+  // cartas en los dos. Vacío aquí sólo puede ser una fila ilegible.
+  if (offered.length === 0 || requested.length === 0) {
+    console.error(`trade_offers: fila ${fila?.id} con ids ilegibles; se muestra vacía`);
+  }
+  return { offered, requested };
 }
 
 async function hydrateCardsByIds(ids: string[]) {
@@ -224,6 +271,32 @@ export async function getSocialOverview() {
   }
 }
 
+/** Cartas por lado. Era un 12 suelto repetido en el mensaje de error. */
+const MAX_CARTAS_POR_LADO = 12;
+
+/**
+ * Tope del recado que acompaña a la oferta. No es un límite de producto: es que
+ * antes no había NINGUNO y la columna se tragaba lo que le echaran.
+ */
+const MAX_MENSAJE = 280;
+
+/**
+ * Ofertas 'pending' que un emisor puede tener a la vez con el MISMO receptor.
+ * 20 es holgado para jugar (la interfaz manda una oferta por gesto) y corta el
+ * anegamiento de la bandeja ajena. Cambiarlo es cambiar este número.
+ */
+const MAX_OFERTAS_PENDIENTES = 20;
+
+/** Longitud máxima de un id de usuario de Clerk, con margen. */
+const MAX_ID_USUARIO = 200;
+
+/**
+ * Ids de carta plausibles ("sv3pt5-207", "swsh12pt5gg-GG01"). Es la MISMA forma
+ * que valida `app/action.ts` en el mercado y en el bazar; no hay dos ideas
+ * distintas de qué es un id de carta en este repositorio.
+ */
+const ID_CARTA = /^[a-zA-Z0-9._-]{1,40}$/;
+
 /* ==================================================================== *
  * EL INTERCAMBIO ES LA EXCEPCIÓN A LA COPIA RESERVADA. A PROPÓSITO.
  * ====================================================================
@@ -251,9 +324,30 @@ export async function getSocialOverview() {
 export async function createTradeOffer(receiverId: string, offeredIds: string[], requestedIds: string[], message?: string) {
   const { userId } = await auth();
   if (!userId) return { error: "No autorizado" };
+  // NADA DE LO QUE LLEGA AQUÍ ESTÁ COMPROBADO POR EL TIPO. `createTradeOffer`
+  // es una server action: la firma la escribe TypeScript para el compilador,
+  // pero al otro lado hay una petición HTTP y ahí cabe cualquier cosa. Lo que
+  // se guardaba sin mirar era justo lo que luego cegaba la bandeja del
+  // destinatario (ver la nota de `parseIds`), así que la validación va ANTES de
+  // tocar la base, no después.
+  if (typeof receiverId !== "string" || receiverId.length === 0 || receiverId.length > MAX_ID_USUARIO) {
+    return { error: "Oferta no válida" };
+  }
   if (receiverId === userId) return { error: "No puedes intercambiar contigo" };
+  if (!Array.isArray(offeredIds) || !Array.isArray(requestedIds)) return { error: "Oferta no válida" };
   if (offeredIds.length === 0 || requestedIds.length === 0) return { error: "Selecciona cartas en ambos lados" };
-  if (offeredIds.length > 12 || requestedIds.length > 12) return { error: "Máximo 12 cartas por lado" };
+  if (offeredIds.length > MAX_CARTAS_POR_LADO || requestedIds.length > MAX_CARTAS_POR_LADO) {
+    return { error: `Máximo ${MAX_CARTAS_POR_LADO} cartas por lado` };
+  }
+  if (![...offeredIds, ...requestedIds].every((id) => typeof id === "string" && ID_CARTA.test(id))) {
+    return { error: "Oferta no válida" };
+  }
+  // El mensaje no tenía tope NINGUNO: una llamada podía dejar en la fila el
+  // megabyte que quisiera, y el destinatario se lo comía entero en cada carga
+  // de la bandeja. Se rechaza en vez de recortarlo, que sería mentirle al que
+  // lo escribe.
+  const texto = typeof message === "string" ? message.trim() : "";
+  if (texto.length > MAX_MENSAJE) return { error: `El mensaje no puede pasar de ${MAX_MENSAJE} caracteres` };
 
   try {
     const { rows: fr } = await sql`
@@ -262,16 +356,97 @@ export async function createTradeOffer(receiverId: string, offeredIds: string[],
     `;
     if (fr.length === 0) return { error: "Solo puedes intercambiar con amigos" };
 
+    /* LO OFRECIDO SE MIDE COMO LO MIDE `acceptTradeOffer`: COPIAS ENTREGABLES.
+     *
+     * Aquí se contaba `user_collection.quantity` a secas, pero el que decide de
+     * verdad —el CTE `saldo` de `acceptTradeOffer`— descuenta las copias
+     * graduadas activas. Las dos cuentas no coincidían, y el resultado era una
+     * oferta que se podía crear, que el amigo veía, y que al aceptarla se
+     * cancelaba sola diciendo "el emisor ya no tiene esas cartas" — mentira: las
+     * tenía, estaban en la vitrina. La incoherencia se cierra por el lado de
+     * NO PODER OFRECERLAS, y se dice al crear la oferta, que es cuando el que
+     * la monta puede hacer algo al respecto.
+     *
+     * POR QUÉ ese lado y no el de "que el trueque las trate bien": la identidad
+     * de una copia graduada es (usuario, carta, ÍNDICE DE COPIA), y ese índice
+     * ES la nota (utils/graduacion.ts siembra con usuario|carta|índice). Por eso
+     * ninguna sentencia del repositorio puede cambiarle a una fila de
+     * graded_cards el user_id ni la copia —hay un invariante que lo vigila— y el
+     * cambio de manos de una graduada se hace marcándola 'vendida' y creando
+     * una fila nueva para el que la recibe. El trueque, en cambio, es CARTA POR
+     * CARTA: mueve cantidades entre álbumes y no sabe qué copia concreta viaja.
+     * Dejarle llevarse una graduada dejaría la fila de graded_cards con su dueño
+     * viejo y `quantity` por debajo de las filas que la apuntan, que es
+     * exactamente la corrupción que el resto del repositorio evita. Y no
+     * contradice la excepción documentada arriba: el trueque sigue sin reservar
+     * copia, una carta única sin graduar se intercambia igual que siempre.
+     */
     const offCount = countById(offeredIds);
+    const { rows: saldos } = await sql.query(
+      `SELECT uc.card_id,
+              uc.quantity::int        AS quantity,
+              COALESCE(g.n, 0)::int   AS graduadas
+         FROM user_collection uc
+         LEFT JOIN (
+           -- Solo las que siguen en la vitrina, igual que en acceptTradeOffer:
+           -- una copia vendida conserva su fila para no soltar su indice, pero
+           -- ya no ocupa copia.
+           SELECT card_id, count(*)::int AS n
+             FROM graded_cards
+            WHERE user_id = $1 AND estado = 'activa'
+            GROUP BY card_id
+         ) g ON g.card_id = uc.card_id
+        WHERE uc.user_id = $1 AND uc.card_id = ANY($2::text[])`,
+      [userId, Object.keys(offCount)],
+    );
+    const saldoPorCarta = new Map<string, { total: number; graduadas: number }>(
+      saldos.map((r: any) => [String(r.card_id), { total: Number(r.quantity), graduadas: Number(r.graduadas) }]),
+    );
+    let bloqueadasEnVitrina = false;
     for (const [cid, qty] of Object.entries(offCount)) {
-      const { rows } = await sql`SELECT quantity FROM user_collection WHERE user_id = ${userId} AND card_id = ${cid}`;
-      if ((rows[0]?.quantity || 0) < qty) return { error: "No posees todas las cartas ofrecidas" };
+      const s = saldoPorCarta.get(cid) ?? { total: 0, graduadas: 0 };
+      if (s.total - s.graduadas < qty) {
+        // No tenerlas y tenerlas graduadas son dos cosas distintas y se dicen
+        // distintas. Faltar de verdad manda: es el problema más gordo de los
+        // dos, y el que el jugador no puede resolver quitando nada de la oferta.
+        if (s.total < qty) return { error: "No posees todas las cartas ofrecidas" };
+        bloqueadasEnVitrina = true;
+      }
+    }
+    if (bloqueadasEnVitrina) {
+      return { error: "Las copias graduadas no se intercambian: están en la vitrina" };
     }
 
-    await sql`
-      INSERT INTO trade_offers (sender_id, receiver_id, offered_ids, requested_ids, status, message)
-      VALUES (${userId}, ${receiverId}, ${JSON.stringify(offeredIds)}, ${JSON.stringify(requestedIds)}, 'pending', ${message || null})
-    `;
+    /* TOPE DE OFERTAS PENDIENTES HACIA EL MISMO AMIGO, y dentro del INSERT.
+     *
+     * No había ninguno: un amigo podía dejar miles de ofertas 'pending', y cada
+     * carga de la bandeja del otro las lee todas e hidrata todas sus cartas
+     * (`getIncomingTradeOffers` no lleva LIMIT). Es el mismo daño que la fila
+     * corrupta —dejar al otro sin bandeja usable— sólo que por volumen.
+     *
+     * Va por PAR (emisor, receptor) y no por emisor: el estorbo lo sufre un
+     * destinatario concreto, y un tope global castigaría a quien trapichea
+     * mucho con muchos amigos. Y va DENTRO del INSERT para no dejar una ventana
+     * entre contar e insertar; no pretende ser un tope exacto —dos peticiones a
+     * la vez pueden dejar 21— sino cortar el goteo masivo, y para eso sobra.
+     */
+    const { rowCount } = await sql.query(
+      `INSERT INTO trade_offers (sender_id, receiver_id, offered_ids, requested_ids, status, message)
+       SELECT $1::text, $2::text, $3::jsonb, $4::jsonb, 'pending', $5::text
+        WHERE (SELECT count(*) FROM trade_offers
+                WHERE sender_id = $1 AND receiver_id = $2 AND status = 'pending') < $6::int`,
+      [
+        userId,
+        receiverId,
+        JSON.stringify(offeredIds),
+        JSON.stringify(requestedIds),
+        texto || null,
+        MAX_OFERTAS_PENDIENTES,
+      ],
+    );
+    if (!rowCount) {
+      return { error: `Ya tienes ${MAX_OFERTAS_PENDIENTES} ofertas pendientes con ese entrenador` };
+    }
     revalidatePath("/friends");
     return { success: true };
   } catch (e) {
@@ -291,12 +466,15 @@ export async function getIncomingTradeOffers() {
       WHERE t.receiver_id = ${userId} AND t.status = 'pending'
       ORDER BY t.created_at DESC
     `;
-    const allIds = rows.flatMap((r: any) => [...parseIds(r.offered_ids), ...parseIds(r.requested_ids)]);
+    // Una pasada de parseo por fila, no cuatro: las listas ya parseadas son las
+    // mismas que se hidratan y las mismas que se devuelven.
+    const filas = rows.map((r: any) => ({ fila: r, ...idsDeOferta(r) }));
+    const allIds = filas.flatMap((f) => [...f.offered, ...f.requested]);
     const map = await hydrateCardsByIds(allIds);
-    return rows.map((r: any) => ({
+    return filas.map(({ fila: r, offered, requested }) => ({
       id: r.id, senderId: r.sender_id, senderName: r.sender_name, message: r.message, createdAt: r.created_at,
-      offered: parseIds(r.offered_ids).map((id) => map[id]).filter(Boolean),
-      requested: parseIds(r.requested_ids).map((id) => map[id]).filter(Boolean),
+      offered: offered.map((id) => map[id]).filter(Boolean),
+      requested: requested.map((id) => map[id]).filter(Boolean),
     }));
   } catch (e) {
     console.error("getIncomingTradeOffers error:", e);
@@ -315,12 +493,14 @@ export async function getOutgoingTradeOffers() {
       WHERE t.sender_id = ${userId} AND t.status = 'pending'
       ORDER BY t.created_at DESC
     `;
-    const allIds = rows.flatMap((r: any) => [...parseIds(r.offered_ids), ...parseIds(r.requested_ids)]);
+    // Igual que en la bandeja de entrada: fila a fila, y una sola vez.
+    const filas = rows.map((r: any) => ({ fila: r, ...idsDeOferta(r) }));
+    const allIds = filas.flatMap((f) => [...f.offered, ...f.requested]);
     const map = await hydrateCardsByIds(allIds);
-    return rows.map((r: any) => ({
+    return filas.map(({ fila: r, offered, requested }) => ({
       id: r.id, receiverId: r.receiver_id, receiverName: r.receiver_name, status: r.status, createdAt: r.created_at,
-      offered: parseIds(r.offered_ids).map((id) => map[id]).filter(Boolean),
-      requested: parseIds(r.requested_ids).map((id) => map[id]).filter(Boolean),
+      offered: offered.map((id) => map[id]).filter(Boolean),
+      requested: requested.map((id) => map[id]).filter(Boolean),
     }));
   } catch (e) {
     console.error("getOutgoingTradeOffers error:", e);
@@ -574,9 +754,14 @@ export async function acceptTradeOffer(tradeId: number) {
         [id, userId],
       );
       revalidatePath("/friends");
-      return { error: "El emisor ya no tiene esas cartas. Oferta cancelada." };
+      // "Ya no PUEDE entregar" y no "ya no tiene": desde que `saldo` descuenta
+      // las graduadas, este camino también lo pisa quien graduó sus copias
+      // después de mandar la oferta, y decirle al otro que no las tiene sería
+      // falso. Crear la oferta ya no se puede con copias graduadas, así que lo
+      // que queda aquí es lo que cambió DESPUÉS: venta, otro trueque o vitrina.
+      return { error: "El emisor ya no puede entregar esas cartas. Oferta cancelada." };
     }
-    if (r.falta_receptor) return { error: "No tienes todas las cartas pedidas" };
+    if (r.falta_receptor) return { error: "No tienes disponibles todas las cartas pedidas: las graduadas no cuentan" };
     return { error: "Error al procesar el intercambio" };
   } catch (e) {
     // Aquí caen también los interbloqueos que Postgres corta: no se ha movido
@@ -586,10 +771,29 @@ export async function acceptTradeOffer(tradeId: number) {
   }
 }
 
+/*
+ * Rechazar y cancelar DICEN LA VERDAD SOBRE SI HAN HECHO ALGO.
+ *
+ * Las dos devolvían `{ success: true }` pasara lo que pasara: el UPDATE lleva
+ * filtro de dueño y de estado, así que con una oferta ajena, ya resuelta o
+ * inexistente no tocaba ninguna fila y la pantalla cantaba "Oferta rechazada"
+ * igual. `rowCount` es el número de filas que de verdad han cambiado, y es lo
+ * único que hace falta para no mentir. La forma de retorno no cambia —sigue
+ * siendo `{ success }` o `{ error }`, que es lo que espera app/friends/page.tsx
+ * para elegir el aviso— y el texto del error es el mismo que ya usa
+ * `acceptTradeOffer` para este caso.
+ *
+ * El `Number.isInteger` es el de `acceptTradeOffer`, por el mismo motivo: sin
+ * él, un `tradeId` que no sea un número llega como texto a una columna entera y
+ * Postgres lanza. Aquí, además, sin ningún try/catch que lo recoja.
+ */
 export async function declineTradeOffer(tradeId: number) {
   const { userId } = await auth();
   if (!userId) return { error: "No autorizado" };
-  await sql`UPDATE trade_offers SET status = 'declined', updated_at = NOW() WHERE id = ${tradeId} AND receiver_id = ${userId} AND status = 'pending'`;
+  const id = Number(tradeId);
+  if (!Number.isInteger(id)) return { error: "Oferta no válida" };
+  const { rowCount } = await sql`UPDATE trade_offers SET status = 'declined', updated_at = NOW() WHERE id = ${id} AND receiver_id = ${userId} AND status = 'pending'`;
+  if (!rowCount) return { error: "La oferta ya no está disponible" };
   revalidatePath("/friends");
   return { success: true };
 }
@@ -597,7 +801,10 @@ export async function declineTradeOffer(tradeId: number) {
 export async function cancelTradeOffer(tradeId: number) {
   const { userId } = await auth();
   if (!userId) return { error: "No autorizado" };
-  await sql`UPDATE trade_offers SET status = 'cancelled', updated_at = NOW() WHERE id = ${tradeId} AND sender_id = ${userId} AND status = 'pending'`;
+  const id = Number(tradeId);
+  if (!Number.isInteger(id)) return { error: "Oferta no válida" };
+  const { rowCount } = await sql`UPDATE trade_offers SET status = 'cancelled', updated_at = NOW() WHERE id = ${id} AND sender_id = ${userId} AND status = 'pending'`;
+  if (!rowCount) return { error: "La oferta ya no está disponible" };
   revalidatePath("/friends");
   return { success: true };
 }
@@ -617,10 +824,25 @@ export async function getTradableCollection(targetId: string) {
     // comparaba texto, así que "Uncommon" salía por delante de "Special
     // Illustration Rare" y el selector de intercambio parecía desordenado.
     // Aquí no hay una segunda ordenación en el cliente que lo disimule.
+    // `quantity` AQUÍ ES LO ENTREGABLE, no lo que hay en el álbum: las copias
+    // graduadas activas van descontadas y las cartas que se quedan a cero no
+    // salen. El selector (components/social/TradeBuilder.tsx) usa este número
+    // como tope de lo que se puede elegir, así que descontarlo en el servidor
+    // —que es quien sabe qué copias están en la vitrina— evita que el cliente
+    // tenga que repetir la cuenta y que ofrezca cartas que `acceptTradeOffer`
+    // va a rechazar luego. Es la misma resta que hace el CTE `saldo`.
     const { rows } = await sql`
-      SELECT c.id, c.name, c.rarity, c.images, c.set_id, uc.quantity
-      FROM user_collection uc JOIN cards c ON uc.card_id = c.id
-      WHERE uc.user_id = ${targetId} AND uc.quantity > 0
+      SELECT c.id, c.name, c.rarity, c.images, c.set_id,
+             (uc.quantity - COALESCE(g.n, 0)) AS quantity
+      FROM user_collection uc
+      JOIN cards c ON uc.card_id = c.id
+      LEFT JOIN (
+        SELECT card_id, count(*)::int AS n
+          FROM graded_cards
+         WHERE user_id = ${targetId} AND estado = 'activa'
+         GROUP BY card_id
+      ) g ON g.card_id = uc.card_id
+      WHERE uc.user_id = ${targetId} AND uc.quantity - COALESCE(g.n, 0) > 0
     `;
     rows.sort((a: any, b: any) => {
       const ra = RARITY_RANK[a.rarity] || 0;

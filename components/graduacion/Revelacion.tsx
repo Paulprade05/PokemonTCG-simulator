@@ -58,6 +58,12 @@ interface Props {
   resultados: Resultado[];
   /** Qué se ha hecho ya con cada copia, por `claveCopia`. */
   decisiones: Record<string, Decision>;
+  /**
+   * Lo que el servidor abonó por cada copia vendida, por `claveCopia`. Es lo
+   * que escribe el «Vendida por X»: si se recalculara, el rótulo podría decir
+   * una cifra distinta de la del aviso que acaba de salir.
+   */
+  cobradoPorCopia: Record<string, number>;
   /** Copias de cada carta que quedan en la colección, para la última copia. */
   copiasPorCarta: Record<string, number>;
   /** `gradedId` de la venta en vuelo, o null. */
@@ -111,6 +117,7 @@ function Informe({
   resultado,
   abierto,
   decision,
+  cobrado,
   copias,
   vendiendo,
   compacto,
@@ -120,6 +127,8 @@ function Informe({
   resultado: Resultado;
   abierto: boolean;
   decision: Decision | undefined;
+  /** Lo que el servidor pagó por esta copia, si ya se vendió. */
+  cobrado: number | undefined;
   copias: number;
   vendiendo: boolean;
   compacto: boolean;
@@ -130,15 +139,40 @@ function Informe({
   const { carta, nota, desperfectos, marcas: marcasVisuales, valor } = resultado;
   const marcas = abierto && !verLimpia;
 
+  /* ================================================================== *
+   * LAS DOS CIFRAS DE ESTA FICHA, Y POR QUÉ NO SON LA MISMA
+   * ==================================================================
+   *
+   * `valor` es lo que la copia VALE ya graduada: la tarifa de la carta por el
+   * multiplicador de la nota. Es el número del "Ahora vale", que existe para
+   * comparar con lo que valía antes, y es también el que el bazar usa para la
+   * banda de precio de un anuncio.
+   *
+   * `venta` es lo que la TIENDA PAGA si se vende ahora mismo, y lo calcula el
+   * servidor: la curva de repetidas (cada copia de más vale menos que la
+   * anterior) con la nota encima. Con dos copias coinciden; a partir de la
+   * tercera, no.
+   *
+   * El botón dice `venta` porque un botón es una promesa de pago, y hasta ahora
+   * decía `valor`: prometía 488 y el aviso contestaba «+417».
+   */
+  const venta = resultado.valorDeVentaAhora;
+
   /* LAS DOS RAZONES POR LAS QUE NO SE PUEDE VENDER, dichas antes de tocar nada.
    * El servidor las comprueba igual y devuelve "ultima-copia" o "sin-valor",
-   * pero un botón que sólo sirve para enseñar un error no es un botón. */
+   * pero un botón que sólo sirve para enseñar un error no es un botón.
+   *
+   * "No vale nada" se mide sobre `valor` y no sobre `venta`: lo que multiplica
+   * por cero es LA NOTA, y ése es el motivo que se le explica al jugador. Una
+   * `venta` a cero con copias de sobra no existe —la curva nunca baja de 1— y,
+   * cuando la copia es la única que queda, manda el aviso de la última copia. */
   const esUltimaCopia = copias <= 1;
   const noValeNada = valor <= 0;
   /* Y la tercera, que es momentánea: `venderGraduadaAction` sólo acepta el id
-   * de la fila de graded_cards, y ese id llega con la vitrina, un instante
-   * después que la nota. Ver la cabecera de Graduacion.tsx. */
-  const sinFicha = resultado.gradedId === undefined;
+   * de la fila de graded_cards, y ese id —junto con el importe que se va a
+   * abonar— llega con la vitrina, un instante después que la nota. Ver la
+   * cabecera de Graduacion.tsx. */
+  const sinFicha = resultado.gradedId === undefined || venta === undefined;
   const sePuedeVender = !esUltimaCopia && !noValeNada && !sinFicha && !decision;
 
   return (
@@ -224,7 +258,8 @@ function Informe({
               {formatNumber(valor)}
             </span>
             <span className="t-meta ink-soft">
-              {multiplicador(MULTIPLICADOR_NOTA[nota] ?? 0)} sobre {formatNumber(carta.valor)}
+              {multiplicador(MULTIPLICADOR_NOTA[nota] ?? 0)} sobre{" "}
+              {formatNumber(carta.valorDeReferencia)}
             </span>
           </div>
 
@@ -240,8 +275,12 @@ function Informe({
 
           {/* DECIDIR */}
           {decision === "vendida" ? (
+            /* LO QUE SE COBRÓ, dicho por el servidor. Aquí ponía `valor` —la
+               tarifa por la nota— mientras el aviso decía el importe real: la
+               misma copia con dos precios a diez centímetros. El respaldo es
+               `venta`, el precio que el propio botón acababa de prometer. */
             <p className="t-meta font-semibold" style={{ color: "var(--ok)" }}>
-              Vendida por {formatNumber(valor)} monedas
+              Vendida por {formatNumber(cobrado ?? venta ?? 0)} monedas
             </p>
           ) : decision === "guardada" ? (
             <p className="t-meta ink-soft">Guardada en la vitrina</p>
@@ -264,11 +303,26 @@ function Informe({
               >
                 {vendiendo ? (
                   <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                ) : venta === undefined ? (
+                  // Sin el precio del servidor no se dice ninguna cifra: el
+                  // botón está deshabilitado de todos modos (le falta la ficha).
+                  <>Vender</>
                 ) : (
-                  <>Vender · {formatNumber(valor)}</>
+                  <>Vender · {formatNumber(venta)}</>
                 )}
               </button>
             </div>
+          )}
+
+          {/* POR QUÉ SE PAGA MENOS DE LO QUE "VALE". Sólo cuando las dos cifras
+              se separan, que es a partir de la tercera copia: sin esta línea,
+              "Ahora vale 488" encima de "Vender · 417" parece un error de la
+              pantalla y es la regla que sostiene toda la economía de repetidas. */}
+          {!decision && sePuedeVender && venta !== undefined && venta < valor && (
+            <p className="t-meta ink-soft leading-snug max-w-xs">
+              Te pagan menos porque es una repetida: cada copia de más de una misma carta vale
+              menos que la anterior.
+            </p>
           )}
 
           {/* LA ÚLTIMA COPIA, explicada donde se toma la decisión y no en un
@@ -304,6 +358,7 @@ function Informe({
 export default function Revelacion({
   resultados,
   decisiones,
+  cobradoPorCopia,
   copiasPorCarta,
   vendiendoId,
   onVender,
@@ -396,6 +451,7 @@ export default function Revelacion({
                 abierto
                 compacto
                 decision={decisiones[clave]}
+                cobrado={cobradoPorCopia[clave]}
                 copias={copiasPorCarta[r.cardId] ?? 0}
                 vendiendo={r.gradedId !== undefined && r.gradedId === vendiendoId}
                 onVender={() => onVender(r)}
@@ -459,6 +515,7 @@ export default function Revelacion({
         abierto={abierto}
         compacto={false}
         decision={decisiones[clave]}
+        cobrado={cobradoPorCopia[clave]}
         copias={copiasPorCarta[actual.cardId] ?? 0}
         vendiendo={actual.gradedId !== undefined && actual.gradedId === vendiendoId}
         onVender={() => onVender(actual)}

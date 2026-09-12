@@ -48,12 +48,25 @@ export default function VitrinaGraduadas({
   vendiendo,
   onVender,
 }: Props) {
+  /* EL BALANCE VA SOBRE EL VALOR DE REFERENCIA, no sobre lo que pagaría la
+   * tienda hoy, y conviene dejar escrito por qué no es una incoherencia con el
+   * botón de cada ficha (que sí dice lo que se abona):
+   *
+   * "Lo que pagarían hoy" vale 0 en toda copia que sea la última de su carta
+   * —ésas no se pueden vender—, así que una vitrina entera de cartas únicas,
+   * dieces incluidos, sumaría CERO frente a las tasas pagadas. Eso no es más
+   * honesto que el número de antes: es una segunda mentira, y de las caras,
+   * porque esas copias se pueden publicar en el bazar y ahí la banda de precio
+   * la fija exactamente este valor de referencia.
+   *
+   * Así que aquí manda "cuánto valen" y en el botón manda "cuánto te pagan".
+   * Cuando se separan, la ficha lo dice con todas sus letras. */
   const resumen = useMemo(() => {
     let valor = 0;
     let invertido = 0;
     let mejor = 0;
     for (const c of cartas) {
-      valor += c.valor;
+      valor += c.valorDeReferencia;
       invertido += c.coste;
       mejor = Math.max(mejor, c.nota);
     }
@@ -100,8 +113,17 @@ export default function VitrinaGraduadas({
         {cartas.map((c, i) => {
           const copias = copiasPorCarta[c.id] ?? c.copiasTotales;
           const esUltimaCopia = copias <= 1;
-          const noValeNada = c.valor <= 0;
+          /* "No vale nada" lo decide LA NOTA (un 1 multiplica por cero), así que
+           * se mide sobre el valor de referencia. Sobre lo que paga la tienda no
+           * se podría: eso también es 0 en la última copia, y entonces el aviso
+           * culparía a la nota de una regla que es del álbum. */
+          const noValeNada = c.valorDeReferencia <= 0;
           const enVuelo = vendiendo === c.gradedId;
+          /* LO QUE SE VA A ABONAR, calculado por el servidor con la misma
+           * función que cobra `venderGraduadaAction`. Aquí se pintaba `c.valor`
+           * —la tarifa plana por la nota— y el aviso de después decía otra cosa:
+           * medido, "Vender por 488" y "+417" con tres copias en la mano. */
+          const seCobra = c.valorDeVentaAhora;
 
           return (
             <motion.div
@@ -130,8 +152,11 @@ export default function VitrinaGraduadas({
                 </div>
               </div>
 
+              {/* LO QUE VALE, que no es lo que te pagan. Este renglón es el
+                  valor de referencia de la copia —y el que manda en el bazar—;
+                  el botón de abajo dice lo que abona la tienda. */}
               <p className="t-meta ink-soft tnum">
-                {c.etiqueta} · vale {formatNumber(c.valor)}
+                {c.etiqueta} · vale {formatNumber(c.valorDeReferencia)}
               </p>
 
               {esUltimaCopia ? (
@@ -145,19 +170,30 @@ export default function VitrinaGraduadas({
                   Un {c.nota} multiplica por cero: nadie paga por ella.
                 </p>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => onVender(c)}
-                  disabled={enVuelo}
-                  aria-busy={enVuelo}
-                  className="btn-ghost press touch-target w-full rounded-xl t-cuerpo-2 font-medium flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  {enVuelo ? (
-                    <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
-                  ) : (
-                    <>Vender por {formatNumber(c.valor)}</>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onVender(c)}
+                    disabled={enVuelo}
+                    aria-busy={enVuelo}
+                    className="btn-ghost press touch-target w-full rounded-xl t-cuerpo-2 font-medium flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {enVuelo ? (
+                      <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                    ) : (
+                      <>Vender por {formatNumber(seCobra)}</>
+                    )}
+                  </button>
+                  {/* La explicación sólo aparece cuando las dos cifras de la
+                      ficha se separan, o sea a partir de la tercera copia. Con
+                      dos coinciden y una frase de más sobraría. */}
+                  {seCobra < c.valorDeReferencia && (
+                    <p className="t-micro ink-soft leading-snug">
+                      Te pagan menos porque es una repetida: tienes {formatNumber(copias)} copias de
+                      esta carta y cada una de más vale menos que la anterior.
+                    </p>
                   )}
-                </button>
+                </>
               )}
             </motion.div>
           );

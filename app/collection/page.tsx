@@ -68,6 +68,98 @@ async function enIdiomaLocal(cartas: CartaEnColeccion[]): Promise<CartaEnColecci
   }
 }
 
+/**
+ * COPIAS QUE SE PUEDEN VENDER POR AQUÍ, que no son todas las que se tienen.
+ *
+ * Las graduadas siguen contando como copias en propiedad —ocupan su sitio en la
+ * curva de precios— pero salen de la colección por otra puerta, la de la
+ * vitrina: `sellCardAction` y `sellAllDuplicatesAction` descuentan las graduadas
+ * antes de decidir, y `sellAllDuplicatesBulkAction` ni siquiera selecciona las
+ * cartas cuyo `quantity` no supera `1 + graduadas`.
+ *
+ * Esta pantalla decidía con `quantity` a secas, y el desajuste lo pagaba el
+ * jugador: con 2 copias y 1 graduada la rejilla ofrecía "Vender", el servidor
+ * devolvía null y salía «No se pudo vender la carta. Nada ha cambiado.» una y
+ * otra vez, sin explicar nunca por qué.
+ *
+ * `graduadas` viaja con la colección desde `getFullCollection` (LEFT JOIN a
+ * graded_cards, sólo las activas) y falta en el modo invitado, donde no hay
+ * graduación: ahí el `|| 0` deja el comportamiento de siempre.
+ *
+ * Fuera del componente porque es pura y la lee un `useMemo`: dentro habría que
+ * declararla como dependencia o mentirle al linter de hooks.
+ */
+function copiasLibres(card: { quantity: number; graduadas?: number | null }): number {
+  return Math.max(0, (Number(card.quantity) || 0) - (Number(card.graduadas) || 0));
+}
+
+/* ==================================================================== *
+ * EL DINERO QUE PROMETE ESTA PANTALLA LO CALCULA QUIEN LO PAGA
+ * ====================================================================
+ *
+ * EL FALLO QUE CIERRA ESTO, MEDIDO: aquí se llamaba a `valorDeVenta(rareza,
+ * copias, n)` SIN el cuarto argumento —el precio real de Cardmarket—, porque
+ * `getFullCollection` no devolvía nada de euros; el servidor sí lo aplica. Con
+ * una Hyper Rare y 3 copias: con la carta a 50 € el botón decía 214 y la tienda
+ * abonaba 225, y con 200 €, 214 contra 257.
+ *
+ * AHORA LOS IMPORTES LLEGAN HECHOS, uno por botón, calculados por las mismas
+ * funciones que cobran (app/action.ts, `valoresDeVentaDelMonton`). Esta pantalla
+ * ya no aplica la curva: la lee. Es lo mismo que hacen la hoja de publicar con
+ * la banda del bazar y el botón "Vender por X" de la vitrina.
+ *
+ * POR QUÉ SIGUE HABIENDO UNA FÓRMULA AQUÍ ABAJO: por el MODO INVITADO, que no
+ * tiene servidor. Su colección vive en localStorage, no tiene cartas graduadas y
+ * NUNCA tiene precio en euros —ese dato sólo existe en Postgres—, así que para
+ * él la cuenta del cliente no es una estimación: es la misma que haría el
+ * servidor con los mismos datos, y es exacta. El respaldo cubre también a las
+ * cartas que llegan de otras pantallas (álbum, bazar) sin estos campos.
+ *
+ * SE MIRA `typeof === "number"` Y NO SI ES VERDADERO: 0 es un valor legítimo
+ * —significa "no queda nada que vender por esta puerta"— y con un `??` o un `||`
+ * caería al respaldo justo donde el servidor está diciendo que no paga nada.
+ */
+type ValoresDelServidor = {
+  valorDeVentaAhora?: number | null;
+  valorDeVentaRepetidas?: number | null;
+};
+
+const importeDelServidor = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null;
+
+/** Lo que abona `sellCardAction` por UNA copia sobrante. 0 si se negaría. */
+function ventaDeUnaCopia(card: CartaEnColeccion): number {
+  const delServidor = importeDelServidor((card as ValoresDelServidor).valorDeVentaAhora);
+  if (delServidor !== null) return delServidor;
+  // Invitado: la curva sobre el montón entero, vendiendo una sola copia libre.
+  return valorDeVenta(card.rarity, card.quantity, Math.min(1, Math.max(0, copiasLibres(card) - 1)));
+}
+
+/** Lo que abona `sellAllDuplicatesAction` por TODAS las repetidas libres. */
+function ventaDeRepetidas(card: CartaEnColeccion): number {
+  const delServidor = importeDelServidor((card as ValoresDelServidor).valorDeVentaRepetidas);
+  if (delServidor !== null) return delServidor;
+  return valorDeVenta(card.rarity, card.quantity, Math.max(0, copiasLibres(card) - 1));
+}
+
+/**
+ * La carta tal y como queda cuando se le han vendido TODAS las repetidas: una
+ * copia libre más las graduadas, y por tanto nada que vender.
+ *
+ * Los dos importes se ponen a 0 y no se recalculan, y eso no es volver a hacer
+ * la cuenta del servidor: es la MISMA afirmación que ya hace la línea de al lado
+ * al dejar `quantity` en `1 + graduadas`. Sin ellos, el botón seguiría
+ * prometiendo el importe del montón que acaba de venderse.
+ */
+function sinRepetidas(card: CartaEnColeccion): CartaEnColeccion & ValoresDelServidor {
+  return {
+    ...card,
+    quantity: 1 + (Number(card.graduadas) || 0),
+    valorDeVentaAhora: 0,
+    valorDeVentaRepetidas: 0,
+  };
+}
+
 export default function CollectionPage() {
   const { isSignedIn, isLoaded } = useUser();
   // Tipadas: son las dos listas de las que cuelga la pantalla entera.
@@ -298,23 +390,36 @@ export default function CollectionPage() {
   useEffect(() => { setPage(1); }, [searchTerm, filterSet, filterRarity, sortBy]);
 
   /**
-   * Precio de vender UNA copia de una carta de la que se tienen `quantity`.
+   * Duplicados vendibles (las favoritas quedan protegidas) y su valor.
    *
-   * Es la misma función que usa el servidor (utils/constanst.ts), y por eso el
-   * número que se pinta en el botón es exactamente el que se acaba cobrando:
-   * el precio ya no es una constante por rareza, baja con las copias que tienes.
+   * EL TOTAL CUADRA CON `sellAllDuplicatesBulkAction` CARTA A CARTA, y no por
+   * casualidad: el filtro es el mismo —`copiasLibres > 1` es `quantity > 1 +
+   * graduadas`, que es literalmente la condición del SELECT del servidor, y las
+   * favoritas se excluyen en los dos lados— y cada sumando es el importe que ese
+   * mismo servidor calculó para esa carta. La suma de los sumandos es la suma
+   * que abona el lote.
+   *
+   * LO QUE NO PUEDE GARANTIZAR NINGÚN NÚMERO DE AQUÍ: que la colección no haya
+   * cambiado entre esta pantalla y la sentencia. Si otra pestaña vende o gradúa,
+   * el guard de cantidad del servidor deja esa carta fuera del lote, y entonces
+   * se cobra MENOS de lo que decía la hoja. Eso ya está dicho en voz alta: el
+   * aviso del final compara `res.sold` con `units` y cuenta cuántas cambiaron.
    */
-  const precioDeUna = (rarity: string, quantity: number) => valorDeVenta(rarity, quantity, 1);
-
-  /** Duplicados vendibles (las favoritas quedan protegidas) y su valor. */
   const duplicateInfo = useMemo(() => {
-    const list = cards.filter((card) => card.quantity > 1 && !card.is_favorite);
+    // Con las LIBRES: una carta con 3 copias y 2 graduadas no tiene ningún
+    // duplicado que vender y el servidor ni la selecciona (su filtro es
+    // `quantity > 1 + graduadas`). Contándola, la hoja de confirmación prometía
+    // un importe que no llegaba y el aviso del final decía que "cambiaron"
+    // cartas que en realidad nunca habían entrado en el lote.
+    const list = cards.filter((card) => copiasLibres(card) > 1 && !card.is_favorite);
     let total = 0;
     let units = 0;
     list.forEach((card) => {
-      // No es (copias − 1) × precio: cada copia vale menos que la anterior.
-      total += valorDeVenta(card.rarity, card.quantity);
-      units += card.quantity - 1;
+      const sobrantes = copiasLibres(card) - 1;
+      // No es (copias − 1) × precio: cada copia vale menos que la anterior. El
+      // importe lo trae ya hecho la colección (ver `ventaDeRepetidas`).
+      total += ventaDeRepetidas(card);
+      units += sobrantes;
     });
     return { list, total, units };
   }, [cards]);
@@ -323,17 +428,23 @@ export default function CollectionPage() {
    * Vende una copia suelta. La comparte el botón de la rejilla y la hoja de
    * acciones. La actualización es optimista pero con red: si el servidor
    * rechaza o revienta se devuelven la carta y las monedas.
-   * Devuelve las monedas cobradas, o 0 si la venta no se consolidó (quien
-   * avisa al jugador necesita el importe, y tras vender ya no se puede
-   * recalcular: la carta tiene una copia menos y la tarifa ha cambiado).
+   * Devuelve las monedas COBRADAS POR EL SERVIDOR, o 0 si la venta no se
+   * consolidó (quien avisa al jugador necesita el importe, y tras vender ya no
+   * se puede recalcular: la carta tiene una copia menos y la tarifa ha
+   * cambiado).
    */
-  const sellOneCopy = async (cardId: string, rarity: string) => {
+  /* YA NO RECIBE LA RAREZA: el importe no se calcula aquí, se lee de la carta
+   * (ver `ventaDeUnaCopia`), y la rareza sólo servía para recalcularlo. */
+  const sellOneCopy = async (cardId: string) => {
     const card = cards.find((c) => c.id === cardId);
-    if (!card || card.quantity <= 1) return 0;
+    // Con las LIBRES y no con las copias: sin una copia sin graduar de sobra,
+    // `sellCardAction` devuelve null y lo único que se consigue es el aviso de
+    // error. Ver `copiasLibres`.
+    if (!card || copiasLibres(card) <= 1) return 0;
     if (!beginSale(cardId)) return 0;
 
-    // Con las copias que tiene AHORA: se va la más profunda, la más barata.
-    const price = precioDeUna(rarity, card.quantity);
+    // Lo que el servidor abonará por la copia más profunda del montón de hoy.
+    const price = ventaDeUnaCopia(card);
     const prevCards = cards; // instantánea para el modo invitado
     haptic("success");
     const updatedCards = cards.map((c) => (c.id === cardId ? { ...c, quantity: c.quantity - 1 } : c));
@@ -350,9 +461,23 @@ export default function CollectionPage() {
         const res = await sellCardAction(cardId);
         if (!res) throw new Error("venta rechazada");
         setCoins(res.coins);
-      } else {
-        saveCollectionRaw(updatedCards);
+        /* Y LOS IMPORTES DEL MONTÓN QUE QUEDA, que la respuesta trae hechos.
+         *
+         * Sin esto, el botón se quedaría enseñando el precio del montón de antes
+         * de esta venta: la curva SUBE al menguar el montón (la copia que queda
+         * es menos profunda), así que el segundo toque prometería de menos. Se
+         * adopta el número del servidor en vez de recalcularlo, que es la regla
+         * entera de este cambio. */
+        const importes: ValoresDelServidor = {
+          valorDeVentaAhora: res.valorDeVentaAhora,
+          valorDeVentaRepetidas: res.valorDeVentaRepetidas,
+        };
+        setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, ...importes } : c)));
+        setSelectedCard((prev) => (prev && prev.id === cardId ? { ...prev, ...importes } : prev));
+        // Se devuelve LO COBRADO, que es lo que va a decir el aviso.
+        return res.earned;
       }
+      saveCollectionRaw(updatedCards);
       return price;
     } catch {
       // Revertimos por id (no restaurando la instantánea) para no pisar otros
@@ -370,9 +495,9 @@ export default function CollectionPage() {
     }
   };
 
-  const handleSellCard = async (e: React.MouseEvent, cardId: string, rarity: string) => {
+  const handleSellCard = async (e: React.MouseEvent, cardId: string) => {
     e.stopPropagation();
-    await sellOneCopy(cardId, rarity);
+    await sellOneCopy(cardId);
   };
 
   /** Abre la hoja de confirmación (sustituye a confirm()). */
@@ -412,9 +537,11 @@ export default function CollectionPage() {
     try {
       if (!isSignedIn) {
         // Invitado: la colección vive en localStorage y el importe se calcula
-        // con la misma función que usaría el servidor.
+        // con la misma función que usaría el servidor. El invitado no tiene
+        // graduadas, así que `1 + graduadas` vale 1 aquí; se escribe igual que
+        // en la rama con sesión para que las dos digan la misma regla.
         const newCollection = cards.map((card) =>
-          card.quantity > 1 && !card.is_favorite ? { ...card, quantity: 1 } : card,
+          copiasLibres(card) > 1 && !card.is_favorite ? sinRepetidas(card) : card,
         );
         setCards(newCollection);
         saveCollectionRaw(newCollection);
@@ -436,9 +563,14 @@ export default function CollectionPage() {
       // El saldo es el que devuelve el servidor, no una suma optimista.
       setCoins(res.coins);
       const vendidas = new Set(res.ids);
-      setCards((prev) => prev.map((c) => (vendidas.has(c.id) ? { ...c, quantity: 1 } : c)));
+      /* SE QUEDA `1 + graduadas`, NO 1. La sentencia del servidor deja
+       * exactamente eso (`SET quantity = 1 + COALESCE(g.n, 0)`), porque las
+       * copias que están en la vitrina no se venden por esta puerta. Poniendo 1
+       * a secas, la rejilla decía "Única" de una carta que seguía teniendo tres
+       * copias y el jugador perdía de vista sus graduadas hasta recargar. */
+      setCards((prev) => prev.map((c) => (vendidas.has(c.id) ? sinRepetidas(c) : c)));
       setSelectedCard((prev: any) =>
-        prev && vendidas.has(prev.id) ? { ...prev, quantity: 1 } : prev,
+        prev && vendidas.has(prev.id) ? sinRepetidas(prev) : prev,
       );
       haptic("success");
 
@@ -458,18 +590,27 @@ export default function CollectionPage() {
   };
 
   const handleSellAllFromModal = async () => {
-    if (!selectedCard || selectedCard.quantity <= 1) return;
-    const { id, rarity } = selectedCard;
+    if (!selectedCard) return;
+    // Las libres mandan: con 4 copias y 2 graduadas sólo sobra UNA, no tres.
+    const libres = copiasLibres(selectedCard);
+    if (libres <= 1) return;
+    const { id } = selectedCard;
     const prevQuantity = selectedCard.quantity;
     if (!beginSale(id)) return;
 
-    const duplicates = prevQuantity - 1;
-    // Precio decreciente: la suma de las copias, no copias × tarifa.
-    const totalValue = valorDeVenta(rarity, prevQuantity);
+    const duplicates = libres - 1;
+    /* LO QUE QUEDA NO ES 1: es una copia libre MÁS las graduadas. Es lo que
+     * escribe la sentencia del servidor, y poner 1 aquí dejaba la rejilla
+     * diciendo "Única" con tres copias en la mano (y el aviso celebrando el
+     * importe de tres ventas cuando el servidor sólo había hecho una). */
+    const restantes = prevQuantity - duplicates;
+    // El importe lo trae hecho la colección: es el que abona
+    // `sellAllDuplicatesAction` por estas mismas copias (ver `ventaDeRepetidas`).
+    const totalValue = ventaDeRepetidas(selectedCard);
     const prevCards = cards;
-    const updatedCards = cards.map((c) => (c.id === id ? { ...c, quantity: 1 } : c));
+    const updatedCards = cards.map((c) => (c.id === id ? { ...c, quantity: restantes } : c));
     addCoins(totalValue);
-    setSelectedCard((prev: any) => (prev && prev.id === id ? { ...prev, quantity: 1 } : prev));
+    setSelectedCard((prev: any) => (prev && prev.id === id ? { ...prev, quantity: restantes } : prev));
     setCards(updatedCards);
 
     try {
@@ -477,10 +618,32 @@ export default function CollectionPage() {
         const res: any = await sellAllDuplicatesAction(id);
         if (!res?.success) throw new Error(res?.error || "venta rechazada");
         if (typeof res.coins === "number") setCoins(res.coins);
+        /* RECONCILIACIÓN CON LO QUE DICE EL SERVIDOR, no con la suposición
+         * optimista: `sold` son las copias que de verdad se fueron y `earned` lo
+         * que de verdad se abonó. Si el servidor vendió menos de lo previsto, la
+         * carta se queda con las copias que le quedan de verdad. */
+        const vendidas = Number(res.sold) || 0;
+        const quedan = Math.max(1, prevQuantity - vendidas);
+        /* Y LOS DOS IMPORTES A CERO. Esta acción es de todo o nada —o vende las
+         * `duplicates` que se le pidieron o falla—, así que tras ella el montón
+         * es una copia libre más las graduadas: no queda nada que vender por
+         * ninguna de las dos puertas, y el 0 es la misma afirmación que el
+         * `quedan` de la línea de arriba, no una cuenta de precios. */
+        const agotada: ValoresDelServidor = { valorDeVentaAhora: 0, valorDeVentaRepetidas: 0 };
+        setCards((prev) =>
+          prev.map((c) => (c.id === id ? { ...c, quantity: quedan, ...agotada } : c)),
+        );
+        setSelectedCard((prev) =>
+          prev && prev.id === id ? { ...prev, quantity: quedan, ...agotada } : prev,
+        );
+        toast(
+          `+${formatNumber(Number(res.earned) || 0)} monedas por ${formatNumber(vendidas)} duplicadas`,
+          "success",
+        );
       } else {
         saveCollectionRaw(updatedCards);
+        toast(`+${formatNumber(totalValue)} monedas por ${formatNumber(duplicates)} duplicadas`, "success");
       }
-      toast(`+${formatNumber(totalValue)} monedas por ${formatNumber(duplicates)} duplicadas`, "success");
     } catch {
       setCards((prev) => prev.map((c) => (c.id === id ? { ...c, quantity: prevQuantity } : c)));
       setSelectedCard((prev: any) =>
@@ -1071,6 +1234,10 @@ export default function CollectionPage() {
                * casi todas las cartas y el del invitado entero (graduar pide
                * cuenta). */
               const graduada = notaDeCarta(card);
+              /* Las copias que se pueden vender por aquí. No es `quantity`:
+               * las graduadas están en la vitrina y el servidor no las toca.
+               * Ver `copiasLibres`. */
+              const libres = copiasLibres(card);
               return (
               <div key={card.id} className="relative group">
                 {card.quantity > 1 && (
@@ -1187,9 +1354,9 @@ export default function CollectionPage() {
                 </div>
                 {/* En táctil no hay hover: la acción se muestra siempre en móvil */}
                 <div className="mt-2 flex justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 transition-opacity duration-[var(--d-base)]">
-                  {card.quantity > 1 ? (
+                  {libres > 1 ? (
                     <button
-                      onClick={(e) => handleSellCard(e, card.id, card.rarity)}
+                      onClick={(e) => handleSellCard(e, card.id)}
                       // Deshabilitado mientras hay una venta en vuelo: dos
                       // toques seguidos vendían dos copias con una sola
                       // confirmación del servidor.
@@ -1197,8 +1364,19 @@ export default function CollectionPage() {
                       aria-busy={pendingSale === card.id}
                       className="chip ink t-meta min-h-11 px-4 rounded-full press hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:brightness-100"
                     >
-                      {pendingSale === card.id ? "Vendiendo…" : `Vender +${precioDeUna(card.rarity, card.quantity)}`}
+                      {pendingSale === card.id ? "Vendiendo…" : `Vender +${ventaDeUnaCopia(card)}`}
                     </button>
+                  ) : (card.graduadas ?? 0) > 0 ? (
+                    /* NI "Vender" NI "Única": las dos mentirían. Aquí hay más de
+                       una copia —el contador de la esquina lo dice— pero las que
+                       sobran están graduadas, y ésas salen por la vitrina. Antes
+                       salía el botón y el servidor contestaba que no. */
+                    <span
+                      className="chip ink-soft t-micro px-2 py-1 rounded-full"
+                      title={`${card.quantity} copias · ${card.graduadas} en la vitrina`}
+                    >
+                      Sin repetidas
+                    </span>
                   ) : (
                     <span className="chip ink-soft t-micro px-2 py-1 rounded-full">Única</span>
                   )}
@@ -1242,7 +1420,16 @@ export default function CollectionPage() {
         // El importe se calcula con la misma función que cobra el servidor, y
         // se dice en voz alta por qué no es "repetidas × tarifa": si no, quien
         // haga la multiplicación de cabeza creerá que le han pagado de menos.
-        description={`Se venderán ${formatNumber(duplicateInfo.units)} cartas repetidas por ${formatNumber(duplicateInfo.total)} monedas. Cada copia extra de una misma carta vale menos que la anterior. Las favoritas no se tocan.`}
+        /* Y se dice que las graduadas no entran SÓLO si el jugador tiene
+           alguna: es la otra razón por la que el recuento puede salir más bajo
+           de lo que el contador de copias hace pensar, y sin decirlo parece que
+           el lote se ha dejado cartas. A quien no ha graduado nada no se le
+           cuenta una regla que no le afecta. */
+        description={`Se venderán ${formatNumber(duplicateInfo.units)} cartas repetidas por ${formatNumber(duplicateInfo.total)} monedas. Cada copia extra de una misma carta vale menos que la anterior. Las favoritas no se tocan.${
+          cards.some((c) => (c.graduadas ?? 0) > 0)
+            ? " Las copias graduadas tampoco: ésas se venden desde la vitrina."
+            : ""
+        }`}
         confirmLabel={`Vender por ${formatNumber(duplicateInfo.total)}`}
         destructive
         onConfirm={handleSellAllDuplicates}
@@ -1303,13 +1490,15 @@ export default function CollectionPage() {
                 Ver detalle
               </button>
 
-              {actionCardLive.quantity > 1 && (
+              {/* Con las LIBRES: ofrecer vender una copia que el servidor no
+                  puede vender sólo sirve para enseñar un error. */}
+              {copiasLibres(actionCardLive) > 1 && (
                 <button
                   onClick={async () => {
-                    const { id, rarity, name } = actionCardLive;
+                    const { id, name } = actionCardLive;
                     setActionCard(null);
                     // Sólo celebramos si el servidor aceptó la venta.
-                    const cobrado = await sellOneCopy(id, rarity);
+                    const cobrado = await sellOneCopy(id);
                     if (cobrado > 0) toast(`+${formatNumber(cobrado)} monedas por ${name}`, "success");
                   }}
                   disabled={isSelling}
@@ -1318,7 +1507,7 @@ export default function CollectionPage() {
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="w-4 h-4">
                     <circle cx="12" cy="12" r="9" /><path d="M12 7v10M9.5 9.5h4a1.8 1.8 0 0 1 0 3.5h-3a1.8 1.8 0 0 0 0 3.5h4" />
                   </svg>
-                  Vender una copia · +{precioDeUna(actionCardLive.rarity, actionCardLive.quantity)}
+                  Vender una copia · +{ventaDeUnaCopia(actionCardLive)}
                 </button>
               )}
 

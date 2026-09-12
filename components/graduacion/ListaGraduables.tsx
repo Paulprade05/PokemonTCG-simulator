@@ -87,11 +87,15 @@ export default function ListaGraduables({
       if (ea !== eb) return eb - ea;
       switch (orden) {
         case "libres_desc":
-          return b.libres - a.libres || b.valor - a.valor;
+          return b.libres - a.libres || b.valorDeReferencia - a.valorDeReferencia;
         case "nombre_asc":
           return a.name.localeCompare(b.name, "es");
         default:
-          return b.valor - a.valor || a.name.localeCompare(b.name, "es");
+          /* "Las más valiosas" se ordena por la TARIFA de la carta y no por lo
+             que pagaría la tienda por una repetida: si no, una Común con
+             cincuenta copias se pondría por delante de una Hyper Rare única, y
+             quien entra aquí viene a graduar la cara. */
+          return b.valorDeReferencia - a.valorDeReferencia || a.name.localeCompare(b.name, "es");
       }
     });
     return lista;
@@ -149,9 +153,15 @@ export default function ListaGraduables({
       <ul className="flex flex-col gap-2.5">
         {mostradas.map((carta, i) => {
           const elegidas = seleccion[carta.id] ?? 0;
-          // Con descuento: es lo que se va a cobrar de verdad por esta copia si
-          // el envío se manda tal y como está ahora mismo.
-          const precio = costeDeGraduar(carta.valor, totalCopias);
+          /* Con descuento: es lo que se va a cobrar de verdad por esta copia si
+           * el envío se manda tal y como está ahora mismo.
+           *
+           * LA BASE ES LA TARIFA PLANA, y no es intercambiable con la curva de
+           * repetidas: `graduarCartasAction` cobra
+           * `costeDeGraduar(precioDeCartaSuelta(...))`. Calcularlo sobre lo que
+           * paga la tienda por una repetida haría que este precio bajase con las
+           * copias que tienes y el servidor cobrase otra cosa. */
+          const precio = costeDeGraduar(carta.valorDeReferencia, totalCopias);
           const sinDescuento = carta.coste;
           const rebajada = precio < sinDescuento;
           // El tope es del envío entero, así que una carta con diez copias
@@ -182,8 +192,16 @@ export default function ListaGraduables({
 
               <div className="flex-1 min-w-[7.5rem]">
                 <p className="t-cuerpo font-semibold truncate">{carta.name}</p>
+                {/* "TARIFA" Y NO "VALE", que es lo que ponía y no era verdad.
+                    Este número es el precio plano de la rareza, o sea la base
+                    con la que se calcula el "Por copia" de la derecha y la banda
+                    del bazar. Lo que la tienda paga por una repetida de esta
+                    carta es otra cosa —baja con las copias que tengas— y aquí no
+                    pinta nada: en esta pantalla no se vende, se gradúa. Mientras
+                    ponía "vale", el número se leía como una oferta que nadie iba
+                    a pagar. */}
                 <p className="t-meta ink-soft truncate">
-                  {carta.rarity} · vale {formatNumber(carta.valor)}
+                  {carta.rarity} · tarifa {formatNumber(carta.valorDeReferencia)}
                 </p>
                 <p className="t-meta ink-soft tnum mt-0.5">
                   {formatNumber(carta.libres)} {carta.libres === 1 ? "copia libre" : "copias libres"}

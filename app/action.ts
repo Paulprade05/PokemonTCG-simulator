@@ -26,6 +26,7 @@
   import {
     admiteSobreEstandar,
     admiteSobrePremium,
+    composicionDelSobre,
     eraDeSerie,
     openGoldenPack,
     openPremiumPack,
@@ -289,6 +290,44 @@
    * 6 para abajo es 0,05^60, o sea cero. Mirar más copias no puede cambiar la
    * respuesta, y sí multiplicaría el trabajo en la colección de quien acumula
    * cientos de repetidas.
+   *
+   * ------------------------------------------------------------------
+   * ESTO RECORRE 1..CANTIDAD Y ESE RANGO NO ES EXACTO. POR QUÉ SE DEJA ASÍ
+   * ------------------------------------------------------------------
+   *
+   * Los índices de copia no se reparten al comprar: se reparten al GRADUAR, y
+   * el que se usa es el más bajo que esté libre (graduarCartasAction). Cuando
+   * una copia graduada se vende, su fila se queda marcada 'vendida' ocupando su
+   * índice para siempre —es lo que impide repetir su nota— pero `quantity`
+   * baja. A partir de ahí, los índices de las copias que quedan ya no son
+   * 1..cantidad: son los `cantidad` índices LIBRES más bajos, que pueden estar
+   * más arriba.
+   *
+   * O sea que este bucle puede estar pintando el desgaste de una copia que ya
+   * no está, y dejando fuera el de una que sí. Se deja así, con tres razones y
+   * una condición:
+   *
+   *   1. NO AFECTA A NINGÚN NÚMERO. De aquí no sale dinero ni notas: sale el
+   *      aspecto de la miniatura, y encima el de LA MEJOR de las copias, que es
+   *      un resumen de varias y no la promesa de ninguna en concreto.
+   *   2. NO DELATA NADA. El desgaste que viaja es el de la mejor copia; la nota
+   *      que se revelará al graduar es la del índice libre más bajo. Nunca
+   *      fueron la misma copia, ni antes de este desajuste.
+   *   3. ARREGLARLO CUESTA CARO Y EN EL SITIO MALO. Haría falta traerse los
+   *      índices ocupados (array_agg sobre graded_cards, SIN filtrar por estado)
+   *      carta a carta, y el sitio donde se llama esto es `getFullCollection`,
+   *      que lee la colección ENTERA en cada visita a la portada y al álbum.
+   *      Pagar eso en la consulta más caliente de la aplicación para mover unos
+   *      píxeles no sale a cuenta.
+   *
+   * LA CONDICIÓN: esto vale mientras de aquí siga sin salir ni una cifra. El
+   * día que la miniatura enseñe la nota, el valor o cualquier cosa que se pueda
+   * cobrar, el rango tiene que dejar de ser 1..cantidad y pasar a ser "los
+   * índices libres más bajos", que es lo que de verdad tiene el jugador.
+   *
+   * Lo mismo vale para `conEstadoFisico`, aquí abajo: deduce el número de copia
+   * contando hacia atrás desde la cantidad resultante de la compra, así que
+   * hereda el mismo desajuste y por las mismas razones se queda igual.
    */
   const COPIAS_QUE_SE_MIRAN = 60;
 
@@ -455,7 +494,19 @@
   const CATALOGO_TTL_MS = 10 * 60 * 1000;
   const catalogoDeSet = new Map<string, { cartas: CartaDeSobre[]; expira: number }>();
 
-  async function cartasDelSet(setId: string): Promise<CartaDeSobre[]> {
+  /**
+   * @param sembrarSiFalta true (lo de siempre, y lo que necesita la COMPRA):
+   *   si el set no está en `cards`, se siembra antes de sortear. Se pasa false
+   *   desde lecturas que sólo ANUNCIAN —`getComposicionDeSobres`, que no exige
+   *   sesión—: sembrar son ~250 INSERT, y una lectura abierta que escriba en la
+   *   base es exactamente el endpoint que app/page.tsx dejó de llamar a
+   *   propósito cuando la siembra se movió aquí. Sin sembrar, la lectura
+   *   devuelve vacío y quien llama decide con qué respalda.
+   */
+  async function cartasDelSet(
+    setId: string,
+    sembrarSiFalta = true,
+  ): Promise<CartaDeSobre[]> {
     const guardado = catalogoDeSet.get(setId);
     if (guardado && guardado.expira > Date.now()) return guardado.cartas;
 
@@ -467,7 +518,7 @@
     };
 
     let cartas = await leer();
-    if (cartas.length === 0) {
+    if (cartas.length === 0 && sembrarSiFalta) {
       // Set todavía sin sembrar. Se siembra AQUÍ y no se sortea contra el JSON
       // local: el abono hace JOIN contra `cards`, así que un sobre generado con
       // ids que aún no están en la tabla se cobraría y no acreditaría nada.
@@ -604,6 +655,257 @@
     if (admiteSobreEstandar(cartas, era)) permitidos.add("STANDARD");
     if (admiteSobrePremium(cartas, era)) permitidos.add("PREMIUM");
     return permitidos;
+  }
+
+  /* ==================================================================== *
+   * LO QUE LA TIENDA ANUNCIA SE CALCULA DONDE SE SORTEA
+   * ====================================================================
+   *
+   * EL PROBLEMA QUE CIERRA: app/page.tsx llamaba a `composicionDelSobre(cartas,
+   * tipo)` SIN el tercer argumento, la era. La era no es un adorno: es la tabla
+   * con la que se reparte el hueco de premio del sobre PREMIUM, y son tres
+   * tablas distintas (utils/packLogic.ts, PREMIO_PREMIUM_POR_ERA):
+   *
+   *     moderna  8 / 15 / 30 / 47      <- Escarlata y Púrpura, Mega Evolución
+   *     media    5 / 10 / 25 / 60      <- lo que anunciaba la tienda SIEMPRE
+   *     clasica  3 /  7 / 20 / 70      <- XY hacia atrás
+   *
+   * O sea: en una expansión moderna la tienda prometía un 5% de dorada y el
+   * servidor repartía un 8%; en una clásica prometía 5% y repartía 3%. Sólo el
+   * Premium —en el Estándar las tres eras comparten tabla— y sólo la tabla de
+   * probabilidades, no el número de cartas.
+   *
+   * Y NO SE ARREGLA PASÁNDOLE LA ERA AL CLIENTE. El calibrado que decide cuántas
+   * cartas trae el sobre entra por `precioDeCartaSuelta(rareza, precioEur)`, y
+   * `precioEur` —el precio real de Cardmarket que trae el cron— NO baja al
+   * navegador: vive en `card_prices` y se lo pega `cartasDelSet` al catálogo con
+   * el que el servidor sortea. El cliente no puede reproducir el número por más
+   * datos que se le manden; lo que puede es PEDIRLO. Es el mismo patrón que ya
+   * usa PublicarSheet con la banda del bazar: el servidor manda el número ya
+   * hecho y la pantalla lo pinta.
+   *
+   * ESTA ACCIÓN NO EXIGE SESIÓN, y es deliberado: el invitado ya llama a
+   * `getCardsFromSet` (services/pokemon.ts), que también lee la base, y aquí no
+   * sale ni un dato de nadie — es la ficha pública de un producto de la tienda.
+   * Lo que sí cambia con la sesión es CUÁL ES LA VERDAD, porque el sobre lo
+   * reparte otro:
+   *
+   *   · CON sesión reparte `comprarSobreAction` con la era de la ficha y con los
+   *     precios reales pegados al catálogo. Eso es lo que se anuncia.
+   *   · SIN sesión el sobre lo sortea el propio navegador (app/page.tsx llama a
+   *     openStandardPack(allCards) a secas), sin era y sin precios en euros. Su
+   *     verdad es la tabla 'media' sin ajuste, así que eso es lo que se le
+   *     anuncia al invitado — que es exactamente lo que ve hoy. Anunciarle la
+   *     era sería cambiar una mentira por otra.
+   *
+   * `reparto` en la respuesta dice cuál de los dos casos es, para que la
+   * pantalla no tenga que deducirlo.
+   */
+
+  /** Una rama del hueco de premio, ya resuelta contra los pools del set. */
+  interface RamaAnunciada {
+    /** Escalón que promete el sobre ("Ultra Rare"). */
+    etiqueta: string;
+    /** % de sobres que caen en esta rama, con la era que de verdad reparte. */
+    prob: number;
+    /** false = esta expansión no tiene ese escalón y la rama cae al respaldo. */
+    disponible: boolean;
+    /** Escalón del que sale DE VERDAD cuando no está disponible. */
+    etiquetaReal: string;
+  }
+
+  /** Un hueco fijo del sobre: no es una probabilidad, es una promesa. */
+  interface HuecoAnunciado {
+    /** Identificador del escalón, por si la pantalla quiere distinguirlo. */
+    pool: string;
+    etiqueta: string;
+    cantidad: number;
+    disponible: boolean;
+    etiquetaReal: string;
+  }
+
+  /** La ficha completa de un tipo de sobre en una expansión concreta. */
+  interface SobreAnunciado {
+    tipo: TipoSobre;
+    /** Precio en monedas: el MISMO que cobra `comprarSobreAction`. */
+    precio: number;
+    /** Cartas que trae de verdad, ya calibrado (swsh35 trae 9, no 10). */
+    cartas: number;
+    /** ¿Se vende este sobre en esta expansión? Mismo filtro que la compra. */
+    disponible: boolean;
+    /** Todos los huecos fijos, morralla incluida. */
+    garantias: HuecoAnunciado[];
+    /** Raras aseguradas, que es el número que la tienda rotula. 0 si no hay. */
+    rarasGarantizadas: number;
+    /** Reparto del hueco de premio. Vacío en Leyenda y Promo, que no tienen. */
+    premio: RamaAnunciada[];
+    /** Huecos de relleno que la calibración retiró para no pasar del precio. */
+    retirados: number;
+    /**
+     * La tabla desplegable YA MONTADA, en el orden en que se pinta: primero el
+     * premio (de mejor a peor) y luego los huecos que no son morralla. Va aquí
+     * y no en la pantalla para que "cuál es el rótulo de una rama que no existe
+     * en este set" se decida una sola vez y en el sitio que lo sabe.
+     */
+    filas: [string, string][];
+  }
+
+  /**
+   * Rótulo de la carta garantizada del Leyenda y del Promo. No sale de
+   * ETIQUETA_POOL porque no es un escalón de rareza: es la promesa de que la
+   * carta que toca es una que NO tienes (ver openGoldenPack).
+   */
+  const NUEVA_GARANTIZADA = "Carta nueva";
+
+  /** Monta la ficha de UN tipo de sobre a partir de la composición calibrada. */
+  const fichaDeSobre = (
+    tipo: TipoSobre,
+    cartas: CartaDeSobre[],
+    era: Era,
+    disponible: boolean,
+  ): SobreAnunciado => {
+    const comp = composicionDelSobre(cartas, tipo, era);
+    const pct = (n: number) => `${Number(n.toFixed(2))}%`;
+
+    const premio: RamaAnunciada[] = comp.premio.map((r) => ({
+      etiqueta: r.etiqueta,
+      prob: r.prob,
+      disponible: r.disponible,
+      etiquetaReal: r.etiquetaReal,
+    }));
+    const garantias: HuecoAnunciado[] = comp.huecos.map((h) => ({
+      pool: h.pool,
+      etiqueta: h.etiqueta,
+      cantidad: h.cantidad,
+      disponible: h.disponible,
+      etiquetaReal: h.etiquetaReal,
+    }));
+
+    /* Las filas del desplegable. Un porcentaje sólo se anuncia si su escalón
+     * EXISTE en la expansión; si no, se dice a dónde cae de verdad, que es más
+     * honesto que enseñar una probabilidad inalcanzable (en toda la era Espada
+     * y Escudo no hay ni Illustration Rare ni Ultra Rare). */
+    const filaPremio: [string, string][] = premio.map((r) =>
+      r.disponible
+        ? [r.etiqueta, pct(r.prob)]
+        : [`${r.etiqueta} (no hay)`, `→ ${r.etiquetaReal}`],
+    );
+    const filaHuecos: [string, string][] = garantias
+      .filter((h) => h.pool !== "common" && h.pool !== "uncommon")
+      .map((h) =>
+        h.disponible
+          ? [h.etiqueta, `${h.cantidad}×`]
+          : [`${h.etiqueta} (no hay)`, `→ ${h.etiquetaReal}`],
+      );
+    // El Leyenda y el Promo no tienen hueco de premio: su promesa es la carta
+    // que te falta, y eso no es una probabilidad.
+    const filas: [string, string][] =
+      tipo === "GOLDEN" || tipo === "SPECIAL"
+        ? [[NUEVA_GARANTIZADA, "1×"], ...filaHuecos]
+        : [...filaPremio, ...filaHuecos];
+
+    return {
+      tipo,
+      precio: PACK_PRICES[tipo],
+      cartas: comp.cartas,
+      disponible,
+      garantias,
+      rarasGarantizadas: garantias.find((h) => h.pool === "rare")?.cantidad ?? 0,
+      premio,
+      retirados: comp.retirados,
+      filas,
+    };
+  };
+
+  /**
+   * Qué reparte de verdad cada sobre de esta expansión, ya calculado.
+   *
+   * Lee el porqué en el bloque de arriba. Resumen para quien pinta: esto no se
+   * recalcula en la pantalla, se pinta. Devuelve los cuatro tipos SIEMPRE, con
+   * `disponible` diciendo cuáles se pueden comprar aquí.
+   */
+  export async function getComposicionDeSobres(setId: string) {
+    // Misma validación de forma que la compra: lo que llega del cliente es un
+    // deseo, no un dato, aunque esta acción sólo lea.
+    if (typeof setId !== "string" || !/^[a-z0-9._-]{1,40}$/i.test(setId)) {
+      return { ok: false as const, motivo: "set-invalido" as const };
+    }
+
+    try {
+      const { userId } = await auth();
+      const conSesion = Boolean(userId);
+
+      /* EL CATÁLOGO, POR EL MISMO SITIO QUE EL SORTEO. `cartasDelSet` es lo que
+       * le da a esto su razón de ser: trae `precioEur` pegado y comparte la
+       * caché de instancia con la compra, así que lo que se anuncia y lo que se
+       * reparte salen de la MISMA lista de cartas.
+       *
+       * SIN SEMBRAR (segundo argumento): esta acción no exige sesión y sembrar
+       * son ~250 INSERT. Si el set aún no está en la base se cae al catálogo
+       * local, que es EXACTAMENTE lo que `syncSetToDatabase` sembraría (lee de
+       * loadLocalCards), así que la respuesta no cambia por eso; y las
+       * expansiones que sólo existen en la base —las que trae el cron y no
+       * están en los 38 JSON— ya están sembradas por definición. */
+      let fuente: "bd" | "local" = "bd";
+      let cartas = await cartasDelSet(setId, false);
+      if (cartas.length === 0) {
+        fuente = "local";
+        const locales = await loadLocalCards(setId);
+        cartas = locales.map(aCartaDeSobre);
+        if (cartas.length > 0) {
+          // El precio real también aquí: si no, el respaldo local anunciaría un
+          // sobre calibrado con otros precios que el que se va a repartir.
+          try {
+            const euros = await preciosEnEuros(cartas.map((c) => c.id));
+            if (euros.size > 0) {
+              cartas = cartas.map((c) => {
+                const eur = euros.get(c.id);
+                return eur ? { ...c, precioEur: eur } : c;
+              });
+            }
+          } catch (e) {
+            console.warn("Precios reales no disponibles al anunciar el sobre:", e);
+          }
+        }
+      }
+      if (cartas.length === 0) {
+        return { ok: false as const, motivo: "sin-catalogo" as const };
+      }
+
+      const ficha = await fichaDelSet(setId);
+      if (!ficha) return { ok: false as const, motivo: "set-invalido" as const };
+
+      /* LA ERA Y LOS PRECIOS, LOS DE QUIEN VA A REPARTIR DE VERDAD. Ver el
+       * bloque de arriba: al invitado le sortea el sobre su propio navegador,
+       * que no tiene ni era ni precios en euros, así que anunciarle los del
+       * servidor sería cambiar una mentira por otra. `eraDeSerie(null)` es la
+       * era por defecto, que es el reparto que aplica el cliente. */
+      const era = conSesion ? eraDeSerie(ficha.series) : eraDeSerie(null);
+      const catalogo = conSesion
+        ? cartas
+        : cartas.map((c) => ({ ...c, precioEur: null }));
+
+      const permitidos = sobresPermitidos(ficha, catalogo, era);
+      const sobres = {} as Record<TipoSobre, SobreAnunciado>;
+      for (const tipo of TIPOS_DE_SOBRE) {
+        sobres[tipo] = fichaDeSobre(tipo, catalogo, era, permitidos.has(tipo));
+      }
+
+      return {
+        ok: true as const,
+        setId,
+        /** La era con la que se reparte de verdad el hueco de premio. */
+        era,
+        /** Quién sortea el sobre de quien está preguntando. */
+        reparto: conSesion ? ("servidor" as const) : ("navegador" as const),
+        /** De dónde salió el catálogo con el que se ha calculado todo esto. */
+        fuente,
+        sobres,
+      };
+    } catch (e) {
+      console.error("getComposicionDeSobres error:", e);
+      return { ok: false as const, motivo: "error" as const };
+    }
   }
 
   /** Ids del set que el usuario YA tiene: la garantía del Leyenda sale de aquí. */
@@ -974,6 +1276,66 @@
 
   // --- 3. GESTIÓN DE LA COLECCIÓN ---
 
+  /* ==================================================================== *
+   * LOS DOS IMPORTES QUE LA COLECCIÓN PROMETE, Y POR QUÉ LOS CALCULA EL
+   * SERVIDOR
+   * ====================================================================
+   *
+   * EL FALLO QUE CIERRA ESTO, MEDIDO: el botón "Vender +X" de la colección
+   * llamaba a `valorDeVenta(rareza, copias, 1)` SIN el cuarto argumento —el
+   * precio real de Cardmarket— porque `getFullCollection` no devolvía nada de
+   * euros. El servidor sí lo aplica. Con una Hyper Rare y 3 copias: sin precio
+   * conocido decía 214 y pagaba 214; con la carta a 50 € decía 214 y abonaba
+   * 225; con 200 €, decía 214 y abonaba 257. Siempre a favor del jugador, y
+   * siempre una promesa que no era la que se cumplía.
+   *
+   * Y NO SE ARREGLA MANDANDO `precioEur` PARA QUE LA PANTALLA REHAGA LA CUENTA:
+   * eso es la misma fórmula escrita en dos sitios, que es exactamente como nació
+   * el "Vender por 488" que abonaba 417 de la vitrina. Viajan los IMPORTES ya
+   * hechos, igual que `getVitrina` manda `valorDeVentaAhora`, y la pantalla
+   * pinta lo que le dan.
+   *
+   * SON DOS NÚMEROS Y NO UNO PORQUE HAY DOS BOTONES, y cada uno vende una
+   * cantidad distinta de copias sobre la MISMA curva:
+   *
+   *   · `valorDeVentaAhora`      UNA copia (rejilla y hoja de acciones)
+   *                              = lo que abona `sellCardAction`.
+   *   · `valorDeVentaRepetidas`  TODAS las repetidas libres (el botón del
+   *                              detalle y cada sumando del total de "Limpiar
+   *                              duplicados") = lo que abonan
+   *                              `sellAllDuplicatesAction` y, carta a carta,
+   *                              `sellAllDuplicatesBulkAction`.
+   *
+   * No son derivables el uno del otro sin volver a aplicar la curva, que es
+   * justo lo que la pantalla deja de hacer.
+   *
+   * LA CURVA VA SOBRE EL MONTÓN ENTERO Y LAS GRADUADAS SÓLO ACOTAN CUÁNTAS SE
+   * VENDEN. Es la misma regla que ya sostienen las tres rutas de venta: una
+   * copia graduada sigue ocupando su sitio en el montón —por eso `copiasQueTengo`
+   * es `quantity` a secas— pero sale por la vitrina, así que no entra en el
+   * recuento de lo vendible.
+   *
+   * @param copiasQueTengo copias en propiedad AHORA, graduadas incluidas.
+   * @param graduadas      cuántas de ellas están en la vitrina.
+   */
+  function valoresDeVentaDelMonton(
+    rareza: string | null | undefined,
+    copiasQueTengo: number,
+    graduadas: number,
+    euros?: number | null,
+  ) {
+    const repetidasLibres = Math.max(0, copiasQueTengo - graduadas - 1);
+    return {
+      /* `Math.min(1, ...)` y no un 1 fijo: con 3 copias y 2 graduadas queda UNA
+       * copia libre, `sellCardAction` contesta que no, y el número tiene que ser
+       * 0 para que el botón no prometa un pago que la acción va a rechazar. Es
+       * el mismo criterio que el "el botón enseña 0 donde la venta se niega" de
+       * la vitrina. */
+      valorDeVentaAhora: valorDeVenta(rareza, copiasQueTengo, Math.min(1, repetidasLibres), euros),
+      valorDeVentaRepetidas: valorDeVenta(rareza, copiasQueTengo, repetidasLibres, euros),
+    };
+  }
+
   export async function getFullCollection() {
     const { userId } = await auth();
     if (!userId) return [];
@@ -1049,6 +1411,17 @@
        * —que es lo que delata la nota— justo lo que se acaba de cerrar. */
       const secretoNotas = secretoDeNotas();
 
+      /* LOS PRECIOS REALES, EN UNA SOLA CONSULTA PARA LA COLECCIÓN ENTERA.
+       *
+       * Es el mismo patrón que `sellAllDuplicatesBulkAction`, que puede tocar
+       * cientos de cartas: `preciosEnEuros` trocea de 900 en 900 ids y cachea
+       * diez minutos por carta, así que esto son cero o una idas y vueltas más
+       * —tres con una colección de 2.500 cartas recién arrancado el proceso—, no
+       * una por carta. Y nunca lanza: sin tabla de precios devuelve un mapa
+       * vacío y todos los importes salen a tarifa por rareza, que es el
+       * comportamiento de siempre. */
+      const euros = await preciosEnEuros(rows.map((r) => String(r.id)));
+
       return enIdiomaUsuario(
         rows.map((row: any) => {
           const estado = estadoDeLaMejorCopia(
@@ -1057,6 +1430,7 @@
             Number(row.quantity) || 1,
             secretoNotas,
           );
+          const eur = euros.get(String(row.id));
           return {
             ...row,
             images: parse(row.images),
@@ -1066,6 +1440,23 @@
             weaknesses: parse(row.weaknesses, []),
             retreatCost: parse(row.retreat_cost, []),
             flavorText: row.flavor_text,
+            /* LO QUE ABONAN LAS DOS RUTAS DE VENTA, YA CALCULADO. Ver el bloque
+             * de `valoresDeVentaDelMonton`: la pantalla no vuelve a aplicar la
+             * curva ni el ajuste por euros, pinta estos números. */
+            ...valoresDeVentaDelMonton(
+              row.rarity,
+              Number(row.quantity) || 0,
+              Number(row.graduadas) || 0,
+              eur,
+            ),
+            /**
+             * Tarifa plana de la carta con su ajuste por precio real: lo que
+             * VALE, no lo que se cobra por una repetida. Es la casilla "Valor de
+             * la carta" del detalle, y es el mismo número —y el mismo nombre—
+             * que mandan `getVitrina` y `getCartasGraduables` para la banda del
+             * bazar. La curva NO entra aquí a propósito.
+             */
+            valorDeReferencia: precioDeCartaSuelta(row.rarity, eur),
             // Ausente cuando la carta se ve bien, que es lo normal.
             ...(estado ?? {}),
           };
@@ -1191,7 +1582,8 @@
       /* La curva se aplica sobre el montón ENTERO (ver el bloque de arriba):
        * las graduadas siguen siendo copias en propiedad y ocupan su sitio en la
        * curva. Lo único que hacen es no poder venderse por esta vía. */
-      const price = valorDeVenta(info[0].rarity, cantidad, 1, await euroDeCarta(cardId));
+      const eur = await euroDeCarta(cardId);
+      const price = valorDeVenta(info[0].rarity, cantidad, 1, eur);
       if (price <= 0) return null; // copia única: no hay nada que vender
 
       // Descuento y abono en UNA sola sentencia (CTE): o pasan los dos o ninguno.
@@ -1225,7 +1617,29 @@
 
       revalidatePath('/');
       revalidatePath('/collection');
-      return { earned: price, coins: Number(rows[0]?.coins ?? 0) };
+      /* Y SE DEVUELVEN LOS IMPORTES DEL MONTÓN QUE QUEDA.
+       *
+       * Sin esto, el arreglo de arriba traía un fallo nuevo: la colección pinta
+       * ahora números del servidor, y tras esta venta la pantalla se queda con
+       * el montón viejo en la mano. Vender de una en una enseñaría en el segundo
+       * toque el precio del primero —y la curva SUBE al menguar el montón, así
+       * que volvería a prometer de menos—. Con esto la pantalla parchea la carta
+       * y el número sigue siendo el del servidor, no una cuenta suya.
+       *
+       * No cuesta ni una consulta: la rareza, el recuento de graduadas y el euro
+       * ya están leídos aquí arriba. Y es lo mismo que hace la pantalla de
+       * graduación, que tras cada venta RE-ADOPTA el `valorDeVentaAhora` de la
+       * vitrina en vez de recalcularlo (components/graduacion/Graduacion.tsx):
+       * el número lo pone siempre quien cobra.
+       *
+       * Las otras dos rutas de venta NO lo necesitan: las dos dejan el montón en
+       * "una copia libre más las graduadas", o sea sin nada que vender, y ahí los
+       * dos importes son 0 por definición. */
+      return {
+        earned: price,
+        coins: Number(rows[0]?.coins ?? 0),
+        ...valoresDeVentaDelMonton(info[0].rarity, cantidad - 1, graduadas, eur),
+      };
     } catch (error) {
       console.error("Error vendiendo carta:", error);
       return null;
@@ -3542,6 +3956,79 @@ function secretoDeNotas(): string {
   return RESPALDO_SECRETO_NOTAS;
 }
 
+/* ==================================================================== *
+ * UNA CARTA TIENE DOS VALORES Y NO SON EL MISMO NÚMERO
+ * ====================================================================
+ *
+ * EL FALLO QUE CIERRA ESTE BLOQUE: el botón de la vitrina decía "Vender por
+ * 488" y el servidor abonaba 417. No era un redondeo, eran dos fórmulas
+ * distintas viviendo en dos funciones distintas:
+ *
+ *   · `getVitrina` pintaba valorGraduado(precioDeCartaSuelta(...), nota), la
+ *     TARIFA PLANA — lo que paga la primera copia repetida;
+ *   · `venderGraduadaAction` abonaba valorGraduado(valorDeVenta(...), nota), la
+ *     CURVA de repetidas, que es lo que de verdad se cobra.
+ *
+ * Medido sobre una Hyper Rare (tarifa 250) con un 10: con 3 copias el botón
+ * decía 488 y pagaba 417; con 20 copias decía 488 y pagaba 123. Coincidían
+ * exactamente con 2 copias, que es el único caso en que la curva no ha empezado
+ * a bajar. Y no es que una de las dos esté mal: LAS DOS HACEN FALTA, porque
+ * responden a preguntas distintas y hay una pantalla detrás de cada una.
+ *
+ *   · LO QUE SE COBRA AL VENDER AHORA (la curva). Tiene que llevar las copias
+ *     que se tienen, porque la curva anti-acaparamiento existe justo para que
+ *     la copia número veinte no pague como la primera. Es la cifra del botón.
+ *   · EL VALOR DE REFERENCIA (la tarifa plana). Es el que `publicarEnBazarAction`
+ *     usa para calcular la banda de precio del anuncio, y el que
+ *     `graduarCartasAction` usa para cobrar la graduación. Tiene que ser plano a
+ *     propósito: si la banda del bazar dependiera de cuántas copias tiene el
+ *     vendedor, la misma carta valdría cosas distintas según quién la publique,
+ *     y el comprador no tiene forma de saberlo.
+ *
+ * POR QUÉ DOS FUNCIONES Y NO DOS EXPRESIONES COPIADAS: porque copiadas ya se
+ * separaron una vez. Cada número sale ahora de UN sitio, y quien lo pinta y
+ * quien lo paga llaman al mismo.
+ */
+
+/**
+ * Lo que abona la tienda HOY por vender una copia YA GRADUADA. Es la curva de
+ * repetidas (la copia más alta del montón, la más barata) con el multiplicador
+ * de la nota encima, en ese orden.
+ *
+ * EL ORDEN IMPORTA y está explicado en utils/graduacion.ts (valorGraduado): si
+ * se multiplicara la tarifa y luego se aplicase la curva, graduar sería la
+ * forma de esquivar la curva y 400 repetidas graduadas cobrarían como la
+ * primera.
+ *
+ * @param copiasQueTengo copias en propiedad AHORA, graduadas incluidas: ocupan
+ *                       su sitio en la curva aunque no se vendan por esta vía.
+ */
+function valorDeVenderGraduada(
+  rareza: string | null | undefined,
+  copiasQueTengo: number,
+  nota: number,
+  euros?: number | null,
+): number {
+  return valorGraduado(valorDeVenta(rareza, copiasQueTengo, 1, euros), nota);
+}
+
+/**
+ * Valor de REFERENCIA de una copia graduada: la tarifa plana de la carta por el
+ * multiplicador de su nota, sin la curva de repetidas.
+ *
+ * No es lo que se cobra al venderla (para eso está la de arriba): es el número
+ * contra el que `publicarEnBazarAction` mide la banda de precio del anuncio, y
+ * por eso la pantalla de publicar necesita EXACTAMENTE éste — si pintara otro,
+ * ofrecería un precio que el servidor rechaza.
+ */
+function valorDeReferenciaGraduada(
+  rareza: string | null | undefined,
+  nota: number,
+  euros?: number | null,
+): number {
+  return valorGraduado(precioDeCartaSuelta(rareza, euros), nota);
+}
+
 /**
  * Qué se puede graduar de la colección y cuánto costaría.
  *
@@ -3572,7 +4059,12 @@ export async function getCartasGraduables() {
     const cartas = rows.map((r: any) => {
       const cantidad = Number(r.quantity);
       const graduadas = Number(r.graduadas ?? 0);
-      const valor = precioDeCartaSuelta(r.rarity, euros.get(String(r.card_id)));
+      const eur = euros.get(String(r.card_id));
+      /* LOS DOS VALORES, cada uno con su nombre. Ver el bloque largo de arriba:
+       * el plano es el de la banda del bazar y el del coste de graduar, y la
+       * curva es lo que la tienda paga hoy por una copia sobrante. Antes iba
+       * sólo el plano, con el rótulo "vale X", y ese X no lo pagaba nadie. */
+      const valorDeReferencia = precioDeCartaSuelta(r.rarity, eur);
       return {
         id: String(r.card_id),
         name: String(r.name ?? ""),
@@ -3583,8 +4075,26 @@ export async function getCartasGraduables() {
         graduadas,
         /** Copias que aún no tienen nota. Son las que se pueden mandar. */
         libres: cantidad - graduadas,
-        valor,
-        coste: costeDeGraduar(valor),
+        /**
+         * Lo que la tienda paga HOY por UNA copia sobrante sin graduar: la
+         * misma expresión que cobra `sellCardAction`. Es 0 cuando sólo queda
+         * una copia, porque esa no se vende (el álbum no se vacía).
+         */
+        valorDeVentaAhora: valorDeVenta(r.rarity, cantidad, 1, eur),
+        /**
+         * Tarifa plana de la carta. Es la base del coste de graduar (lo que
+         * cobra `graduarCartasAction`) y del valor con el que
+         * `publicarEnBazarAction` calcula la banda del anuncio.
+         */
+        valorDeReferencia,
+        /**
+         * Alias de `valorDeReferencia`, que es lo que este campo siempre fue.
+         * Sigue aquí porque lo leen pantallas que no son de este cambio
+         * (PublicarSheet para la banda, ListaGraduables para el coste); el
+         * rótulo "vale X" es el que tiene que pasarse a `valorDeVentaAhora`.
+         */
+        valor: valorDeReferencia,
+        coste: costeDeGraduar(valorDeReferencia),
       };
     });
 
@@ -3669,22 +4179,61 @@ export async function graduarCartasAction(
     /* PRIMERA PASADA: qué copias se pueden graduar de verdad.
      *
      * Se recorre el estado REAL de la colección, no lo que pidió el cliente:
-     * de cada carta se toman las copias libres más bajas, en orden, hasta
-     * llegar a las que pidió o quedarse sin. Determinista a propósito — dos
+     * de cada carta se toman los índices libres MÁS BAJOS, en orden, hasta
+     * llegar a los que pidió o quedarse sin. Determinista a propósito — dos
      * peticiones iguales apuntan a las mismas copias, y de la carrera entre
-     * ellas se encarga el índice único (user_id, card_id, copia). */
+     * ellas se encarga el índice único (user_id, card_id, copia).
+     *
+     * ------------------------------------------------------------------
+     * EL TOPE DEL BUCLE ERA `copia <= cantidad` Y DEJABA AL JUGADOR ATASCADO
+     * ------------------------------------------------------------------
+     *
+     * `tomadas` incluye las filas 'vendida' a propósito: su hueco no se suelta
+     * jamás porque el hueco ES la nota (ver el índice único de graded_cards en
+     * services/esquemaMejoras.ts). Pero al vender una graduada, `quantity` BAJA
+     * y su índice se queda dentro de 1..quantity, así que cada venta se come un
+     * índice del rango que el bucle miraba. Con dos ventas y una copia restante
+     * el rango era {1} y estaba ocupado: la pantalla ofrecía la copia
+     * —getCartasGraduables cuenta `quantity - activas`, y las vendidas no son
+     * activas— y la acción contestaba "nada-que-graduar". Sin salida: ni
+     * graduando más ni vendiendo más se recupera un índice, porque no se
+     * recupera nunca ninguno.
+     *
+     * AHORA NO HAY TOPE ARTIFICIAL: se sube por los enteros saltando los
+     * ocupados hasta reunir los que se piden. El índice deja de significar
+     * "posición física dentro de las que tengo" —que nunca fue verdad, sólo lo
+     * parecía— y significa lo único que siempre significó: qué tirada le toca a
+     * esta copia. El bazar ya hacía esto mismo desde el otro lado: al comprador
+     * se le da MAX(copia) + 1 (CTE 'entrega' de comprarEnBazarAction), que
+     * también puede pasarse de sus copias.
+     *
+     * CUÁNTAS SE GRADÚAN LO SIGUE DECIDIENDO LA BASE, no este bucle: el CTE
+     * 'posibles' corta por `c.puesto <= b.quantity - activas` sobre la fila ya
+     * bloqueada. El invariante que hay que sostener es de RECUENTO
+     * (graduadas + nuevas <= quantity) y ése no lo toca cambiar el tope: esto
+     * sólo propone candidatas, y de más nunca entran.
+     *
+     * Y NO RECICLA NOTAS: `ocupadas` se llena con TODAS las filas de
+     * graded_cards de esas cartas, sin filtrar por estado, así que un índice
+     * usado no vuelve a salir de aquí; el `NOT EXISTS` de 'posibles' tampoco
+     * filtra por estado, y el índice único (user_id, card_id, copia) tampoco.
+     * Tres cerraduras, ninguna mira el estado, que es justo el punto.
+     *
+     * EL BUCLE TERMINA SIEMPRE: entre 1 y `tomadas.size + quiere` hay como
+     * mucho `tomadas.size` ocupados, así que quedan al menos `quiere` libres.
+     * El tope está escrito y no es un `while (true)` con fe. */
     const cCard: string[] = [];
     const cCopia: number[] = [];
     const cNota: number[] = [];
 
     for (const fila of estado) {
       const cardId = String(fila.card_id);
-      const cantidad = Number(fila.quantity);
       const quiere = pedidas.get(cardId) ?? 0;
       const tomadas = ocupadas.get(cardId) ?? new Set<number>();
+      const tope = tomadas.size + quiere;
 
       let puestas = 0;
-      for (let copia = 1; copia <= cantidad && puestas < quiere; copia++) {
+      for (let copia = 1; copia <= tope && puestas < quiere; copia++) {
         if (tomadas.has(copia)) continue;
         cCard.push(cardId);
         cCopia.push(copia);
@@ -3961,10 +4510,12 @@ export async function getVitrina() {
       const semilla = semillaDeCopia(userId, String(r.card_id), Number(r.copia), secreto);
       const desperfectos = desperfectosDeCopia(semilla, nota);
       const marcas = marcasDeCopia(semilla, desperfectos);
-      /* El valor base es el de UNA copia suelta, sin la curva de repetidas: una
-       * carta graduada sale del montón y deja de ser "la copia número N". Sobre
-       * eso se aplica el multiplicador de la nota. */
-      const base = precioDeCartaSuelta(r.rarity, eur);
+      const copiasTotales = Number(r.quantity ?? 0);
+      /* LOS DOS VALORES, cada uno con su nombre y su pantalla. Ver el bloque
+       * largo de arriba: aquí vivía la mentira del botón "Vender por 488" que
+       * abonaba 417, porque este cálculo era el plano y el de
+       * venderGraduadaAction era la curva. */
+      const valorDeReferencia = valorDeReferenciaGraduada(r.rarity, nota, eur);
       return {
         gradedId: Number(r.id),
         id: String(r.card_id),
@@ -3978,9 +4529,28 @@ export async function getVitrina() {
         /* Ya calculados. Ver el comentario de arriba: la semilla no viaja. */
         desperfectos,
         marcas,
-        valor: valorGraduado(base, nota),
+        /**
+         * LO QUE ABONA `venderGraduadaAction` SI SE VENDE AHORA. Sale de la
+         * misma función que el abono, así que el botón no puede volver a
+         * prometer una cifra distinta de la que se cobra. Es 0 cuando sólo
+         * queda una copia: entonces la acción responde "ultima-copia".
+         */
+        valorDeVentaAhora: valorDeVenderGraduada(r.rarity, copiasTotales, nota, eur),
+        /**
+         * Valor de referencia (tarifa plana × nota). Es el que
+         * `publicarEnBazarAction` usa para la banda del anuncio, así que es el
+         * que tiene que pintar la hoja de publicar en el bazar.
+         */
+        valorDeReferencia,
+        /**
+         * Alias de `valorDeReferencia`, que es lo que este campo siempre fue.
+         * Se mantiene porque PublicarSheet lo lee para la banda; el botón
+         * "Vender por X" de la vitrina es el que tiene que pasarse a
+         * `valorDeVentaAhora`.
+         */
+        valor: valorDeReferencia,
         coste: Number(r.coste ?? 0),
-        copiasTotales: Number(r.quantity ?? 0),
+        copiasTotales,
       };
     });
 
@@ -4048,9 +4618,18 @@ export async function venderGraduadaAction(gradedId: number) {
      * Ahora la base es lo que de VERDAD pagaría esa copia hoy —valorDeVenta con
      * las copias que se tienen— y el multiplicador de la nota se aplica encima.
      * Una copia profunda graduada sigue valiendo más que sin graduar, pero ya
-     * no vale más que la primera. */
-    const base = valorDeVenta(info[0].rarity, cantidad, 1, await euroDeCarta(cardId));
-    const importe = valorGraduado(base, nota);
+     * no vale más que la primera.
+     *
+     * Y LA EXPRESIÓN YA NO VIVE AQUÍ: es `valorDeVenderGraduada`, la misma que
+     * llama `getVitrina` para pintar el botón. Mientras fueron dos expresiones
+     * —ésta la curva, la de la vitrina la tarifa plana— el botón decía 488 y
+     * esto abonaba 417. Separadas se separan; compartidas, no pueden. */
+    const importe = valorDeVenderGraduada(
+      info[0].rarity,
+      cantidad,
+      nota,
+      await euroDeCarta(cardId),
+    );
     if (importe <= 0) {
       // Un 1 vale x0: la carta no se vende, se tira. Mejor decirlo que cobrar 0.
       return { ok: false as const, error: "sin-valor" as const };
@@ -4361,7 +4940,13 @@ export async function publicarEnBazarAction(
       // El valor de referencia de la banda es el YA multiplicado por la nota:
       // un 10 vale el triple, y si la banda se calculase sobre el valor sin
       // graduar, publicar un 10 al precio que le corresponde sería imposible.
-      valor = valorGraduado(valor, nota);
+      //
+      // Sale de la MISMA función que pinta la hoja de publicar (getVitrina
+      // devuelve `valorDeReferencia`), que es lo que garantiza que el precio
+      // que ofrece el deslizador caiga siempre dentro de la banda que se
+      // comprueba aquí. Con la fórmula escrita dos veces, bastaba con que una
+      // de las dos cambiara para que el jugador viera "ese precio no vale".
+      valor = valorDeReferenciaGraduada(info[0].rarity, nota, eur);
       if (valor <= 0) return { ok: false as const, error: "sin-valor" as const };
     }
 
