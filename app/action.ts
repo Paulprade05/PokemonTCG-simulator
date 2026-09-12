@@ -875,12 +875,25 @@
       const ficha = await fichaDelSet(setId);
       if (!ficha) return { ok: false as const, motivo: "set-invalido" as const };
 
-      /* LA ERA Y LOS PRECIOS, LOS DE QUIEN VA A REPARTIR DE VERDAD. Ver el
-       * bloque de arriba: al invitado le sortea el sobre su propio navegador,
-       * que no tiene ni era ni precios en euros, así que anunciarle los del
-       * servidor sería cambiar una mentira por otra. `eraDeSerie(null)` es la
-       * era por defecto, que es el reparto que aplica el cliente. */
-      const era = conSesion ? eraDeSerie(ficha.series) : eraDeSerie(null);
+      /* LA ERA Y LOS PRECIOS, LOS DE QUIEN VA A REPARTIR DE VERDAD, y las dos
+       * mitades ya no van juntas.
+       *
+       * LA ERA ES LA MISMA PARA TODOS. Aquí había un `conSesion ? ... : null`
+       * porque el navegador del invitado repartía sin era, y anunciarle la del
+       * servidor habría sido cambiar una mentira por otra. Desde que el invitado
+       * reparte con la era de la expansión (app/page.tsx, `eraDelReparto`), esa
+       * excepción decía justo lo contrario de lo que pasa: le habría prometido
+       * 5/10/25/60 en un Escarlata y Púrpura donde su navegador le da 8/15/30/47.
+       * No llegaba a nadie —hoy sólo pregunta quien tiene sesión— pero era una
+       * trampa esperando al primero que abriera esta acción al invitado.
+       *
+       * LOS PRECIOS EN EUROS SÍ SIGUEN SIENDO DISTINTOS, y no es un descuido:
+       * el precio real de Cardmarket vive en la base y no baja al navegador, así
+       * que el invitado no puede reproducir una calibración que le quite un
+       * hueco. Anunciárselo le prometería un número de cartas que no va a
+       * recibir. Por eso el catálogo del invitado va con `precioEur` anulado:
+       * esta respuesta calcula exactamente lo que calcula su navegador. */
+      const era = eraDeSerie(ficha.series);
       const catalogo = conSesion
         ? cartas
         : cartas.map((c) => ({ ...c, precioEur: null }));

@@ -797,11 +797,14 @@ export default function Home() {
    *   · SIN SESIÓN reparte ESTE navegador (`openStandardPack` y compañía, en
    *     handleBuyPack), con `allCards` y con `eraDelReparto`. Su verdad es la que
    *     se calcula aquí abajo con ESA MISMA lista y ESA MISMA era, así que no se
-   *     le pregunta al servidor: la respuesta no aportaría nada —para el invitado
-   *     calcula con la era por defecto y sin precios, que es justo esto— y sí
-   *     abriría la única rendija por la que anuncio y reparto pueden volver a
-   *     separarse (que el servidor mire un catálogo distinto del que tiene el
-   *     navegador en la mano). Al invitado le anuncia quien le reparte, y es éste.
+   *     le pregunta al servidor: la respuesta sería PEOR que este cálculo —sin
+   *     sesión `getComposicionDeSobres` contesta con la era POR DEFECTO (mira su
+   *     `conSesion ? eraDeSerie(ficha.series) : eraDeSerie(null)` en
+   *     app/action.ts), y desde que el invitado reparte por era ésa ya no es la
+   *     suya— y además abriría la única rendija por la que anuncio y reparto
+   *     pueden volver a separarse (que el servidor mire un catálogo distinto del
+   *     que tiene el navegador en la mano). Al invitado le anuncia quien le
+   *     reparte, y es éste.
    *
    * El cálculo local NO sobra con sesión: es lo que se pinta mientras la
    * respuesta viaja y si la petición falla. Con la era ya puesta, ese respaldo
@@ -815,15 +818,37 @@ export default function Home() {
    * (guarda el nombre español aparte, en `serieEs`), así que `eraDeSerie` casa
    * con sus claves tal cual.
    *
-   * SIN SESIÓN ES LA ERA POR DEFECTO, y no por descuido: el invitado sortea en
-   * el navegador y `openStandardPack` la usa al no recibir ninguna. Que lo que
-   * se anuncia y lo que se saca lean esta MISMA constante es lo que impide que
-   * vuelvan a separarse: el día que se quiera que el invitado reparta por era,
-   * se quita el `isSignedIn` de aquí y las dos cosas se mueven a la vez.
+   * ES LA MISMA CON SESIÓN Y SIN ELLA, y eso es lo que acaba de cambiar. Antes
+   * aquí ponía `isSignedIn ? currentSetObj?.series : null`, o sea que el
+   * invitado repartía y anunciaba con la era por defecto mientras el servidor
+   * repartía a quien tiene cuenta con la de la expansión: coherentes cada uno
+   * consigo mismo, pero dos juegos distintos. En las catorce expansiones de
+   * Escarlata y Púrpura que venden Premium, el invitado veía y recibía
+   * 5/10/25/60 y el jugador con cuenta 8/15/30/47. Ahora los dos leen
+   * `eraDeSerie(series)`.
+   *
+   * SÓLO SE MUEVE EL PREMIUM, y no por descuido: las tres eras comparten la
+   * tabla del Estándar (está explicado en PREMIO_ESTANDAR_POR_ERA) y el
+   * Leyenda/Promo no tiene hueco de premio. Medido sobre las 40 expansiones con
+   * cartas en el repositorio: cambian dieciséis, todas de Escarlata y Púrpura,
+   * todas sólo en el Premium y NINGUNA pierde cartas (siguen siendo 10).
+   *
+   * LA SERIE LA TIENE TAMBIÉN EL INVITADO: `currentSetObj` sale de `dbSets`, que
+   * es lo que devuelve `getSetsFromDB` —sin sesión también—, y esa acción sirve
+   * `s.series` de Postgres o, si la tabla está vacía, el `series` de
+   * src/data/all-sets.json. Por los dos caminos llega el mismo nombre inglés.
+   *
+   * CUANDO NO HAY SERIE manda el respaldo de `eraDeSerie`, que es la era por
+   * defecto ('media', el reparto de siempre). Pasa en la ventana de un render en
+   * la que las cartas ya han llegado y la lista de expansiones no —son dos
+   * peticiones sueltas—, y en una expansión recién ingerida sin `series`. No
+   * miente a nadie: lo que se anuncia y lo que se sortea salen de ESTA misma
+   * constante en ese mismo render, así que a lo sumo el sobre se reparte con la
+   * tabla de siempre, que es exactamente lo que hacía el invitado hasta hoy.
    */
   const eraDelReparto = useMemo(
-    () => eraDeSerie(isSignedIn ? currentSetObj?.series : null),
-    [isSignedIn, currentSetObj?.series],
+    () => eraDeSerie(currentSetObj?.series),
+    [currentSetObj?.series],
   );
 
   /** La ficha de los cuatro sobres tal y como la calcula quien los reparte. */
@@ -1394,13 +1419,14 @@ export default function Home() {
       /* MODO INVITADO: no hay cuenta que defraudar, así que el sobre se sortea
        * y se guarda aquí mismo, en local, exactamente igual que siempre.
        *
-       * LA ERA VA EXPLÍCITA Y ES LA MISMA QUE SE ANUNCIA. Aquí no cambia nada
-       * hoy —sin sesión `eraDelReparto` es la era por defecto, que es la que
-       * `openStandardPack` ya usaba al no recibir ninguna—, pero deja escrito lo
-       * que antes sólo coincidía por casualidad: la tabla que se pinta en la
-       * tienda y la que sortea esta línea salen del MISMO valor. El Leyenda no
-       * la lleva porque no tiene hueco de premio: su promesa es una carta que no
-       * tengas, y eso no depende de la era. */
+       * LA ERA VA EXPLÍCITA Y ES LA MISMA QUE SE ANUNCIA, y ahora es además la
+       * DE LA EXPANSIÓN y no la de por defecto: el invitado sortea con la misma
+       * tabla que el servidor usaría para este set (ver `eraDelReparto`). La
+       * tabla que se pinta en la tienda y la que sortea esta línea salen del
+       * MISMO valor, así que no pueden desmentirse. El Leyenda no la lleva
+       * porque no tiene hueco de premio: su promesa es una carta que no tengas,
+       * y eso no depende de la era —`openGoldenPack` ni siquiera la acepta, y el
+       * Promo Pack entra por esta misma rama. */
       let newPack: Carta[] = [];
       if (type === "STANDARD") newPack = openStandardPack(allCards, eraDelReparto);
       else if (type === "PREMIUM") newPack = openPremiumPack(allCards, eraDelReparto);
