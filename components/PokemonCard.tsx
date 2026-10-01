@@ -53,6 +53,16 @@ function CardFace({
         // debe esperar al observer de lazy-loading.
         loading={loading}
         decoding="async"
+        /* NO SE PUEDE LEVANTAR COMO IMAGEN. Desde iOS 15, mantener el dedo
+           sobre un <img> lo despega para arrastrarlo (a otra app, a Notas…)
+           hacia el medio segundo: justo lo que dura la pulsación larga que en
+           la colección abre las acciones de la carta. La miniatura se despegaba
+           bajo el dedo y el `pointercancel` del arrastre nativo se llevaba por
+           delante nuestro gesto. `-webkit-touch-callout: none` (globals.css)
+           quita el menú, pero no el arrastre. Ya lo llevaban la ficha del álbum
+           y CardZoom; faltaba aquí, que es de donde salen todas las rejillas.
+           Es un atributo: ni crea capa ni toca la nitidez. */
+        draggable={false}
         /* `cover` Y NO `contain`, QUE ES DE DONDE SALÍA EL MARCO DE UNOS PÍXELES.
            El hueco es `aspect-[2.5/3.5]` = 0,71429, que es la proporción FÍSICA
            de una carta. Los escaneos que sirve la API no la tienen: las modernas
@@ -334,6 +344,9 @@ function PokemonCardInteractive({
             alt="Card Back"
             loading="lazy"
             decoding="async"
+            // Igual que la cara: el reverso es lo que hay bajo el dedo mientras
+            // el sobre aún no se ha girado.
+            draggable={false}
             className="w-full h-full object-cover"
           />
         </div>

@@ -6,7 +6,6 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
   getUserData,
-  comprarSobreAction,
   getSetsFromDB,
   getFullCollection,
   claimSetCompletionBonuses,
@@ -37,22 +36,81 @@ import {
 } from "../utils/constanst";
 import { RARITY_GLOW } from "../utils/rarityGlow";
 import { useCurrency } from "../hooks/useGameCurrency";
+import { useIdentidad } from "../hooks/useIdentidad";
+import { useFondoQuieto } from "../hooks/useBloqueoScroll";
 import { useHaptics } from "../hooks/useHaptics";
 import { useSound } from "../hooks/useSound";
 import { useSwipe, touchActionFor } from "../hooks/useSwipe";
-import { leerAjustes, guardarAjustes, suscribirseAjustes } from "../utils/settings";
+import { leerAjustes, guardarAjustes, suscribirseAjustes, leerIdioma } from "../utils/settings";
 import { useToast } from "../components/ui/Toast";
 import { useImmersive } from "../components/AppShell";
+import EstadoError from "../components/ui/EstadoError";
+import SinConexion from "../components/ui/SinConexion";
+import CardDetailModal from "../components/CardDetailModal";
 import PokemonCard from "../components/PokemonCard";
 import MazoCartas from "../components/MazoCartas";
 import BoosterPack, { semillaDeSobre, type FaseSobre } from "../components/BoosterPack";
 import { formatNumber } from "../utils/format";
 import { D, EASE_OUT } from "../utils/motion";
 import Portal from "../components/ui/Portal";
-import { IconoDesplegar, IconoVolver } from "../components/icons";
+import { IconoDesplegar, IconoMoneda, IconoVolver } from "../components/icons";
 import type { Carta, Expansion } from "../utils/tipos";
+// Lo que la tienda recuerda entre visitas y las piezas que se han ido sacando
+// de este fichero. El porqué de cada una está en su cabecera.
+import {
+  catalogoDeSet,
+  leerSetsGuardados,
+  guardarSets,
+  leerUltimaExpansion,
+  guardarUltimaExpansion,
+  leerAperturaRapida,
+  guardarAperturaRapida,
+  EVENTO_APERTURA_RAPIDA,
+  leerCompraPendiente,
+  guardarCompraPendiente,
+  olvidarCompraPendiente,
+  avisoDeInvitadoVisto,
+  marcarAvisoDeInvitado,
+  type CompraPendiente,
+  type ExpansionConSerie,
+  type UltimaExpansion,
+} from "../components/tienda/memoria";
+import {
+  inventarioDe,
+  sumarSobre,
+  restarVenta,
+  tasarRepetidas,
+  resumenDeRepetidas,
+  type Inventario,
+} from "../components/tienda/repetidas";
+import {
+  comprarConClave,
+  recuperarConClave,
+  textoDeRechazo,
+  pedirAlmacenPersistente,
+  coleccionLocalSegura,
+} from "../components/tienda/compra";
+import ProgresoExpansion from "../components/tienda/ProgresoExpansion";
+import PastillaDeProgreso from "../components/tienda/PastillaDeProgreso";
+import BarraDelResumen from "../components/tienda/BarraDelResumen";
+import AvisoSinSaldo from "../components/tienda/AvisoSinSaldo";
+import SeguirAbriendo from "../components/tienda/SeguirAbriendo";
+import FilaAperturaRapida from "../components/tienda/FilaAperturaRapida";
+import CompraSinConfirmar from "../components/tienda/CompraSinConfirmar";
+import VenderRepetidasSheet, {
+  type RepetidaDelicada,
+} from "../components/tienda/VenderRepetidasSheet";
+import { esAccionCaducada } from "../utils/versionApp";
 
 type PackType = "STANDARD" | "PREMIUM" | "GOLDEN" | "SPECIAL";
+
+/** Cómo se llama cada sobre en la tienda: el mismo rótulo de su tarjeta. */
+const NOMBRE_DE_SOBRE: Record<PackType, string> = {
+  STANDARD: "Estándar",
+  PREMIUM: "Premium",
+  GOLDEN: "Leyenda",
+  SPECIAL: "Promo Pack",
+};
 
 /**
  * Ancho de la carta calculado sobre el viewport real (--app-height ya descuenta
@@ -61,8 +119,16 @@ type PackType = "STANDARD" | "PREMIUM" | "GOLDEN" | "SPECIAL";
  */
 // Los 20px extra son aire: sin ellos la carta ocupaba el 99,96% de la zona
 // central y quedaba pegada a la cabecera y al pie.
+//
+// EL HUECO INFERIOR ES `max(--sab, 12px)` Y NO `--sab` A SECAS. En un iPhone sin
+// indicador de inicio (SE 2/3, --sab 0) "Abrir sobre", "Siguiente" y "Guardar
+// sobre" quedaban a 3 px del borde físico de la pantalla. Con indicador (34 px)
+// no cambia nada. Es la MISMA expresión en los tres sitios que la usan —el
+// relleno de la vista, este ancho y el del sobre en components/BoosterPack.tsx—
+// porque carta y sobre tienen que descontar lo que de verdad se reserva.
+const SAB_APERTURA = "max(var(--sab), 12px)";
 const CARD_WIDTH =
-  "min(82vw, 360px, calc((var(--app-height) - var(--sat) - var(--sab) - 56px - 96px - 20px) * 0.714))";
+  `min(82vw, 360px, calc((var(--app-height) - var(--sat) - ${SAB_APERTURA} - 56px - 96px - 20px) * 0.714))`;
 
 /** Rareza a partir de la cual la revelación merece aura a pantalla completa. */
 const AURA_RANK = 70;
@@ -94,6 +160,7 @@ const nuevaClaveDeCompra = (): string => {
     .toString(36)
     .slice(2, 12)}`;
 };
+
 
 /**
  * Fases de la apertura (el tipo vive en components/BoosterPack). Son cuatro y
@@ -273,8 +340,29 @@ function guardarSeriesAbiertas(estado: Record<string, boolean>, tocada: string):
 }
 
 export default function Home() {
-  const { coins, setCoins, spendCoins, addCoins } = useCurrency();
-  const { isSignedIn, isLoaded } = useUser();
+  const { coins, setCoins, spendCoins, addCoins, loaded: saldoCargado } = useCurrency();
+  const { isSignedIn, isLoaded, user } = useUser();
+  /**
+   * QUIÉN ESTÁ MIRANDO, también cuando Clerk no contesta (utils/identidad.ts).
+   *
+   * La portada decidía con `isLoaded` e `isSignedIn` a secas, y eso fallaba por
+   * los dos lados sin red:
+   *   · al INVITADO no le cargaba nada —`isLoaded` no llega nunca—, así que ni
+   *     progreso, ni "Nueva", ni repetidas, con su colección en el dispositivo;
+   *   · a quien TIENE CUENTA le dejaba comprar: `isSignedIn` es `undefined`, la
+   *     compra entraba por la rama del invitado y sorteaba un sobre en local
+   *     pagado con el saldo que hubiera en pantalla, mientras Colección decía
+   *     «Sin conexión». Lo mismo, durante medio segundo, en cada arranque.
+   *
+   * `isSignedIn` se sigue usando para "hay cuenta confirmada" (es lo mismo que
+   * `identidad === "cuenta"`); lo que cambia es que NO tener cuenta confirmada
+   * ya no significa ser invitado: tiene que decirlo `esInvitado`.
+   */
+  const identidad = useIdentidad();
+  const esInvitado = identidad === "invitado";
+  const cuentaSinConexion = identidad === "cuenta-sin-conexion";
+  /** Id de la cuenta: va pegado a la compra anotada (ver `CompraPendiente`). */
+  const usuarioId = user?.id ?? null;
   const haptic = useHaptics();
   const toast = useToast();
 
@@ -316,6 +404,100 @@ export default function Home() {
   const [packSaveFailed, setPackSaveFailed] = useState(false);
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
   const [openSeries, setOpenSeries] = useState<Record<string, boolean>>({});
+  /**
+   * `getSetsFromDB` ha fallado o ha devuelto una lista vacía. Antes eso era un
+   * aviso de 2,8 s y la portada EN BLANCO: ni estado de error ni botón, y con la
+   * PWA instalada no hay recarga ni tirar-para-refrescar con los que salir. Con
+   * esto se pinta el error con su "Reintentar"; y si había una lista guardada
+   * de otra visita, se pinta ésa y se dice que es la guardada.
+   */
+  const [errorSets, setErrorSets] = useState(false);
+  /** Hay una petición de expansiones en vuelo: `online` y `visibilitychange`
+   *  pueden llegar a la vez y no deben lanzar dos. */
+  const cargandoSetsRef = useRef(false);
+  /** La última expansión y sobre que se compraron (fila "Seguir abriendo"). */
+  const [ultima, setUltima] = useState<UltimaExpansion | null>(null);
+  /** Un sobre suelto va directo al resumen, como el ×10. */
+  const [aperturaRapida, setAperturaRapida] = useState(false);
+  /** `/?set=<id>` en la dirección: la expansión a la que hay que entrar en
+   *  cuanto se sepa que existe. Se consume una sola vez. */
+  const enlaceSetRef = useRef<string | null>(null);
+  /** La colección ya ha contestado: sin esto el progreso de la expansión
+   *  diría "llevas 0" durante el rato que tarda en llegar. */
+  const [coleccionLista, setColeccionLista] = useState(false);
+  /**
+   * Cuántas copias hay de cada carta (sólo con sesión; el invitado lo lee de
+   * su localStorage cuando hace falta). Es lo que permite decir cuánto dan las
+   * repetidas ANTES de venderlas; el porqué y sus límites están en
+   * components/tienda/repetidas.ts. Es un ref y no estado porque se muta en
+   * sitio con cada sobre; `versionInventario` es lo que avisa a los efectos.
+   */
+  const inventarioRef = useRef<Inventario | null>(null);
+  const [versionInventario, setVersionInventario] = useState(0);
+  /** Todas las repetidas vendibles y lo que valen (aviso de "sin saldo"). */
+  const [repetidasTotales, setRepetidasTotales] = useState<{ n: number; valor: number } | null>(null);
+  /** Lo que darían las repetidas del sobre en pantalla, y cuáles son favoritas. */
+  const [tasacion, setTasacion] = useState<{
+    importe: number;
+    exacta: boolean;
+    favoritas: Set<string>;
+  } | null>(null);
+  /** Hoja "¿vender también éstas?" del resumen. */
+  const [hojaVenta, setHojaVenta] = useState(false);
+  /** Carta del resumen abierta en grande (índice dentro del sobre). */
+  const [detalleIndex, setDetalleIndex] = useState<number | null>(null);
+  /** Cuántos sobres trajo la última compra: "Otro sobre" tras un ×10 compraba
+   *  UNO, y quien abre de diez en diez tenía que volver a la tienda. */
+  const [ultimaCantidad, setUltimaCantidad] = useState(1);
+  /** Aviso único de que la partida de invitado sigue en este dispositivo. */
+  const [avisoInvitado, setAvisoInvitado] = useState(false);
+  /**
+   * LA COMPRA QUE SE QUEDÓ A MEDIAS (ver `comprarConClave` en
+   * components/tienda/compra.ts y `CompraPendiente` en memoria.ts). Son cuatro
+   * piezas:
+   *
+   *   · `intentoRef`: el intento EN CURSO, con su clave. Es lo que permite
+   *     reintentar el mismo sobre en vez de comprar otro.
+   *   · `compraEnDuda`: el sobre en pantalla no se ha podido confirmar. La
+   *     vista NO se cierra: ofrece reintentar ahí mismo. El ref es su espejo,
+   *     para los sitios que lo leen después de un `await`.
+   *   · `compraPendiente`: lo mismo, pero ya fuera de la apertura (se salió, era
+   *     un ×10, o es de una visita anterior): pinta el aviso de la tienda.
+   *   · `previasRef`: qué había en la colección cuando se lanzó ESE intento.
+   *     Sólo vive en memoria: si la página se ha remontado entre medias ya no
+   *     se sabe qué cartas del sobre eran nuevas (ver `sobreRecuperado`).
+   */
+  const intentoRef = useRef<CompraPendiente | null>(null);
+  /** El intento en curso está anotado en disco (puede no estarlo: no se pisa
+   *  una compra en duda anterior que el jugador aún no ha resuelto). */
+  const intentoEnDiscoRef = useRef(false);
+  const previasRef = useRef<{ clave: string; ids: string[] } | null>(null);
+  const [compraEnDuda, setCompraEnDuda] = useState(false);
+  const compraEnDudaRef = useRef(false);
+  const [reintentando, setReintentando] = useState(false);
+  const [compraPendiente, setCompraPendiente] = useState<CompraPendiente | null>(null);
+  /**
+   * El sobre del resumen se ha RECUPERADO de una visita anterior: ya estaba
+   * cobrado y sus cartas llevan en la colección desde entonces, así que no hay
+   * foto de "antes del sobre" con la que decidir cuáles eran nuevas ni cuáles
+   * repetidas. Con esto a true el resumen no pinta insignias "Nueva" ni ofrece
+   * vender repetidas: rotular las diez como repetidas sería mentir.
+   */
+  const [sobreRecuperado, setSobreRecuperado] = useState(false);
+  /** La página sigue montada. Una compra puede contestar con el jugador ya en
+   *  otra pestaña: ahí no se pinta nada, pero sí se deja anotada. */
+  const montadoRef = useRef(true);
+  useEffect(() => {
+    montadoRef.current = true;
+    return () => {
+      montadoRef.current = false;
+    };
+  }, []);
+  /** Carrusel de sobres: para centrar el sobre habitual al entrar. */
+  const carruselRef = useRef<HTMLDivElement>(null);
+  /** Testigo de la carga de catálogo en curso: cambiar de expansión mientras
+   *  viaja dejaba la respuesta vieja pisando el catálogo de la nueva. */
+  const cargaCatalogoRef = useRef<object | null>(null);
   /**
    * Sentido del último avance: +1 adelante, -1 atrás y 0 "la primera carta sale
    * del sobre". Con el mazo persistente ya no hay entradas ni salidas laterales
@@ -471,15 +653,12 @@ export default function Home() {
   );
 
   // La vista de apertura ocupa toda la pantalla: el documento de debajo no debe
-  // poder desplazarse, igual que hacen el resto de overlays del proyecto.
-  useEffect(() => {
-    if (!isPackOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [isPackOpen]);
+  // poder desplazarse. Va por `useFondoQuieto`, como las hojas, el buscador y
+  // la ficha: escribía `body.style.overflow` a mano, guardando y reponiendo el
+  // valor anterior, y eso no se entiende con el contador de capas de aquel
+  // hook. Con la ficha de una carta abierta ENCIMA del sobre, la que cerrara
+  // fuera de orden reponía un valor que ya no era el suyo.
+  useFondoQuieto(isPackOpen);
 
   const lastIndex = Math.max(0, currentPack.length - 1);
   const currentCard = currentPack[packIndex];
@@ -599,8 +778,9 @@ export default function Home() {
    * energías). Entonces esto devuelve `null` y `PackCard` sigue pintando su
    * icono SVG de siempre: NO se deja un hueco.
    *
-   * LOS DOS ESPACIOS DE IDS, otra vez y por el mismo motivo que en
-   * components/SetPackTile.tsx y en el precargador de abajo: el primer
+   * LOS DOS ESPACIOS DE IDS, otra vez y por el mismo motivo que en el
+   * precargador de abajo (y que en components/SetPackTile.tsx, la tesela de
+   * fotos que quedó SIN USO al volver la portada a logos, commit 2379052): el primer
    * argumento va NORMALIZADO porque el manifiesto se indexa así, y el `remoto`
    * lleva el id CRUDO porque es la clave de `set_pack_art`. Pasar el crudo
    * donde va el normalizado es el fallo que este fichero ya pagó una vez.
@@ -1050,10 +1230,46 @@ export default function Home() {
       composicionEspecial
     : false;
 
-  useEffect(() => {
+  /* LA PORTADA ARRANCA CON ALGO QUE MIRAR. El porqué largo está en el bloque
+     de `leerSeriesAbiertas`, arriba del componente.
+     El funcional del updater no es adorno: entre que arranca la carga y que
+     responde el servidor cabe un toque del jugador, y sembrar encima de su
+     elección sería peor que no sembrar. Es una función aparte porque ahora
+     siembran dos listas: la guardada de la última visita y la del servidor. */
+  const sembrarSeries = useCallback((sets: Expansion[]) => {
+    setOpenSeries((previo) => {
+      if (Object.keys(previo).length > 0) return previo;
+      const recordado = leerSeriesAbiertas();
+      if (recordado) return recordado;
+      // Por POSICIÓN y no por fecha: ver el bloque de arriba.
+      const primera = sets.find((s: Expansion) => s.series)?.series;
+      return primera ? { [primera]: true } : {};
+    });
+  }, []);
+
+  /* LA LISTA DE EXPANSIONES, CON REINTENTO.
+   *
+   * Era un efecto de un solo disparo: si `getSetsFromDB` rechazaba —la PWA
+   * abierta al salir del metro, o en modo avión— saltaba un aviso de 2,8 s, se
+   * apagaba el esqueleto y la portada quedaba con la barra superior, la de
+   * pestañas y NADA en medio. Sin botón, y en la aplicación instalada sin
+   * recarga posible: había que cerrarla desde el selector.
+   *
+   * Ahora es una función que se puede volver a llamar: desde el botón del
+   * estado de error, y sola cuando vuelve la red o la aplicación vuelve al
+   * primer plano (el efecto de más abajo). Una lista VACÍA cuenta como fallo:
+   * una portada sin expansiones no tiene nada que hacer, y así al menos ofrece
+   * reintentar. */
+  const cargarExpansiones = useCallback(() => {
+    if (cargandoSetsRef.current) return;
+    cargandoSetsRef.current = true;
+    setSetsCargando(true);
     (async () => {
       try {
         const sets = await getSetsFromDB();
+        if (!Array.isArray(sets) || sets.length === 0) {
+          throw new Error("La lista de expansiones ha llegado vacía");
+        }
         // Sort by release date desc when available
         sets.sort((a: any, b: any) => {
           const da = a.releaseDate ? new Date(a.releaseDate).getTime() : 0;
@@ -1061,48 +1277,131 @@ export default function Home() {
           return db - da;
         });
         setDbSets(sets);
-        /* LA PORTADA ARRANCA CON ALGO QUE MIRAR. El porqué largo está en el
-           bloque de `leerSeriesAbiertas`, arriba del componente.
-           El funcional del updater no es adorno: entre que arranca este efecto
-           y que responde el servidor cabe un toque del jugador, y sembrar
-           encima de su elección sería peor que no sembrar. */
-        setOpenSeries((previo) => {
-          if (Object.keys(previo).length > 0) return previo;
-          const recordado = leerSeriesAbiertas();
-          if (recordado) return recordado;
-          // Por POSICIÓN y no por fecha: ver el bloque de arriba.
-          const primera = sets.find((s: Expansion) => s.series)?.series;
-          return primera ? { [primera]: true } : {};
-        });
+        setErrorSets(false);
+        // Se guarda para la próxima visita: es lo que se pinta mientras el
+        // servidor contesta, y lo único que hay que pintar si no contesta.
+        guardarSets(sets, leerIdioma());
+        sembrarSeries(sets);
       } catch (err) {
         // getSetsFromDB rechaza ante fallo de red: sin capturarlo la portada se
-        // quedaba sin expansiones y sin aviso (rechazo no manejado).
+        // quedaba sin expansiones y sin aviso (rechazo no manejado). Ya no es
+        // un aviso que se va solo: es un estado, con su botón.
         console.error("Error cargando las expansiones:", err);
-        toast("No se pudieron cargar las expansiones. Revisa tu conexión.", "error");
+        setErrorSets(true);
       } finally {
         // En el `finally` y no tras el `setDbSets`: si la petición falla, el
         // esqueleto tiene que irse igual o se queda barriendo para siempre
         // detrás del aviso de error.
         setSetsCargando(false);
+        cargandoSetsRef.current = false;
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sembrarSeries]);
+
+  /* EL ARRANQUE: LO QUE SE RECUERDA, Y DESPUÉS EL SERVIDOR.
+   *
+   * Todo lo de localStorage se lee AQUÍ, dentro del efecto, por lo mismo que
+   * `leerSeriesAbiertas`: este componente se renderiza también en el servidor.
+   *
+   * La lista guardada se pinta ya y se revalida detrás: la portada deja de
+   * arrancar con un esqueleto en cada visita, y sin red enseña el catálogo de
+   * la última vez en lugar de nada. */
+  useEffect(() => {
+    const guardados = leerSetsGuardados(leerIdioma());
+    if (guardados) {
+      setDbSets((previo) => (previo.length > 0 ? previo : guardados));
+      sembrarSeries(guardados);
+    }
+    setUltima(leerUltimaExpansion());
+    setAperturaRapida(leerAperturaRapida());
+    // `/?set=<id>`: un enlace a la tienda de una expansión (desde el álbum, por
+    // ejemplo). Sólo se ANOTA; se entra cuando la lista confirme que existe.
+    try {
+      const pedido = new URLSearchParams(window.location.search).get("set");
+      if (pedido && /^[a-z0-9._-]{1,40}$/i.test(pedido)) enlaceSetRef.current = pedido;
+    } catch {
+      /* una dirección rara no puede tumbar la portada */
+    }
+    cargarExpansiones();
+    // El mismo interruptor puede pintarse en Ajustes: si cambia allí, aquí se ve.
+    const alCambiarRapida = (e: Event) =>
+      setAperturaRapida((e as CustomEvent<boolean>).detail === true);
+    window.addEventListener(EVENTO_APERTURA_RAPIDA, alCambiarRapida);
+    return () => window.removeEventListener(EVENTO_APERTURA_RAPIDA, alCambiarRapida);
+  }, [cargarExpansiones, sembrarSeries]);
+
+  // El enlace `/?set=` se consume una vez, y sólo si la expansión existe: un id
+  // inventado dejaría la tienda en "no se han podido cargar las cartas".
+  useEffect(() => {
+    const pedido = enlaceSetRef.current;
+    if (!pedido || dbSets.length === 0) return;
+    enlaceSetRef.current = null;
+    // Y SE RETIRA DE LA DIRECCIÓN. El parámetro se consumía en memoria pero la
+    // ruta seguía siendo `/?set=sv10` después de salir de la tienda: al volver
+    // por el historial desde otra pestaña, o al reabrir la app instalada en
+    // esa dirección, se entraba otra vez en una tienda que se había cerrado a
+    // propósito. `replaceState` con null es la forma que Next documenta para
+    // cambiar la dirección sin navegar: no recarga ni añade entrada.
+    try {
+      if (new URLSearchParams(window.location.search).has("set")) {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    } catch {
+      /* si no se puede, el parámetro se queda: es lo que había */
+    }
+    if (dbSets.some((s) => s.id === pedido)) setSelectedSet((actual) => actual ?? pedido);
+  }, [dbSets]);
+
+  /* LA COMPRA QUE QUEDÓ ANOTADA EN OTRA VISITA. Se mira al saber quién es el
+     jugador (la anotación lleva su id) y nunca con una compra de ESTA visita en
+     curso, que es la que manda. Al cerrar sesión el aviso se retira: la clave
+     no significa nada para otra cuenta ni para el invitado. */
+  useEffect(() => {
+    if (!isLoaded) return;
+    if (!isSignedIn || !usuarioId) {
+      setCompraPendiente(null);
+      return;
+    }
+    if (intentoRef.current) return;
+    setCompraPendiente(leerCompraPendiente(usuarioId));
+  }, [isLoaded, isSignedIn, usuarioId]);
 
   useEffect(() => {
     const syncUserData = async () => {
-      if (!isLoaded) return;
+      if (identidad === "resolviendo") return;
+      // Cuenta sin red: sus cartas están en el servidor y no se puede preguntar.
+      // No se carga la colección del invitado en su lugar: pintaría "Nueva" y
+      // repetidas contra una partida que no es la suya.
+      if (cuentaSinConexion) return;
       try {
-        if (isSignedIn) {
+        if (identidad === "cuenta") {
           const data = await getUserData();
           if (data) setCoins(data.coins);
           const myCards = await getFullCollection();
           setUserCollectionIds(myCards.map((c: any) => c.id));
+          // La misma respuesta trae cantidades, graduadas y favoritas: con eso
+          // la tienda puede decir cuánto dan las repetidas antes de venderlas.
+          inventarioRef.current = inventarioDe(myCards);
+          setVersionInventario((v) => v + 1);
+          setColeccionLista(true);
           // Un fallo de deseados no puede tumbar el resto de la sincronización.
           getWishlistIds().then(setWishlistIds).catch(() => {});
+          /* La cuenta no hereda la partida de invitado (no hay traspaso), y
+             quien entra con veinte sobres abiertos ve una colección vacía y
+             cree que lo ha perdido todo. No lo ha perdido: sigue en este
+             dispositivo. Se dice una vez, y sólo a quien tiene algo guardado. */
+          if (!avisoDeInvitadoVisto() && coleccionLocalSegura().length > 0) {
+            setAvisoInvitado(true);
+          }
         } else {
           const localCards = getCollection();
           setUserCollectionIds(localCards.map((c: any) => c.id));
+          // El invitado no tiene inventario en memoria: su localStorage es la
+          // verdad y se lee cuando hace falta.
+          inventarioRef.current = null;
+          setVersionInventario((v) => v + 1);
+          setColeccionLista(true);
+          setAvisoInvitado(false);
         }
       } catch (err) {
         // Las server actions rechazan ante fallo de red (su try/catch interno
@@ -1110,21 +1409,49 @@ export default function Home() {
         // manejar y colección y saldo se quedaban vacíos EN SILENCIO: el sobre
         // Leyenda "garantizaba" cartas ya poseídas y todo salía marcado "Nueva".
         console.error("Error sincronizando datos de usuario:", err);
-        toast("No se pudieron cargar tus datos. Revisa tu conexión.", "error");
+        if (!esAccionCaducada(err)) toast("No se pudieron cargar tus datos. Revisa tu conexión.", "error");
       }
     };
     syncUserData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSignedIn, isLoaded, setCoins]);
+  }, [identidad, setCoins]);
+
+  /**
+   * El catálogo de una expansión, por la caché de módulo (ver `catalogoDeSet`):
+   * volver a la expansión que se acaba de dejar ya no lo descarga otra vez.
+   * Con ahorro de datos o sin red no se adelanta nada.
+   */
+  const precalentarCatalogo = useCallback((setId: string) => {
+    const conexion = (navigator as unknown as {
+      connection?: { saveData?: boolean };
+    }).connection;
+    if (conexion?.saveData || navigator.onLine === false) return;
+    // Nadie espera esta promesa: si falla, que no quede como rechazo sin manejar.
+    catalogoDeSet(setId, leerIdioma(), getCardsFromSet).catch(() => {});
+  }, []);
 
   const loadAndSync = useCallback(async () => {
-    if (!selectedSet) return;
+    if (!selectedSet) {
+      // Sin expansión no hay nada que cargar, y lo que estuviera en vuelo ya
+      // no es de nadie: se le retira el testigo para que no pinte al llegar.
+      cargaCatalogoRef.current = null;
+      setLoading(false);
+      return;
+    }
+    /* EL TESTIGO cierra la carrera de cambiar de expansión con el catálogo en
+       vuelo: las dos respuestas llegaban y la última en llegar —no la última
+       pedida— se quedaba como catálogo, con la tienda de una expansión
+       sorteando sobre las cartas de otra. Sólo pinta quien conserva el testigo. */
+    const testigo = {};
+    cargaCatalogoRef.current = testigo;
     setLoading(true);
     setLoadError(false);
     try {
-      const cards = await getCardsFromSet(selectedSet);
+      const cards = await catalogoDeSet(selectedSet, leerIdioma(), getCardsFromSet);
+      if (cargaCatalogoRef.current !== testigo) return;
       if (cards && cards.length > 0) {
-        setAllCards(cards);
+        // Copia: la lista de la caché es compartida y aquí se ordena y filtra.
+        setAllCards(cards.slice());
         // AQUÍ YA NO SE SIEMBRA. La siembra la hace el servidor cuando la
         // necesita de verdad (`cartasDelSet`, en app/action.ts, justo antes de
         // sortear el sobre). Dispararla desde aquí costaba un SELECT count(*)
@@ -1139,15 +1466,45 @@ export default function Home() {
       }
     } catch (err) {
       console.error(err);
-      setLoadError(true);
+      if (cargaCatalogoRef.current === testigo) setLoadError(true);
     } finally {
-      setLoading(false);
+      if (cargaCatalogoRef.current === testigo) setLoading(false);
     }
   }, [selectedSet]);
 
   useEffect(() => {
     loadAndSync();
   }, [loadAndSync]);
+
+  /* REINTENTO SOLO CUANDO VUELVE LA RED O LA APLICACIÓN.
+     Sólo escucha mientras hay algo roto. `online` cubre el túnel del metro y
+     `visibilitychange` el caso de iOS: la PWA vuelve del segundo plano con la
+     petición muerta y nadie le ha dicho que ya hay cobertura. */
+  useEffect(() => {
+    if (!errorSets && !loadError) return;
+    const reintentar = () => {
+      if (document.visibilityState !== "visible") return;
+      if (errorSets) cargarExpansiones();
+      if (loadError) loadAndSync();
+    };
+    window.addEventListener("online", reintentar);
+    document.addEventListener("visibilitychange", reintentar);
+    return () => {
+      window.removeEventListener("online", reintentar);
+      document.removeEventListener("visibilitychange", reintentar);
+    };
+  }, [errorSets, loadError, cargarExpansiones, loadAndSync]);
+
+  /* LA EXPANSIÓN DE SIEMPRE, YA DESCARGADA CUANDO SE TOCA. Con la portada
+     quieta un momento se adelanta el catálogo de la última expansión que se
+     compró, que es a la que casi seguro se va a entrar. Una sola petición por
+     visita a la aplicación (la caché es de módulo), y aplazada para no ponerse
+     delante del saldo y la colección, que salen al montar. */
+  useEffect(() => {
+    if (selectedSet || !ultima || !dbSets.some((s) => s.id === ultima.setId)) return;
+    const t = window.setTimeout(() => precalentarCatalogo(ultima.setId), 1200);
+    return () => window.clearTimeout(t);
+  }, [selectedSet, ultima, dbSets, precalentarCatalogo]);
 
   // `Expansion[]` y no `any[]`: dentro del .map de la rejilla el set era `any`,
   // así que se le podía leer cualquier campo —incluido uno mal escrito— sin que
@@ -1160,6 +1517,22 @@ export default function Home() {
       groups[seriesName].push(set);
     });
     return groups;
+  }, [dbSets]);
+
+  /**
+   * Cómo se ROTULA cada serie. Se sigue agrupando por la clave inglesa —de ella
+   * cuelgan `tcg:series-abiertas` y `eraDeSerie`— y el nombre español va
+   * aparte: con la app en español la portada decía "SCARLET & VIOLET" encima de
+   * "Llamas Obsidianas". `serieEs` ya llegaba del servidor y nadie lo leía.
+   */
+  const rotuloDeSerie = useMemo(() => {
+    const rotulos: Record<string, string> = {};
+    dbSets.forEach((set) => {
+      const clave = set.series || "Otras";
+      const enEspanol = (set as ExpansionConSerie).serieEs;
+      if (enEspanol && !rotulos[clave]) rotulos[clave] = enEspanol;
+    });
+    return rotulos;
   }, [dbSets]);
 
   /**
@@ -1201,7 +1574,10 @@ export default function Home() {
         // Mientras hay un guardado en vuelo, finishPack no entra: la capa se
         // cierra en seco igual que hace el botón de la cabecera, porque aquí no
         // hay barra de pestañas ni gesto de retroceso con los que salir.
-        if (finishingRef.current) cerrarVistaSobre();
+        // Con la compra sin confirmar no hay sobre que guardar: se sale
+        // dejando el aviso de reintento en la tienda.
+        if (compraEnDuda) salirDeLaDuda();
+        else if (finishingRef.current) cerrarVistaSobre();
         else finishPack();
         return;
       }
@@ -1227,7 +1603,7 @@ export default function Home() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPackOpen, maxRevealed, packIndex, currentPack, isSignedIn, fase]);
+  }, [isPackOpen, maxRevealed, packIndex, currentPack, isSignedIn, fase, compraEnDuda]);
 
   // Precarga de las dos siguientes. La ventana de alta resolución del mazo es
   // ±1, pero la ranura +1 todavía enseña el DORSO (no se destapa hasta que se
@@ -1260,16 +1636,25 @@ export default function Home() {
     setIsPackOpen(false);
   };
 
-  const resetPackState = () => {
-    setCurrentPack([]);
+  /** `compraEnDuda` en estado y en ref: se escriben siempre juntos. */
+  const marcarDuda = (enDuda: boolean) => {
+    compraEnDudaRef.current = enDuda;
+    setCompraEnDuda(enDuda);
+  };
+
+  /**
+   * La apertura vuelve a "sellado y sin nada visto". Es lo que comparten
+   * `resetPackState` (ya no hay sobre) y `abrirSobreSellado` (llega uno nuevo).
+   * Antes cada una reiniciaba a mano los mismos diez campos, y olvidar uno en
+   * cualquiera de las dos hacía que el sobre siguiente naciera abierto. Un campo
+   * nuevo de la apertura se añade AQUÍ y vale para las dos.
+   */
+  const sellarApertura = () => {
     setPackIndex(0);
     setMaxRevealed(0);
-    setIsPackOpen(false);
+    // Si el sobre anterior se cerró tras retroceder, direction quedaba en -1 y
+    // la primera carta del nuevo entraba por el lado contrario.
     setDirection(1);
-    // El siguiente sobre vuelve a llegar sellado. Olvidar cualquiera de estas
-    // líneas (aquí o en handleBuyPack) hace que el segundo sobre nazca abierto.
-    sobrePendienteRef.current = null;
-    cartasRef.current = [];
     limpiarTemporizadores();
     setFase("sellado");
     tornRef.current = false;
@@ -1277,27 +1662,185 @@ export default function Home() {
     anunciadoRef.current = -1;
     ultimaLlegadaRef.current = 0;
     setFanfarriaEn(null);
-    setPackSaveFailed(false);
     setEsperandoSobre(false);
+    marcarDuda(false);
+    setReintentando(false);
+    setSobreRecuperado(false);
+    setDetalleIndex(null);
+    setHojaVenta(false);
+  };
+
+  const resetPackState = () => {
+    setCurrentPack([]);
+    setIsPackOpen(false);
+    // El siguiente sobre vuelve a llegar sellado (ver `sellarApertura`).
+    sobrePendienteRef.current = null;
+    cartasRef.current = [];
+    sellarApertura();
+    setPackSaveFailed(false);
   };
 
   /**
-   * La compra no cuajó con la vista ya abierta. Se cierra el sobre y se dice
-   * por qué: no se ha cobrado nada (el servidor sólo cobra si entrega).
+   * El servidor ha dicho que NO con la vista ya abierta (sin saldo, sobre no
+   * disponible, sesión caducada). Se cierra el sobre y se dice por qué. Aquí sí
+   * es seguro que no se ha cobrado nada, porque es el propio servidor quien lo
+   * contesta. Una respuesta PERDIDA no pasa por aquí —ahí no se sabe si cobró,
+   * y antes se decía igualmente que no—: va a `compraEnDuda`.
    */
   const abortarSobre = (motivo?: string) => {
     sobrePendienteRef.current = null;
     cartasRef.current = [];
     resetPackState();
-    toast(
-      motivo === "sin-saldo"
-        ? "No tienes suficientes monedas"
-        : motivo === "sobre-no-disponible"
-          ? "Ese sobre no está a la venta en esta expansión"
-          : "No se pudo completar la compra",
-      "error",
-    );
+    toast(textoDeRechazo(motivo), "error");
     haptic("warning");
+  };
+
+  /** Recuerda la expansión y el sobre que se acaban de pedir. */
+  const recordarCompra = (setId: string, tipo: PackType) => {
+    guardarUltimaExpansion(setId, tipo);
+    setUltima({ setId, tipo });
+  };
+
+  /**
+   * Anota la compra que se va a enviar, ANTES de enviarla: es lo que permite
+   * reintentarla con la misma clave pase lo que pase con la respuesta.
+   *
+   * No pisa en disco una compra en duda anterior que el jugador aún no ha
+   * resuelto (el aviso sigue en pantalla): perderla sería perder la única
+   * forma de ver un sobre que quizá ya pagó.
+   */
+  const anotarIntento = (tipo: PackType, cantidad: number): CompraPendiente => {
+    const intento: CompraPendiente = {
+      clave: nuevaClaveDeCompra(),
+      setId: selectedSet!,
+      tipo,
+      cantidad,
+      ts: Date.now(),
+      usuario: usuarioId ?? "",
+      confirmada: false,
+    };
+    intentoRef.current = intento;
+    previasRef.current = { clave: intento.clave, ids: [...userCollectionIds] };
+    intentoEnDiscoRef.current = !compraPendiente;
+    if (intentoEnDiscoRef.current) guardarCompraPendiente(intento);
+    return intento;
+  };
+
+  /** Esa compra ya no está en el aire: ni en disco ni como intento en curso. */
+  const cerrarIntento = (clave: string) => {
+    olvidarCompraPendiente(clave);
+    if (intentoRef.current?.clave === clave) intentoRef.current = null;
+  };
+
+  /**
+   * Envía la compra del sobre EN PANTALLA y atiende la respuesta. Se llama al
+   * comprar y otra vez, con el mismo intento, al pulsar "Reintentar".
+   *
+   * Devuelve la promesa que aguarda el rasgado (`true` = el sobre ha llegado).
+   */
+  const lanzarPedido = (intento: CompraPendiente, yaEnviada = false): Promise<boolean> => {
+    // La vista se queda como está y ofrece reintentar: el sobre no se cierra.
+    const dejarEnDuda = () => {
+      sobrePendienteRef.current = null;
+      // El rasgado que estuviera esperando se retira: tras reintentar se podrá
+      // volver a rasgar.
+      tornRef.current = false;
+      setEsperandoSobre(false);
+      setReintentando(false);
+      marcarDuda(true);
+      haptic("warning");
+    };
+    const pedido: Promise<boolean> = comprarConClave(intento, yaEnviada)
+      .then((res) => {
+        // ¿Sigue siendo ESTE el sobre en pantalla? Si se salió, se cambió de
+        // expansión o se compró otro, la respuesta llega tarde y no pinta.
+        const enPantalla = sobrePendienteRef.current === pedido;
+        if (!res) {
+          // No se sabe si la compra llegó.
+          if (enPantalla) dejarEnDuda();
+          else if (montadoRef.current) setCompraPendiente(intento);
+          return false;
+        }
+        if (!res.ok) {
+          cerrarIntento(intento.clave);
+          if (enPantalla) abortarSobre(res.motivo);
+          return false;
+        }
+        // Saldo autoritativo: ya lleva el cobro aplicado en el servidor. Se
+        // adopta aunque el sobre ya no esté en pantalla: el cobro es real.
+        setCoins(res.coins);
+        const cartas = hidratarCartas(res.cartas);
+        if (inventarioRef.current) {
+          sumarSobre(inventarioRef.current, cartas);
+          setVersionInventario((v) => v + 1);
+        }
+        if (!enPantalla) {
+          // Cobrado y guardado, pero nadie lo ha visto. Si no hay una compra
+          // posterior, queda anotado para ofrecer verlo desde la tienda.
+          if (intentoRef.current?.clave === intento.clave) {
+            const confirmado = { ...intento, confirmada: true };
+            if (intentoEnDiscoRef.current) guardarCompraPendiente(confirmado);
+            if (montadoRef.current) setCompraPendiente(confirmado);
+          }
+          return false;
+        }
+        if (cartas.length === 0) {
+          // Sólo en un reenvío: `sobreYaServido` filtra las cartas que ya no
+          // están en el catálogo. Sin nada que enseñar, un sobre sellado que
+          // no se puede rasgar sería un encierro.
+          cerrarIntento(intento.clave);
+          resetPackState();
+          toast("El sobre está cobrado y en tu colección, pero no se puede volver a mostrar", "error");
+          return false;
+        }
+        cartasRef.current = cartas;
+        setCurrentPack(cartas);
+        packSavedRef.current = true;
+        // Cobrado, pero sin terminar de ver: si iOS mata la aplicación ahora,
+        // la anotación es lo que permite volver a este sobre.
+        if (intentoEnDiscoRef.current) guardarCompraPendiente({ ...intento, confirmada: true });
+        marcarDuda(false);
+        setReintentando(false);
+        // Las dos primeras imágenes, ya: la primera carta se monta 420ms
+        // después de rasgar y para entonces tiene que estar en caché.
+        for (const card of cartas.slice(0, 2)) {
+          const url = card?.images?.large;
+          if (url) new Image().src = url;
+        }
+        // Llegó: a partir de aquí el rasgado no tiene nada que esperar.
+        sobrePendienteRef.current = null;
+        return true;
+      })
+      .catch((err) => {
+        // `comprarConClave` no rechaza; esto sólo salta si falla el tratamiento
+        // de la respuesta. El cobro puede estar hecho, así que es una duda y
+        // no un "no se compró": reintentar devuelve el mismo sobre.
+        console.error("Error tratando la respuesta de la compra:", err);
+        if (sobrePendienteRef.current === pedido) dejarEnDuda();
+        return false;
+      });
+    sobrePendienteRef.current = pedido;
+    return pedido;
+  };
+
+  /** "Reintentar" con el sobre en pantalla: el MISMO intento, la misma clave. */
+  const reintentarSobre = () => {
+    const intento = intentoRef.current;
+    if (!intento || reintentando) return;
+    setReintentando(true);
+    lanzarPedido(intento, true);
+  };
+
+  /**
+   * Se sale de la apertura con la compra sin confirmar. No se dice "no se
+   * compró" —no se sabe— y el intento pasa al aviso de la tienda, desde donde
+   * se puede reintentar más tarde.
+   */
+  const salirDeLaDuda = () => {
+    const intento = intentoRef.current;
+    resetPackState();
+    if (intento) setCompraPendiente(intento);
+    toast("No sabemos si la compra llegó. Puedes reintentarla sin pagar dos veces.", "error");
   };
 
   /**
@@ -1312,28 +1855,45 @@ export default function Home() {
     setSoldInfo(null);
     setCurrentPackType(type);
     setCurrentPack(cartas);
-    setPackIndex(0);
-    setMaxRevealed(0);
-    // Si el sobre anterior se cerró tras retroceder, direction quedaba en -1 y
-    // la primera carta del nuevo entraba por el lado contrario.
-    setDirection(1);
     // El sobre entra sellado: hay que rasgar la tira para ver las cartas.
-    limpiarTemporizadores();
+    sellarApertura();
     setSemillaSobre(semillaDeSobre(selectedSet, aperturasRef.current++));
-    setFase("sellado");
-    tornRef.current = false;
-    vistasRef.current = 0;
-    anunciadoRef.current = -1;
-    ultimaLlegadaRef.current = 0;
-    setFanfarriaEn(null);
-    setEsperandoSobre(false);
+    setUltimaCantidad(1);
     setIsPackOpen(true);
   };
 
+  /**
+   * ¿Se puede comprar ahora? Sólo con la identidad FIRME: una cuenta que Clerk
+   * ha confirmado, o un invitado. Si no, avisa y devuelve false.
+   *
+   * Sin esto, "no hay cuenta confirmada" caía en la rama del invitado (ver
+   * `identidad`, arriba): un jugador con cuenta y sin red abría sobres de
+   * invitado, guardados en el dispositivo y cobrados del espejo local de su
+   * saldo, que el servidor corregía después sin que las cartas existieran.
+   */
+  const identidadFirme = (): boolean => {
+    if (identidad === "cuenta" || esInvitado) return true;
+    haptic("warning");
+    toast(
+      cuentaSinConexion
+        ? "Sin conexión: no se ha podido comprobar tu sesión, y los sobres se abren con tu cuenta."
+        : "Un momento: se está comprobando tu sesión.",
+      "error",
+    );
+    return false;
+  };
+
   const handleBuyPack = async (type: PackType) => {
+    /* APERTURA RÁPIDA: el sobre suelto hace lo que ya hacía el ×10 —comprar e
+       ir al resumen—, sin los cuatro toques y los 1,15 s de rasgado por sobre.
+       `handleBuyMulti` trae sus propias guardas, las mismas que las de abajo. */
+    if (aperturaRapida) return handleBuyMulti(type, 1);
     if (finishingRef.current) return;
+    if (!identidadFirme()) return;
     if (!allCards || allCards.length === 0) {
-      toast("Las cartas no se han cargado. Recarga la página.", "error");
+      // Decía "Recarga la página", que en la PWA instalada no se puede hacer.
+      toast("Las cartas no se habían cargado. Reintentando…", "error");
+      loadAndSync();
       return;
     }
     // Esto ya NO es la defensa —la pone el servidor, que mide la composición
@@ -1346,7 +1906,9 @@ export default function Home() {
     const price = PACK_PRICES[type];
     if (coins < price) {
       haptic("warning");
-      toast("No tienes suficientes monedas", "error");
+      // Cuánto falta, no sólo que falta: el botón ya lo dice, pero el saldo
+      // puede haber cambiado desde que se pintó.
+      toast(`Te faltan ${formatNumber(price - coins)} monedas para este sobre`, "error");
       return;
     }
 
@@ -1359,6 +1921,7 @@ export default function Home() {
     sobrePendienteRef.current = null;
     cartasRef.current = [];
     setPackSaveFailed(false);
+    recordarCompra(selectedSet!, type);
 
     try {
       if (isSignedIn) {
@@ -1374,44 +1937,11 @@ export default function Home() {
          * (ver rasgarSobre), y para entonces lleva medio segundo largo en
          * vuelo: el sobre ya está aquí y la coreografía arranca igual que
          * cuando se sorteaba en el navegador.
+         *
+         * La respuesta la atiende `lanzarPedido`, que es también lo que vuelve
+         * a ejecutarse —con este mismo intento— si hay que reintentar.
          */
-        const clave = nuevaClaveDeCompra();
-        const pedido: Promise<boolean> = comprarSobreAction(selectedSet!, type, 1, clave)
-          .then((res) => {
-            // Este sobre ya no es el que está en pantalla (se salió, se cambió
-            // de expansión o se compró otro): llegó tarde y no pinta nada. Las
-            // cartas están guardadas igual, que para eso se cobraron.
-            if (sobrePendienteRef.current !== pedido) return false;
-            if (!res?.ok) {
-              abortarSobre(res?.motivo);
-              return false;
-            }
-            const cartas = hidratarCartas(res.cartas);
-            cartasRef.current = cartas;
-            setCurrentPack(cartas);
-            // Saldo autoritativo: ya lleva el cobro aplicado en el servidor.
-            setCoins(res.coins);
-            packSavedRef.current = true;
-            // Las dos primeras imágenes, ya: la primera carta se monta 420ms
-            // después de rasgar y para entonces tiene que estar en caché.
-            for (const card of cartas.slice(0, 2)) {
-              const url = card?.images?.large;
-              if (url) new Image().src = url;
-            }
-            // Llegó: a partir de aquí el rasgado no tiene nada que esperar.
-            sobrePendienteRef.current = null;
-            return true;
-          })
-          .catch((err) => {
-            console.error("Error comprando el sobre:", err);
-            // El mismo guard que arriba, y hace falta igual: si se sale con la
-            // ✕ estando el sobre sellado y se compra otro, la caída de red de
-            // ESTA petición llegaría con otro sobre en pantalla y abortarSobre
-            // lo cerraría con un aviso que no es suyo.
-            if (sobrePendienteRef.current === pedido) abortarSobre();
-            return false;
-          });
-        sobrePendienteRef.current = pedido;
+        lanzarPedido(anotarIntento(type, 1));
         abrirSobreSellado(type, []);
         return;
       }
@@ -1451,6 +1981,7 @@ export default function Home() {
       }
       packSavedRef.current = true;
       cartasRef.current = newPack;
+      pedirAlmacenPersistente();
       abrirSobreSellado(type, newPack);
     } catch (err) {
       console.error("Error comprando el sobre:", err);
@@ -1504,9 +2035,134 @@ export default function Home() {
     }
   };
 
+  /**
+   * Lleva al resumen un sobre (o varios) que ya está comprado, sin pasar por la
+   * apertura. Lo comparten el ×N, la apertura rápida y la recuperación de una
+   * compra que quedó a medias.
+   */
+  const mostrarResumen = (r: {
+    tipo: PackType;
+    cartas: Carta[];
+    /** Lo que había en la colección ANTES de este sobre. */
+    previas: string[];
+    guardado: boolean;
+    cantidad: number;
+    /** Ver `sobreRecuperado`: sin foto de antes no hay "Nueva" ni repetidas. */
+    recuperado: boolean;
+  }) => {
+    packSavedRef.current = r.guardado;
+    cartasRef.current = r.cartas;
+    // Con el guardado sin cuajar no se ofrece vender repetidas: se venderían
+    // contra una colección que aún no incluye estos sobres.
+    setPackSaveFailed(!r.guardado);
+    setPrePackIds(r.previas);
+    // Sólo damos por poseídas las cartas si el guardado salió bien. Las de un
+    // sobre recuperado ya lo estaban: llegaron con la colección.
+    if (r.guardado && !r.recuperado) {
+      setUserCollectionIds((prev) => [...prev, ...r.cartas.map((c) => c.id)]);
+    }
+    setSoldInfo(null);
+    setCurrentPackType(r.tipo);
+    setCurrentPack(r.cartas);
+    setUltimaCantidad(r.cantidad);
+    setSobreRecuperado(r.recuperado);
+    setDetalleIndex(null);
+    setHojaVenta(false);
+    setVersionInventario((v) => v + 1);
+    setIsPackOpen(false); // directo al resumen
+    play("moneda");
+    haptic("success");
+  };
+
+  /**
+   * "Reintentar" / "Ver sobre" del aviso de la tienda, con la clave anotada.
+   *
+   *  · "Reintentar" (no se sabe si llegó) reenvía la COMPRA: si el servidor ya
+   *    la había cobrado devuelve ese mismo sobre; si nunca llegó, se compra
+   *    ahora —que es lo que se había pedido—.
+   *  · "Ver sobre" (consta como cobrada) sólo LEE el sobre. Antes iba también
+   *    por la acción de compra, y si el recibo ya no existía era una compra
+   *    nueva hecha desde un botón que dice "ver".
+   */
+  const recuperarCompra = async () => {
+    const pendiente = compraPendiente;
+    if (!pendiente || finishingRef.current) return;
+    finishingRef.current = true;
+    setBusy(true);
+    try {
+      const res = pendiente.confirmada
+        ? await recuperarConClave(pendiente)
+        : await comprarConClave(pendiente, true);
+      if (!res) {
+        toast("Sigue sin poder confirmarse. Inténtalo cuando tengas conexión.", "error");
+        return;
+      }
+      cerrarIntento(pendiente.clave);
+      setCompraPendiente(null);
+      if (!res.ok) {
+        toast(textoDeRechazo(res.motivo), "error");
+        return;
+      }
+      setCoins(res.coins);
+      const cartas = hidratarCartas(res.cartas);
+      if (cartas.length === 0) {
+        toast("El sobre está cobrado y en tu colección, pero no se puede volver a mostrar", "error");
+        return;
+      }
+      // ¿Se sabe qué había antes de ESTE sobre? Sólo si el intento es de esta
+      // misma visita. Si viene de otra y ya estaba cobrado (`reenvio`), sus
+      // cartas llegaron mezcladas con la colección y no hay con qué comparar.
+      const deEstaVisita =
+        previasRef.current?.clave === pendiente.clave ? previasRef.current.ids : null;
+      const recuperado = !deEstaVisita && res.reenvio;
+      if (!recuperado && inventarioRef.current) sumarSobre(inventarioRef.current, cartas);
+      // El resumen es de SU expansión: "Otro sobre" y el progreso cuelgan de
+      // ella. El catálogo que hubiera cargado era de otra: se vacía para que el
+      // progreso no mida este sobre contra las cartas de la expansión anterior
+      // mientras llega el suyo.
+      if (selectedSet !== pendiente.setId) {
+        setAllCards([]);
+        setSelectedSet(pendiente.setId);
+      }
+      mostrarResumen({
+        tipo: pendiente.tipo,
+        cartas,
+        previas: deEstaVisita ?? [...userCollectionIds],
+        guardado: true,
+        cantidad: pendiente.cantidad,
+        recuperado,
+      });
+      // Bonus de set y saldo, sin esperar: ya hay resumen que mirar.
+      refreshAfterPack();
+    } catch (err) {
+      console.error("Error recuperando la compra:", err);
+      toast("No se pudo recuperar la compra", "error");
+    } finally {
+      finishingRef.current = false;
+      setBusy(false);
+    }
+  };
+
+  /** "Descartar" del aviso: deja de preguntar. En el servidor no deshace nada. */
+  const descartarCompra = () => {
+    const pendiente = compraPendiente;
+    if (!pendiente) return;
+    cerrarIntento(pendiente.clave);
+    setCompraPendiente(null);
+    toast("Descartada. Si la compra llegó, sus cartas ya están en tu colección.", "info");
+    // Si llegó, el saldo en pantalla está sin el cobro: se pone al día cuando
+    // la red lo permita, sin molestar si no.
+    getUserData()
+      .then((data) => {
+        if (data) setCoins(data.coins);
+      })
+      .catch(() => {});
+  };
+
   // Apertura múltiple (×N): salta animación, guarda todo, va al resumen.
   const handleBuyMulti = async (type: PackType, count = 10) => {
     if (finishingRef.current) return;
+    if (!identidadFirme()) return;
     finishingRef.current = true;
     setBusy(true);
     setPackSaveFailed(false);
@@ -1515,7 +2171,8 @@ export default function Home() {
     // true y los botones de compra bloqueados para el resto de la sesión.
     try {
       if (!allCards || allCards.length === 0) {
-        toast("Las cartas no se han cargado. Recarga la página.", "error");
+        toast("Las cartas no se habían cargado. Reintentando…", "error");
+        loadAndSync();
         return;
       }
       // Cortesía, no defensa: el servidor mide la composición contra la BD.
@@ -1526,9 +2183,16 @@ export default function Home() {
       const price = PACK_PRICES[type] * count;
       if (coins < price) {
         haptic("warning");
-        toast(`Necesitas ${formatNumber(price)} monedas para ×${count}`, "error");
+        // Con la apertura rápida esto atiende también al sobre suelto.
+        toast(
+          count > 1
+            ? `Te faltan ${formatNumber(price - coins)} monedas para ×${count}`
+            : `Te faltan ${formatNumber(price - coins)} monedas para este sobre`,
+          "error",
+        );
         return;
       }
+      recordarCompra(selectedSet!, type);
 
       const ownedSnapshot = [...userCollectionIds];
       let combined: Carta[] = [];
@@ -1539,20 +2203,37 @@ export default function Home() {
         // los sortea: no hay forma de quedarse con el cobro hecho y las cartas
         // sin dar, ni al revés. Aquí sí se espera —el ×10 va directo al resumen
         // y no hay animación que cubrir— y no se abre nada hasta que conteste.
-        const clave = nuevaClaveDeCompra();
-        const res = await comprarSobreAction(selectedSet!, type, count, clave);
-        if (!res?.ok) {
-          toast(
-            res?.motivo === "sin-saldo"
-              ? "No tienes suficientes monedas"
-              : "No se pudieron comprar los sobres",
-            "error",
-          );
-          haptic("warning");
+        const intento = anotarIntento(type, count);
+        const res = await comprarConClave(intento);
+        if (!res) {
+          /* NO SE SABE SI LLEGÓ. Antes la clave se perdía aquí y volver a
+             pulsar eran otros 500: ahora el intento queda en el aviso de la
+             tienda y "Reintentar" reenvía ESTA clave. */
+          if (montadoRef.current) setCompraPendiente(intento);
+          toast("No se pudo confirmar la compra. Puedes reintentarla sin pagar dos veces.", "error");
+          return;
+        }
+        if (!res.ok) {
+          cerrarIntento(intento.clave);
+          toast(textoDeRechazo(res.motivo), "error");
           return;
         }
         combined = hidratarCartas(res.cartas);
         setCoins(res.coins);
+        if (inventarioRef.current) sumarSobre(inventarioRef.current, combined);
+        if (!montadoRef.current) {
+          // Contestó con el jugador ya en otra pestaña: cobrado y guardado,
+          // pero sin ver. Se deja anotado para ofrecerlo al volver a Inicio.
+          if (intentoEnDiscoRef.current && intentoRef.current?.clave === intento.clave) {
+            guardarCompraPendiente({ ...intento, confirmada: true });
+          }
+          return;
+        }
+        cerrarIntento(intento.clave);
+        if (combined.length === 0) {
+          toast("Los sobres están cobrados y en tu colección, pero no se pueden mostrar", "error");
+          return;
+        }
         await refreshAfterPack();
       } else {
         /* INVITADO: sorteo y guardado en local, como siempre. La era es la
@@ -1573,24 +2254,19 @@ export default function Home() {
           addCoins(price);
           toast("No se pudieron guardar los sobres en este dispositivo", "error");
           saved = false;
+        } else {
+          pedirAlmacenPersistente();
         }
       }
 
-      packSavedRef.current = saved;
-      cartasRef.current = combined;
-      // Con el guardado sin cuajar no se ofrece vender repetidas: se venderían
-      // contra una colección que aún no incluye estos sobres.
-      setPackSaveFailed(!saved);
-
-      setPrePackIds(ownedSnapshot);
-      // Sólo damos por poseídas las cartas si el guardado salió bien.
-      if (saved) setUserCollectionIds((prev) => [...prev, ...combined.map((c) => c.id)]);
-      setSoldInfo(null);
-      setCurrentPackType(type);
-      setCurrentPack(combined);
-      setIsPackOpen(false); // directo al resumen
-      play("moneda");
-      haptic("success");
+      mostrarResumen({
+        tipo: type,
+        cartas: combined,
+        previas: ownedSnapshot,
+        guardado: saved,
+        cantidad: count,
+        recuperado: false,
+      });
     } catch (err) {
       console.error("Error comprando los sobres:", err);
       toast("No se pudieron comprar los sobres", "error");
@@ -1620,11 +2296,19 @@ export default function Home() {
        * cartasRef las recoge cuando lleguen (currentPack, en la clausura de
        * esta función, seguiría vacío). */
       await sobrePendienteRef.current;
+      if (compraEnDudaRef.current) {
+        // Se salió con el sobre aún en vuelo y la respuesta no ha llegado: ni
+        // guardado ni fallido, sin confirmar. El `finally` suelta los botones.
+        salirDeLaDuda();
+        return;
+      }
       const cartasGuardadas = cartasRef.current.length ? cartasRef.current : currentPack;
       if (packSavedRef.current) {
         setUserCollectionIds((prev) => [...prev, ...cartasGuardadas.map((c) => c.id)]);
         setPackSaveFailed(false);
         haptic("success");
+        // El sobre ya se ha visto: la anotación de la compra ha cumplido.
+        if (intentoRef.current) cerrarIntento(intentoRef.current.clave);
       } else {
         // Con el sobre sin guardar no se dan por poseídas sus cartas: si no, la
         // colección enseñaría cartas que no están en la base de datos.
@@ -1763,6 +2447,10 @@ export default function Home() {
    */
   const rasgarSobre = (dir: 1 | -1 = 1) => {
     if (tornRef.current || fase !== "sellado") return;
+    // Sin sobre y sin sobre en camino no hay nada hacia lo que rasgar: es el
+    // estado de "compra sin confirmar", donde lo que toca es reintentar. Sin
+    // esta guarda el rasgado seguía adelante hacia un mazo vacío.
+    if (!sobrePendienteRef.current && cartasRef.current.length === 0) return;
     tornRef.current = true;
 
     // La coreografía tal cual era. Se saca a una función porque puede tener que
@@ -1821,7 +2509,8 @@ export default function Home() {
     follow: false,
     threshold: 80,
     velocity: 600,
-    enabled: isPackOpen && fase === "sellado",
+    // Con la compra sin confirmar la tira no acompaña al dedo: no hay sobre.
+    enabled: isPackOpen && fase === "sellado" && !compraEnDuda,
     onStart: () => {
       tearWidthRef.current = sobreRef.current?.offsetWidth || 280;
       tearHapticRef.current = 0;
@@ -1895,6 +2584,76 @@ export default function Home() {
     resetPackState();
   };
 
+  /* TOCAR "INICIO" ESTANDO EN INICIO VUELVE A LA LISTA.
+   *
+   * La tienda de una expansión y el resumen son estado de esta página, no
+   * rutas: la pestaña Inicio, la marca de la barra superior y el menú lateral
+   * son enlaces a "/" y, estando ya en "/", no hacían nada. La única salida era
+   * el botón "Volver", y en iOS tocar la pestaña activa es justo el gesto con
+   * el que se vuelve a la raíz.
+   *
+   * Se escucha el click en el documento en vez de cablear cada barra porque
+   * las tres son enlaces a "/" y esta página sólo está montada en "/": un
+   * enlace a "/" pulsado aquí ES "llévame al principio de Inicio". No se
+   * cancela la navegación del enlace, que estando ya en la ruta no hace nada.
+   *
+   * Con la lista ya a la vista sube al principio, que es lo que hace iOS.
+   * Durante la apertura no entra (el resto de la aplicación está inerte) ni
+   * con una compra en vuelo.
+   *
+   * El manejador vive en un ref que se refresca en cada render: el oyente se
+   * engancha una vez y siempre ve el estado actual. */
+  const alTocarInicioRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    alTocarInicioRef.current = () => {
+      if (isPackOpen || finishingRef.current) return;
+      if (selectedSet) {
+        handleBackToMenu();
+        window.scrollTo(0, 0);
+      } else {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    };
+  });
+  useEffect(() => {
+    const alClick = (e: MouseEvent) => {
+      // Sólo el toque normal: con modificadores se está abriendo otra pestaña.
+      // NO se mira `defaultPrevented`: el <Link> de Next lo cancela SIEMPRE
+      // para navegar él, así que con esa guarda esto no se ejecutaba nunca.
+      if (e.button !== 0) return;
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const enlace = e.target instanceof Element ? e.target.closest('a[href="/"]') : null;
+      if (enlace) alTocarInicioRef.current();
+    };
+    document.addEventListener("click", alClick);
+    return () => document.removeEventListener("click", alClick);
+  }, []);
+
+  /* EL SOBRE DE SIEMPRE, CENTRADO AL ENTRAR. En móvil los sobres son un
+     carrusel que arranca en el Estándar: quien abre Premium deslizaba hasta él
+     en cada visita. Se escribe `scrollLeft` a mano y no `scrollIntoView`, que
+     además movería la página en vertical. En escritorio es una rejilla sin
+     desbordamiento y esto no hace nada. */
+  const tipoRecordado = ultima?.tipo ?? null;
+  const catalogoListo = allCards.length > 0;
+  const hayResumen = currentPack.length > 0;
+  useEffect(() => {
+    if (!selectedSet || !tipoRecordado || loading || isPackOpen || hayResumen || !catalogoListo) {
+      return;
+    }
+    const caja = carruselRef.current;
+    const tarjeta = caja?.querySelector<HTMLElement>(`[data-sobre="${tipoRecordado}"]`);
+    if (!caja || !tarjeta || caja.scrollWidth <= caja.clientWidth) return;
+    const dondeEsta =
+      tarjeta.getBoundingClientRect().left - caja.getBoundingClientRect().left + caja.scrollLeft;
+    caja.scrollLeft = dondeEsta - (caja.clientWidth - tarjeta.offsetWidth) / 2;
+  }, [selectedSet, tipoRecordado, loading, isPackOpen, hayResumen, catalogoListo]);
+
+  const cambiarAperturaRapida = (activa: boolean) => {
+    guardarAperturaRapida(activa);
+    setAperturaRapida(activa);
+  };
+
   // Posiciones del sobre que estrenan carta. Sólo cuenta la PRIMERA aparición
   // de cada id: si el sobre trae dos copias de la misma carta, la segunda es
   // una repetida (y como tal la vende dupeIdsInPack), no una nueva.
@@ -1902,12 +2661,14 @@ export default function Home() {
     const before = new Set(prePackIds);
     const seen = new Set<string>();
     const indexes = new Set<number>();
+    // Sobre recuperado: no hay foto de "antes" (ver `sobreRecuperado`).
+    if (sobreRecuperado) return indexes;
     currentPack.forEach((c, i) => {
       if (!before.has(c.id) && !seen.has(c.id)) indexes.add(i);
       seen.add(c.id);
     });
     return indexes;
-  }, [currentPack, prePackIds]);
+  }, [currentPack, prePackIds, sobreRecuperado]);
 
   // Cartas nuevas (no estaban antes del sobre)
   const newCardsInPack = newCardIndexes.size;
@@ -1917,19 +2678,115 @@ export default function Home() {
     const before = new Set(prePackIds);
     const seenNew = new Set<string>();
     const dupes: string[] = [];
+    // Sobre recuperado: sin foto de "antes" las diez parecerían repetidas.
+    if (sobreRecuperado) return dupes;
     currentPack.forEach((c) => {
       if (before.has(c.id)) dupes.push(c.id);
       else if (seenNew.has(c.id)) dupes.push(c.id); // repetida dentro del mismo sobre
       else seenNew.add(c.id);
     });
     return dupes;
-  }, [currentPack, prePackIds]);
+  }, [currentPack, prePackIds, sobreRecuperado]);
 
-  // Aquí NO se puede estimar el importe: el precio por copia baja con las copias
-  // que ya tienes (valorDeVenta) y el cliente, con el sobre recién guardado, no
-  // sabe cuántas le han quedado de cada carta. Sumar SELL_PRICES por repetida
-  // prometía más de lo que abona sellPackDuplicates, así que el botón no da
-  // cifra y el importe real se enseña después, con `soldInfo.earned`.
+  /* CUÁNTO DAN LAS REPETIDAS DEL SOBRE, ANTES DE VENDERLAS.
+   *
+   * Aquí ponía que NO se podía estimar: el precio por copia baja con las copias
+   * que ya tienes (valorDeVenta) y la página, que reducía la colección a ids,
+   * no sabía cuántas le quedaban de cada carta. Sumar SELL_PRICES por repetida
+   * prometía más de lo que abona sellPackDuplicates, así que el botón no daba
+   * cifra y el jugador vendía a ciegas algo que no se puede deshacer.
+   *
+   * Ahora sí se sabe cuántas hay: con sesión las trae `getFullCollection` (el
+   * inventario de components/tienda/repetidas.ts, que suma cada sobre que
+   * llega) y el invitado las tiene en su localStorage. Se tasa con la MISMA
+   * regla y la misma curva que la venta. Con sesión se rotula como aproximada:
+   * el servidor añade el ajuste por precio real, que no baja al navegador. Sin
+   * inventario (la colección no llegó a cargar) no se da cifra, como antes.
+   *
+   * Va en un efecto y no en un useMemo porque el invitado lee localStorage.
+   */
+  useEffect(() => {
+    if (isPackOpen || dupeIdsInPack.length === 0 || soldInfo) {
+      setTasacion(null);
+      return;
+    }
+    // La colección local sólo es la de quien juega como invitado. Con cuenta
+    // —confirmada o sin red— manda el inventario del servidor, o nada.
+    const inv = esInvitado ? inventarioDe(coleccionLocalSegura()) : inventarioRef.current;
+    if (!inv) {
+      setTasacion(null);
+      return;
+    }
+    setTasacion({
+      importe: tasarRepetidas(inv, dupeIdsInPack).importe,
+      exacta: !isSignedIn,
+      favoritas: new Set(dupeIdsInPack.filter((id) => inv.get(id)?.fav)),
+    });
+  }, [isPackOpen, dupeIdsInPack, soldInfo, isSignedIn, esInvitado, versionInventario]);
+
+  /**
+   * Las repetidas del sobre que merecen una segunda mirada antes de venderlas:
+   * rareza de aura para arriba (lo que se gradúa o se publica en el Bazar) y
+   * favoritas. Con alguna, el botón abre la hoja en vez de vender al toque.
+   */
+  const repetidasDelicadas = useMemo<RepetidaDelicada[]>(() => {
+    const porId = new Map(currentPack.map((c) => [c.id, c]));
+    const vistas = new Set<string>();
+    const lista: RepetidaDelicada[] = [];
+    for (const id of dupeIdsInPack) {
+      if (vistas.has(id)) continue;
+      vistas.add(id);
+      const carta = porId.get(id);
+      if (!carta) continue;
+      const favorita = tasacion?.favoritas.has(id) === true;
+      if (favorita || rankOf(carta.rarity) >= AURA_RANK) {
+        lista.push({ id, nombre: carta.name, motivo: favorita ? "Favorita" : carta.rarity });
+      }
+    }
+    return lista;
+  }, [currentPack, dupeIdsInPack, tasacion]);
+
+  /** Las repetidas del sobre sin las delicadas ("vender sólo las demás"). */
+  const repetidasCorrientes = useMemo(() => {
+    const apartadas = new Set(repetidasDelicadas.map((c) => c.id));
+    return dupeIdsInPack.filter((id) => !apartadas.has(id));
+  }, [dupeIdsInPack, repetidasDelicadas]);
+
+  /* SIN SALDO, ¿DE DÓNDE SALEN MONEDAS? Casi siempre, de las repetidas que ya
+     se tienen; y cuántas son y cuánto valen sólo se veía en Colección, dentro
+     de una hoja de confirmación. Se calcula con la tienda a la vista. */
+  useEffect(() => {
+    if (!selectedSet || isPackOpen || currentPack.length > 0) return;
+    const inv = esInvitado ? inventarioDe(coleccionLocalSegura()) : inventarioRef.current;
+    setRepetidasTotales(inv ? resumenDeRepetidas(inv) : null);
+  }, [selectedSet, isPackOpen, currentPack.length, esInvitado, versionInventario]);
+
+  /** Cuántas cartas DISTINTAS de la expansión abierta hay ya en la colección. */
+  const poseidasDelSet = useMemo(() => {
+    if (allCards.length === 0) return 0;
+    const tengo = new Set(userCollectionIds);
+    let n = 0;
+    for (const c of allCards) if (tengo.has(c.id)) n++;
+    return n;
+  }, [allCards, userCollectionIds]);
+
+  /**
+   * Cartas distintas por expansión, para la pastilla de cada tesela. El id de
+   * la expansión es el prefijo del id de la carta hasta el último guion, igual
+   * que lo cuenta el progreso de app/collection/page.tsx. Cero peticiones.
+   */
+  const conteoPorSet = useMemo(() => {
+    const conteo = new Map<string, number>();
+    // `userCollectionIds` repite ids (cada sobre añade los suyos): se cuentan
+    // cartas distintas.
+    for (const id of new Set(userCollectionIds)) {
+      const guion = id.lastIndexOf("-");
+      if (guion <= 0) continue;
+      const setId = id.slice(0, guion);
+      conteo.set(setId, (conteo.get(setId) ?? 0) + 1);
+    }
+    return conteo;
+  }, [userCollectionIds]);
 
   // Desglose por rareza del sobre
   const rarityBreakdown = useMemo(() => {
@@ -1975,15 +2832,21 @@ export default function Home() {
     return { earned, sold };
   };
 
-  const handleSellPackDupes = async () => {
-    if (dupeIdsInPack.length === 0 || sellingDupes) return;
+  /**
+   * `ids` son las repetidas a vender: todas las del sobre o, desde la hoja,
+   * "sólo las demás". No cambia ningún precio: decide qué se le manda a la
+   * venta de siempre.
+   */
+  const handleSellPackDupes = async (ids: string[] = dupeIdsInPack) => {
+    if (ids.length === 0 || sellingDupes) return;
     setSellingDupes(true);
     try {
       if (!isSignedIn) {
-        const res = venderRepetidasEnLocal(dupeIdsInPack);
+        const res = venderRepetidasEnLocal(ids);
         if (res.earned > 0) {
           addCoins(res.earned);
           setSoldInfo(res);
+          setVersionInventario((v) => v + 1);
           play("moneda");
         } else {
           toast("No había repetidas que vender", "error");
@@ -1995,13 +2858,15 @@ export default function Home() {
       // quantity=1 para estas cartas y sellable=0: la venta saldría a 0 y el
       // botón no haría nada visible.
       await sobrePendienteRef.current;
-      const res = await sellPackDuplicates(dupeIdsInPack);
+      const res = await sellPackDuplicates(ids);
       if (res.earned > 0) {
         // ventasRef avisa a refreshAfterPack de que hay una venta cuyo delta ya
         // está en el marcador, para que no lo pise con un saldo pre-venta.
         ventasRef.current += 1;
         setCoins((c) => c + res.earned);
         setSoldInfo(res);
+        if (inventarioRef.current) restarVenta(inventarioRef.current, ids);
+        setVersionInventario((v) => v + 1);
         play("moneda");
       } else {
         toast("No había repetidas que vender", "error");
@@ -2013,6 +2878,84 @@ export default function Home() {
       // Sin el finally, un fallo dejaba el botón en "Vendiendo..." para siempre.
       setSellingDupes(false);
     }
+  };
+
+  /* ---- Lo que se pinta, calculado una vez por render ---- */
+
+  /** La expansión recordada, si existe en la lista: fila "Seguir abriendo". */
+  const setRecordado =
+    !selectedSet && ultima ? (dbSets.find((s) => s.id === ultima.setId) ?? null) : null;
+  const detalleRecordado = (() => {
+    if (!setRecordado || !ultima) return undefined;
+    const llevo = conteoPorSet.get(setRecordado.id) ?? 0;
+    const total = Number(setRecordado.cardsCount) || Number(setRecordado.total) || 0;
+    const progreso =
+      llevo > 0 ? `${Math.min(llevo, total || llevo)}${total ? `/${total}` : ""} cartas` : null;
+    // Con el progreso al lado, el tipo va sin "Sobre": "Sobre Estándar ·
+    // 105/244 cartas" pedía 171 px y a 320 la fila le deja 150, así que salía
+    // cortado. Solo, sí lo lleva: "Estándar" a secas no dice qué es.
+    const tipo = ultima.tipo
+      ? progreso
+        ? NOMBRE_DE_SOBRE[ultima.tipo]
+        : `Sobre ${NOMBRE_DE_SOBRE[ultima.tipo]}`
+      : null;
+    return [tipo, progreso].filter(Boolean).join(" · ");
+  })();
+
+  /** "Sobre Premium · Rivales Predestinados" / "×10 Estándar · …". */
+  const rotuloDeCompra = (compra: CompraPendiente): string => {
+    const nombre = dbSets.find((s) => s.id === compra.setId)?.name ?? compra.setId;
+    const cuantos = compra.cantidad > 1 ? `×${compra.cantidad} ` : "Sobre ";
+    return `${cuantos}${NOMBRE_DE_SOBRE[compra.tipo]} · ${nombre}`;
+  };
+  const avisoDeCompra = compraPendiente ? (
+    <CompraSinConfirmar
+      confirmada={compraPendiente.confirmada}
+      rotulo={rotuloDeCompra(compraPendiente)}
+      ocupado={busy}
+      onReintentar={recuperarCompra}
+      onDescartar={descartarCompra}
+    />
+  ) : null;
+
+  /* QUÉ SOBRES SE PINTAN: MANDA EL SERVIDOR CUANDO HA CONTESTADO.
+   *
+   * La regla estaba escrita dos veces —`isSpecialSet` aquí y `sobresPermitidos`
+   * en app/action.ts— y la del servidor sabe más: calibra con el precio real,
+   * que no baja al navegador, y puede retirar el Estándar o el Premium de una
+   * expansión normal. La tienda seguía pintando el botón y la compra fallaba
+   * con "sobre-no-disponible". Con sesión y respuesta, cada tarjeta se pinta
+   * según `disponible`; la regla local queda de respaldo mientras la respuesta
+   * viaja y para el invitado, a quien le reparte este navegador. */
+  const soloPromo = sobresServidor ? sobresServidor.SPECIAL.disponible : isSpecialSet;
+  const seVendeEstandar = sobresServidor ? sobresServidor.STANDARD.disponible : true;
+  const seVendePremium = sobresServidor ? sobresServidor.PREMIUM.disponible : true;
+
+  /* SIN SALDO. El saldo sólo cuenta cuando el almacén de monedas ha cargado:
+     antes de eso vale el inicial y media tienda diría "te faltan". */
+  const saldo = saldoCargado ? coins : undefined;
+  const precioMasBarato = soloPromo
+    ? PACK_PRICES.SPECIAL
+    : seVendeEstandar
+      ? PACK_PRICES.STANDARD
+      : seVendePremium
+        ? PACK_PRICES.PREMIUM
+        : PACK_PRICES.GOLDEN;
+  const precioMasCaro = soloPromo ? PACK_PRICES.SPECIAL : PACK_PRICES.GOLDEN;
+  const noLlegaParaAlguno = saldo !== undefined && saldo < precioMasCaro;
+  const noLlegaParaNinguno = saldo !== undefined && saldo < precioMasBarato;
+
+  /** Repetir la última compra desde el resumen: el mismo sobre, o los mismos N. */
+  const costeDeRepetir = currentPackType ? PACK_PRICES[currentPackType] * ultimaCantidad : 0;
+  const faltaParaRepetir = saldo !== undefined ? Math.max(0, costeDeRepetir - saldo) : 0;
+  const rotuloDeRepetir =
+    ultimaCantidad > 1
+      ? `Otros ×${ultimaCantidad} · ${formatNumber(costeDeRepetir)}`
+      : `Otro sobre · ${formatNumber(costeDeRepetir)}`;
+  const repetirCompra = () => {
+    if (!currentPackType) return;
+    if (ultimaCantidad > 1) handleBuyMulti(currentPackType, ultimaCantidad);
+    else handleBuyPack(currentPackType);
   };
 
   return (
@@ -2030,7 +2973,13 @@ export default function Home() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -20 }}
               style={{ top: "calc(var(--sat) + var(--topbar-h) + 12px)" }}
-              className="fixed left-1/2 -translate-x-1/2 z-[200] bg-[color-mix(in_srgb,var(--warn)_15%,transparent)] border border-[color-mix(in_srgb,var(--warn)_30%,transparent)] backdrop-blur-xl px-6 py-4 rounded-2xl text-center max-w-sm"
+              /* `inset-x-4 mx-auto w-fit` y no `left-1/2 -translate-x-1/2`: con
+                 el borde izquierdo en el centro, el ancho disponible para un
+                 elemento fijo es MEDIA pantalla (160 px a 320), y "Rivales
+                 Predestinados · +2.500 monedas" partía en cuatro líneas. Así
+                 dispone del ancho entero menos 16 px por lado y se sigue
+                 centrando solo. */
+              className="fixed inset-x-4 mx-auto w-fit z-[200] bg-[color-mix(in_srgb,var(--warn)_15%,transparent)] border border-[color-mix(in_srgb,var(--warn)_30%,transparent)] backdrop-blur-xl px-6 py-4 rounded-2xl text-center max-w-sm"
             >
               {/* --warn-ink y no --warn: el token de aviso da 2,0-2,4:1 sobre el
                   papel claro, o sea que el titular del cartel no se leía en
@@ -2048,8 +2997,10 @@ export default function Home() {
       {/* Las estadísticas y los logros viven ahora en Social: la portada queda
           en héroe, recompensa diaria y expansiones. */}
 
-      {/* HERO INVITADO */}
-      {!selectedSet && isLoaded && !isSignedIn && (
+      {/* HERO INVITADO. Cuando ya hay una expansión recordada lo sustituye la
+          fila "Seguir abriendo": quien vuelve a abrir no necesita el titular de
+          bienvenida empujando la lista hacia abajo. */}
+      {!selectedSet && esInvitado && !setRecordado && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -2057,8 +3008,15 @@ export default function Home() {
           className="w-full max-w-6xl mb-10 text-center relative z-10"
         >
           <h1 className="text-4xl md:text-6xl font-bold text-gradient-ink tracking-tight">Abre. Colecciona. Completa.</h1>
+          {/* DICE LO QUE PASA, NO LO QUE SUENA BIEN. Ponía "Inicia sesión para
+              guardar tu colección", y quien abría veinte sobres de invitado y
+              luego entraba se encontraba una cuenta vacía: la colección del
+              invitado NO se traspasa (vive en este dispositivo y vuelve al
+              cerrar sesión). El texto prometía un traspaso que no existe. */}
           <p className="ink-soft t-cuerpo md:t-base mt-4 max-w-md mx-auto">
-            Elige una expansión y abre sobres con probabilidades reales. Inicia sesión para guardar tu colección.
+            Elige una expansión y abre sobres con probabilidades reales. Con una cuenta tu
+            colección se guarda en la nube; lo que abras como invitado se queda en este
+            dispositivo y no pasa a la cuenta.
           </p>
         </motion.div>
       )}
@@ -2093,6 +3051,50 @@ export default function Home() {
              nada: manda el ancho disponible, no el tope. */
           className="w-full max-w-7xl flex flex-col gap-4 pt-2 pb-24 relative z-10"
         >
+          {/* Una compra que quedó a medias: lo primero, porque puede haber
+              monedas ya cobradas detrás. */}
+          {avisoDeCompra}
+
+          {/* CUENTA SIN RED. La lista de expansiones se puede mirar (sale de la
+              copia guardada), pero abrir sobres no: se dice aquí, antes de que
+              el jugador entre en una tienda cuyos botones no van a responder. */}
+          {cuentaSinConexion && (
+            <SinConexion
+              variante="tira"
+              detalle="No se ha podido comprobar tu sesión. Puedes mirar las expansiones, pero los sobres se abren con tu cuenta: se reintentará en cuanto vuelva la conexión."
+            />
+          )}
+
+          {/* UNA VEZ, al entrar con cuenta teniendo partida de invitado. */}
+          {avisoInvitado && (
+            <div className="surface flex flex-col gap-3 rounded-2xl p-4 sm:flex-row sm:items-center" role="status">
+              <p className="ink-soft t-cuerpo-2 min-w-0 flex-1 leading-relaxed">
+                <span className="ink font-semibold">Tu partida de invitado sigue en este dispositivo.</span>{" "}
+                Esta cuenta tiene su propia colección; la de invitado no se traspasa y la volverás
+                a ver al cerrar sesión.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  marcarAvisoDeInvitado();
+                  setAvisoInvitado(false);
+                }}
+                className="btn-ghost press control-44 t-cuerpo shrink-0 rounded-xl px-5 font-medium"
+              >
+                Entendido
+              </button>
+            </div>
+          )}
+
+          {setRecordado && (
+            <SeguirAbriendo
+              set={setRecordado}
+              detalle={detalleRecordado}
+              onAbrir={() => handleSelectSet(setRecordado.id)}
+              onPrecalentar={() => precalentarCatalogo(setRecordado.id)}
+            />
+          )}
+
           {/* Cabecera de sección: al irse el panel de estadísticas a Social, la
               lista necesitaba un ancla visual que abriera la portada.
 
@@ -2148,6 +3150,34 @@ export default function Home() {
             </>
           )}
 
+          {/* SIN LISTA Y SIN RED: un estado, con su botón. Antes era un aviso de
+              2,8 s y la pantalla en blanco. */}
+          {errorSets && !setsCargando && dbSets.length === 0 && (
+            <EstadoError
+              titulo="No se pudieron cargar las expansiones"
+              onReintentar={cargarExpansiones}
+            />
+          )}
+
+          {/* SIN RED PERO CON LA LISTA DE LA ÚLTIMA VISITA: se pinta y se dice
+              que es la guardada, que es lo honesto (puede faltar una expansión
+              nueva). */}
+          {errorSets && dbSets.length > 0 && (
+            <div className="surface flex items-center justify-between gap-3 rounded-2xl px-4 py-2" role="status">
+              <p className="ink-soft t-cuerpo-2 min-w-0 leading-snug">
+                No se pudo actualizar la lista: ésta es la de tu última visita.
+              </p>
+              <button
+                type="button"
+                onClick={cargarExpansiones}
+                disabled={setsCargando}
+                className="chip press control-44 t-cuerpo-2 shrink-0 whitespace-nowrap rounded-xl px-3 font-medium disabled:opacity-60"
+              >
+                {setsCargando ? "Reintentando…" : "Reintentar"}
+              </button>
+            </div>
+          )}
+
           {Object.entries(setsBySeries).map(([seriesName, sets], idx) => (
             <motion.div
               key={seriesName}
@@ -2187,7 +3217,7 @@ export default function Home() {
                 aria-expanded={!!openSeries[seriesName]}
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <span className="t-cuerpo font-bold uppercase tracking-[0.2em] truncate">{seriesName}</span>
+                  <span className="t-cuerpo font-bold uppercase tracking-[0.2em] truncate">{rotuloDeSerie[seriesName] ?? seriesName}</span>
                   <span className="t-cuerpo-2 ink-soft tnum chip px-2 py-0.5 shrink-0">{sets.length}</span>
                 </div>
                 {/* El giro va en un envoltorio: el dibujo sale del vocabulario
@@ -2257,6 +3287,10 @@ export default function Home() {
                               <span className="sr-only"> · esta expansión todavía no está traducida al español</span>
                             </span>
                           )}
+                          <PastillaDeProgreso
+                            llevo={conteoPorSet.get(set.id) ?? 0}
+                            total={Number(set.cardsCount) || Number(set.total) || 0}
+                          />
                           <div className="flex-1 flex items-center justify-center w-full relative z-10">
                             {set.images?.logo ? (
                               <img
@@ -2311,17 +3345,49 @@ export default function Home() {
              ahí. */
           className="w-full max-w-6xl flex flex-col items-center pt-4 relative z-10"
         >
+          {/* EN MÓVIL, "VOLVER" COMPARTE FILA CON EL LOGO. Iba en una fila
+              propia (44 px de botón más 20 de margen) encima del logo, y en un
+              iPhone esa fila es justo lo que falta abajo: a 375x812, con la
+              barra de estado y la de pestañas, el botón de compra quedaba a unos
+              11 px de la barra y el de ×10 ya detrás de ella, y el progreso de
+              la expansión que ahora va bajo el logo (56 px con su margen)
+              habría escondido también el primero. Se recuperan 64 px poniendo
+              el botón a la izquierda de la misma fila, como una flecha —que es
+              donde iOS pone "atrás" y lo mismo que hace la vista de apertura—.
+              En escritorio no cambia nada: sigue siendo la píldora con rótulo
+              encima del logo. El logo cede 56 px por lado para no meterse
+              debajo del botón, y si la expansión no tiene logo se pinta su
+              nombre, que además mantiene el alto de la fila. */}
           <button
             onClick={handleBackToMenu}
-            className="mb-5 md:mb-10 ink-soft hover:ink transition flex items-center gap-2 t-etiqueta chip touch-target px-4 py-2 press"
+            aria-label="Volver a las expansiones"
+            className="max-md:absolute max-md:left-0 max-md:top-[22px] max-md:px-0 max-md:justify-center md:mb-10 ink-soft hover:ink transition flex items-center gap-2 t-etiqueta chip touch-target px-4 py-2 press"
           >
             <IconoVolver tam={16} />
-            Volver
+            <span className="max-md:hidden">Volver</span>
           </button>
 
-          {currentSetObj?.images?.logo && (
-            <img src={currentSetObj.images.logo} alt={currentSetObj.name} className="h-14 md:h-20 object-contain mb-5 md:mb-10 opacity-90" />
+          {currentSetObj?.images?.logo ? (
+            <img src={currentSetObj.images.logo} alt={currentSetObj.name} className="h-14 md:h-20 max-md:max-w-[calc(100%-7rem)] object-contain mb-5 md:mb-10 opacity-90" />
+          ) : (
+            <p className="h-14 md:h-20 mb-5 md:mb-10 max-md:px-14 flex items-center text-center t-titulo font-bold leading-tight">
+              {currentSetObj?.name ?? ""}
+            </p>
           )}
+
+          {/* CUÁNTO LLEVAS DE ESTA EXPANSIÓN, antes de decidir qué sobre abrir.
+              Espera a la colección (`coleccionLista`): sin ella diría "llevas
+              0" durante el rato que tarda en llegar. */}
+          {coleccionLista && allCards.length > 0 && !loadError && selectedSet && (
+            <ProgresoExpansion
+              tengo={poseidasDelSet}
+              total={allCards.length}
+              hrefAlbum={`/album/${selectedSet}`}
+              className="max-w-md px-2 mb-3 md:mb-8"
+            />
+          )}
+
+          {avisoDeCompra && <div className="w-full max-w-md px-2 mb-4 md:mb-8">{avisoDeCompra}</div>}
 
           {/* Sin cartas no hay sobres que ofrecer: se dice y se ofrece reintentar,
               en vez de enseñar una tienda que falla al pulsar comprar. */}
@@ -2343,13 +3409,14 @@ export default function Home() {
               "en la misma línea" y se pasan deslizando, en vez de apilarse en
               una columna kilométrica. En md+ vuelve a ser una rejilla. */
           <div
+            ref={carruselRef}
             className={
-              isSpecialSet
+              soloPromo
                 ? "w-full max-w-md px-2"
                 : "w-full flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:grid md:grid-cols-3 md:gap-6 md:overflow-visible md:px-2 md:pb-0"
             }
           >
-            {isSpecialSet ? (
+            {soloPromo ? (
               <PackCard
                 accent="blue"
                 badge="Edición limitada"
@@ -2367,9 +3434,12 @@ export default function Home() {
                 }
                 onClick={() => handleBuyPack("SPECIAL")}
                 disabled={busy}
+                tipo="SPECIAL"
+                saldo={saldo}
               />
             ) : (
               <>
+                {seVendeEstandar && (
                 <PackCard
                   accent="white"
                   title="Estándar"
@@ -2386,7 +3456,11 @@ export default function Home() {
                   onClick={() => handleBuyPack("STANDARD")}
                   onMulti={() => handleBuyMulti("STANDARD", 10)}
                   disabled={busy}
+                  tipo="STANDARD"
+                  saldo={saldo}
                 />
+                )}
+                {seVendePremium && (
                 <PackCard
                   accent="purple"
                   badge="Élite"
@@ -2403,7 +3477,10 @@ export default function Home() {
                   onClick={() => handleBuyPack("PREMIUM")}
                   onMulti={() => handleBuyMulti("PREMIUM", 10)}
                   disabled={busy}
+                  tipo="PREMIUM"
+                  saldo={saldo}
                 />
+                )}
                 <PackCard
                   accent="yellow"
                   badge="Coleccionista"
@@ -2421,10 +3498,31 @@ export default function Home() {
                   onMulti={() => handleBuyMulti("GOLDEN", 5)}
                   disabled={busy}
                   multiCount={5}
+                  tipo="GOLDEN"
+                  saldo={saldo}
                 />
               </>
             )}
           </div>
+          )}
+
+          {/* BAJO LOS SOBRES: de dónde sacar monedas cuando no llega, y el
+              interruptor de apertura rápida. Va debajo y no encima: lo que hay
+              que ver sin desplazar son los sobres y sus botones. */}
+          {!loadError && !loading && (
+            <div className="w-full max-w-md px-2 mt-4 md:mt-8 flex flex-col gap-3">
+              {/* De dónde sacar monedas cuando no llega (el porqué, en
+                  components/tienda/AvisoSinSaldo.tsx). */}
+              {noLlegaParaAlguno && (
+                <AvisoSinSaldo
+                  repetidas={repetidasTotales}
+                  aproximado={!!isSignedIn}
+                  noLlegaParaNinguno={noLlegaParaNinguno}
+                  conSesion={!!isSignedIn}
+                />
+              )}
+              <FilaAperturaRapida activa={aperturaRapida} onCambiar={cambiarAperturaRapida} />
+            </div>
           )}
 
           <Portal>
@@ -2481,7 +3579,8 @@ export default function Home() {
           style={{
             height: "var(--app-height)",
             paddingTop: "var(--sat)",
-            paddingBottom: "var(--sab)",
+            // No `--sab` a secas: ver SAB_APERTURA, junto a CARD_WIDTH.
+            paddingBottom: SAB_APERTURA,
             background: "var(--bg)",
           }}
         >
@@ -2594,8 +3693,10 @@ export default function Home() {
                 de retroceso, ni scroll: sería un encierro. El sobre ya está
                 guardado desde la compra, así que salir no pierde nada. */}
             <button
-              onClick={busy ? cerrarVistaSobre : finishPack}
-              aria-label={busy ? "Salir de la apertura" : "Guardar el sobre y salir"}
+              // Con la compra sin confirmar no hay sobre que guardar: se sale
+              // dejando el aviso de reintento en la tienda.
+              onClick={compraEnDuda ? salirDeLaDuda : busy ? cerrarVistaSobre : finishPack}
+              aria-label={compraEnDuda || busy ? "Salir de la apertura" : "Guardar el sobre y salir"}
               // `.control-44` en lugar de `w-10 h-10`: medía 40px y es la
               // única salida de la vista de apertura, donde no hay barra de
               // pestañas, ni gesto de retroceso, ni scroll.
@@ -2838,7 +3939,9 @@ export default function Home() {
                           ? (T_FANFARRIA - T_CARTA) / 1000
                           : 0,
                     }}
-                    className="absolute -top-3 -left-3 z-50 bg-[var(--accent)] text-white t-etiqueta font-bold px-3 py-1 rounded-full shadow-[var(--shadow-lg)]"
+                    // Tinta oscura y no `text-white`: blanco sobre el esmeralda de marca
+                    // da 2,5:1. Es la misma tinta que lleva `btn-accent`.
+                    className="absolute -top-3 -left-3 z-50 bg-[var(--accent)] text-[#04110c] t-etiqueta font-bold px-3 py-1 rounded-full shadow-[var(--shadow-lg)]"
                   >
                     Nueva
                   </motion.div>
@@ -2902,7 +4005,25 @@ export default function Home() {
                 CSS, que es lo que la hizo fiable. */}
             <div className="relative h-10 w-full">
               <AnimatePresence initial={false}>
-                {fase === "sellado" && (
+                {/* LA COMPRA NO SE HA PODIDO CONFIRMAR. Antes la vista se cerraba
+                    con "No se pudo completar la compra", aunque el servidor ya
+                    hubiera cobrado. Ahora el sobre se queda y se dice lo que se
+                    sabe: reintentar usa la misma clave y no cobra dos veces. */}
+                {fase === "sellado" && compraEnDuda && (
+                  <motion.p
+                    key="duda"
+                    role="alert"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0, transition: { duration: efectosApagados ? 0 : 0.15 } }}
+                    className="absolute inset-0 flex items-center justify-center px-2 text-center ink t-cuerpo-2 leading-tight"
+                  >
+                    {reintentando
+                      ? "Reintentando la compra…"
+                      : "No se ha podido confirmar la compra. Reintentar no cobra dos veces."}
+                  </motion.p>
+                )}
+                {fase === "sellado" && !compraEnDuda && (
                   <motion.p
                     key="rasga"
                     exit={{ opacity: 0, transition: { duration: efectosApagados ? 0 : 0.15 } }}
@@ -2952,7 +4073,7 @@ export default function Home() {
                     <p className="t-cuerpo font-semibold ink leading-tight truncate max-w-full">
                       {currentCard.name}
                     </p>
-                    <p className="ink-soft t-etiqueta leading-tight flex items-center gap-1.5">
+                    <p className="ink-soft t-etiqueta leading-tight flex items-center gap-1.5 max-w-full">
                       {RARITY_GLOW[currentCard.rarity] && (
                         // El color de rareza va como punto y no como color de
                         // texto: son rgba fijos y en tema claro no contrastan.
@@ -2967,9 +4088,17 @@ export default function Home() {
                           cada copia que ya tengas (la séptima repetida paga la
                           mitad). El pie prometía la tarifa de la primera y la
                           tienda pagaba otra cosa. */}
-                      <span className="truncate">
-                        {currentCard.rarity || "Sin rareza"} · hasta{" "}
-                        {formatNumber(precioDeCartaSuelta(currentCard.rarity))} monedas
+                      {/* SE RECORTA LA RAREZA, NUNCA EL PRECIO. Iban en un solo
+                          span con `truncate`, y a 320 px "Special Illustration
+                          Rare · hasta 150 monedas" no cabía: lo que se comían
+                          los puntos suspensivos era la cifra. Ahora el precio
+                          no encoge, y por debajo de 360 px la palabra
+                          "monedas" cede su sitio al icono. */}
+                      <span className="truncate min-w-0">{currentCard.rarity || "Sin rareza"}</span>
+                      <span className="shrink-0 whitespace-nowrap flex items-center gap-1">
+                        · hasta {formatNumber(precioDeCartaSuelta(currentCard.rarity))}
+                        <span className="max-[359px]:hidden">monedas</span>
+                        <IconoMoneda tam={16} className="hidden max-[359px]:block" titulo="monedas" />
                       </span>
                     </p>
                   </motion.div>
@@ -2981,7 +4110,32 @@ export default function Home() {
                 coreografía no hay nada que pulsar y el pie queda en silencio. */}
             <div className="relative h-11 w-full">
               <AnimatePresence initial={false}>
-                {fase === "sellado" && (
+                {fase === "sellado" && compraEnDuda && (
+                  <motion.div
+                    key="reintentar"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0, transition: { duration: efectosApagados ? 0 : 0.15 } }}
+                    className="absolute inset-0 flex items-center justify-center gap-2"
+                  >
+                    <button
+                      onClick={reintentarSobre}
+                      disabled={reintentando}
+                      aria-busy={reintentando}
+                      className="btn-accent press touch-target whitespace-nowrap px-6 py-2.5 rounded-xl t-cuerpo font-semibold disabled:opacity-60"
+                    >
+                      {reintentando ? "Reintentando…" : "Reintentar"}
+                    </button>
+                    <button
+                      onClick={salirDeLaDuda}
+                      disabled={reintentando}
+                      className="ink-soft hover:ink press touch-target whitespace-nowrap px-4 py-2.5 rounded-xl t-cuerpo font-medium transition disabled:opacity-50"
+                    >
+                      Salir
+                    </button>
+                  </motion.div>
+                )}
+                {fase === "sellado" && !compraEnDuda && (
                   <motion.div
                     key="abrir"
                     exit={{ opacity: 0, transition: { duration: efectosApagados ? 0 : 0.15 } }}
@@ -2995,6 +4149,19 @@ export default function Home() {
                       Abrir sobre{" "}
                       <kbd className="ml-1 t-micro opacity-70 hidden sm:inline">espacio</kbd>
                     </button>
+                    {/* SALTAR: guarda el sobre y va al resumen sin rasgarlo.
+                        Ya lo hacía la flecha de la cabecera, pero nada lo
+                        decía; quien abre veinte seguidos no tiene por qué
+                        pagar 1,15 s de animación y tres toques por sobre. Para
+                        saltársela siempre está la apertura rápida de la tienda. */}
+                    <button
+                      onClick={finishPack}
+                      disabled={busy}
+                      aria-label="Saltar la animación e ir al resumen"
+                      className="ink-soft hover:ink press touch-target whitespace-nowrap px-4 py-2.5 rounded-xl t-cuerpo font-medium transition disabled:opacity-50"
+                    >
+                      Saltar
+                    </button>
                   </motion.div>
                 )}
                 {fase === "cartas" && (
@@ -3005,10 +4172,16 @@ export default function Home() {
                     transition={{ duration: D.base }}
                     className="absolute inset-0 flex items-center justify-center gap-2"
                   >
+                    {/* A 320 px "Guardar sobre" y "Revelar todo" pedían 296 px
+                        de los 288 que hay: los rótulos partían en dos líneas,
+                        los botones pasaban de 44 a 62 px y se salían del pie
+                        (que es de alto fijo) hacia el indicador de inicio. No
+                        parten (`whitespace-nowrap`) y por debajo de 360 px
+                        llevan menos relleno. */}
                     <button
                       onClick={handleNextCard}
                       disabled={busy}
-                      className="btn-accent press touch-target px-6 py-2.5 rounded-xl t-cuerpo font-semibold disabled:opacity-60"
+                      className="btn-accent press touch-target whitespace-nowrap px-6 max-[359px]:px-4 py-2.5 rounded-xl t-cuerpo font-semibold disabled:opacity-60"
                     >
                       {busy ? (
                         "Guardando..."
@@ -3021,17 +4194,21 @@ export default function Home() {
                     </button>
                     {/* Revelar todo no aparece hasta rasgar: saltarse el sobre
                         cerrado desde aquí vaciaría el momento que se acaba de
-                        pagar. */}
+                        pagar. Y con todo ya revelado NO SE PINTA: se quedaba
+                        apagado, sin hacer nada, justo en la última carta, que
+                        es donde menos sitio hay. */}
+                    {maxRevealed < currentPack.length && (
                     <button
                       onClick={handleRevealAll}
-                      disabled={busy || maxRevealed >= currentPack.length}
-                      className="ink-soft hover:ink press touch-target px-4 py-2.5 rounded-xl t-cuerpo font-medium transition flex items-center gap-2 disabled:opacity-50"
+                      disabled={busy}
+                      className="ink-soft hover:ink press touch-target whitespace-nowrap px-4 max-[359px]:px-3 py-2.5 rounded-xl t-cuerpo font-medium transition flex items-center gap-2 disabled:opacity-50"
                     >
                       Revelar todo
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="w-4 h-4">
                         <path d="m13 17 5-5-5-5M6 17l5-5-5-5" />
                       </svg>
                     </button>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -3047,63 +4224,57 @@ export default function Home() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: D.slow }}
-          className="flex flex-col items-center w-full max-w-7xl pb-24 pt-4 relative z-10"
+          /* `pb-2` y no `pb-24`: el hueco de la barra de pestañas ya lo reserva
+             <main> (pb-nav). Con 96 px más aquí, la barra de acciones pegada
+             abajo saltaba esos 96 px hacia arriba al llegar al final del
+             desplazamiento, que es donde descansa en su sitio natural. */
+          className="flex flex-col items-center w-full max-w-7xl pb-2 pt-4 relative z-10"
         >
-          <div className="flex flex-col md:flex-row gap-4 mb-12 items-center w-full justify-between">
-            <div>
+          {/* `items-start` en móvil: el bloque del título iba CENTRADO como
+              bloque con el texto alineado a la izquierda, así que arrancaba en
+              x 43 a 320 px mientras todo lo de debajo arranca en x 16. */}
+          <div className="flex flex-col md:flex-row gap-4 mb-5 items-start md:items-center w-full justify-between">
+            <div className="min-w-0">
               <h2 className="t-display font-bold ink tracking-tight">Resumen</h2>
               <p className="t-cuerpo-2 ink-soft mt-1">
-                {newCardsInPack > 0
+                {sobreRecuperado
+                  ? "Sobre recuperado: ya estaba cobrado y sus cartas están en tu colección"
+                  : newCardsInPack > 0
                   ? `${newCardsInPack} carta${newCardsInPack > 1 ? "s" : ""} nueva${newCardsInPack > 1 ? "s" : ""} añadida${newCardsInPack > 1 ? "s" : ""} a tu colección`
                   : "Sin cartas nuevas en este sobre"}
               </p>
             </div>
+            {/* ARRIBA QUEDAN LAS DOS SALIDAS. "Vender repetidas" y "Otro sobre"
+                —lo que se repite sobre tras sobre— bajan a la barra pegada del
+                final: tras un ×10 son 34 filas de cartas y había que deshacer
+                todo el desplazamiento para repetir.
+                Las dos se apagan mientras la venta de repetidas está en vuelo:
+                su respuesta escribía `soldInfo` sin mirar si el sobre seguía
+                siendo el mismo, y con "Otro sobre" de por medio el resumen
+                siguiente enseñaba "+X por 5 repetidas" del anterior. */}
             <div className="flex flex-wrap gap-2 md:gap-3 w-full md:w-auto">
-              {/* El invitado también vende: su colección vive en localStorage y
-                  la pantalla de colección ya sabe venderla (saveCollectionRaw +
-                  valorDeVenta). Dejarlo fuera era un hueco, no una decisión. */}
-              {dupeIdsInPack.length > 0 && !soldInfo && !packSaveFailed && (
-                <button
-                  onClick={handleSellPackDupes}
-                  disabled={sellingDupes}
-                  className="press touch-target px-5 py-2.5 rounded-xl t-cuerpo font-medium transition disabled:opacity-50"
-                  style={{
-                    background: "var(--ok-weak)",
-                    border: "1px solid color-mix(in srgb, var(--ok) 35%, transparent)",
-                    color: "var(--ok)",
-                  }}
-                >
-                  {sellingDupes ? "Vendiendo..." : `Vender ${dupeIdsInPack.length} repetidas`}
-                </button>
-              )}
-              {soldInfo && (
-                <span className="t-cuerpo font-medium px-3 py-2.5" style={{ color: "var(--ok)" }}>
-                  +{formatNumber(soldInfo.earned)} por {soldInfo.sold} repetidas
-                </span>
-              )}
               {/* Vaciar currentPack a secas dejaba direction en -1 y la primera
                   carta del sobre siguiente entraba por el lado contrario. */}
-              <button onClick={resetPackState} className="btn-ghost press touch-target px-5 py-2.5 rounded-xl t-cuerpo font-medium">
+              <button onClick={resetPackState} disabled={busy || sellingDupes} className="btn-ghost press touch-target px-5 py-2.5 rounded-xl t-cuerpo font-medium disabled:opacity-50">
                 Cambiar de sobre
               </button>
-              <button onClick={handleBackToMenu} className="btn-ghost press touch-target px-5 py-2.5 rounded-xl t-cuerpo font-medium">
+              <button onClick={handleBackToMenu} disabled={busy || sellingDupes} className="btn-ghost press touch-target px-5 py-2.5 rounded-xl t-cuerpo font-medium disabled:opacity-50">
                 Finalizar
               </button>
-              {currentPackType && (
-                // Repetir el mismo sobre sin pasar por la tienda: handleBuyPack
-                // ya comprueba saldo y compra en vuelo, y finishPack ya metió
-                // estas cartas en userCollectionIds, así que las "Nuevas" del
-                // siguiente sobre salen bien.
-                <button
-                  onClick={() => handleBuyPack(currentPackType)}
-                  disabled={busy}
-                  className="btn-accent press touch-target px-6 py-2.5 rounded-xl t-cuerpo font-semibold disabled:opacity-60"
-                >
-                  {busy ? "Abriendo..." : `Otro sobre · ${formatNumber(PACK_PRICES[currentPackType])}`}
-                </button>
-              )}
             </div>
           </div>
+
+          {/* CÓMO QUEDA LA EXPANSIÓN TRAS ESTE SOBRE. Con el guardado sin
+              cuajar o el sobre recuperado no se dice "+N": no se sabe. */}
+          {coleccionLista && allCards.length > 0 && selectedSet && (
+            <ProgresoExpansion
+              tengo={poseidasDelSet}
+              total={allCards.length}
+              nuevas={packSaveFailed || sobreRecuperado ? 0 : newCardsInPack}
+              hrefAlbum={`/album/${selectedSet}`}
+              className="mb-6"
+            />
+          )}
 
           {/* DESGLOSE POR RAREZA */}
           <div className="w-full flex flex-wrap gap-2 mb-8">
@@ -3138,7 +4309,11 @@ export default function Home() {
                     se lee lo que vale la carta. --warn-ink y --ok son su
                     versión legible (ver app/globals.css). */}
                 <p className="t-etiqueta" style={{ color: "var(--warn-ink)" }}>Mejor carta del sobre</p>
-                <h3 className="t-base md:t-titulo font-semibold ink truncate">{bestPull.name}</h3>
+                {/* `line-clamp-3` y no `truncate`: a 320 px el nombre dispone
+                    de 100 px y "Team Rocket's Mewtwo ex" salía "Team Rock…".
+                    Con dos líneas seguía cortado ("Team / Rocket's…"): pide
+                    tres, y tres caben en el alto de la miniatura de al lado. */}
+                <h3 className="t-base md:t-titulo font-semibold ink leading-tight line-clamp-3">{bestPull.name}</h3>
                 {/* ink-soft: en móvil esta línea son 11px y --ink-faint no llega
                     al mínimo por debajo de 12. */}
                 <p className="t-meta md:t-cuerpo-2 ink-soft">{bestPull.rarity}</p>
@@ -3166,8 +4341,38 @@ export default function Home() {
                   transition={{ delay: reduceMotion ? 0 : Math.min(index, 12) * 0.04 }}
                   className="relative"
                 >
+                  {/* LA CARTA SE PUEDE TOCAR para verla en grande, con el
+                      resto del sobre a un deslizamiento. Antes, para mirar la
+                      carta nueva que acababa de salir había que ir a Colección
+                      y buscarla.
+                      `press-flat` (2 px de traslación) y no `press`: esto
+                      envuelve una carta, y una escala sobre su ancestro la
+                      rasteriza borrosa en WebKit. */}
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Ver ${card.name} en grande`}
+                    onClick={() => setDetalleIndex(index)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setDetalleIndex(index);
+                      }
+                    }}
+                    className="press-flat relative cursor-pointer"
+                  >
+                  {/* LAS DOS INSIGNIAS VAN EN UNA FILA QUE PARTE. Cada una
+                      volaba 8 px fuera de su carta y el hueco entre columnas es
+                      de 10: "Deseada" de una carta pisaba a "Nueva" de la
+                      siguiente. Y en la MISMA carta era peor —una deseada que
+                      sale es casi siempre nueva—: a 320 px la carta mide 89 px
+                      y las dos píldoras suman 128. Ahora vuelan 4 px por lado
+                      (8 en total, menos que el hueco) y, si no caben juntas,
+                      "Deseada" baja a una segunda línea. */}
+                  {(isNew || wishlistSet.has(card.id)) && (
+                    <div className="pointer-events-none absolute -top-2 -inset-x-1 z-30 flex flex-wrap items-start gap-0.5">
                   {isNew && (
-                    <div className="absolute -top-2 -left-2 z-30 bg-[var(--accent)] text-white t-etiqueta font-bold px-2 py-0.5 rounded-full shadow-[var(--shadow-lg)]">
+                    <div className="bg-[var(--accent)] text-[#04110c] t-etiqueta font-bold px-2 py-0.5 rounded-full shadow-[var(--shadow-lg)]">
                       Nueva
                     </div>
                   )}
@@ -3179,15 +4384,59 @@ export default function Home() {
                       que sobre el rosa de antes daba 3,7:1: mantenerla blanca
                       habría sido perder legibilidad al cambiar de color. */}
                   {wishlistSet.has(card.id) && (
-                    <div className="absolute -top-2 -right-2 z-30 bg-[var(--warn)] text-black t-etiqueta font-bold px-2 py-0.5 rounded-full shadow-[var(--shadow-lg)]">
+                    <div className="ml-auto bg-[var(--warn)] text-black t-etiqueta font-bold px-2 py-0.5 rounded-full shadow-[var(--shadow-lg)]">
                       Deseada
                     </div>
                   )}
+                    </div>
+                  )}
                   <PokemonCard card={card} reveal={true} interactive={false} />
+                  </div>
                 </motion.div>
               );
             })}
           </div>
+
+          {/* Vender repetidas y repetir la compra, pegados abajo (el porqué, en
+              components/tienda/BarraDelResumen.tsx). El invitado también vende:
+              su colección vive en localStorage y la pantalla de colección ya
+              sabe venderla; dejarlo fuera era un hueco, no una decisión.
+              Si entre las repetidas hay algo valioso o favorito no se vende al
+              toque: se pregunta (VenderRepetidasSheet). */}
+          <BarraDelResumen
+            repetidas={dupeIdsInPack.length}
+            puedeVender={!packSaveFailed}
+            tasacion={tasacion}
+            vendiendo={sellingDupes}
+            vendido={soldInfo}
+            onVender={() =>
+              repetidasDelicadas.length > 0 ? setHojaVenta(true) : handleSellPackDupes()
+            }
+            repetir={currentPackType ? { rotulo: rotuloDeRepetir, falta: faltaParaRepetir } : null}
+            ocupado={busy}
+            onRepetir={repetirCompra}
+          />
+
+          {detalleIndex !== null && currentPack[detalleIndex] && (
+            <CardDetailModal
+              card={currentPack[detalleIndex]}
+              onClose={() => setDetalleIndex(null)}
+              readOnly
+              cards={currentPack}
+              index={detalleIndex}
+              onIndexChange={setDetalleIndex}
+            />
+          )}
+
+          <VenderRepetidasSheet
+            open={hojaVenta}
+            onClose={() => setHojaVenta(false)}
+            delicadas={repetidasDelicadas}
+            total={dupeIdsInPack.length}
+            demas={repetidasCorrientes.length}
+            onVenderTodas={() => handleSellPackDupes()}
+            onVenderDemas={() => handleSellPackDupes(repetidasCorrientes)}
+          />
         </motion.div>
       )}
     </div>
@@ -3221,9 +4470,25 @@ interface PackCardProps {
   odds?: [string, string][];
   /** Hay una compra en vuelo: los botones no deben poder dispararse otra vez. */
   disabled?: boolean;
+  /** Qué sobre es: marca la tarjeta para poder centrarla en el carrusel. */
+  tipo?: string;
+  /**
+   * Monedas del jugador, o `undefined` si todavía no se saben. Con el saldo
+   * por debajo del precio el botón lo DICE ("Te faltan 150") en vez de parecer
+   * activo y contestar con un aviso al pulsarlo.
+   */
+  saldo?: number;
 }
 
-function PackCard({ accent, badge, title, description, price, icon, foto, onClick, onMulti, multiCount = 10, odds, disabled = false }: PackCardProps) {
+function PackCard({ accent, badge, title, description, price, icon, foto, onClick, onMulti, multiCount = 10, odds, disabled = false, tipo, saldo }: PackCardProps) {
+  /* CUÁNTO FALTA, Y NO SE DESHABILITA. El botón se apaga a la vista y cambia de
+     rótulo, pero sigue respondiendo: el saldo que se lee aquí es el del
+     contexto de monedas, cacheado en localStorage, y bloquear una compra con un
+     dato de segunda mano dejaría al jugador sin poder comprar algo que sí puede
+     pagar. Es el mismo criterio que components/bazar/TarjetaAnuncio.tsx: avisar
+     es honesto; quien decide es el servidor. */
+  const falta = saldo === undefined ? 0 : Math.max(0, price - saldo);
+  const faltaMulti = saldo === undefined ? 0 : Math.max(0, price * multiCount - saldo);
   /*
    * LOS COLORES DE LAS TRES VARIANTES, Y LO QUE FALTA AQUÍ.
    *
@@ -3265,7 +4530,8 @@ function PackCard({ accent, badge, title, description, price, icon, foto, onClic
     },
     blue:   {
       iconColor: "text-[var(--accent-2)]",
-      btn: "bg-[var(--accent-2)] hover:bg-[color-mix(in_srgb,var(--accent-2)_85%,white)] text-white",
+      // Tinta oscura: blanco sobre el cian de --accent-2 da 2,4:1.
+      btn: "bg-[var(--accent-2)] hover:bg-[color-mix(in_srgb,var(--accent-2)_85%,white)] text-[#04110c]",
       badgeBg: "bg-[color-mix(in_srgb,var(--accent-2)_15%,transparent)] ink border border-[color-mix(in_srgb,var(--accent-2)_20%,transparent)]",
       glow: "rgba(56,189,248,0.22)",
     },
@@ -3286,12 +4552,14 @@ function PackCard({ accent, badge, title, description, price, icon, foto, onClic
       /* LOS DOS GESTOS SON TRASLACIONES. El de antes era `whileTap: scale 0.98`
          sobre la tarjeta entera, o sea un transform de escala en un ANCESTRO de
          la fotografía del sobre: exactamente lo que la rasteriza a escala fija y
-         la deja borrosa en iOS. Es el mismo cambio que ya se hizo en
-         components/SetPackTile.tsx, y aquí es más grave porque la foto ocupa
-         180px y no 44. Un hundimiento de 2px acusa recibo igual. */
+         la deja borrosa en iOS. Es el mismo cambio que se hizo en su día en
+         components/SetPackTile.tsx (hoy sin uso: nadie lo importa desde el
+         commit 2379052), y aquí es más grave porque la foto ocupa 180px y no
+         44. Un hundimiento de 2px acusa recibo igual. */
       whileTap={{ y: 2 }}
       transition={{ duration: D.base }}
       className="surface surface-hover rounded-3xl p-5 md:p-8 flex flex-col items-center group relative overflow-hidden text-left w-[76vw] max-w-[300px] shrink-0 snap-center md:w-auto md:max-w-none md:shrink"
+      data-sobre={tipo}
     >
       {/* EL RESPLANDOR ES HERMANO DE LA FOTO, NO ANCESTRO, y por eso su
           `blur-3xl` puede quedarse. `filter` promociona a capa y crea contexto
@@ -3420,17 +4688,23 @@ function PackCard({ accent, badge, title, description, price, icon, foto, onClic
         <button
           onClick={onClick}
           disabled={disabled}
-          className={`${a.btn} press touch-target font-semibold py-2.5 px-6 rounded-xl w-full text-center transition t-cuerpo disabled:opacity-50 disabled:cursor-not-allowed`}
+          className={`${a.btn} press touch-target font-semibold py-2.5 px-6 rounded-xl w-full text-center transition t-cuerpo disabled:opacity-50 disabled:cursor-not-allowed ${falta > 0 && !disabled ? "opacity-60" : ""}`}
         >
-          {disabled ? "Abriendo..." : `${formatNumber(price)} monedas`}
+          {disabled
+            ? "Abriendo..."
+            : falta > 0
+              ? `Te faltan ${formatNumber(falta)}`
+              : `${formatNumber(price)} monedas`}
         </button>
         {onMulti && (
           <button
             onClick={onMulti}
             disabled={disabled}
-            className="press btn-ghost touch-target font-medium py-2 px-6 rounded-xl w-full text-center transition t-cuerpo-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            className={`press btn-ghost touch-target font-medium py-2 px-6 rounded-xl w-full text-center transition t-cuerpo-2 disabled:opacity-50 disabled:cursor-not-allowed ${faltaMulti > 0 && !disabled ? "opacity-60" : ""}`}
           >
-            Abrir ×{multiCount} · {formatNumber(price * multiCount)}
+            {faltaMulti > 0
+              ? `×${multiCount} · te faltan ${formatNumber(faltaMulti)}`
+              : `Abrir ×${multiCount} · ${formatNumber(price * multiCount)}`}
           </button>
         )}
       </div>

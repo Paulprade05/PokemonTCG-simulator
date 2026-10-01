@@ -88,6 +88,28 @@ function medir() {
   oyentes.forEach((cb) => cb());
 }
 
+/* AL VOLVER DEL SEGUNDO PLANO SE VUELVE A MEDIR.
+ *
+ * iOS reanuda una PWA instalada tal cual la dejó, sin recargarla, y los eventos
+ * de `visualViewport` que ocurrieron mientras estaba suspendida no llegan. Si
+ * se salió con el teclado abierto, al volver el teclado ya no está pero
+ * `data-keyboard="open"` seguía puesto: la barra de pestañas escondida y
+ * `--app-height` a media pantalla, hasta que algo provocara un resize.
+ *
+ * Se mide al volver y otra vez un momento después: iOS repinta la app antes de
+ * terminar de recolocar el viewport, y la primera lectura puede ser todavía la
+ * de antes. `medir` no hace nada si la medida no ha cambiado, así que la
+ * segunda pasada no cuesta un render. */
+const ESPERA_SEGUNDA_MEDIDA_MS = 350;
+let temporizadorVuelta: number | undefined;
+
+function medirAlVolver() {
+  if (document.visibilityState !== "visible") return;
+  medir();
+  window.clearTimeout(temporizadorVuelta);
+  temporizadorVuelta = window.setTimeout(medir, ESPERA_SEGUNDA_MEDIDA_MS);
+}
+
 function instalar() {
   if (instalado) return;
   instalado = true;
@@ -98,6 +120,10 @@ function instalar() {
   }
   window.addEventListener("resize", medir);
   window.addEventListener("orientationchange", medir);
+  document.addEventListener("visibilitychange", medirAlVolver);
+  // `pageshow` cubre la restauración desde la caché de páginas del navegador,
+  // que no dispara `visibilitychange`.
+  window.addEventListener("pageshow", medirAlVolver);
   medir();
 }
 
@@ -111,6 +137,9 @@ function desinstalar() {
   }
   window.removeEventListener("resize", medir);
   window.removeEventListener("orientationchange", medir);
+  document.removeEventListener("visibilitychange", medirAlVolver);
+  window.removeEventListener("pageshow", medirAlVolver);
+  window.clearTimeout(temporizadorVuelta);
 }
 
 /** Suscripción para useSyncExternalStore. Los oyentes del DOM se instalan con

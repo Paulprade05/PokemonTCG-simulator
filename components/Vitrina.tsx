@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useReducedMotion } from "framer-motion";
-import { useUser } from "@clerk/nextjs";
 import Link from "next/link";
 import {
   getArchivador,
@@ -21,6 +20,9 @@ import {
 } from "../utils/archivadorLocal";
 import { RARITY_RANK } from "../utils/constanst";
 import { formatNumber } from "../utils/format";
+import { leerAjustes, suscribirseAjustes, type Ajustes } from "../utils/settings";
+import { useIdentidad } from "../hooks/useIdentidad";
+import SinConexion from "./ui/SinConexion";
 import { useHaptics } from "../hooks/useHaptics";
 import { useSwipe, touchActionFor } from "../hooks/useSwipe";
 import PageHeader from "./PageHeader";
@@ -81,7 +83,7 @@ import type { CartaEnColeccion, Expansion } from "../utils/tipos";
  *    que en TODO el árbol de la vitrina no hay `filter`, `drop-shadow`,
  *    `backdrop-filter`, `mix-blend-mode`, ni un solo `transform` con `scale`.
  *    WebKit rasteriza esa capa a escala fija y la ilustración sale borrosa
- *    (PokemonCard.tsx:140-163 y 255-266).
+ *    (PokemonCard.tsx: la nota de `settled` y la del halo con box-shadow).
  *    La perspectiva del pase de página es la ÚNICA excepción, y está acotada:
  *    components/vitrina/LibroArchivador.tsx monta el escenario 3D al empezar el
  *    giro y lo desmonta al acabarlo, así que en reposo —el 99% del tiempo que
@@ -236,11 +238,46 @@ function porQueNoSePudo(
   }
 }
 
-export default function Vitrina() {
-  const { isSignedIn, isLoaded } = useUser();
+export default function Vitrina({
+  bajoCabecera,
+}: {
+  /**
+   * Lo que va justo debajo de la cabecera cuando el archivador está a la vista:
+   * la fila de accesos a las pantallas hermanas. Lo pasa la ruta
+   * (app/vitrina/page.tsx) para que este componente no tenga que saber de qué
+   * familia de pantallas forma parte.
+   */
+  bajoCabecera?: ReactNode;
+}) {
+  // `useIdentidad` y no `useUser().isLoaded`: sin conexión Clerk no resuelve
+  // nunca y «Abriendo la vitrina» giraba para siempre, con el archivador del
+  // invitado esperando en localStorage. Ver utils/identidad.ts.
+  const identidad = useIdentidad();
+  // Con cuenta CONFIRMADA: decide si colocar y quitar escriben en el servidor
+  // o en localStorage, así que no vale un "parece que tiene cuenta".
+  const isSignedIn = identidad === "cuenta";
   const haptic = useHaptics();
   const toast = useToast();
   const reducido = useReducedMotion();
+  /**
+   * "Reducir efectos", el interruptor PROPIO de Ajustes, además del sistema.
+   *
+   * `useReducedMotion` de framer sólo lee la preferencia del sistema. Con el
+   * ajuste de la app activo y el sistema sin preferencia, el CSS ya recortaba
+   * la animación (`data-efectos=off`), pero LibroArchivador seguía montando el
+   * escenario 3D y esperando la duración entera del giro antes de fijar la
+   * hoja: medio segundo con dos hojas en perspectiva —cartas rasterizadas— y
+   * los mandos bloqueados, en vez del cambio seco que promete el prop. La
+   * portada ya combinaba las dos cosas; aquí faltaba. Se lee en un efecto
+   * porque sale de localStorage.
+   */
+  const [reducirEfectos, setReducirEfectos] = useState(false);
+  useEffect(() => {
+    const aplicar = (a: Ajustes) => setReducirEfectos(a.reducirEfectos);
+    aplicar(leerAjustes());
+    return suscribirseAjustes(aplicar);
+  }, []);
+  const efectosApagados = !!reducido || reducirEfectos;
 
   /** La colección: sólo se usa para OFRECER cartas en el selector. */
   const [cartas, setCartas] = useState<CartaEnColeccion[]>([]);
@@ -298,14 +335,16 @@ export default function Vitrina() {
    * indistinguible de "todavía no has colocado nada".
    */
   const cargar = useCallback(async () => {
-    if (!isLoaded) return;
+    // "resolviendo" deja el esqueleto; "cuenta-sin-conexion" pinta su propia
+    // pantalla más abajo y aquí no hay nada que pedir.
+    if (identidad !== "cuenta" && identidad !== "invitado") return;
     setCargando(true);
     setErrorCarga(false);
     try {
-      const expansiones = await getSetsFromDB();
-      setSets(expansiones);
-
       if (isSignedIn) {
+        const expansiones = await getSetsFromDB();
+        setSets(expansiones);
+
         // En paralelo: son dos lecturas independientes y encadenarlas duplica
         // la espera de la primera pantalla.
         const [coleccion, archivador] = await Promise.all([
@@ -323,6 +362,17 @@ export default function Vitrina() {
           ),
         );
       } else {
+        /* EL INVITADO NO ESPERA A LA RED PARA VER SU ARCHIVADOR. Las
+         * expansiones iban delante de todo y con `await`: sin cobertura
+         * lanzaban y la pantalla acababa en "No se pudo abrir la vitrina" con
+         * el archivador y la colección enteros en localStorage. Aquí sólo
+         * alimentan el filtro del selector, así que se piden aparte y, si no
+         * llegan, el selector se queda con "Todas" y nada más. */
+        getSetsFromDB()
+          .then(setSets)
+          .catch(() => {
+            /* sin red: el selector funciona sin el filtro por expansión */
+          });
         const coleccion = ordenarComoElServidor(getCollection());
         setCartas(coleccion);
         setMaxHojas(MAX_HOJAS);
@@ -348,7 +398,7 @@ export default function Vitrina() {
     } finally {
       setCargando(false);
     }
-  }, [isSignedIn, isLoaded]);
+  }, [identidad, isSignedIn]);
 
   useEffect(() => {
     cargar();
@@ -460,11 +510,28 @@ export default function Vitrina() {
    * el `will-change` que puso al empezar el arrastre — y un `will-change`
    * permanente sobre un ancestro de las cartas es exactamente lo que las deja
    * borrosas en iPhone.
+   *
+   * SÍ MIRA SI LA VENTANA ESTÁ MONTADA (`!cargando && !errorCarga`), y eso era
+   * el fallo de "el arrastre no engancha al entrar": mientras se carga, esta
+   * pantalla devuelve el esqueleto y `ventanaRef.current` es null. useSwipe
+   * enganchaba sus oyentes en un efecto que sólo se repetía cuando cambiaba
+   * `enabled`; con `!hayCapa` a secas valía true desde el primer render, el
+   * efecto corría sin elemento, y cuando la ventana aparecía ya no cambiaba
+   * nada que lo relanzara. Deslizar no hacía nada hasta abrir y cerrar una
+   * funda, que es lo único que movía la bandera.
+   *
+   * HOY ESTÁ ARREGLADO POR LOS DOS LADOS: useSwipe mira `ref.current` tras
+   * cada render y se reengancha solo si el elemento ha cambiado
+   * (hooks/useSwipe.ts), y aquí la bandera sigue pasando a true en el mismo
+   * render en el que se monta la ventana. Lo segundo ya no es imprescindible,
+   * pero se queda: dice la verdad (sin ventana no hay nada que arrastrar) y no
+   * contradice lo de arriba, porque ocurre antes de que pueda haber un gesto
+   * en marcha.
    */
   const arrastroRef = useSwipe(ventanaRef, {
     axis: "x",
     follow: false,
-    enabled: !hayCapa,
+    enabled: !hayCapa && !cargando && !errorCarga,
     onSwipeLeft:
       hojaSegura < totalHojas - 1 ? () => irAHoja(hojaSegura + 1) : undefined,
     onSwipeRight: hojaSegura > 0 ? () => irAHoja(hojaSegura - 1) : undefined,
@@ -783,6 +850,22 @@ export default function Vitrina() {
   /* RENDER                                                            */
   /* ---------------------------------------------------------------- */
 
+  // ANTES que el esqueleto: `cargando` sigue en true porque no se ha pedido
+  // nada. Con cuenta y sin red no se pinta ni un giro sin fin ni el archivador
+  // del invitado, que es otro archivador.
+  if (identidad === "cuenta-sin-conexion") {
+    return (
+      <div className="w-full">
+        <PageHeader
+          title="Vitrina"
+          subtitle="El archivador que montas tú, funda a funda"
+          back="/collection"
+        />
+        <SinConexion detalle="No se ha podido comprobar tu sesión y tu archivador está guardado en tu cuenta. Se abrirá en cuanto vuelva la conexión." />
+      </div>
+    );
+  }
+
   if (cargando) return <Loader label="Abriendo la vitrina" />;
 
   if (errorCarga) {
@@ -814,6 +897,8 @@ export default function Vitrina() {
         subtitle="El archivador que montas tú, funda a funda"
         back="/collection"
       />
+
+      {bajoCabecera}
 
       {/* TOPE DE ANCHO. Un archivador no es una rejilla fluida: nueve cartas
           en 3×3 miden 1,4 veces de alto lo que midan de ancho, así que dejarlo
@@ -850,7 +935,8 @@ export default function Vitrina() {
           {sinCartas ? (
             <Link
               href="/"
-              className="btn-primary press shrink-0 rounded-xl px-4 py-2 text-center t-cuerpo-2 font-medium"
+              // `control-44`: es la única salida de una vitrina vacía y medía 32 px.
+              className="btn-primary press control-44 shrink-0 rounded-xl px-4 text-center t-cuerpo-2 font-medium"
             >
               Abrir sobres
             </Link>
@@ -924,7 +1010,7 @@ export default function Vitrina() {
                     setPasando(false);
                     setHoja(pase ? pase.hasta : nueva);
                   }}
-                  efectosApagados={!!reducido}
+                  efectosApagados={efectosApagados}
                   urlsDeHoja={urlsDeHoja}
                 />
               </div>
@@ -934,8 +1020,17 @@ export default function Vitrina() {
 
         {/* MANDOS — botones, además del gesto y del teclado. El gesto no
             puede ser el único camino: en escritorio no hay dedo, y en la
-            PWA el arrastre convive con el gesto de retroceso del sistema. */}
-        <div className="flex items-center justify-center gap-2">
+            PWA el arrastre convive con el gesto de retroceso del sistema.
+
+            LA FILA CABE A 320 PX, Y ERA LA ÚNICA DE LA APP QUE NO. Cuatro
+            botones de 44, la pastilla con un mínimo de 152 y cuatro huecos de
+            8 suman 360 px en un contenedor de 288: "Primera hoja" y "Última
+            hoja" quedaban 20 px fuera de pantalla por cada lado y el documento
+            entero ganaba scroll horizontal. Los botones no pueden encoger —son
+            los 44 px de zona táctil—, así que cede lo demás: los huecos bajan a
+            4 px por debajo de 400 y la pastilla deja de tener mínimo (ver
+            abajo). A 320 son 176 + 16 + 96 = 288, justo. */}
+        <div className="flex items-center justify-center gap-1 min-[400px]:gap-2">
           <button
             type="button"
             onClick={() => irAHoja(0)}
@@ -969,12 +1064,27 @@ export default function Vitrina() {
           {/* `aria-live` para que el pase de hoja se anuncie: con lector de
               pantalla, el gesto y las flechas cambian nueve fundas sin
               mover el foco, y sin esto no habría ni rastro de que ha
-              pasado algo. */}
+              pasado algo.
+
+              `flex-1` con tope en vez de `min-w-[9.5rem]`: la pastilla ocupa lo
+              que le dejan los botones hasta los 152 px de siempre, así que
+              sigue sin cambiar de ancho al pasar de la hoja 9 a la 10. Por
+              debajo de 360 no caben ni "Hoja 10 de 12", y se pinta "10 / 12";
+              lo que oye el lector es siempre la frase entera, que va aparte en
+              `sr-only` para que el anuncio no dependa del ancho. */}
           <span
             aria-live="polite"
-            className="chip ink tnum min-w-[9.5rem] px-4 py-2 text-center t-cuerpo font-medium"
+            className="chip ink tnum min-w-0 max-w-[9.5rem] flex-1 whitespace-nowrap px-2 py-2 text-center t-cuerpo font-medium min-[400px]:px-4"
           >
-            Hoja {hojaSegura + 1} de {totalHojas}
+            <span className="sr-only">
+              Hoja {hojaSegura + 1} de {totalHojas}
+            </span>
+            <span aria-hidden="true" className="min-[360px]:hidden">
+              {hojaSegura + 1} / {totalHojas}
+            </span>
+            <span aria-hidden="true" className="hidden min-[360px]:inline">
+              Hoja {hojaSegura + 1} de {totalHojas}
+            </span>
           </span>
 
           <button

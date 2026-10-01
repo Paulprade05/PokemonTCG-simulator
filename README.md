@@ -51,7 +51,7 @@ Las rutas van en este orden y **todas** piden `Authorization: Bearer $ADMIN_SECR
 |---|---|---|
 | 1 | `/migrate-core` | Crea las cinco tablas base (`users`, `sets`, `cards`, `user_collection`, `friendships`) más `set_translations`, con sus claves e índices. |
 | 2 | `/migrate-schema` | Añade a `cards` las columnas ricas (ataques, legalidades, precios…) e índices. |
-| 3 | `/migrate-social` | Crea `trade_offers` y los índices de usuario. |
+| 3 | `/migrate-social` | Crea `trade_offers`, los índices de usuario y `friend_codes` (el código de amigo). Su respuesta dice si existe el índice de pareja de `friendships` (`indiceDePareja`); ver «Amigos». |
 | 4 | `/migrate-mejoras` | Crea `graded_cards` (graduación), `binder_slots` (el archivador de la vitrina), `card_prices` (precios reales de Cardmarket) y `bazar_listings` (bazar entre jugadores). |
 | 5 | `/seed-database` | Siembra las expansiones de `src/data`. Con `?force=true` reescribe las que ya estén. |
 
@@ -237,6 +237,69 @@ perspectiva, ni un `preserve-3d`, ni un `will-change`. Comprobado en el
 navegador: durante el giro hay dos hojas y `perspective: 1800px`; 520 ms
 después, una hoja y `perspective: none`.
 
+## Amigos
+
+Añadir a alguien son tres caminos que acaban en el mismo sitio, una petición de
+amistad que el otro acepta:
+
+- **El código de amigo.** Ocho caracteres (`ABCD-2345`) sin 0, O, 1, I ni L,
+  para que se pueda dictar. Cada cuenta tiene uno, se crea solo la primera vez
+  que hace falta y se puede cambiar: el viejo deja de valer en el acto.
+- **El enlace de invitación,** `/invitar/CODIGO`, que es lo que manda
+  «Compartir» y lo que lleva dentro el **QR** (`utils/qr.ts`, generado en el
+  propio navegador, sin dependencias). Abrir el enlace NO envía nada: enseña la
+  ficha del entrenador y hace falta un toque. Sin sesión, la invitación se
+  recuerda y se retoma al entrar o al crear la cuenta.
+- **El nombre,** en el mismo campo que el código (Social → Añadir). Acepta
+  también el enlace o el mensaje entero pegado.
+
+**La regla de todo el bloque:** el id de Clerk de otra persona no sale del
+servidor salvo hacia un amigo ya aceptado. A un entrenador se le nombra por su
+código o por el id numérico de la fila de `friendships`.
+
+**Hay una fila por pareja** y su `status` dice además quién hizo qué
+(`services/esquemaSocial.ts` lo documenta estado a estado). Lo que conviene
+saber sin abrir el código:
+
+- Dos personas que se añaden a la vez acaban como amigas: la segunda petición
+  acepta la primera.
+- **El rechazo es silencioso.** La fila se queda en `declined`: quien fue
+  rechazado sigue viendo su petición como enviada y no puede reenviarla. Ni
+  cancelándola (pasa a `withdrawn`) ni bloqueando y desbloqueando (pasa por
+  `blocked_declined` y vuelve a `withdrawn`).
+- **Bloquear** corta la amistad, cancela las ofertas pendientes entre los dos,
+  saca a cada uno de la búsqueda del otro y cierra el álbum en los dos sentidos.
+- **Eliminar a un amigo** cancela también las ofertas pendientes entre los dos,
+  y aceptar una oferta exige que la amistad siga viva.
+- Topes: 20 peticiones enviadas sin contestar, 50 recibidas, 100 amigos. Están
+  para cortar el goteo masivo, no para contar: uno a uno son exactos, y bajo
+  ráfagas simultáneas se pasan (medido: hasta 30, 60 y 140).
+
+**Al desplegar,** ejecuta `/migrate-core` y `/migrate-social` y mira la
+respuesta de la segunda. Si `indiceDePareja` es `false`, falta
+`idx_friendships_par`, que es lo que impide dos filas por pareja cuando dos
+peticiones se cruzan: sin él, entre la mitad y dos tercios de las peticiones
+simultáneas dejan la pareja duplicada. Suele faltar porque la base ya trae
+duplicados y el índice no se deja crear; `parejasDuplicadas` dice cuántas hay.
+Para verlas:
+
+```sql
+SELECT LEAST(user_id, friend_id) a, GREATEST(user_id, friend_id) b,
+       array_agg(id ORDER BY id), array_agg(status ORDER BY id)
+  FROM friendships
+ GROUP BY 1, 2 HAVING count(*) > 1;
+```
+
+La misma respuesta trae `minusculasUnicode`. Si es `false`, la base se creó con
+`LC_CTYPE = C` y su `LOWER()` no pasa a minúscula la Ñ ni las vocales
+acentuadas: la búsqueda de entrenadores por nombre no encuentra a «Álvaro»
+escribiendo «álvaro» (la respuesta trae además `avisoBusqueda`). La aplicación
+sólo lo detecta, no lo arregla: el arreglo es comparar con una colación que
+entienda Unicode, o buscar por una columna con el nombre ya normalizado.
+
+`/migrate-social?relleno=1` crea de una vez el código de quien aún no lo tenga
+(en tandas; se puede repetir). No hace falta: se crean solos al primer uso.
+
 ## Ilustraciones reales de sobre
 
 Al abrir un sobre de una expansión que tenga foto, se ve el sobre de verdad; el
@@ -345,13 +408,16 @@ La lista original de "MEJORAS PARA LA WEB", con dónde está cada una:
 
 ### Ideas que siguen abiertas
 
-- Reintentar el sobre cuando falla la red, en vez de cerrar la vista (la clave de
-  idempotencia de `pack_purchases` ya permite reenviar sin cobrar dos veces).
-- Cuánto falta para completar la expansión, en el resumen del sobre.
 - Historial de sobres abiertos (`pack_purchases` ya lo guarda dos días).
 - Contador de sequía: cuántos sobres llevas sin un hit de rango alto.
-- Interruptor de "saltar animación" dentro de la propia apertura.
-- Precargar el catálogo de la expansión al pasar el dedo por su tarjeta.
+- Exportar e importar la partida de invitado (hoy vive sólo en el navegador, y
+  Safari sin instalar la borra a los siete días sin uso; Ajustes lo avisa).
+- Un ajuste «Tamaño del texto»: el enchufe está en `app/globals.css`
+  (`--escala-texto` y `html[data-texto="grande"]`), sin interruptor todavía.
+
+Ya hechas, de las que estaban aquí: reintentar el sobre con la misma clave
+cuando falla la red, el progreso de la expansión en el resumen, «Saltar» y la
+apertura rápida (en la tienda y en Ajustes), y la precarga del catálogo.
 
 ---
 
@@ -378,3 +444,32 @@ encima: explican qué agujero cerró cada uno.
 
 Se despliega en Vercel como cualquier proyecto Next.js. Tras el primer
 despliegue hay que ejecutar las cuatro rutas de migración de arriba, en orden.
+
+**El aviso de «hay una versión nueva».** La app instalada puede llevar días
+abierta cuando llega un despliegue. Lo detecta por dos vías que ya funcionan
+solas (el service worker nuevo y una server action que el servidor ya no
+reconoce) y por una tercera que está escrita pero apagada: comparar el build
+del cliente con el de `/api/version` al volver a primer plano. Para encenderla
+falta una línea en `next.config.ts`:
+
+```ts
+env: {
+  NEXT_PUBLIC_BUILD_ID:
+    process.env.VERCEL_DEPLOYMENT_ID ?? process.env.VERCEL_GIT_COMMIT_SHA ?? "",
+},
+```
+
+Sin ella no pasa nada malo: sólo se tarda un poco más en avisar.
+
+**Las imágenes de la app instalada.** Las pantallas de arranque de iOS van por
+pares, oscura y clara (`public/splash/splash-<tamaño>.png` y `-claro.png`), y
+el icono de la pantalla de inicio es `public/icons/apple-touch-icon-v2.png`, a
+sangre. Las claras y el icono salen de las que ya hay:
+
+```bash
+node scripts/generar-imagenes-pwa.mjs
+```
+
+No pisa lo que ya existe. Para un iPhone con otra resolución: se añade su
+arranque oscuro a `public/splash/`, su fila a `STARTUP_IMAGES` en
+`app/layout.tsx` y se vuelve a pasar el script.

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Vitrina from "../../components/Vitrina";
+import FilaAccesos from "../../components/ui/FilaAccesos";
 
 /**
  * Ruta de la vitrina.
@@ -23,5 +24,15 @@ export const metadata: Metadata = {
 };
 
 export default function VitrinaPage() {
-  return <Vitrina />;
+  // La fila de accesos (Cartas · Vitrina · Graduación) se monta desde aquí y
+  // no dentro de components/Vitrina.tsx: es cosa de la ruta saber de qué
+  // familia de pantallas forma parte. El margen negativo es el mismo que en
+  // la colección, para que la fila caiga a la misma altura en las tres.
+  return (
+    <Vitrina
+      bajoCabecera={
+        <FilaAccesos grupo="coleccion" className="-mt-2 mb-4 md:-mt-3 md:mb-6" />
+      }
+    />
+  );
 }

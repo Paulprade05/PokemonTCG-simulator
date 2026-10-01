@@ -67,7 +67,7 @@ const SENTENCIAS: readonly string[] = [
      lang             TEXT,
      created_at       TIMESTAMP DEFAULT NOW()
    )`,
-  // searchUsersByName y addFriend buscan por nombre en minúsculas.
+  // buscarEntrenadores (app/social.ts) busca por nombre en minúsculas.
   `CREATE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username))`,
 
   /* ---------------------------------------------------------------- *
@@ -184,9 +184,11 @@ const SENTENCIAS: readonly string[] = [
   /* ---------------------------------------------------------------- *
    * friendships
    * ----------------------------------------------------------------
-   * `id` es SERIAL porque acceptFriend y removeFriendship reciben un número
-   * desde el cliente y filtran por él (siempre junto al userId de la sesión,
-   * que es lo que impide tocar la amistad de otro).
+   * `id` es SERIAL porque las acciones de amistad de app/social.ts
+   * (aceptarPeticion, rechazarPeticion, cancelarPeticion, eliminarAmigo,
+   * desbloquear) reciben un número desde el cliente y filtran por él, siempre
+   * junto al userId de la sesión, que es lo que impide tocar la amistad de
+   * otro.
    */
   `CREATE TABLE IF NOT EXISTS friendships (
      id         SERIAL PRIMARY KEY,
@@ -199,14 +201,16 @@ const SENTENCIAS: readonly string[] = [
    *
    * La amistad no tiene sentido: (A,B) y (B,A) son la misma. Sin este índice,
    * dos peticiones cruzadas simultáneas (A pide a B mientras B pide a A) pasan
-   * las dos la comprobación previa de `addFriend` —que es una lectura sin
+   * las dos la comprobación previa de `enviarPeticion` —que es una lectura sin
    * bloqueo— y crean DOS filas: la pareja aparece dos veces en la lista.
    *
-   * OJO: `addFriend` (app/social.ts) hace un INSERT pelado, sin ON CONFLICT, así
-   * que con el índice puesto la perdedora de esa carrera recibe "Error al enviar
-   * petición" en vez de "ya hay una petición pendiente". Es un mensaje peor,
-   * pero el estado queda correcto, que es lo que importa; el mensaje se arregla
-   * añadiendo allí un ON CONFLICT DO NOTHING.
+   * CON EL ÍNDICE PUESTO, el INSERT de `pedirAmistad` (app/social.ts) lleva
+   * ON CONFLICT DO NOTHING: la perdedora de esa carrera no inserta, vuelve a
+   * leer y trata la fila de la otra como petición cruzada, así que las dos
+   * acaban como amigos. Medido contra PostgreSQL: SIN el índice, entre la
+   * mitad y dos tercios de las parejas que se piden a la vez quedan con dos
+   * filas. Este índice no es un adorno: /migrate-social dice si existe
+   * (`indiceDePareja`) y cuántas parejas duplicadas le impiden crearse.
    *
    * LEAST/GREATEST normalizan el par, así que el índice es el mismo se pida en
    * el orden que se pida. Puede fallar sobre una base que YA tenga duplicados:

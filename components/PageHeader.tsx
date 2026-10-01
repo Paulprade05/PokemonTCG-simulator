@@ -69,7 +69,12 @@ export default function PageHeader({ title, subtitle, back, logo, actions }: Pag
         ) : (
           <div className="min-w-0">
             <h1 className="t-titulo md:t-display font-bold tracking-tight truncate">{title}</h1>
-            {subtitle && <p className="t-cuerpo-2 ink-soft mt-0.5 truncate">{subtitle}</p>}
+            {/* Dos líneas y no `truncate`: a 320px, con el botón de volver y
+                dos acciones en la fila, al subtítulo le quedan unos 180px y
+                "Encargos nuevos en 16 h 26 min" salía como "…16 h 26 …" —se
+                comía justo el dato—. El título sí se queda en una: es corto
+                y, si se corta, la pantalla sigue reconociéndose. */}
+            {subtitle && <p className="t-cuerpo-2 ink-soft mt-0.5 line-clamp-2">{subtitle}</p>}
           </div>
         )}
       </div>

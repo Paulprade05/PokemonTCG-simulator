@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 
 export type SwipeAxis = "x" | "y" | "both";
 
@@ -40,6 +40,21 @@ export interface SwipeOptions {
    * apartada del centro) se quedaba así hasta el siguiente toque.
    */
   onCancel?: () => void;
+  /**
+   * Al CONFIRMARSE el gesto, el elemento se queda donde lo dejó el dedo en vez
+   * de volver en seco a su sitio.
+   *
+   * Es para lo que se VA al confirmarse (una hoja que se cierra tirando del
+   * asa): sin esto, `finish` borraba el transform en el mismo instante en que
+   * pedía el cierre, la hoja pegaba un salto hasta arriba y sólo entonces
+   * empezaba a salir. Quien lo activa se compromete a que el elemento se
+   * desmonte o a que su animación de salida lo saque de pantalla; si a los
+   * RETENCION_MAX ms sigue ahí (el dueño de la hoja decidió no cerrarla), el
+   * hook lo devuelve a su sitio animando, igual que un gesto sin confirmar.
+   * No vale para pasar de carta: ahí el contenido cambia y SÍ hay que
+   * recolocar en seco.
+   */
+  mantenerAlDisparar?: boolean;
 }
 
 const DEFAULTS = {
@@ -71,6 +86,10 @@ const TAP_SLOP = 24;
 // 533 px/s): sin esta distancia, ese roce contaba como deslizamiento y además
 // se tragaba el click. El camino por umbral (threshold) no la necesita.
 const FLICK_DISTANCE = 30;
+// Cuánto se le deja a `mantenerAlDisparar` antes de dar por hecho que nadie ha
+// cerrado nada. Las salidas de hoja duran --d-base (220 ms): el doble da margen
+// a un repintado lento sin dejar un panel descolocado a la vista.
+const RETENCION_MAX = 450;
 
 /**
  * Gestos de deslizamiento con eventos de puntero puros.
@@ -89,28 +108,60 @@ export function useSwipe(
   options: SwipeOptions,
 ) {
   const optsRef = useRef(options);
-  optsRef.current = options;
+  // En un efecto de layout y no durante el render: escribir un ref mientras se
+  // pinta está prohibido (un render que React descarta dejaría aquí opciones de
+  // una pantalla que nunca llegó a existir). De layout y no pasivo para que
+  // esté al día antes que cualquier otro efecto y, desde luego, antes del
+  // primer evento de puntero, que es lo único que lo lee.
+  useLayoutEffect(() => {
+    optsRef.current = options;
+  });
   const didSwipeRef = useRef(false);
+  /** A qué elemento están enganchados los oyentes ahora mismo, y cómo soltarlo. */
+  const engancheRef = useRef<{ el: HTMLElement; soltar: () => void } | null>(null);
 
+  /* ==================================================================== *
+   * ESTE EFECTO NO LLEVA DEPENDENCIAS, Y ES A PROPÓSITO
+   * ====================================================================
+   *
+   * Antes era `[ref, options.enabled]` y leía `ref.current` UNA vez. Una
+   * pantalla que pinta primero un Loader (`if (cargando) return <Loader />`)
+   * monta el hook con el ref vacío; cuando llega el contenido, el ref ya apunta
+   * al elemento pero ni `ref` ni `enabled` han cambiado, así que el efecto no
+   * volvía a correr y el gesto no se enganchaba nunca. Es lo que pasaba al
+   * entrar en la Vitrina: el arrastre para pasar de hoja no hacía nada hasta
+   * que otra cosa (abrir y cerrar una capa) cambiaba `enabled`.
+   *
+   * Un ref no avisa cuando cambia, así que no se puede poner de dependencia:
+   * lo único fiable es mirarlo después de CADA render y comparar con lo que
+   * hay enganchado. Si es el mismo elemento no se toca nada —el gesto en curso
+   * vive en el cierre de abajo y sobrevive a los repintados—; si ha cambiado
+   * (apareció, desapareció, es otro nodo, o `enabled` se ha movido) se suelta
+   * el viejo y se engancha el nuevo. El coste por render es una comparación.
+   */
   useEffect(() => {
-    const el = ref.current;
+    // Misma lectura de `enabled` que hace `cfg()` más abajo, para que "está
+    // enganchado" y "atiende al toque" no puedan discrepar.
+    const el = { ...DEFAULTS, ...options }.enabled ? ref.current : null;
+    if (el === (engancheRef.current?.el ?? null)) return;
+    engancheRef.current?.soltar();
+    engancheRef.current = null;
     if (!el) return;
 
     const cfg = () => ({ ...DEFAULTS, ...optsRef.current });
-    if (!cfg().enabled) return;
 
     let startX = 0;
     let startY = 0;
     let startT = 0;
-    let lastX = 0;
-    let lastY = 0;
-    let lastT = 0;
     let locked: "x" | "y" | null = null;
     let active = false;
     let pointerId = -1;
     // Id del temporizador que limpia la transition/willChange tras la animación
     // de retorno: se guarda para poder cancelarlo si empieza otro gesto antes.
     let releaseTimer = 0;
+    // El gesto se confirmó con `mantenerAlDisparar` y el elemento sigue
+    // desplazado adrede: mientras dure, la limpieza no le toca el transform.
+    let retenido = false;
 
     // El transform puede ir a otro elemento: así se arrastra un panel entero
     // tirando sólo de su asa.
@@ -161,10 +212,11 @@ export function useSwipe(
       }
       active = true;
       pointerId = e.pointerId;
-      startX = lastX = e.clientX;
-      startY = lastY = e.clientY;
-      startT = lastT = e.timeStamp || performance.now();
+      startX = e.clientX;
+      startY = e.clientY;
+      startT = e.timeStamp || performance.now();
       locked = null;
+      retenido = false;
       // Un gesto nuevo puede empezar mientras la carta anterior aún vuelve a su
       // sitio: se cancela esa animación de retorno y su temporizador sobre el
       // MISMO elemento que lleva el transform (moved), para que el arrastre no
@@ -197,10 +249,6 @@ export function useSwipe(
           return;
         }
       }
-
-      lastX = e.clientX;
-      lastY = e.clientY;
-      lastT = e.timeStamp || performance.now();
 
       const { resistance, onSwipeLeft, onSwipeRight, onSwipeUp, onSwipeDown } =
         cfg();
@@ -281,7 +329,21 @@ export function useSwipe(
       // Si el gesto se confirmó, el contenido ya ha cambiado: volver animando
       // haría que la carta nueva entrase deslizándose hacia atrás. Se recoloca
       // en seco y que la animación de entrada haga su trabajo.
-      release(!fired);
+      //
+      // Salvo que quien escucha haya pedido `mantenerAlDisparar`: entonces lo
+      // confirmado es que el elemento se VA, y recolocarlo en seco es el salto
+      // hacia arriba que se veía al cerrar una hoja arrastrando. Se queda donde
+      // está, y el temporizador es la red por si al final nadie lo cierra.
+      if (fired && cfg().mantenerAlDisparar) {
+        retenido = true;
+        clearTimeout(releaseTimer);
+        releaseTimer = window.setTimeout(() => {
+          retenido = false;
+          release(true);
+        }, RETENCION_MAX);
+      } else {
+        release(!fired);
+      }
       locked = null;
       cfg().onEnd?.();
     };
@@ -292,13 +354,18 @@ export function useSwipe(
     window.addEventListener("pointerup", finish);
     window.addEventListener("pointercancel", finish);
 
-    return () => {
+    const soltar = () => {
       el.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
       clearTimeout(releaseTimer);
-      el.style.transform = "";
+      // Con el gesto retenido el transform se queda: quien cierra la hoja apaga
+      // `enabled` en ese mismo render, y devolverla a su sitio aquí sería
+      // exactamente el salto que `mantenerAlDisparar` viene a quitar. El
+      // will-change y la transition sí se limpian, como siempre.
+      const conservar = retenido;
+      if (!conservar) el.style.transform = "";
       el.style.transition = "";
       // El will-change lo escribe onPointerDown en el elemento que escucha
       // (moved() es `el` salvo con followTarget). Si `enabled` pasa a false a
@@ -311,12 +378,24 @@ export function useSwipe(
       // desplazado: se devuelve a su sitio también.
       const ft = optsRef.current.followTarget?.current;
       if (ft) {
-        ft.style.transform = "";
+        if (!conservar) ft.style.transform = "";
         ft.style.transition = "";
         ft.style.willChange = "";
       }
     };
-  }, [ref, options.enabled]);
+    engancheRef.current = { el, soltar };
+  });
+
+  // Al desmontar se suelta lo que hubiera. Va aparte porque el efecto de
+  // arriba no devuelve limpieza: si la devolviera, se desengancharía y se
+  // volvería a enganchar en cada render, cortando el gesto en curso.
+  useEffect(
+    () => () => {
+      engancheRef.current?.soltar();
+      engancheRef.current = null;
+    },
+    [],
+  );
 
   return didSwipeRef;
 }

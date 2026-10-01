@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   getFullCollection,
   sellCardAction,
@@ -12,14 +12,19 @@ import {
   getSetsFromDB,
   nombresDeCartas,
 } from "../action";
-import { getCollection, saveCollectionRaw } from "../../utils/storage";
+import {
+  COLLECTION_STORAGE_KEY,
+  ajustarCopiasEnLocal,
+  getCollection,
+  venderCopiasEnLocal,
+} from "../../utils/storage";
 import { useCurrency } from "../../hooks/useGameCurrency";
 import { useHaptics } from "../../hooks/useHaptics";
 import { useToast } from "../../components/ui/Toast";
 import ConfirmSheet from "../../components/ui/ConfirmSheet";
 import Sheet from "../../components/ui/Sheet";
 import { RARITY_RANK, valorDeVenta } from "../../utils/constanst";
-import { formatNumber } from "../../utils/format";
+import { cifraCorta, formatNumber } from "../../utils/format";
 import { D, EASE_OUT } from "../../utils/motion";
 import PokemonCard from "../../components/PokemonCard";
 // El estado físico de la copia. Se pinta también en la rejilla: sin esto, una
@@ -35,9 +40,13 @@ import CardDetailModal from "../../components/CardDetailModal";
 import CampoBusqueda from "../../components/ui/CampoBusqueda";
 import EstadoError from "../../components/ui/EstadoError";
 import EstadoVacio from "../../components/ui/EstadoVacio";
-import { IconoAvanzar, IconoDesplegar, IconoPapelera, IconoVolver } from "../../components/icons";
+import { IconoAvanzar, IconoDesplegar, IconoMoneda, IconoPapelera, IconoVolver } from "../../components/icons";
 import Link from "next/link";
 import type { CartaEnColeccion, Expansion } from "../../utils/tipos";
+import { conteoPorExpansion, progresoPorExpansion } from "../../utils/progresoPorExpansion";
+import { useIdentidad } from "../../hooks/useIdentidad";
+import SinConexion from "../../components/ui/SinConexion";
+import FilaAccesos from "../../components/ui/FilaAccesos";
 
 /**
  * Cartas del invitado con el rótulo y la ilustración del idioma ACTUAL.
@@ -51,29 +60,63 @@ import type { CartaEnColeccion, Expansion } from "../../utils/tipos";
  * Funciona en los dos sentidos: en español el rótulo sale del diccionario (sin
  * consultas), y en inglés del catálogo, que es el único sitio donde está el
  * nombre inglés de una carta que se guardó traducida.
+ *
+ * VA PARTIDO EN DOS —pedir los rótulos y aplicarlos— desde que la colección
+ * del invitado se pinta sin esperar a la red (ver `loadCollection`): si los
+ * rótulos llegan tarde hay que ponerlos sobre las cartas que haya EN ESE
+ * MOMENTO, no sobre la lista con la que se pidieron, o una venta hecha
+ * entretanto volvería atrás al llegar la respuesta.
  */
-async function enIdiomaLocal(cartas: CartaEnColeccion[]): Promise<CartaEnColeccion[]> {
-  if (cartas.length === 0) return cartas;
+type Rotulos = Awaited<ReturnType<typeof nombresDeCartas>>;
+
+/** Los rótulos del idioma actual. Nunca lanza: sin cobertura, ninguno. */
+async function rotulosEnIdiomaLocal(cartas: CartaEnColeccion[]): Promise<Rotulos> {
+  if (cartas.length === 0) return {};
   try {
-    const traducidas = await nombresDeCartas(cartas.map((c) => c.id));
-    if (Object.keys(traducidas).length === 0) return cartas;
-    return cartas.map((c) => {
-      const t = traducidas[c.id];
-      // Sin ilustración española (promos, Galerías...) se conserva la guardada.
-      return t?.name ? { ...c, name: t.name, images: t.images ?? c.images } : c;
-    });
+    return await nombresDeCartas(cartas.map((c) => c.id));
   } catch {
     // Sin cobertura la colección local se pinta igual, con lo que hay guardado.
-    return cartas;
+    return {};
   }
 }
+
+/**
+ * La lista recién leída de localStorage, conservando de lo ya pintado lo que
+ * el almacén no trae: el nombre y la ilustración en el idioma actual. De la
+ * lectura nueva sólo se toman las cantidades y las cartas que no estaban.
+ */
+function conLoPintado(pintadas: CartaEnColeccion[], frescas: CartaEnColeccion[]): CartaEnColeccion[] {
+  const porId = new Map(pintadas.map((c) => [c.id, c]));
+  return frescas.map((f) => {
+    const p = porId.get(f.id);
+    return p ? { ...p, quantity: f.quantity } : f;
+  });
+}
+
+function conRotulos(cartas: CartaEnColeccion[], rotulos: Rotulos): CartaEnColeccion[] {
+  if (Object.keys(rotulos).length === 0) return cartas;
+  return cartas.map((c) => {
+    const t = rotulos[c.id];
+    // Sin ilustración española (promos, Galerías...) se conserva la guardada.
+    return t?.name ? { ...c, name: t.name, images: t.images ?? c.images } : c;
+  });
+}
+
+/**
+ * Cuánto se espera a los rótulos y a las expansiones antes de pintar la
+ * colección del invitado con lo que hay guardado. Con red llegan en unas
+ * décimas y no se ve el cambio de idioma; sin red la petición falla al
+ * instante y ni se espera; el plazo sólo cuenta con cobertura mala, que es
+ * cuando una petición ni llega ni falla.
+ */
+const ESPERA_ROTULOS_MS = 2500;
 
 /**
  * COPIAS QUE SE PUEDEN VENDER POR AQUÍ, que no son todas las que se tienen.
  *
  * Las graduadas siguen contando como copias en propiedad —ocupan su sitio en la
- * curva de precios— pero salen de la colección por otra puerta, la de la
- * vitrina: `sellCardAction` y `sellAllDuplicatesAction` descuentan las graduadas
+ * curva de precios— pero salen de la colección por otra puerta, la de
+ * Graduación («Mis graduadas»): `sellCardAction` y `sellAllDuplicatesAction` descuentan las graduadas
  * antes de decidir, y `sellAllDuplicatesBulkAction` ni siquiera selecciona las
  * cartas cuyo `quantity` no supera `1 + graduadas`.
  *
@@ -106,7 +149,7 @@ function copiasLibres(card: { quantity: number; graduadas?: number | null }): nu
  * AHORA LOS IMPORTES LLEGAN HECHOS, uno por botón, calculados por las mismas
  * funciones que cobran (app/action.ts, `valoresDeVentaDelMonton`). Esta pantalla
  * ya no aplica la curva: la lee. Es lo mismo que hacen la hoja de publicar con
- * la banda del bazar y el botón "Vender por X" de la vitrina.
+ * la banda del bazar y el botón "Vender por X" de «Mis graduadas».
  *
  * POR QUÉ SIGUE HABIENDO UNA FÓRMULA AQUÍ ABAJO: por el MODO INVITADO, que no
  * tiene servidor. Su colección vive en localStorage, no tiene cartas graduadas y
@@ -160,19 +203,157 @@ function sinRepetidas(card: CartaEnColeccion): CartaEnColeccion & ValoresDelServ
   };
 }
 
+/* ==================================================================== *
+ * LA VISTA SE RECUERDA
+ * ====================================================================
+ *
+ * EL FALLO: orden, filtros, búsqueda y página eran `useState` sueltos. Poner
+ * "Orden: nombre", filtrar una expansión, ir a la página 3, tocar una
+ * expansión del progreso (que lleva a /album/…) y volver devolvía rareza,
+ * todas las expansiones y página 1. Lo mismo al pasar por el Mercado. Quien
+ * ordena su colección de una manera la quiere así hasta que diga otra cosa.
+ *
+ * DOS MEMORIAS, PORQUE SON DOS PREGUNTAS:
+ *
+ *  · `vistaDeSesion`, un objeto de módulo: dura lo que dura la app abierta y
+ *    lo guarda TODO, también la búsqueda y la página. Es lo que hace que
+ *    volver del álbum deje la rejilla donde estaba. Se usa como valor INICIAL
+ *    del estado, y eso no rompe la hidratación: en una carga completa el
+ *    módulo acaba de nacer y vale lo mismo que en el servidor, que nunca lo
+ *    modifica (sólo se escribe desde efectos).
+ *  · localStorage (`tcg:coleccion-vista`): sobrevive a cerrar la app, y por
+ *    eso guarda sólo lo que es una PREFERENCIA —orden, los dos filtros y si el
+ *    progreso está desplegado—. La búsqueda y la página no: abrir la app al
+ *    día siguiente en la página 3 de "pika" sería encontrarse la colección
+ *    recortada sin haber hecho nada. Se lee en un efecto, como
+ *    CLAVE_SERIES_ABIERTAS en la portada.
+ */
+const ORDENES = ["rarity_desc", "quantity_desc", "name_asc"] as const;
+const CLAVE_VISTA = "tcg:coleccion-vista";
+
+/** La vista con la que nace la pantalla, y a la que vuelve si cambia quién juega. */
+const VISTA_POR_DEFECTO = {
+  sortBy: "rarity_desc" as string,
+  filterSet: "all",
+  filterRarity: "all",
+  showStats: false,
+  searchTerm: "",
+  page: 1,
+};
+
+const vistaDeSesion = {
+  /** ¿Se ha leído ya localStorage en esta carga de la app? */
+  restaurada: false,
+  /**
+   * DE QUIÉN es esta vista: el id de la cuenta o "guest", igual que
+   * `coleccionDeSesion.de`. null mientras no se sepa quién mira.
+   *
+   * EL FALLO QUE CIERRA. Al cambiar de identidad el proveedor del saldo borra
+   * `tcg:coleccion-vista`, pero este objeto vive en el módulo y no se enteraba:
+   * en un teléfono compartido, A buscaba «charizard», cerraba sesión desde el
+   * avatar (navegación de cliente, sin recarga) y quien abría Colección
+   * después se encontraba la búsqueda y los filtros de A — y el efecto de
+   * guardado los volvía a escribir en localStorage, ya a nombre del nuevo.
+   */
+  de: null as string | null,
+  ...VISTA_POR_DEFECTO,
+};
+
+/** ¿La vista recordada es de otra identidad que la que mira ahora? */
+const vistaEsDeOtro = (clave: string | null): boolean =>
+  clave !== null && vistaDeSesion.de !== null && vistaDeSesion.de !== clave;
+
+/**
+ * LA ÚLTIMA COLECCIÓN PINTADA, mientras la app esté abierta.
+ *
+ * EL FALLO QUE CIERRA. Volver a Colección (desde el álbum, desde Mercado, con
+ * el gesto de atrás) la remontaba vacía: esqueleto, petición y, un segundo
+ * después, las cartas. El navegador restaura el desplazamiento al volver, pero
+ * lo hace contra la página que hay EN ESE MOMENTO, y el esqueleto mide menos
+ * que la rejilla: medido a 320 px, se salía de la posición 900 y se volvía a la
+ * 594. Se recordaban el orden, los filtros y la página, y aun así se perdía el
+ * sitio.
+ *
+ * Con esto la pantalla nace ya pintada con lo último que enseñó, a su altura
+ * de verdad, y la carga de siempre corre por detrás y la pone al día (lo que
+ * se haya abierto o vendido entre medias entra en cuanto contesta). Es el
+ * mismo trato que `vistaDeSesion`: vive en el módulo y sólo se escribe desde
+ * efectos, así que en una carga completa vale lo mismo que en el servidor.
+ *
+ * `de` dice DE QUIÉN es: el id de la cuenta o "guest". Si no coincide con
+ * quien mira ahora, no se pinta: la colección de una cuenta no puede asomar,
+ * ni un instante, en la sesión de otra.
+ */
+const coleccionDeSesion: {
+  de: string | null;
+  cards: CartaEnColeccion[];
+  sets: Expansion[];
+} = { de: null, cards: [], sets: [] };
+
+/** La preferencia guardada, saneada campo a campo. null si no hay o no vale. */
+function leerVistaGuardada() {
+  try {
+    const crudo = window.localStorage.getItem(CLAVE_VISTA);
+    if (!crudo) return null;
+    const v = JSON.parse(crudo) as Record<string, unknown> | null;
+    if (!v || typeof v !== "object") return null;
+    // Acotado en forma y longitud: es un almacenamiento que cualquiera puede
+    // editar, y estos valores acaban en un `startsWith` por carta.
+    const texto = (x: unknown) =>
+      typeof x === "string" && x.length > 0 && x.length <= 80 ? x : "all";
+    return {
+      sortBy: (ORDENES as readonly string[]).includes(v.sortBy as string)
+        ? (v.sortBy as string)
+        : "rarity_desc",
+      filterSet: texto(v.filterSet),
+      filterRarity: texto(v.filterRarity),
+      showStats: v.showStats === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function CollectionPage() {
-  const { isSignedIn, isLoaded } = useUser();
+  // `useIdentidad` y no `useUser().isLoaded`: sin conexión Clerk no resuelve
+  // nunca, y esperarle a secas dejaba «Cargando Colección» girando para siempre
+  // con la colección del invitado esperando en localStorage. El hook pone el
+  // plazo y, además, distingue al invitado de quien tiene cuenta pero no red
+  // (ver utils/identidad.ts).
+  const identidad = useIdentidad();
+  // Con cuenta CONFIRMADA por Clerk. Es lo que decide si una venta va al
+  // servidor o a localStorage, así que no vale un "parece que tiene cuenta".
+  const isSignedIn = identidad === "cuenta";
+  // De quién es la colección que toca enseñar (ver `coleccionDeSesion`). Al
+  // volver a esta pantalla dentro de la app la identidad ya está resuelta en
+  // el primer render, así que lo recordado se puede pintar desde el principio.
+  const { user } = useUser();
+  const claveDeColeccion =
+    identidad === "cuenta" ? (user?.id ?? null) : identidad === "invitado" ? "guest" : null;
+  const enMemoria = claveDeColeccion !== null && coleccionDeSesion.de === claveDeColeccion;
   // Tipadas: son las dos listas de las que cuelga la pantalla entera.
-  const [cards, setCards] = useState<CartaEnColeccion[]>([]);
-  const [dbSets, setDbSets] = useState<Expansion[]>([]);
+  const [cards, setCards] = useState<CartaEnColeccion[]>(() =>
+    enMemoria ? coleccionDeSesion.cards : [],
+  );
+  const [dbSets, setDbSets] = useState<Expansion[]>(() =>
+    enMemoria ? coleccionDeSesion.sets : [],
+  );
   const { coins, addCoins, setCoins } = useCurrency();
-  const [showStats, setShowStats] = useState(false);
-  const [loading, setLoading] = useState(true);
+  // La vista recordada sólo vale si es de quien mira (ver `vistaDeSesion.de`).
+  // Si es de otro, la pantalla nace con la de por defecto y el efecto de más
+  // abajo reinicia la memoria.
+  const vistaInicial = vistaEsDeOtro(claveDeColeccion) ? VISTA_POR_DEFECTO : vistaDeSesion;
+  const [showStats, setShowStats] = useState(vistaInicial.showStats);
+  const [loading, setLoading] = useState(() => !enMemoria);
+  /** De quién es lo que hay pintado ahora mismo; null si todavía nada. */
+  const pintadoDeRef = useRef<string | null>(enMemoria ? claveDeColeccion : null);
   const [loadError, setLoadError] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [sortBy, setSortBy] = useState("rarity_desc");
-  const [filterSet, setFilterSet] = useState("all");
-  const [filterRarity, setFilterRarity] = useState("all");
+  const [searchTerm, setSearchTerm] = useState(vistaInicial.searchTerm);
+  const [sortBy, setSortBy] = useState(vistaInicial.sortBy);
+  const [filterSet, setFilterSet] = useState(vistaInicial.filterSet);
+  const [filterRarity, setFilterRarity] = useState(vistaInicial.filterRarity);
+  /** La preferencia guardada ya está aplicada: desde aquí se puede escribir. */
+  const [vistaLista, setVistaLista] = useState(vistaDeSesion.restaurada);
   /**
    * Los tres desplegables, plegados de salida por debajo de `xl`.
    *
@@ -185,8 +366,61 @@ export default function CollectionPage() {
   const [selectedCard, setSelectedCard] = useState<CartaEnColeccion | null>(null);
   const [actionCard, setActionCard] = useState<CartaEnColeccion | null>(null);
   const [confirmDuplicates, setConfirmDuplicates] = useState(false);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(vistaInicial.page);
   const PAGE_SIZE = 24;
+
+  // Restaurar la preferencia, UNA vez por carga de la app (las visitas
+  // siguientes ya arrancan con `vistaDeSesion`, sin parpadeo).
+  //
+  // Y OLVIDARLA SI HA CAMBIADO QUIÉN JUEGA. Depende de `claveDeColeccion` para
+  // enterarse cuando la identidad se resuelve o cambia: la primera vez que se
+  // sabe quién mira, la vista queda a su nombre; si ya era de otro, se vuelve a
+  // la de por defecto. En ese caso NO se lee localStorage: el proveedor ya ha
+  // borrado la clave o está a punto (su efecto corre después que éste), y lo
+  // que quedara ahí sería del anterior.
+  useEffect(() => {
+    const ajena = vistaEsDeOtro(claveDeColeccion);
+    if (claveDeColeccion !== null) vistaDeSesion.de = claveDeColeccion;
+    if (ajena) {
+      Object.assign(vistaDeSesion, VISTA_POR_DEFECTO, { restaurada: true });
+      setSortBy(VISTA_POR_DEFECTO.sortBy);
+      setFilterSet(VISTA_POR_DEFECTO.filterSet);
+      setFilterRarity(VISTA_POR_DEFECTO.filterRarity);
+      setShowStats(VISTA_POR_DEFECTO.showStats);
+      setSearchTerm(VISTA_POR_DEFECTO.searchTerm);
+      setPage(VISTA_POR_DEFECTO.page);
+      setVistaLista(true);
+      return;
+    }
+    if (vistaDeSesion.restaurada) return;
+    vistaDeSesion.restaurada = true;
+    const guardada = leerVistaGuardada();
+    if (guardada) {
+      setSortBy(guardada.sortBy);
+      setFilterSet(guardada.filterSet);
+      setFilterRarity(guardada.filterRarity);
+      setShowStats(guardada.showStats);
+    }
+    setVistaLista(true);
+  }, [claveDeColeccion]);
+
+  // Guardar. Espera a `vistaLista`: sin esa guarda, el primer render escribiría
+  // los valores por defecto ENCIMA de la preferencia antes de haberla leído.
+  useEffect(() => {
+    if (!vistaLista) return;
+    Object.assign(vistaDeSesion, { sortBy, filterSet, filterRarity, showStats, searchTerm, page });
+  }, [vistaLista, sortBy, filterSet, filterRarity, showStats, searchTerm, page]);
+  useEffect(() => {
+    if (!vistaLista) return;
+    try {
+      window.localStorage.setItem(
+        CLAVE_VISTA,
+        JSON.stringify({ sortBy, filterSet, filterRarity, showStats }),
+      );
+    } catch {
+      /* sin almacenamiento la vista dura lo que dure la sesión */
+    }
+  }, [vistaLista, sortBy, filterSet, filterRarity, showStats]);
 
   /**
    * Venta en vuelo. `pendingSale` guarda el id de la carta (o "duplicates"
@@ -239,31 +473,118 @@ export default function CollectionPage() {
    * invitado está corrupto, el `finally` apaga el spinner y `loadError` ofrece
    * reintentar, en vez de dejar la pantalla girando o fingir una colección
    * vacía a quien tiene cientos de cartas.
+   *
+   * EL INVITADO NO DEPENDE DE LA RED PARA VER SUS CARTAS. Antes `getSetsFromDB`
+   * iba delante de todo: sin cobertura lanzaba y la pantalla acababa en "No se
+   * pudo cargar tu colección" con la colección entera en localStorage. Ahora
+   * sus cartas se leen primero y lo que viene del servidor —el nombre en el
+   * idioma actual y la lista de expansiones— es un añadido que puede faltar:
+   * sin él se pinta lo guardado y el progreso por expansión sale vacío.
+   *
+   * `cargaRef` numera las cargas: una respuesta que llega cuando ya hay otra
+   * carga en marcha (cambio de sesión, reintento) no pinta nada.
    */
+  const cargaRef = useRef(0);
   const loadCollection = useCallback(async () => {
-    if (!isLoaded) return;
-    setLoading(true);
+    // "resolviendo" deja el esqueleto; "cuenta-sin-conexion" tiene su propia
+    // pantalla más abajo y aquí no hay nada que pedir.
+    if (identidad !== "cuenta" && identidad !== "invitado") return;
+    if (claveDeColeccion === null) return;
+    const turno = ++cargaRef.current;
+    // Con la colección de ESTA identidad ya en pantalla (la recordada, o la de
+    // una carga anterior) no se vuelve al esqueleto: se refresca por detrás.
+    const yaPintado = pintadoDeRef.current === claveDeColeccion;
+    if (!yaPintado) setLoading(true);
     setLoadError(false);
     try {
-      const sets = await getSetsFromDB();
-      setDbSets(sets);
-      if (isSignedIn) {
-        // Ya viene traducida: la capa de idioma se aplica en el servidor.
-        setCards(await getFullCollection());
+      if (identidad === "cuenta") {
+        // En paralelo: son dos lecturas independientes y encadenarlas sumaba
+        // sus dos esperas. La colección ya viene traducida: la capa de idioma
+        // se aplica en el servidor.
+        const [sets, coleccion] = await Promise.all([getSetsFromDB(), getFullCollection()]);
+        if (turno !== cargaRef.current) return;
+        setDbSets(sets);
+        setCards(coleccion);
+        pintadoDeRef.current = claveDeColeccion;
       } else {
-        setCards(await enIdiomaLocal(getCollection()));
+        const locales = getCollection() as CartaEnColeccion[];
+        const delServidor = Promise.all([
+          rotulosEnIdiomaLocal(locales),
+          getSetsFromDB().catch(() => null),
+        ]);
+        const aTiempo = await Promise.race([
+          delServidor,
+          new Promise<null>((resolver) => window.setTimeout(() => resolver(null), ESPERA_ROTULOS_MS)),
+        ]);
+        if (turno !== cargaRef.current) return;
+        if (aTiempo) {
+          const [rotulos, sets] = aTiempo;
+          if (sets) setDbSets(sets);
+          setCards(conRotulos(locales, rotulos));
+        } else {
+          // Venció el plazo: se pinta lo guardado y, si la respuesta acaba
+          // llegando, se aplica sobre las cartas que haya entonces.
+          setCards(yaPintado ? (prev) => conLoPintado(prev, locales) : locales);
+          delServidor.then(([rotulos, sets]) => {
+            if (turno !== cargaRef.current) return;
+            if (sets) setDbSets(sets);
+            setCards((prev) => conRotulos(prev, rotulos));
+          });
+        }
+        pintadoDeRef.current = claveDeColeccion;
       }
     } catch (error) {
+      if (turno !== cargaRef.current) return;
       console.error("Error cargando colección:", error);
-      setLoadError(true);
+      // Si ya hay una colección en pantalla, un refresco que falla no la
+      // cambia por un error: se queda lo que había, que sigue siendo cierto
+      // salvo por lo último que haya pasado en otra pantalla.
+      if (!yaPintado) setLoadError(true);
     } finally {
-      setLoading(false);
+      if (turno === cargaRef.current) setLoading(false);
     }
-  }, [isSignedIn, isLoaded]);
+  }, [identidad, claveDeColeccion]);
+
+  // Se recuerda lo pintado (ver `coleccionDeSesion`): cada carga y cada venta
+  // dejan aquí la lista tal como queda, para la próxima vez que se vuelva.
+  useEffect(() => {
+    if (loading || loadError || claveDeColeccion === null) return;
+    if (pintadoDeRef.current !== claveDeColeccion) return;
+    coleccionDeSesion.de = claveDeColeccion;
+    coleccionDeSesion.cards = cards;
+    coleccionDeSesion.sets = dbSets;
+  }, [loading, loadError, claveDeColeccion, cards, dbSets]);
 
   useEffect(() => {
     loadCollection();
   }, [loadCollection]);
+
+  /**
+   * LA COLECCIÓN DEL INVITADO PUEDE CAMBIAR DESDE OTRA PESTAÑA.
+   *
+   * Esta pantalla la lee una vez. Con ella abierta en una pestaña y cinco
+   * sobres abiertos en otra, lo pintado se queda viejo, y antes era peor que
+   * viejo: cada venta grababa ENTERA la lista de esta pantalla y las cartas de
+   * esos cinco sobres desaparecían. Las ventas ya no escriben la lista (ver
+   * `venderCopiasEnLocal` en utils/storage.ts), y aquí se cierra la otra mitad:
+   * cuando otra pestaña escribe, se releen las cantidades.
+   *
+   * Sin esqueleto y conservando el rótulo ya traducido de lo que hay pintado:
+   * sólo cambian las copias, y lo que sea nuevo entra con el nombre guardado.
+   */
+  const refrescarDeLocal = useCallback(() => {
+    const frescas = getCollection() as CartaEnColeccion[];
+    setCards((prev) => conLoPintado(prev, frescas));
+  }, []);
+  useEffect(() => {
+    if (identidad !== "invitado") return;
+    // `storage` sólo se dispara en las OTRAS pestañas, que es justo el caso.
+    const alEscribirOtra = (e: StorageEvent) => {
+      if (e.key === COLLECTION_STORAGE_KEY) refrescarDeLocal();
+    };
+    window.addEventListener("storage", alEscribirOtra);
+    return () => window.removeEventListener("storage", alEscribirOtra);
+  }, [identidad, refrescarDeLocal]);
 
   /**
    * Progreso por expansión.
@@ -286,36 +607,12 @@ export default function CollectionPage() {
    * `totalInSet` se calcula una vez y lo usan el porcentaje, el "n/N" y las que
    * faltan: antes el rótulo pintaba `set.total` crudo mientras el porcentaje
    * usaba el respaldo `|| 1`, así que un set sin total decía "5/" y un 100%.
+   *
+   * LA CUENTA VIVE AHORA EN utils/progresoPorExpansion.ts, con estas mismas
+   * reglas, para que el álbum de otro entrenador —que tenía su copia, más
+   * vieja y sin el primer arreglo— pueda dar el mismo número.
    */
-  const setStats = useMemo(() => {
-    const conteoPorSet = new Map<string, number>();
-    for (const c of cards) {
-      const guion = String(c.id).lastIndexOf("-");
-      if (guion <= 0) continue;
-      const sid = String(c.id).slice(0, guion);
-      conteoPorSet.set(sid, (conteoPorSet.get(sid) ?? 0) + 1);
-    }
-    return dbSets
-      .map((set) => {
-        const totalInSet = Number(set.cardsCount) || Number(set.total) || 1;
-        // Acotado al catálogo, por lo mismo que en el álbum: el numerador cuenta
-        // lo que hay en la colección y el denominador lo que existe hoy, y
-        // pueden no cuadrar tras una resiembra.
-        const uniqueCardsOwned = Math.min(conteoPorSet.get(set.id) ?? 0, totalInSet);
-        const percentage = Math.min(100, Math.round((uniqueCardsOwned / totalInSet) * 100));
-        const missing = Math.max(0, totalInSet - uniqueCardsOwned);
-        const logoUrl = set.images?.logo || "";
-        return {
-          ...set,
-          logo: logoUrl,
-          owned: uniqueCardsOwned,
-          totalInSet,
-          percentage,
-          missing,
-        };
-      })
-      .sort((a, b) => b.percentage - a.percentage || b.owned - a.owned);
-  }, [cards, dbSets]);
+  const setStats = useMemo(() => progresoPorExpansion(cards, dbSets), [cards, dbSets]);
 
   /** Sólo las expansiones en las que el jugador tiene algo. */
   const setStatsEmpezados = useMemo(
@@ -355,6 +652,52 @@ export default function CollectionPage() {
   const [verTodasLasExpansiones, setVerTodasLasExpansiones] = useState(false);
   const setStatsVisibles = verTodasLasExpansiones ? setStats : setStatsEmpezados;
 
+  /**
+   * LAS EXPANSIONES DEL FILTRO: sólo aquellas de las que hay cartas, con su
+   * recuento.
+   *
+   * El desplegable listaba `dbSets` entero —171 con la base sincronizada—
+   * aunque el jugador tuviera cartas de seis: en la rueda de iOS, casi todas
+   * las opciones llevaban a "Sin resultados". Es lo que ya hace el selector
+   * del archivador (components/vitrina/SelectorCarta.tsx), y por el mismo
+   * motivo: ofrecer ciento sesenta expansiones vacías no es filtrar.
+   *
+   * El orden es el de `getSetsFromDB` (lanzamiento descendente). Las cartas
+   * cuya expansión no está en la lista —el invitado sin red, que no ha podido
+   * pedirla— salen al final con el id por nombre, para que el filtro siga
+   * existiendo aunque no sepa cómo se llama.
+   */
+  const opcionesExpansion = useMemo(() => {
+    const conteo = conteoPorExpansion(cards);
+    const lista = dbSets
+      .filter((s) => conteo.has(s.id))
+      .map((s) => ({ id: s.id, nombre: s.name, cartas: conteo.get(s.id) ?? 0 }));
+    const conNombre = new Set(lista.map((o) => o.id));
+    for (const [id, n] of conteo) {
+      if (!conNombre.has(id)) lista.push({ id, nombre: id.toUpperCase(), cartas: n });
+    }
+    return lista;
+  }, [cards, dbSets]);
+
+  /**
+   * Un filtro recordado que ya no encaja con nada se suelta solo.
+   *
+   * Recordar los filtros tiene esta trampa: la preferencia puede venir de otra
+   * identidad (se guardó como invitado y ahora hay sesión) o de una colección
+   * que ha cambiado, y entonces la rejilla abriría en "Sin resultados" con un
+   * filtro que ni siquiera aparece en el desplegable. Sólo se comprueba con la
+   * colección ya cargada: antes no se sabe qué hay.
+   */
+  useEffect(() => {
+    if (loading || loadError || !vistaLista) return;
+    if (filterSet !== "all" && !cards.some((c) => c.id.startsWith(filterSet + "-"))) {
+      setFilterSet("all");
+    }
+    if (filterRarity !== "all" && !cards.some((c) => c.rarity === filterRarity)) {
+      setFilterRarity("all");
+    }
+  }, [loading, loadError, vistaLista, cards, filterSet, filterRarity]);
+
   const processedCards = useMemo(() => {
     let result = [...cards];
     if (searchTerm) result = result.filter((c) => c.name.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -386,8 +729,22 @@ export default function CollectionPage() {
     [processedCards, safePage],
   );
 
-  // Reset page on filter/search change
-  useEffect(() => { setPage(1); }, [searchTerm, filterSet, filterRarity, sortBy]);
+  /* LA VUELTA A LA PÁGINA 1 YA NO ES UN EFECTO. Lo era, con búsqueda, filtros
+   * y orden de dependencias, y un efecto así corre también AL MONTAR: recordar
+   * la página no servía de nada porque la primera pasada la devolvía a 1 (y la
+   * restauración de la preferencia, otra vez). Ahora la reinicia quien cambia
+   * la búsqueda, un filtro o el orden —`alCambiarVista`—, que es cuando de
+   * verdad la página vieja deja de significar algo. */
+  const alCambiarVista = () => setPage(1);
+  /** Hay búsqueda o filtro puestos: el vacío de la rejilla ofrece quitarlos. */
+  const hayRecorte = searchTerm !== "" || filterSet !== "all" || filterRarity !== "all";
+  const quitarRecorte = () => {
+    haptic("tap");
+    setSearchTerm("");
+    setFilterSet("all");
+    setFilterRarity("all");
+    setPage(1);
+  };
 
   /**
    * Duplicados vendibles (las favoritas quedan protegidas) y su valor.
@@ -445,7 +802,6 @@ export default function CollectionPage() {
 
     // Lo que el servidor abonará por la copia más profunda del montón de hoy.
     const price = ventaDeUnaCopia(card);
-    const prevCards = cards; // instantánea para el modo invitado
     haptic("success");
     const updatedCards = cards.map((c) => (c.id === cardId ? { ...c, quantity: c.quantity - 1 } : c));
     setCards(updatedCards);
@@ -477,7 +833,14 @@ export default function CollectionPage() {
         // Se devuelve LO COBRADO, que es lo que va a decir el aviso.
         return res.earned;
       }
-      saveCollectionRaw(updatedCards);
+      /* INVITADO: se quita UNA copia de lo que hay guardado AHORA, no se graba
+       * la lista de esta pantalla. `venderCopiasEnLocal` lee, comprueba y
+       * escribe en la misma operación y sólo toca `quantity`: lo que otra
+       * pestaña haya añadido se conserva y los nombres traducidos que se ven
+       * aquí no pisan los guardados. Devuelve false sin haber escrito nada (la
+       * copia ya no está, o el almacenamiento no deja), y entonces el catch de
+       * abajo deshace lo optimista. */
+      if (!venderCopiasEnLocal(cardId, 1)) throw new Error("venta local rechazada");
       return price;
     } catch {
       // Revertimos por id (no restaurando la instantánea) para no pisar otros
@@ -487,7 +850,10 @@ export default function CollectionPage() {
         prev && prev.id === cardId ? { ...prev, quantity: prev.quantity + 1 } : prev,
       );
       addCoins(-price);
-      if (!isSignedIn) saveCollectionRaw(prevCards);
+      // Nada que restaurar en el almacén del invitado: la venta local es de
+      // todo o nada y, si falló, no llegó a escribir. Lo que sí puede pasar es
+      // que lo pintado estuviera viejo (otra pestaña vendió esa copia).
+      if (!isSignedIn) refrescarDeLocal();
       toast("No se pudo vender la carta. Nada ha cambiado.", "error");
       return 0;
     } finally {
@@ -543,8 +909,19 @@ export default function CollectionPage() {
         const newCollection = cards.map((card) =>
           copiasLibres(card) > 1 && !card.is_favorite ? sinRepetidas(card) : card,
         );
+        /* PRIMERO SE ESCRIBE, Y SÓLO SI SE PUDO SE PINTA Y SE ABONA. Antes iba
+         * al revés (pintar, grabar la lista entera, abonar) y un fallo de
+         * escritura dejaba la rejilla diciendo "vendido" sin haber vendido. La
+         * escritura es de todo o nada sobre lo guardado AHORA: si otra pestaña
+         * cambió alguna de estas cartas no se vende ninguna y se relee. */
+        const cambios: Record<string, number> = {};
+        for (const card of duplicates) cambios[card.id] = -(copiasLibres(card) - 1);
+        if (!ajustarCopiasEnLocal(cambios)) {
+          refrescarDeLocal();
+          toast("No se pudo completar la venta. Nada ha cambiado.", "error");
+          return;
+        }
         setCards(newCollection);
-        saveCollectionRaw(newCollection);
         addCoins(estimado);
         toast(`+${formatNumber(estimado)} monedas por ${formatNumber(units)} cartas`, "success");
         return;
@@ -565,7 +942,7 @@ export default function CollectionPage() {
       const vendidas = new Set(res.ids);
       /* SE QUEDA `1 + graduadas`, NO 1. La sentencia del servidor deja
        * exactamente eso (`SET quantity = 1 + COALESCE(g.n, 0)`), porque las
-       * copias que están en la vitrina no se venden por esta puerta. Poniendo 1
+       * copias graduadas no se venden por esta puerta. Poniendo 1
        * a secas, la rejilla decía "Única" de una carta que seguía teniendo tres
        * copias y el jugador perdía de vista sus graduadas hasta recargar. */
       setCards((prev) => prev.map((c) => (vendidas.has(c.id) ? sinRepetidas(c) : c)));
@@ -607,7 +984,6 @@ export default function CollectionPage() {
     // El importe lo trae hecho la colección: es el que abona
     // `sellAllDuplicatesAction` por estas mismas copias (ver `ventaDeRepetidas`).
     const totalValue = ventaDeRepetidas(selectedCard);
-    const prevCards = cards;
     const updatedCards = cards.map((c) => (c.id === id ? { ...c, quantity: restantes } : c));
     addCoins(totalValue);
     setSelectedCard((prev: any) => (prev && prev.id === id ? { ...prev, quantity: restantes } : prev));
@@ -641,7 +1017,9 @@ export default function CollectionPage() {
           "success",
         );
       } else {
-        saveCollectionRaw(updatedCards);
+        // Igual que al vender una: se quitan las copias de lo guardado ahora,
+        // no se graba la lista de esta pantalla (ver `sellOneCopy`).
+        if (!venderCopiasEnLocal(id, duplicates)) throw new Error("venta local rechazada");
         toast(`+${formatNumber(totalValue)} monedas por ${formatNumber(duplicates)} duplicadas`, "success");
       }
     } catch {
@@ -650,14 +1028,19 @@ export default function CollectionPage() {
         prev && prev.id === id ? { ...prev, quantity: prevQuantity } : prev,
       );
       addCoins(-totalValue);
-      if (!isSignedIn) saveCollectionRaw(prevCards);
+      if (!isSignedIn) refrescarDeLocal();
       toast("No se pudieron vender las duplicadas. Nada ha cambiado.", "error");
     } finally {
       endSale();
     }
   };
 
-  /** Alterna deseada/favorita. La comparten el modal y la hoja de acciones. */
+  /**
+   * Alterna la FAVORITA (`is_favorite`: corazón, sube arriba, tope de 10 y
+   * queda fuera de "Limpiar duplicados"). La comparten el modal y la hoja de
+   * acciones. No es la lista de DESEOS, que es otra cosa —cartas que se
+   * quieren conseguir, el marcador de la ficha— y no pasa por aquí.
+   */
   const applyToggleFavorite = async (cardId: string, current: boolean) => {
     // Sin cerrojo, dos toques seguidos lanzan dos peticiones que se pisan y el
     // corazón acaba en el estado contrario al del servidor.
@@ -781,6 +1164,18 @@ export default function CollectionPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  // ANTES que el esqueleto, porque `loading` sigue en true (no se ha cargado
+  // nada): quien tiene cuenta y no tiene red no ve ni un giro sin fin ni la
+  // colección de invitado. Ver utils/identidad.ts.
+  if (identidad === "cuenta-sin-conexion") {
+    return (
+      <div className="w-full">
+        <PageHeader title="Mi Colección" />
+        <SinConexion detalle="No se ha podido comprobar tu sesión y tu colección está guardada en tu cuenta. Se reintentará en cuanto vuelva la conexión." />
+      </div>
+    );
+  }
+
   if (loading) return <Loader label="Cargando Colección" />;
 
   // Sin esto, un fallo de carga se presentaba como "Aún no tienes cartas" y se
@@ -811,6 +1206,10 @@ export default function CollectionPage() {
        * PageHeader al lado de las tres acciones es de 183px a 375 y de 128px a
        * 320, así que se leía "Tus cartas, progreso y estadís…".
        *
+       * (Eran tres acciones cuando se midió; desde que la vitrina y la
+       * graduación bajaron a la fila de accesos queda una y el rótulo cabría.
+       * Sigue fuera por la razón de abajo, que no era de píxeles.)
+       *
        * Acortarlo era posible —"Cartas y progreso" mide 121px y entra en los
        * dos anchos—, así que la razón para quitarlo NO es que no cupiera nada:
        * es que un subtítulo que promete "progreso y estadísticas" y no da
@@ -830,53 +1229,22 @@ export default function CollectionPage() {
         title="Mi Colección"
         actions={
           <>
-          {/* LAS DOS PUERTAS A LAS PANTALLAS NUEVAS.
-              Están AQUÍ y no en la barra inferior a propósito: la barra tiene
-              cuatro pestañas y meter dos más la deja apretada en un móvil
-              estrecho. Las dos cuelgan de la colección —la vitrina la enseña y
-              la graduación es un servicio sobre ella—, así que la pestaña de
-              Colección cubre sus rutas (ver components/nav-items.tsx) y el
-              acceso vive donde el jugador ya está mirando sus cartas.
-              El rótulo se oculta en móvil como el del botón de al lado; el
-              aria-label es lo que lo mantiene con nombre para un lector.
+          {/* AQUÍ YA NO ESTÁN LAS PUERTAS A LA VITRINA Y A LA GRADUACIÓN.
+              Eran dos iconos sin texto —una rejilla y una estrella que se leía
+              como "favoritos"— y en un móvil el `title` no existe: dos
+              pantallas enteras del juego sólo las encontraba quien tocaba por
+              probar. Han bajado a la fila de accesos de debajo de la cabecera
+              (FilaAccesos.tsx), con su nombre escrito.
+              Siguen sin ir en la barra inferior, y por lo de siempre: cuatro
+              pestañas ya la llenan en un móvil estrecho, y las dos cuelgan de
+              la colección, cuya pestaña cubre sus rutas (ver
+              components/nav-items.tsx).
 
-              ── POR QUÉ EL RÓTULO ENCIENDE EN `lg` Y NO EN `sm` ──
-              Encendía en `sm` (640px), pero la barra lateral no aparece hasta
-              `md` (768px). Entre 768 y ~834 conviven las dos cosas: el bloque
-              de acciones mide 359px, PageHeader lo declara `shrink-0` y al
-              título le quedaban 78px, así que el <h1> se leía "Mi C…" —cortado
-              a mitad de la segunda letra—. Medido a 768: scrollWidth 145 contra
-              clientWidth 78; a 800, 145 contra 110; a 900 ya cabía.
-              Es exactamente el defecto que se arregló en el subtítulo, un
-              renglón más arriba, y estaba aquí desde antes.
-              Con `lg` (1024) los rótulos vuelven cuando de verdad hay sitio:
-              medido a 1024, 145 contra 145. Entre 768 y 1023 las acciones
-              quedan en icono, y por eso llevan `title`: con ratón el aria-label
-              no produce ninguna pista, y un icono sin nombre en un portátil no
-              es un arreglo, es otro problema. */}
-          <Link
-            href="/vitrina"
-            aria-label="Abrir la vitrina"
-            title="Vitrina"
-            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl t-cuerpo-2 font-medium transition press touch-target justify-center"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="w-4 h-4">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
-            </svg>
-            <span className="hidden lg:inline">Vitrina</span>
-          </Link>
-          <Link
-            href="/graduacion"
-            aria-label="Graduar cartas"
-            title="Graduar cartas"
-            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl t-cuerpo-2 font-medium transition press touch-target justify-center"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="w-4 h-4">
-              <path d="M12 2 15 9l7 .6-5.3 4.6L18.2 21 12 17.3 5.8 21l1.5-6.8L2 9.6 9 9z" />
-            </svg>
-            <span className="hidden lg:inline">Graduar</span>
-          </Link>
+              ── POR QUÉ EL RÓTULO DE ESTE BOTÓN ENCIENDE EN `lg` Y NO EN `sm` ──
+              La barra lateral aparece en `md` (768px) y le quita 240px a la
+              cabecera: con el rótulo encendido desde `sm`, entre 768 y ~834 el
+              <h1> se leía "Mi C…". Con `lg` vuelve cuando hay sitio, y hasta
+              entonces el `title` da la pista a quien llega con ratón. */}
           <button
             onClick={requestSellAllDuplicates}
             disabled={isSelling}
@@ -884,7 +1252,13 @@ export default function CollectionPage() {
             // En móvil el texto va oculto con `hidden` (display:none), que lo
             // saca del árbol de accesibilidad: sin esta etiqueta el botón
             // quedaría sin nombre para un lector de pantalla.
-            aria-label={pendingSale === "duplicates" ? "Vendiendo duplicados" : "Limpiar duplicados"}
+            aria-label={
+              pendingSale === "duplicates"
+                ? "Vendiendo duplicados"
+                : duplicateInfo.units > 0
+                  ? `Limpiar duplicados: ${formatNumber(duplicateInfo.units)} repetidas por ${formatNumber(duplicateInfo.total)} monedas`
+                  : "Limpiar duplicados"
+            }
             title={pendingSale === "duplicates" ? "Vendiendo duplicados" : "Limpiar duplicados"}
             className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl t-cuerpo-2 font-medium transition press touch-target justify-center disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -896,13 +1270,32 @@ export default function CollectionPage() {
             ) : (
               <IconoPapelera tam={16} />
             )}
+            {/* LO QUE DAN LAS REPETIDAS, A LA VISTA. En móvil el botón era una
+                papelera sin texto: no decía ni que hubiera repetidas ni cuánto
+                valían, y eso sólo se descubría dentro de la hoja de confirmar.
+                Es justo el dato que busca quien se ha quedado sin monedas en
+                la tienda. La cifra es la misma que enseña esa hoja
+                (`duplicateInfo`), abreviada para no quitarle sitio al título:
+                a 320 px la cabecera no admite más que el icono y un número. */}
+            {duplicateInfo.units > 0 && pendingSale !== "duplicates" && (
+              <span className="tnum lg:hidden">+{cifraCorta(duplicateInfo.total)}</span>
+            )}
             <span className="hidden lg:inline">
-              {pendingSale === "duplicates" ? "Vendiendo…" : "Limpiar duplicados"}
+              {pendingSale === "duplicates"
+                ? "Vendiendo…"
+                : duplicateInfo.units > 0
+                  ? `Limpiar duplicados · +${formatNumber(duplicateInfo.total)}`
+                  : "Limpiar duplicados"}
             </span>
           </button>
           </>
         }
       />
+
+      {/* El margen negativo recoge parte del `mb-6` de la cabecera: la fila es
+          su segundo renglón, no un bloque aparte, y cada píxel de alto que
+          gaste aquí lo paga la primera fila de cartas. */}
+      <FilaAccesos grupo="coleccion" className="-mt-2 mb-4 md:-mt-3 md:mb-6" />
 
       <div className="w-full flex flex-col gap-6">
         {/* PROGRESS PANEL */}
@@ -955,8 +1348,15 @@ export default function CollectionPage() {
                 className="overflow-hidden"
               >
                 {setStatsVisibles.length === 0 ? (
-                  <p className="t-cuerpo-2 ink-faint text-center py-8">
-                    Aún no tienes cartas de ninguna expansión. Abre un sobre para empezar.
+                  /* Dos vacíos distintos. Con cartas y sin lista de
+                     expansiones —el invitado sin red, que pinta lo guardado sin
+                     haber podido pedirla— decir "aún no tienes cartas" sería
+                     mentirle con sus cartas a la vista veinte píxeles más
+                     abajo. `ink-soft` y no `ink-faint`: es texto de lectura. */
+                  <p className="t-cuerpo-2 ink-soft text-center py-8">
+                    {cards.length > 0 && dbSets.length === 0
+                      ? "No se ha podido cargar la lista de expansiones. Tus cartas están aquí abajo; el progreso volverá con la conexión."
+                      : "Aún no tienes cartas de ninguna expansión. Abre un sobre para empezar."}
                   </p>
                 ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
@@ -1075,7 +1475,7 @@ export default function CollectionPage() {
             etiqueta="Buscar en tu colección"
             marcador="Buscar..."
             valor={searchTerm}
-            onCambio={setSearchTerm}
+            onCambio={(v) => { setSearchTerm(v); alCambiarVista(); }}
           />
 
           {/* EL BOTÓN QUE PLIEGA LOS FILTROS. Sólo existe por debajo de `xl`;
@@ -1140,7 +1540,7 @@ export default function CollectionPage() {
           >
             <select
               value={filterSet}
-              onChange={(e) => { haptic("select"); setFilterSet(e.target.value); }}
+              onChange={(e) => { haptic("select"); setFilterSet(e.target.value); alCambiarVista(); }}
               aria-label="Filtrar por expansión"
               // TOPE DE ANCHO EN ESCRITORIO: 320 Y NO 260.
               //
@@ -1161,16 +1561,23 @@ export default function CollectionPage() {
               // (Y no, este tope no decide ningún punto de ruptura: sólo existe
               // a partir de `xl`, que es justo donde la fila ya cabía. Por
               // debajo los tres desplegables son `w-full` y van apilados.)
-              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl t-cuerpo-2 cursor-pointer truncate xl:w-auto xl:max-w-[320px]"
+              // `min-h-11`: con `py-2.5` y la letra a 16 px (la fuerza
+              // globals.css para que iOS no amplíe) el desplegable se quedaba
+              // en 42,4 px, por debajo de los 44 del resto de controles.
+              className="input-field w-full min-h-11 min-w-0 px-3 py-2.5 rounded-xl t-cuerpo-2 cursor-pointer truncate xl:w-auto xl:max-w-[320px]"
             >
               <option value="all">Todas las expansiones</option>
-              {dbSets.map((set) => (<option key={set.id} value={set.id}>{set.name}</option>))}
+              {/* Sólo las expansiones con cartas, y cuántas: ver
+                  `opcionesExpansion`. */}
+              {opcionesExpansion.map((o) => (
+                <option key={o.id} value={o.id}>{o.nombre} · {formatNumber(o.cartas)}</option>
+              ))}
             </select>
             <select
               value={filterRarity}
-              onChange={(e) => { haptic("select"); setFilterRarity(e.target.value); }}
+              onChange={(e) => { haptic("select"); setFilterRarity(e.target.value); alCambiarVista(); }}
               aria-label="Filtrar por rareza"
-              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl t-cuerpo-2 cursor-pointer truncate xl:w-auto"
+              className="input-field w-full min-h-11 min-w-0 px-3 py-2.5 rounded-xl t-cuerpo-2 cursor-pointer truncate xl:w-auto"
             >
               {/* "Todas las rarezas" y no "Toda rareza": el paralelo con "Todas
                   las expansiones" deja claro de un vistazo que este es un filtro
@@ -1181,9 +1588,9 @@ export default function CollectionPage() {
             </select>
             <select
               value={sortBy}
-              onChange={(e) => { haptic("select"); setSortBy(e.target.value); }}
+              onChange={(e) => { haptic("select"); setSortBy(e.target.value); alCambiarVista(); }}
               aria-label="Ordenar por"
-              className="input-field w-full min-w-0 px-3 py-2.5 rounded-xl t-cuerpo-2 cursor-pointer truncate xl:w-auto"
+              className="input-field w-full min-h-11 min-w-0 px-3 py-2.5 rounded-xl t-cuerpo-2 cursor-pointer truncate xl:w-auto"
             >
               {/* El prefijo "Orden:" va DENTRO de las opciones, no en un rótulo
                   al lado: un <select> nativo no admite nada antes de su texto
@@ -1205,7 +1612,11 @@ export default function CollectionPage() {
         {processedCards.length === 0 ? (
           <EstadoVacio
             titulo={cards.length === 0 ? "Aún no tienes cartas" : "Sin resultados"}
-            detalle={cards.length === 0 ? "Abre tu primer sobre para empezar" : "Prueba otros filtros"}
+            detalle={
+              cards.length === 0
+                ? "Abre tu primer sobre para empezar"
+                : "Ninguna carta encaja con la búsqueda y los filtros puestos"
+            }
             /* El álbum abierto: es el icono de esta pestaña en la barra de
                navegación, así que el vacío enseña el dibujo del sitio en el que
                se está. Sólo sale aquí, por eso se queda escrito aquí. */
@@ -1219,6 +1630,18 @@ export default function CollectionPage() {
                 // `.control-44`: medía 40px y es el único camino de salida de
                 // una colección vacía, o sea la primera pantalla del juego.
                 <Link href="/" className="btn-primary press control-44 t-cuerpo rounded-xl px-5 font-medium">Abrir sobres</Link>
+              ) : hayRecorte ? (
+                // La salida del "Sin resultados". Desde que la vista se
+                // recuerda, se puede LLEGAR a este vacío con un filtro puesto
+                // en otra visita y los desplegables plegados: sin un botón
+                // aquí habría que adivinar que la rejilla está recortada.
+                <button
+                  type="button"
+                  onClick={quitarRecorte}
+                  className="btn-ghost press control-44 t-cuerpo rounded-xl px-5 font-medium"
+                >
+                  Quitar búsqueda y filtros
+                </button>
               ) : undefined
             }
           />
@@ -1235,14 +1658,20 @@ export default function CollectionPage() {
                * cuenta). */
               const graduada = notaDeCarta(card);
               /* Las copias que se pueden vender por aquí. No es `quantity`:
-               * las graduadas están en la vitrina y el servidor no las toca.
+               * las graduadas salen por Graduación y el servidor no las toca.
                * Ver `copiasLibres`. */
               const libres = copiasLibres(card);
               return (
               <div key={card.id} className="relative group">
+                {/* LAS DOS CHAPAS SOBRESALEN 4 px POR SU LADO, NO 8. En móvil
+                    el hueco entre cartas es de 10 px (`gap-2.5`): con 8 por
+                    cada lado, la chapa de copias de una carta y el corazón de
+                    la siguiente sumaban 16 y se montaban una sobre otra en la
+                    rejilla de tres columnas. Es el mismo arreglo que ya lleva
+                    el álbum de entrenador. */}
                 {card.quantity > 1 && (
                   <div
-                    className="absolute -top-2 -right-2 z-30 t-micro font-bold w-6 h-6 flex items-center justify-center rounded-full tnum"
+                    className="absolute -top-2 -right-1 z-30 t-micro font-bold w-6 h-6 flex items-center justify-center rounded-full tnum"
                     style={{
                       background: "var(--ink)",
                       color: "var(--bg)",
@@ -1255,7 +1684,7 @@ export default function CollectionPage() {
                 )}
                 {card.is_favorite && (
                   <div
-                    className="absolute -top-2 -left-2 z-30 w-5 h-5 rounded-full flex items-center justify-center"
+                    className="absolute -top-2 -left-1 z-30 w-5 h-5 rounded-full flex items-center justify-center"
                     style={{ background: "var(--danger)", color: "#fff", boxShadow: "var(--shadow-sm)" }}
                   >
                     {/* 12px: es el glifo de una insignia de 20, no un icono de
@@ -1362,18 +1791,48 @@ export default function CollectionPage() {
                       // confirmación del servidor.
                       disabled={isSelling}
                       aria-busy={pendingSale === card.id}
-                      className="chip ink t-meta min-h-11 px-4 rounded-full press hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:brightness-100"
+                      /* EL NOMBRE COMPLETO VA AQUÍ porque lo pintado se acorta
+                         en los móviles estrechos (ver abajo) y, mientras se
+                         vende, es sólo un giro. */
+                      aria-label={
+                        pendingSale === card.id
+                          ? `Vendiendo una copia de ${card.name}`
+                          : `Vender una copia de ${card.name} por ${formatNumber(ventaDeUnaCopia(card))} monedas`
+                      }
+                      /* UNA LÍNEA, SIEMPRE, Y DENTRO DE SU COLUMNA.
+                         A 320 px la columna mide 89 px. "Vender +14" partía en
+                         dos líneas mientras "Vender +3" cabía en una —botones
+                         de distinto alto en la misma fila— y "Vendiendo…"
+                         (99 px) se salía por los dos lados. Tres cambios:
+                          · `whitespace-nowrap`, y `px-3` en vez de `px-4`;
+                          · por debajo de 360 px el rótulo es el importe con la
+                            moneda ("+14 ◎"), que cabe hasta con cuatro cifras;
+                            de 360 en adelante la columna pasa de 102 px y
+                            vuelve la palabra (medido: "Vender +14" son 89 px);
+                          · el estado ocupado es un giro y no un texto más
+                            largo que el que sustituye.
+                         `min-w-11` mantiene los 44 px también con "+3". */
+                      className="chip ink t-meta tnum min-h-11 min-w-11 px-3 rounded-full press hover:brightness-110 inline-flex items-center justify-center gap-1 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:brightness-100"
                     >
-                      {pendingSale === card.id ? "Vendiendo…" : `Vender +${ventaDeUnaCopia(card)}`}
+                      {pendingSale === card.id ? (
+                        <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                      ) : (
+                        <>
+                          <span className="hidden min-[360px]:inline">Vender</span>
+                          <span>+{formatNumber(ventaDeUnaCopia(card))}</span>
+                          <IconoMoneda className="min-[360px]:hidden" />
+                        </>
+                      )}
                     </button>
                   ) : (card.graduadas ?? 0) > 0 ? (
                     /* NI "Vender" NI "Única": las dos mentirían. Aquí hay más de
                        una copia —el contador de la esquina lo dice— pero las que
-                       sobran están graduadas, y ésas salen por la vitrina. Antes
-                       salía el botón y el servidor contestaba que no. */
+                       sobran están graduadas, y ésas se venden desde Graduación
+                       («Mis graduadas»). Antes salía el botón y el servidor
+                       contestaba que no. */
                     <span
                       className="chip ink-soft t-micro px-2 py-1 rounded-full"
-                      title={`${card.quantity} copias · ${card.graduadas} en la vitrina`}
+                      title={`${card.quantity} copias · ${card.graduadas} graduadas`}
                     >
                       Sin repetidas
                     </span>
@@ -1427,7 +1886,7 @@ export default function CollectionPage() {
            cuenta una regla que no le afecta. */
         description={`Se venderán ${formatNumber(duplicateInfo.units)} cartas repetidas por ${formatNumber(duplicateInfo.total)} monedas. Cada copia extra de una misma carta vale menos que la anterior. Las favoritas no se tocan.${
           cards.some((c) => (c.graduadas ?? 0) > 0)
-            ? " Las copias graduadas tampoco: ésas se venden desde la vitrina."
+            ? " Las copias graduadas tampoco: ésas se venden en Graduación, pestaña «Mis graduadas»."
             : ""
         }`}
         confirmLabel={`Vender por ${formatNumber(duplicateInfo.total)}`}
@@ -1511,8 +1970,16 @@ export default function CollectionPage() {
                 </button>
               )}
 
-              {/* Deseados sólo con sesión: al invitado la acción le fallaría
-                  siempre («No estás logueado»), así que no se le ofrece. */}
+              {/* Favorita sólo con sesión: al invitado la acción le fallaría
+                  siempre («No estás logueado»), así que no se le ofrece.
+
+                  SE LLAMA "FAVORITA", que es lo que hace. Decía "Añadir a
+                  deseados", pero el botón marca `is_favorite`: sale un corazón,
+                  la carta sube arriba y queda fuera de "Limpiar duplicados"; con
+                  diez marcadas el aviso hablaba de "favoritos" tras pulsar algo
+                  que hablaba de deseados. La lista de deseos es el marcador de
+                  la ficha. La línea pequeña dice para qué sirve, que es lo que
+                  no se deduce del corazón. */}
               {isSignedIn && (
                 <button
                   onClick={() => {
@@ -1534,8 +2001,13 @@ export default function CollectionPage() {
                   >
                     <path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 5.5 5.5 5.5 0 0 1 21.5 12c-2.5 4.5-9.5 9-9.5 9z" />
                   </svg>
-                  {actionCardLive.is_favorite ? "Quitar de deseados" : "Añadir a deseados"}
+                  {actionCardLive.is_favorite ? "Quitar de favoritas" : "Marcar como favorita"}
                 </button>
+              )}
+              {isSignedIn && !actionCardLive.is_favorite && (
+                <p className="t-meta ink-soft text-center -mt-1">
+                  Las favoritas no se venden al limpiar duplicados (máximo 10).
+                </p>
               )}
 
               <button
@@ -1552,8 +2024,8 @@ export default function CollectionPage() {
       <CardDetailModal
         card={selectedCard}
         onClose={() => setSelectedCard(null)}
-        // El favorito/deseados vive en el servidor: al invitado (localStorage)
-        // le fallaría siempre con «No estás logueado», así que se le oculta el
+        // El favorito vive en el servidor: al invitado (localStorage) le
+        // fallaría siempre con «No estás logueado», así que se le oculta el
         // corazón, igual que ya se oculta el botón de deseos del modal.
         onToggleFavorite={isSignedIn ? handleToggleFavInModal : undefined}
         onSellAll={handleSellAllFromModal}

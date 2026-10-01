@@ -209,7 +209,7 @@ export const SENTENCIAS_PRECIOS: readonly string[] = [
  *   3. La copia protegida SÍ aplica, al contrario que en el trueque. El bazar
  *      saca cartas del juego a cambio de monedas —es un mercado, no un
  *      movimiento— y por eso cae del lado de utils/mercado.ts y no del de
- *      app/social.ts. El porqué de esa asimetría está en social.ts:227-250.
+ *      app/social.ts. El porqué de esa asimetría está en la cabecera de `createTradeOffer`.
  *
  * `estado` toma 'activa', 'vendida' y 'retirada'. No se borra ninguna fila:
  * el histórico es lo que permite ver un patrón de lavado si alguna vez hace
@@ -267,7 +267,7 @@ export const ESTADOS_PRECIO = {
  * Las tres tablas juntas, para /migrate-mejoras.
  *
  * EL REPARTO ENTRE LOS TRES ARRAYS NO ES COSMÉTICO, es el criterio que el
- * repositorio ya sigue (services/idiomaIngest.ts:59-78 lo documenta): una tabla
+ * repositorio ya sigue (services/idiomaIngest.ts lo documenta en su `asegurarTablas`): una tabla
  * que sólo usa un cron se asegura en el módulo del cron, y una tabla que usa la
  * aplicación se asegura en `ensureSchema`. Por eso:
  *

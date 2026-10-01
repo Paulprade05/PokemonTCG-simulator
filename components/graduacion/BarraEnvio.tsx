@@ -102,7 +102,10 @@ export default function BarraEnvio({
               type="button"
               onClick={onVaciar}
               disabled={enCurso}
-              className="chip ink-soft t-meta px-3 py-2 press shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+              // `touch-target`: medía 58×32 y es el control que tira TODA la
+              // selección, pegado al resto de la barra. Un dedo que se queda
+              // corto aquí no puede acabar en otro sitio.
+              className="chip ink-soft t-meta px-3 py-2 press touch-target shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Vaciar
             </button>

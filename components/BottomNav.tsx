@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import { SignedIn } from "@clerk/nextjs";
 import { NAV_ITEMS } from "./nav-items";
 import { useHaptics } from "../hooks/useHaptics";
+import { textoDeInsignia, useSocialPendientes } from "../hooks/useSocialPendientes";
 import { MUELLE_PILDORA } from "../utils/motion";
 
 /* EL INDICADOR ACTIVO, ESCRITO UNA VEZ PARA LAS DOS BARRAS.
@@ -27,17 +27,32 @@ import { MUELLE_PILDORA } from "../utils/motion";
 export const CLASES_PILDORA_NAV =
   "rounded-xl bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] border border-[color-mix(in_srgb,var(--accent)_30%,transparent)]";
 
+/* LA INSIGNIA DE PENDIENTES, TAMBIÉN UNA VEZ PARA LAS DOS BARRAS.
+ *
+ * Es la receta de la píldora de aviso de components/ui/Segmentado.tsx —18 px,
+ * acento de fondo, tinta oscura, cifra en negrita—, que es la que el jugador
+ * ya ha aprendido a leer como "hay algo nuevo" dentro de Social. Con otra cara
+ * aquí, el mismo número se diría de dos maneras a un toque de distancia.
+ * Sin transform ni filter: es un bloque posicionado y ya. */
+export const CLASES_INSIGNIA_NAV =
+  "tnum t-micro flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--accent)] px-1 font-bold leading-none text-[#04110c]";
+
 export default function BottomNav({ hidden = false }: { hidden?: boolean }) {
   const pathname = usePathname();
   const haptic = useHaptics();
+  const { total: pendientes } = useSocialPendientes();
 
   const renderItem = (it: (typeof NAV_ITEMS)[number]) => {
     const active = it.match(pathname);
+    const insignia = it.pendientes ? pendientes : 0;
     return (
       <Link
         key={it.href}
         href={it.href}
         aria-current={active ? "page" : undefined}
+        // Con insignia, el nombre accesible dice cuántos: la píldora va oculta
+        // al lector (un "3" suelto después de "Social" no se entiende).
+        aria-label={insignia > 0 ? `${it.label}, ${insignia} ${insignia === 1 ? "pendiente" : "pendientes"}` : undefined}
         // press-flat y no press: `press` escala, y aquí el 3% de escala sobre un
         // objetivo de 44px no se ve (el dedo tapa justo el centro), mientras que
         // el hundimiento de 2px sí se percibe por los bordes. Además deja el
@@ -69,6 +84,19 @@ export default function BottomNav({ hidden = false }: { hidden?: boolean }) {
         )}
         <span className={`relative z-10 transition-colors ${active ? "accent" : "ink-faint"}`}>
           {it.icon}
+          {insignia > 0 && (
+            /* Sobre la esquina superior derecha del ICONO, no de la pestaña:
+               cada pestaña mide 76 px a 320 px de pantalla y el icono 20, así
+               que la píldora (como mucho 24 px con "9+") cabe con holgura y
+               no llega a la pestaña de al lado. El anillo del color de la
+               barra la despega del trazo del icono que tiene debajo. */
+            <span
+              aria-hidden="true"
+              className={`absolute -top-1.5 left-3 ring-2 ring-[var(--surface)] ${CLASES_INSIGNIA_NAV}`}
+            >
+              {textoDeInsignia(insignia)}
+            </span>
+          )}
         </span>
         {/* La etiqueta inactiva sube a ink-soft: a 10px, ink-faint (~3,6:1) no
             llega al mínimo AA de 4,5:1. El icono sí puede quedarse en ink-faint
@@ -104,9 +132,9 @@ export default function BottomNav({ hidden = false }: { hidden?: boolean }) {
         paddingBottom: "var(--sab)",
       }}
     >
-      {NAV_ITEMS.map((it) =>
-        it.requireAuth ? <SignedIn key={it.href}>{renderItem(it)}</SignedIn> : renderItem(it),
-      )}
+      {/* SIEMPRE LAS CUATRO, sin esperar a Clerk: el porqué está en la pestaña
+          Social de components/nav-items.tsx. */}
+      {NAV_ITEMS.map(renderItem)}
     </nav>
   );
 }

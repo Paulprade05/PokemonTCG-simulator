@@ -183,7 +183,7 @@ let tablasListas: Promise<void> | null = null;
 /**
  * La tabla, memoizada por instancia. Va aquí y NO en el `ensureSchema` de
  * app/action.ts por el motivo que ese fichero documenta en su propio comentario
- * (action.ts:143-159): aquél se espera antes de CADA compra de sobre y esta
+ * (el que va sobre `ensureSchema`): aquél se espera antes de CADA compra de sobre y esta
  * tabla no la toca ninguna compra —sólo la escribe este cron, una vez al día,
  * dentro de su presupuesto—. El fallo no se cachea, para que el siguiente
  * intento vuelva a probar en vez de quedarse envenenado hasta el próximo

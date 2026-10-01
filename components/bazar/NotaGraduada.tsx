@@ -17,7 +17,8 @@ import { etiquetaNota } from "../../utils/graduacion";
  * ilustración, o sea que es hermano de la carta y a veces ancestro suyo en el
  * mismo bloque apilado. Cualquiera de los dos promociona la capa y WebKit
  * rasteriza la ilustración a escala fija —borrosa en iPhone—; está documentado
- * en components/PokemonCard.tsx:140-163. El relieve va con box-shadow.
+ * en components/PokemonCard.tsx, en el comentario del estado `settled`. El
+ * relieve va con box-shadow.
  */
 
 /**
@@ -27,7 +28,8 @@ import { etiquetaNota } from "../../utils/graduacion";
  *
  * Se usan --warn-ink y --ok, que son las variantes LEGIBLES de --warn y --accent
  * (los de marca dan 2,2:1 sobre el papel crema del tema claro: valen para un
- * relleno o un borde, no para texto). Está explicado en app/globals.css:40-47.
+ * relleno o un borde, no para texto). Está explicado en app/globals.css, en la
+ * nota «TINTA SEMÁNTICA».
  */
 function tintaDe(nota: number): string {
   if (nota >= 9) return "var(--warn-ink)";
@@ -45,12 +47,26 @@ interface NotaGraduadaProps {
   etiqueta?: string | null;
   /** "chapa" va superpuesta sobre la carta; "linea" va en una ficha de texto. */
   variante?: "chapa" | "linea";
+  /**
+   * Sólo para la chapa: cuándo lleva la palabra «Nota» al lado de la cifra.
+   *
+   * La chapa entera mide 75 px y no siempre los hay. En la rejilla de tres
+   * columnas de la hoja de publicar la carta mide 73 px a 320 de pantalla y la
+   * chapa asomaba 6 por la derecha: ahí va "nunca". En el escaparate, en un
+   * anuncio propio, comparte el borde superior con la etiqueta «Tuyo» y a 320
+   * se pisaban 11 px: ahí va "ancho", que la enseña de 360 px en adelante.
+   *
+   * Sin la palabra queda la cifra sola, con su tinta y su borde. No se pierde
+   * nada para un lector de pantalla: el `aria-label` lo dice entero siempre.
+   */
+  conRotulo?: "siempre" | "ancho" | "nunca";
 }
 
 export default function NotaGraduada({
   nota,
   etiqueta,
   variante = "chapa",
+  conRotulo = "siempre",
 }: NotaGraduadaProps) {
   const tinta = tintaDe(nota);
   const rotulo = etiqueta ?? etiquetaNota(nota);
@@ -61,7 +77,15 @@ export default function NotaGraduada({
         // aria-label completo y contenido oculto al lector: leído literalmente,
         // "10 Gema Impecable" no dice de qué habla.
         aria-label={`Carta graduada con nota ${nota}, ${rotulo}`}
-        className="flex items-center gap-1.5 rounded-full py-1 pr-2.5 pl-2"
+        // Sin la palabra, el relleno pasa a ser simétrico y con un ancho mínimo:
+        // un «7» y un «10» tienen que parecer la misma pieza.
+        className={`flex items-center justify-center gap-1.5 rounded-full py-1 ${
+          conRotulo === "siempre"
+            ? "pr-2.5 pl-2"
+            : conRotulo === "ancho"
+              ? "min-w-7 px-2 min-[360px]:pr-2.5"
+              : "min-w-7 px-2"
+        }`}
         style={{
           background: "var(--surface)",
           border: `1px solid color-mix(in srgb, ${tinta} 45%, transparent)`,
@@ -75,12 +99,16 @@ export default function NotaGraduada({
         >
           {nota}
         </span>
-        <span
-          aria-hidden="true"
-          className="ink-soft t-etiqueta leading-none"
-        >
-          Nota
-        </span>
+        {conRotulo !== "nunca" && (
+          <span
+            aria-hidden="true"
+            className={`ink-soft t-etiqueta leading-none ${
+              conRotulo === "ancho" ? "hidden min-[360px]:inline" : ""
+            }`}
+          >
+            Nota
+          </span>
+        )}
       </div>
     );
   }

@@ -12,9 +12,10 @@ import {
   getProfileStats,
   retirarDelBazarAction,
 } from "../action";
-import { SOBRES_PARA_VENDER } from "../../utils/bazar";
+import { SOBRES_PARA_COMPRAR, SOBRES_PARA_VENDER } from "../../utils/bazar";
 import { formatNumber } from "../../utils/format";
-import { useCurrency, useSesionResuelta } from "../../hooks/useGameCurrency";
+import { useCurrency } from "../../hooks/useGameCurrency";
+import { useIdentidad } from "../../hooks/useIdentidad";
 import { useHaptics } from "../../hooks/useHaptics";
 import { useToast } from "../../components/ui/Toast";
 import ConfirmSheet from "../../components/ui/ConfirmSheet";
@@ -24,6 +25,8 @@ import HuecoCentrado from "../../components/HuecoCentrado";
 import AvisoInvitado from "../../components/ui/AvisoInvitado";
 import EstadoError from "../../components/ui/EstadoError";
 import EstadoVacio from "../../components/ui/EstadoVacio";
+import FilaAccesos from "../../components/ui/FilaAccesos";
+import SinConexion from "../../components/ui/SinConexion";
 import Segmentado from "../../components/ui/Segmentado";
 import { IconoAvanzar, IconoMas, IconoRefrescar, IconoVolver } from "../../components/icons";
 import MisAnuncios from "../../components/bazar/MisAnuncios";
@@ -31,6 +34,7 @@ import PublicarSheet from "../../components/bazar/PublicarSheet";
 import ReglasBazar from "../../components/bazar/ReglasBazar";
 import TarjetaAnuncio from "../../components/bazar/TarjetaAnuncio";
 import type { AnuncioBazar, MiAnuncio } from "../../components/bazar/tipos";
+import { esAccionCaducada } from "../../utils/versionApp";
 
 /* ==================================================================== *
  * EL BAZAR ENTRE JUGADORES
@@ -46,8 +50,9 @@ import type { AnuncioBazar, MiAnuncio } from "../../components/bazar/tipos";
  * Y por eso esta pantalla está construida alrededor de tres avisos y un
  * cerrojo:
  *
- *  · LOS TRES AVISOS (precio acotado, comisión del 15 %, 25 sobres para poder
- *    vender) se pintan ANTES de tocar nada, en components/bazar/ReglasBazar.tsx.
+ *  · LOS TRES AVISOS (precio acotado, comisión del 15 %, 10 sobres para poder
+ *    comprar y 25 para vender) se pintan ANTES de tocar nada, en
+ *    components/bazar/ReglasBazar.tsx.
  *    Son defensas anti-multicuenta —el porqué medido está en utils/bazar.ts— y
  *    el jugador honesto las sufre igual, así que la única salida decente es que
  *    las lea antes y no en el mensaje de error de un servidor que ya le ha
@@ -67,7 +72,7 @@ import type { AnuncioBazar, MiAnuncio } from "../../components/bazar/tipos";
 
 /**
  * Anuncios por página. LO FIJA EL SERVIDOR (`POR_PAGINA` dentro de `getBazar`,
- * app/action.ts:3500) y no está exportado, así que aquí se repite con el nombre
+ * en app/action.ts) y no está exportado, así que aquí se repite con el nombre
  * a la vista en lugar de un 40 suelto en medio de una condición.
  *
  * QUÉ PASA SI SE DESINCRONIZAN, que es lo que hay que saber antes de tocarlo: el
@@ -109,11 +114,13 @@ type Vista = "escaparate" | "mios";
 
 export default function BazarPage() {
   const { isSignedIn } = useUser();
-  // `useSesionResuelta` y no `isLoaded` de Clerk: sin conexión, Clerk no
-  // resuelve nunca y el esqueleto se quedaba para siempre. Con el plazo
-  // (hooks/useGameCurrency.tsx) se sigue como invitado y, si la red también
-  // falta, se llega al estado de error con su botón de reintentar.
-  const sesionResuelta = useSesionResuelta();
+  // `useIdentidad` y no `isLoaded` de Clerk: sin conexión, Clerk no resuelve
+  // nunca y el esqueleto se quedaba para siempre. Con el plazo se deja de
+  // esperar y, si la red también falta, se llega al estado de error con su
+  // botón de reintentar. La identidad dice además a QUIÉN se ha dejado de
+  // esperar: a una cuenta sin red no se le dice "estás jugando como invitado".
+  const identidad = useIdentidad();
+  const sesionResuelta = identidad !== "resolviendo";
   const { coins, setCoins } = useCurrency();
   const toast = useToast();
   const haptic = useHaptics();
@@ -139,7 +146,8 @@ export default function BazarPage() {
    * EL CERROJO DE DINERO. Uno solo para comprar y retirar: mientras algo se
    * mueve, no se mueve nada más en esta pantalla. Es un ref y no un estado
    * porque el estado no se ve hasta el siguiente render y dos toques seguidos
-   * entrarían los dos — el fallo que documenta app/collection/page.tsx:78-98.
+   * entrarían los dos — el fallo que documenta `saleLockRef` en
+   * app/collection/page.tsx.
    */
   const dineroLockRef = useRef(false);
 
@@ -247,6 +255,14 @@ export default function BazarPage() {
     sobres === null ? null : Math.max(0, SOBRES_PARA_VENDER - sobres);
   // Encendido mientras no se sepa: ver el comentario de `cargarSobres`.
   const puedePublicar = Boolean(isSignedIn) && (faltanSobres === null || faltanSobres === 0);
+  /* LA OTRA BARRERA, LA DEL COMPRADOR. El servidor exige SOBRES_PARA_COMPRAR
+   * sobres abiertos también para comprar, y esta pantalla no lo contaba: se
+   * llegaba hasta la hoja de «Pagar 120», se confirmaba y entonces salía «te
+   * faltan 7». Con el número ya en la mano, el botón de cada anuncio lo dice y
+   * el toque explica la norma en vez de abrir una hoja de pago que va a fallar.
+   * Mientras no se sepa (`null`) vale 0: mismo criterio que con el de vender. */
+  const faltanParaComprar =
+    sobres === null ? 0 : Math.max(0, SOBRES_PARA_COMPRAR - sobres);
 
   const comprar = async (anuncio: AnuncioBazar) => {
     if (dineroLockRef.current) return;
@@ -264,6 +280,12 @@ export default function BazarPage() {
             ? `Te faltan ${res.faltan} ${res.faltan === 1 ? "sobre" : "sobres"} por abrir para poder comprar en el bazar.`
             : (ERRORES_COMPRA[res.error] ?? "No se pudo comprar.");
         toast(mensaje, "error");
+        /* El servidor manda: si dice que faltan N para comprar, los botones del
+         * escaparate pasan a decirlo aunque `getProfileStats` hubiera contado
+         * otra cosa. Es lo mismo que hace `onNovato` con la barrera de vender. */
+        if (res.error === "novato" && "faltan" in res && typeof res.faltan === "number") {
+          setSobres(Math.max(0, SOBRES_PARA_COMPRAR - res.faltan));
+        }
         /* Cualquier desajuste (se lo llevó otro, el anuncio ya no existe) se
          * arregla releyendo el escaparate. Con "peticion" no: ahí el que está
          * mal es el id que se mandó, y recargar no cambiaría nada. */
@@ -284,7 +306,7 @@ export default function BazarPage() {
     } catch (e) {
       console.error("Error comprando en el bazar:", e);
       haptic("warning");
-      toast("No se pudo comprar. Revisa tu conexión.", "error");
+      if (!esAccionCaducada(e)) toast("No se pudo comprar. Revisa tu conexión.", "error");
     } finally {
       dineroLockRef.current = false;
       setEnCurso(null);
@@ -309,7 +331,7 @@ export default function BazarPage() {
       await Promise.all([cargarMios(), cargarEscaparate(pagina, false)]);
     } catch (e) {
       console.error("Error retirando el anuncio:", e);
-      toast("No se pudo retirar el anuncio. Revisa tu conexión.", "error");
+      if (!esAccionCaducada(e)) toast("No se pudo retirar el anuncio. Revisa tu conexión.", "error");
     } finally {
       dineroLockRef.current = false;
       setEnCurso(null);
@@ -335,13 +357,23 @@ export default function BazarPage() {
    * invitado ni las tres reglas del bazar. El invitado va PRIMERO en las dos
    * ramas: lo que le pasa a él no depende de que el servidor conteste.
    */
-  const avisoInvitado = !isSignedIn ? (
+  const avisoInvitado = identidad === "cuenta-sin-conexion" ? (
+    <SinConexion
+      variante="tira"
+      detalle="No se ha podido comprobar tu sesión, y en el bazar se compra y se vende con tu cuenta. Se reintentará en cuanto vuelva la conexión."
+    />
+  ) : !isSignedIn ? (
     <AvisoInvitado>
       Puedes mirar el escaparate, pero comprar y vender mueven monedas
       y cartas entre cuentas: eso ocurre en el servidor y las tuyas
       viven sólo en este dispositivo.
     </AvisoInvitado>
   ) : null;
+
+  /* LA FILA "Encargos · Bazar", la misma que lleva Mercado. Faltaba aquí: se
+   * llegaba al bazar tocándolo en esa fila y, al llegar, ya no estaba. Los
+   * márgenes son los de Mercado, para que caiga a la misma altura en las dos. */
+  const accesos = <FilaAccesos grupo="mercado" className="-mt-2 mb-5 md:-mt-3 md:mb-6" />;
 
   if (estado === "error") {
     const cajaError = (
@@ -352,13 +384,18 @@ export default function BazarPage() {
     );
     return (
       <>
-        <PageHeader title="Bazar" subtitle="Cartas que ponen a la venta otros jugadores" />
+        <PageHeader
+          title="Bazar"
+          subtitle="Cartas que ponen a la venta otros jugadores"
+          back="/mercado"
+        />
+        {accesos}
         {isSignedIn ? (
           /* CENTRADO, POR EL MISMO MOTIVO QUE EL AVISO DE INVITADO DE
              /graduacion: con sesión, cuando esto salta no hay NADA más en la
              pantalla, y medido a 375x812 la caja iba de y=168 a y=378 dejando
              375px de fondo vacío hasta la barra de pestañas. */
-          <HuecoCentrado>{cajaError}</HuecoCentrado>
+          <HuecoCentrado descuento="9.75rem">{cajaError}</HuecoCentrado>
         ) : (
           /* Para el invitado sí hay contenido: su aviso y las reglas van
              primero, y el error se queda debajo, en el flujo normal. Ver la
@@ -378,6 +415,13 @@ export default function BazarPage() {
       <PageHeader
         title="Bazar"
         subtitle="Cartas que ponen a la venta otros jugadores"
+        // LA FLECHA DE VOLVER. Álbum, vitrina, graduación y entrenador la
+        // llevan; el bazar era la única pantalla de detalle sin ella. Se llega
+        // desde Mercado y se vuelve a Mercado: la pestaña sigue encendida y el
+        // gesto de borde funciona, pero con el teclado abierto (el buscador de
+        // la hoja de publicar) la barra de pestañas se retira y no quedaba
+        // ninguna salida a la vista.
+        back="/mercado"
         actions={
           <>
             <button
@@ -418,6 +462,7 @@ export default function BazarPage() {
           </>
         }
       />
+      {accesos}
 
       <div className="flex w-full flex-col gap-4">
         {avisoInvitado}
@@ -494,9 +539,25 @@ export default function BazarPage() {
                   anuncio={a}
                   saldo={coins}
                   puedeComprar={Boolean(isSignedIn)}
+                  faltanSobres={faltanParaComprar}
                   enCurso={enCurso === a.id}
                   bloqueada={enCurso !== null && enCurso !== a.id}
                   onComprar={() => {
+                    if (faltanParaComprar > 0) {
+                      /* No se abre la hoja de pago: iba a acabar en un «no» del
+                       * servidor. Se dice la norma con su número, y se relee el
+                       * dato por si el que hay se quedó viejo (los sobres
+                       * abiertos desde otra pestaña o dispositivo no pasan por
+                       * aquí): si ya llega, el botón vuelve a decir «Comprar»
+                       * solo. */
+                      haptic("warning");
+                      toast(
+                        `Te faltan ${faltanParaComprar} ${faltanParaComprar === 1 ? "sobre" : "sobres"} por abrir para poder comprar en el bazar. Hacen falta ${SOBRES_PARA_COMPRAR}.`,
+                        "info",
+                      );
+                      cargarSobres();
+                      return;
+                    }
                     haptic("tap");
                     setConfirmarCompra(a);
                   }}

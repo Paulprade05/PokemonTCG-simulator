@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { AnimatePresence, motion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
+import Link from "next/link";
+import { AnimatePresence, motion } from "framer-motion";
 import { getSetsFromDB, getFullCollection } from "../../action";
 import { getCardsFromSet } from "../../../services/pokemon";
 import { getCollection } from "../../../utils/storage";
@@ -21,8 +22,46 @@ import { useHaptics } from "../../../hooks/useHaptics";
 import { D, EASE_OUT } from "../../../utils/motion";
 import { useSwipe, touchActionFor } from "../../../hooks/useSwipe";
 import type { Carta, CartaEnColeccion, Expansion } from "../../../utils/tipos";
+import { useIdentidad } from "../../../hooks/useIdentidad";
+import SinConexion from "../../../components/ui/SinConexion";
 
 type Filter = "all" | "owned" | "missing";
+
+/**
+ * EL FILTRO SE RECUERDA, igual que la vista de la colección y por lo mismo:
+ * quien repasa lo que le falta entra en un álbum, pone «Me faltan», vuelve, abre
+ * el siguiente… y cada álbum arrancaba otra vez en «Todas».
+ *
+ * Es UNO para todos los álbumes y no uno por expansión: es una forma de mirar,
+ * no un dato de cada set. El objeto de módulo lo conserva mientras la app está
+ * abierta (y sirve de valor inicial sin romper la hidratación: en una carga
+ * completa acaba de nacer y vale "all", como en el servidor); localStorage lo
+ * conserva entre aperturas y se lee en un efecto.
+ *
+ * `de` DICE DE QUIÉN ES: el id de la cuenta o "guest", null mientras no se
+ * sepa. Al cambiar de identidad el proveedor del saldo borra `tcg:album-filtro`,
+ * pero este objeto vive en el módulo y no se enteraba: tras cerrar sesión desde
+ * el avatar (sin recarga), quien abría un álbum heredaba el filtro del anterior.
+ * Es el mismo arreglo que `vistaDeSesion.de` en app/collection/page.tsx.
+ */
+const CLAVE_FILTRO = "tcg:album-filtro";
+const filtroDeSesion: { restaurado: boolean; de: string | null; valor: Filter } = {
+  restaurado: false,
+  de: null,
+  valor: "all",
+};
+/** ¿El filtro recordado es de otra identidad que la que mira ahora? */
+const filtroEsDeOtro = (clave: string | null): boolean =>
+  clave !== null && filtroDeSesion.de !== null && filtroDeSesion.de !== clave;
+const esFiltro = (v: unknown): v is Filter =>
+  v === "all" || v === "owned" || v === "missing";
+
+/**
+ * La carta que abre la ficha. `owned: false` es lo que le dice a
+ * CardDetailModal que la carta NO se tiene: la vela con el color del papel y
+ * no pinta copias (lo mismo que hace cuando llega del buscador global).
+ */
+type Ficha = Carta & { owned?: boolean };
 
 /* ==================================================================== *
  * UN SOLO DETALLE DE CARTA EN TODA LA APLICACIÓN
@@ -62,17 +101,27 @@ const BATCH = 60;
 const padNumber = (n: unknown) => String(n ?? "").padStart(3, "0");
 
 /** La ficha mezcla el blueprint del set con la copia del usuario. */
-const mergeDetail = (blueprintCard: Carta, ownedCard?: CartaEnColeccion): Carta => ({
+const mergeDetail = (blueprintCard: Carta, ownedCard?: CartaEnColeccion): Ficha => ({
   ...blueprintCard,
   ...ownedCard,
   number: blueprintCard.number ?? ownedCard?.number,
+  // Sin copia propia es un hueco del álbum: ver `Ficha`.
+  ...(ownedCard ? null : { owned: false }),
 });
 
 export default function SetAlbumPage() {
   const params = useParams();
   const setId = params.setId as string;
 
-  const { isSignedIn, isLoaded } = useUser();
+  // `useIdentidad` y no `useUser().isLoaded`: sin conexión Clerk no resuelve
+  // nunca y el álbum se quedaba en «Abriendo álbum» para siempre, sin llegar
+  // siquiera al error con reintento. Ver utils/identidad.ts.
+  const identidad = useIdentidad();
+  // De quién es el filtro recordado (ver `filtroDeSesion.de`): la misma clave
+  // que usa la colección, el id de la cuenta confirmada o "guest".
+  const { user } = useUser();
+  const claveDeFiltro =
+    identidad === "cuenta" ? (user?.id ?? null) : identidad === "invitado" ? "guest" : null;
   const haptic = useHaptics();
 
   // Tipados: `allSetCards` es el catálogo real de la expansión y desde este
@@ -84,8 +133,39 @@ export default function SetAlbumPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
-  const [filter, setFilter] = useState<Filter>("all");
-  const [detail, setDetail] = useState<Carta | null>(null);
+  const [filter, setFilter] = useState<Filter>(
+    filtroEsDeOtro(claveDeFiltro) ? "all" : filtroDeSesion.valor,
+  );
+  // Una vez por carga de la app; las visitas siguientes arrancan ya con
+  // `filtroDeSesion`. Mientras tanto la página está en su esqueleto, así que el
+  // cambio no se ve.
+  //
+  // Depende de `claveDeFiltro` para enterarse de quién mira: la primera vez
+  // que se sabe, el filtro queda a su nombre; si ya era de otro, vuelve a
+  // «Todas» SIN leer localStorage (el proveedor ya ha borrado la clave o está a
+  // punto: su efecto corre después que éste).
+  useEffect(() => {
+    const ajeno = filtroEsDeOtro(claveDeFiltro);
+    if (claveDeFiltro !== null) filtroDeSesion.de = claveDeFiltro;
+    if (ajeno) {
+      filtroDeSesion.restaurado = true;
+      filtroDeSesion.valor = "all";
+      setFilter("all");
+      return;
+    }
+    if (filtroDeSesion.restaurado) return;
+    filtroDeSesion.restaurado = true;
+    try {
+      const guardado = window.localStorage.getItem(CLAVE_FILTRO);
+      if (esFiltro(guardado)) {
+        filtroDeSesion.valor = guardado;
+        setFilter(guardado);
+      }
+    } catch {
+      /* sin almacenamiento el filtro dura lo que dure la sesión */
+    }
+  }, [claveDeFiltro]);
+  const [detail, setDetail] = useState<Ficha | null>(null);
   /** Visor a pantalla completa: el único sitio de la app con zoom (pellizco). */
   const [zoomOpen, setZoomOpen] = useState(false);
   /** Hoja propia: id de la carta cuya imagen ya cargó (el fundido espera a ella). */
@@ -107,21 +187,41 @@ export default function SetAlbumPage() {
   // dentro del mismo try: si getCardsFromSet o getSetsFromDB fallan (PWA sin
   // cobertura, 500) o el setId de la URL no existe, `loadError` ofrece
   // reintentar en vez de dejar el álbum vacío disfrazado de «¡Álbum completo!».
+  //
+  // `cargaRef` numera las cargas: si la identidad cambia a media carga (Clerk
+  // llega tarde), la respuesta vieja no pinta encima de la nueva.
+  const cargaRef = useRef(0);
   const fetchAlbumData = useCallback(async () => {
-    if (!isLoaded) return;
+    // "resolviendo" deja el esqueleto; "cuenta-sin-conexion" pinta su propia
+    // pantalla más abajo y aquí no hay nada que pedir.
+    if (identidad !== "cuenta" && identidad !== "invitado") return;
+    const turno = ++cargaRef.current;
     setLoading(true);
     setLoadError(false);
     try {
-      const sets = await getSetsFromDB();
-      const currentSet = sets.find((s: any) => s.id === setId);
-      if (currentSet) setSetInfo(currentSet);
+      /* LAS TRES LECTURAS A LA VEZ. Iban encadenadas —expansiones, cartas del
+       * set, colección— y son independientes: en un móvil eran tres esperas
+       * seguidas para pintar una rejilla. `allSettled` y no `all` para que el
+       * nombre de la expansión llegue a la cabecera del error aunque sea otra
+       * la que falle, que es lo que pasaba cuando iban en fila. Cualquiera que
+       * falle sigue acabando en el error con reintento. */
+      const [rSets, rCartas, rMias] = await Promise.allSettled([
+        getSetsFromDB(),
+        getCardsFromSet(setId),
+        identidad === "cuenta" ? getFullCollection() : Promise.resolve(getCollection()),
+      ]);
+      if (turno !== cargaRef.current) return;
+      if (rSets.status === "fulfilled") {
+        const currentSet = rSets.value.find((s: any) => s.id === setId);
+        if (currentSet) setSetInfo(currentSet);
+      }
+      if (rSets.status === "rejected") throw rSets.reason;
+      if (rCartas.status === "rejected") throw rCartas.reason;
+      if (rMias.status === "rejected") throw rMias.reason;
 
-      const blueprintCards = await getCardsFromSet(setId);
+      const blueprintCards = rCartas.value;
       setAllSetCards(blueprintCards);
-
-      let userCards = [];
-      if (isSignedIn) userCards = await getFullCollection();
-      else userCards = getCollection();
+      const userCards = rMias.value as CartaEnColeccion[];
 
       // Rótulo e ilustración salen SIEMPRE del blueprint, que ya viene en el
       // idioma elegido. Importa para el invitado: su colección vive en
@@ -141,12 +241,13 @@ export default function SetAlbumPage() {
       });
       setOwnedCards(ownedMap);
     } catch (error) {
+      if (turno !== cargaRef.current) return;
       console.error("Error cargando el álbum:", error);
       setLoadError(true);
     } finally {
-      setLoading(false);
+      if (turno === cargaRef.current) setLoading(false);
     }
-  }, [setId, isSignedIn, isLoaded]);
+  }, [setId, identidad]);
 
   useEffect(() => {
     fetchAlbumData();
@@ -177,24 +278,43 @@ export default function SetAlbumPage() {
     [visibleCards, ownedCards],
   );
 
+  /**
+   * LOS HUECOS TAMBIÉN SE ABREN, y tienen su propio recorrido.
+   *
+   * Un hueco era un <div> con un número: no se podía saber qué carta era la
+   * 057, ni su rareza, ni marcarla como deseada, con el catálogo entero —nombre
+   * e ilustración— ya cargado en esta misma página. Ahora abre la ficha común
+   * en modo lectura con la carta velada (ver `Ficha`).
+   *
+   * Desde un hueco se desliza por los HUECOS y desde una carta conseguida por
+   * las CONSEGUIDAS, en vez de mezclarlas: quien abre la 057 está repasando lo
+   * que le falta, y saltar a las tres que sí tiene antes de llegar a la 061 le
+   * cortaría justo ese repaso.
+   */
+  const huecos = useMemo(
+    () => visibleCards.filter((c) => !ownedCards.has(c.id)),
+    [visibleCards, ownedCards],
+  );
+  const recorrido = detail && !ownedCards.has(detail.id) ? huecos : navCards;
+
   const detailIndex = useMemo(
-    () => (detail ? navCards.findIndex((c) => c.id === detail.id) : -1),
-    [detail, navCards],
+    () => (detail ? recorrido.findIndex((c) => c.id === detail.id) : -1),
+    [detail, recorrido],
   );
 
   const canPrev = detailIndex > 0;
-  const canNext = detailIndex >= 0 && detailIndex < navCards.length - 1;
+  const canNext = detailIndex >= 0 && detailIndex < recorrido.length - 1;
 
-  /** Avanza (+1) o retrocede (-1) por `navCards`. En los extremos no hace nada. */
+  /** Avanza (+1) o retrocede (-1) por `recorrido`. En los extremos no hace nada. */
   const step = useCallback(
     (delta: number) => {
       if (detailIndex < 0) return;
-      const nextCard = navCards[detailIndex + delta];
+      const nextCard = recorrido[detailIndex + delta];
       if (!nextCard) return;
       haptic("tap");
       setDetail(mergeDetail(nextCard, ownedCards.get(nextCard.id)));
     },
-    [detailIndex, navCards, ownedCards, haptic],
+    [detailIndex, recorrido, ownedCards, haptic],
   );
 
   // El gesto se engancha sólo a la imagen: si escuchara en toda la hoja se
@@ -288,6 +408,18 @@ export default function SetAlbumPage() {
 
   const renderedCards = useMemo(() => visibleCards.slice(0, limit), [visibleCards, limit]);
 
+  // ANTES que el esqueleto: `loading` sigue en true porque no se ha pedido
+  // nada. Quien tiene cuenta y no tiene red no ve ni un giro sin fin ni el
+  // álbum vacío de un invitado.
+  if (identidad === "cuenta-sin-conexion") {
+    return (
+      <div className="select-none w-full">
+        <PageHeader back="/collection" title="Álbum" />
+        <SinConexion detalle="No se ha podido comprobar tu sesión y tus cartas están guardadas en tu cuenta. El álbum se abrirá en cuanto vuelva la conexión." />
+      </div>
+    );
+  }
+
   if (loading) return <Loader label="Abriendo álbum" />;
 
   if (loadError) {
@@ -344,7 +476,18 @@ export default function SetAlbumPage() {
   const changeFilter = (next: Filter) => {
     if (next === filter) return;
     setFilter(next);
+    // Se recuerda aquí, en el gesto, y no en un efecto: así no hay forma de que
+    // el valor por defecto se escriba encima del guardado antes de leerlo.
+    filtroDeSesion.valor = next;
+    try {
+      window.localStorage.setItem(CLAVE_FILTRO, next);
+    } catch {
+      /* sin almacenamiento el filtro dura lo que dure la sesión */
+    }
   };
+
+  /** La tienda de ESTA expansión. La portada lee `?set=` y la abre. */
+  const urlSobres = `/?set=${encodeURIComponent(setId)}`;
 
   const openDetail = (blueprintCard: Carta, ownedCard?: CartaEnColeccion) => {
     haptic("tap");
@@ -366,8 +509,12 @@ export default function SetAlbumPage() {
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="surface rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-3 md:gap-4"
+          className="surface rounded-2xl p-4 sm:p-5 flex flex-col gap-3 md:gap-4"
         >
+          {/* La fila de siempre, ahora dentro de una columna: debajo va el
+              atajo a los sobres, y metido en la misma fila dejaba el nombre de
+              la expansión en 34 px a 768 (la barra tiene ancho fijo). */}
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 md:gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2 min-w-0">
               <h2 className="t-base sm:t-titulo font-semibold ink truncate">
@@ -411,6 +558,18 @@ export default function SetAlbumPage() {
             </div>
             <span className="t-titulo sm:t-display font-semibold ink tnum shrink-0">{percent}%</span>
           </div>
+          </div>
+          {/* DEL HUECO AL SOBRE EN UN TOQUE. Desde aquí, ir a por las que
+              faltan eran cuatro: pestaña Inicio, desplegar la serie, la tesela
+              y el precio. Con el álbum completo no se ofrece: no falta nada. */}
+          {owned < total && (
+            <Link
+              href={urlSobres}
+              className="btn-ghost press control-44 rounded-xl px-4 t-cuerpo-2 font-medium md:self-start"
+            >
+              Abrir sobres de esta expansión
+            </Link>
+          )}
         </motion.div>
 
         {/* FILTRO SEGMENTADO. `columnas` porque los tres rótulos miden distinto
@@ -448,6 +607,19 @@ export default function SetAlbumPage() {
                 : filter === "missing"
                   ? "No te falta ninguna carta aquí"
                   : "Vuelve a intentarlo más tarde"
+            }
+            /* "Abre sobres para empezar a rellenarlo" sin un botón era una
+               instrucción sin camino: había que salir a Inicio y buscar la
+               expansión a mano. */
+            accion={
+              filter === "owned" ? (
+                <Link
+                  href={urlSobres}
+                  className="btn-primary press control-44 t-cuerpo rounded-xl px-5 font-medium"
+                >
+                  Abrir sobres de esta expansión
+                </Link>
+              ) : undefined
             }
           />
         ) : (
@@ -487,16 +659,22 @@ export default function SetAlbumPage() {
               }
 
               return (
-                // No lleva aria-hidden: el número es la única pista de qué
-                // carta falta, y un lector de pantalla debe poder leerlo.
+                // EL HUECO DICE QUÉ CARTA FALTA Y SE PUEDE ABRIR. Era un <div>
+                // con el número a secas: "057" no le dice a nadie qué carta
+                // buscar. Ahora lleva el nombre debajo y es un botón que abre
+                // la ficha (velada, ver `Ficha`), donde están la ilustración,
+                // la rareza y el marcador de deseos.
                 // Misma proporción y mismo radio que PokemonCard
                 // (aspect-[2.5/3.5] + rounded-[4.5%]): el hueco ocupa
                 // exactamente lo que ocuparía la carta y la rejilla no baila al
-                // ir consiguiéndolas.
-                <div
+                // ir consiguiéndolas. `press-flat` y no `press`, como el botón
+                // de las conseguidas: en esta rejilla no se escala nada.
+                <button
                   key={blueprintCard.id}
-                  aria-label={`Carta ${padNumber(blueprintCard.number)}, no conseguida`}
-                  className="w-full aspect-[2.5/3.5] border border-dashed rounded-[4.5%] flex items-center justify-center transition"
+                  type="button"
+                  onClick={() => openDetail(blueprintCard)}
+                  aria-label={`Carta ${padNumber(blueprintCard.number)}, ${blueprintCard.name}: no conseguida. Ver la carta`}
+                  className="w-full aspect-[2.5/3.5] border border-dashed rounded-[4.5%] flex flex-col items-center justify-center gap-1 px-1.5 press-flat"
                   style={{
                     background: "color-mix(in srgb, var(--ink) 3%, transparent)",
                     borderColor: "var(--border-strong)",
@@ -505,7 +683,14 @@ export default function SetAlbumPage() {
                   <span className="ink-soft tnum t-base sm:t-titulo md:t-display">
                     {padNumber(blueprintCard.number)}
                   </span>
-                </div>
+                  {/* Dos líneas como mucho: a 320 px el hueco mide 89 px de
+                      ancho y un nombre largo en una sola línea se quedaría en
+                      cuatro letras. `ink-soft` y no `ink-faint`: a 10 px la
+                      tinta tenue no llega al contraste mínimo. */}
+                  <span className="ink-soft t-micro sm:t-meta leading-tight text-center line-clamp-2 break-words max-w-full">
+                    {blueprintCard.name}
+                  </span>
+                </button>
               );
             })}
           </div>
@@ -540,18 +725,19 @@ export default function SetAlbumPage() {
         )}
       </div>
 
-      {/* DETALLE DE CARTA POSEÍDA: la misma ficha que el resto de la app. El
-          recorrido es `navCards` (las conseguidas que el filtro deja ver) y
-          el índice cambia con el gesto o las flechas de la propia ficha. */}
+      {/* DETALLE DE CARTA: la misma ficha que el resto de la app. El recorrido
+          es `recorrido` —las conseguidas que el filtro deja ver o, si se abrió
+          un hueco, los huecos— y el índice cambia con el gesto o las flechas
+          de la propia ficha. */}
       {!USAR_HOJA_PROPIA && (
         <CardDetailModal
           card={detail}
           onClose={() => setDetail(null)}
           readOnly
-          cards={navCards}
+          cards={recorrido}
           index={detailIndex}
           onIndexChange={(i) => {
-            const siguiente = navCards[i];
+            const siguiente = recorrido[i];
             if (siguiente) setDetail(mergeDetail(siguiente, ownedCards.get(siguiente.id)));
           }}
         />

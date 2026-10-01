@@ -121,6 +121,12 @@ export interface Expansion {
    *  qué sobres vende, y eso no puede depender del idioma en que se mire. */
   nameEn?: string;
   series?: string | null;
+  /**
+   * El nombre de la serie en español, cuando la capa de idioma lo tiene. La
+   * portada agrupa por `series` (la clave inglesa, estable) y rotula con éste.
+   * Sólo llega con la app en español.
+   */
+  serieEs?: string | null;
   images?: { logo?: string; symbol?: string };
   total?: number;
   cardsCount?: number;

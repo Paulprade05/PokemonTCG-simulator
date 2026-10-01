@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useHaptics } from "../../hooks/useHaptics";
-import { esRaizDePestana } from "../nav-items";
+import { NAV_ITEMS, esRaizDePestana } from "../nav-items";
 import { IconoVolver } from "../icons";
 
 // Franja desde el borde izquierdo en la que arranca el gesto.
@@ -11,6 +11,34 @@ const EDGE_ZONE = 26;
 // Recorrido necesario para confirmar la vuelta atrás.
 const CONFIRM_DISTANCE = 84;
 const CONFIRM_VELOCITY = 480;
+// Recorrido mínimo para que la VELOCIDAD pueda confirmar. Es la misma guarda
+// que FLICK_DISTANCE en hooks/useSwipe.ts y por el mismo motivo: unos pocos
+// píxeles en unos pocos milisegundos dan una velocidad enorme (15 px en 25 ms
+// son 600 px/s) y sin distancia mínima un roce en el borde volvía atrás.
+const FLICK_DISTANCE = 30;
+
+/**
+ * ¿Hay una pantalla anterior a la que volver?
+ *
+ * `router.back()` sin historial no hace nada: salía la burbuja, vibraba y el
+ * jugador seguía donde estaba. Pasa cuando la pantalla de detalle es la primera
+ * entrada de la sesión (la app se reabre directamente en un álbum, o se recarga
+ * sola tras una actualización).
+ *
+ * La API de navegación lo dice sin rodeos (`canGoBack`); donde no existe se cae
+ * a `history.length`, que es una cota: 1 significa seguro que no hay atrás, y
+ * más de 1 significa que probablemente sí.
+ */
+function hayAtras(): boolean {
+  const nav = (window as unknown as { navigation?: { canGoBack?: boolean } }).navigation;
+  if (typeof nav?.canGoBack === "boolean") return nav.canGoBack;
+  return window.history.length > 1;
+}
+
+/** La pestaña de la que cuelga una ruta: su `match` es el mismo que enciende el
+ *  icono en la barra, así que "arriba" es siempre la pestaña que se ve activa. */
+const raizDe = (ruta: string) =>
+  NAV_ITEMS.find((it) => it.match(ruta))?.href ?? "/";
 
 /**
  * Volver atrás deslizando desde el borde izquierdo.
@@ -25,7 +53,7 @@ const CONFIRM_VELOCITY = 480;
  * `setProgress` por evento era un re-render de este componente por cada uno:
  * en iPhone se notaba como una burbuja que iba un fotograma por detrás del
  * dedo. Es el mismo criterio que usa components/ui/Sheet.tsx para aclarar el
- * fondo mientras se tira de la hoja (Sheet.tsx:105-107): lo que corre en cada
+ * fondo mientras se tira de la hoja (el `onMove` de su `useSwipe`): lo que corre en cada
  * evento de puntero escribe `style` directamente. Por eso la burbuja está
  * SIEMPRE montada (oculta con `visibility`, que no promociona ninguna capa) en
  * vez de montarse al empezar el gesto: montarla también costaría un render.
@@ -111,37 +139,63 @@ export default function EdgeBackGesture({ disabled = false }: { disabled?: boole
       pintar(Math.max(0, Math.min(1, dx / CONFIRM_DISTANCE)));
     };
 
+    const desarmar = () => {
+      armed = false;
+      trackingRef.current = false;
+      pintar(0);
+    };
+
     const onUp = (e: PointerEvent) => {
       if (!armed || e.pointerId !== pointerId) return;
       const dx = e.clientX - startX;
       const dt = Math.max(1, (e.timeStamp || performance.now()) - startT);
       const vx = (dx / dt) * 1000;
 
-      if (trackingRef.current && (dx >= CONFIRM_DISTANCE || vx >= CONFIRM_VELOCITY)) {
+      if (
+        trackingRef.current &&
+        (dx >= CONFIRM_DISTANCE || (vx >= CONFIRM_VELOCITY && dx >= FLICK_DISTANCE))
+      ) {
         haptic("select");
-        router.back();
+        // Sin historial, "atrás" es subir a la pestaña de la que cuelga esta
+        // pantalla. `replace` y no `push`: el detalle no debe quedar DETRÁS de
+        // su propia raíz en el historial.
+        if (hayAtras()) router.back();
+        else router.replace(raizDe(pathname));
       }
-      armed = false;
-      trackingRef.current = false;
-      pintar(0);
+      desarmar();
+    };
+
+    /* CANCELAR NO ES SOLTAR, Y NUNCA NAVEGA.
+     *
+     * `pointercancel` iba al mismo manejador que `pointerup`. Lo manda el
+     * NAVEGADOR cuando se queda él con el gesto: porque el dedo ha empezado un
+     * scroll vertical, porque ha salido una hoja del sistema, o porque iOS ha
+     * reconocido su propio gesto de borde. En todos esos casos el jugador no
+     * ha terminado nada, pero `onUp` medía la velocidad con lo recorrido hasta
+     * ahí y, si salía alta, llamaba a router.back(): un atrás fantasma. Y si
+     * el sistema ya estaba volviendo por su cuenta, eran DOS pantallas atrás.
+     */
+    const onCancel = (e: PointerEvent) => {
+      if (!armed || e.pointerId !== pointerId) return;
+      desarmar();
     };
 
     document.addEventListener("pointerdown", onDown, { passive: true });
     document.addEventListener("pointermove", onMove, { passive: true });
     document.addEventListener("pointerup", onUp, { passive: true });
-    document.addEventListener("pointercancel", onUp, { passive: true });
+    document.addEventListener("pointercancel", onCancel, { passive: true });
 
     return () => {
       document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerup", onUp);
-      document.removeEventListener("pointercancel", onUp);
+      document.removeEventListener("pointercancel", onCancel);
       // Si la pantalla cambia a mitad de gesto, que no se quede una burbuja
       // encendida en la siguiente.
       trackingRef.current = false;
       pintar(0);
     };
-  }, [disabled, isTabRoot, router, haptic]);
+  }, [disabled, isTabRoot, router, haptic, pathname]);
 
   return (
     <div

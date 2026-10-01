@@ -27,7 +27,7 @@ import { tintaDeNota } from "../graduacion/Comun";
  * del árbol de la funda. Así que no lleva `filter`, ni `drop-shadow`, ni
  * `backdrop-filter`, ni `mix-blend-mode`, ni `opacity` sobre el contenedor, ni
  * un solo `transform` con `scale`: WebKit promociona esa capa y la ilustración
- * de debajo sale borrosa en iPhone (documentado en PokemonCard.tsx:140-163 y en
+ * de debajo sale borrosa en iPhone (documentado en PokemonCard.tsx, en la nota de `settled` y en
  * la cabecera de components/vitrina/FundaCarta.tsx). El relieve es `box-shadow`
  * y un borde, como el resto de insignias del proyecto.
  *

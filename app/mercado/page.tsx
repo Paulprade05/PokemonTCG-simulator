@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useUser } from "@clerk/nextjs";
 import { cumplirOferta, getCartasMercado, getMercado } from "../action";
 import {
   copiasEntregables,
@@ -40,6 +39,10 @@ import CabeceraDeHoja from "../../components/ui/CabeceraDeHoja";
 import CampoBusqueda from "../../components/ui/CampoBusqueda";
 import EstadoError from "../../components/ui/EstadoError";
 import { IconoRefrescar } from "../../components/icons";
+import { useIdentidad } from "../../hooks/useIdentidad";
+import SinConexion from "../../components/ui/SinConexion";
+import FilaAccesos from "../../components/ui/FilaAccesos";
+import { esAccionCaducada } from "../../utils/versionApp";
 
 /* ------------------------------------------------------------------ *
  * RÓTULOS
@@ -59,6 +62,56 @@ const nombreDeSet = (setId: string | null, nombresEs: Record<string, string>): s
  * PANTALLA
  * ------------------------------------------------------------------ */
 
+/**
+ * EL ENCARGO QUE YA SE PUEDE COBRAR, ARRIBA.
+ *
+ * Se pintaban en el orden del servidor, y en un móvil cada tarjeta ocupa más
+ * de media pantalla: si el único cumplible era el quinto, había que bajar
+ * varias pantallas para descubrir que había algo que cobrar. Ahora van primero
+ * los completos sin cobrar, luego los incompletos de más a menos avanzados, y
+ * los ya cobrados al final. Los empates conservan el orden del servidor (el
+ * `sort` es estable).
+ *
+ * EL ORDEN SE CALCULA AL CARGAR Y LUEGO NO SE MUEVE SOLO, y esto es lo más
+ * importante de la función. Devuelve una lista de ids que la pantalla guarda,
+ * en vez de ordenar en cada render, por dos casos en los que reordenar en vivo
+ * haría daño:
+ *
+ *  · Al COBRAR. Si la tarjeta recién cobrada saltara al final, la siguiente
+ *    cobrable subiría a ocupar su sitio con el botón "Cumplir encargo" justo
+ *    debajo del dedo: un doble toque entregaría un segundo lote sin querer, y
+ *    una entrega no se deshace. La cobrada se queda donde estaba, apagada, y
+ *    baja en la próxima visita.
+ *  · Al ELEGIR CARTAS A MANO. Por eso se ordena con el reparto AUTOMÁTICO y no
+ *    con lo que el jugador ha clavado: cambiar un chip que deja el lote
+ *    incompleto mandaría la tarjeta varias pantallas más abajo a media edición.
+ */
+function ordenDeOfertas(ofertas: Oferta[], cartas: CartaMercado[], cumplidas: string[]): string[] {
+  const clave = new Map<string, { grupo: number; avance: number }>();
+  for (const o of ofertas) {
+    const r = repartir(o, cartas);
+    let pedido = 0;
+    let hecho = 0;
+    for (const p of r.partes) {
+      const cantidad = Math.max(1, p.requisito.cantidad);
+      pedido += cantidad;
+      hecho += Math.min(p.progreso, cantidad);
+    }
+    clave.set(o.id, {
+      grupo: cumplidas.includes(o.id) ? 2 : r.completa ? 0 : 1,
+      avance: pedido > 0 ? hecho / pedido : 0,
+    });
+  }
+  return [...ofertas]
+    .sort((a, b) => {
+      const ka = clave.get(a.id);
+      const kb = clave.get(b.id);
+      if (!ka || !kb) return 0;
+      return ka.grupo - kb.grupo || kb.avance - ka.avance;
+    })
+    .map((o) => o.id);
+}
+
 const ERRORES: Record<string, string> = {
   sesion: "Inicia sesión para cobrar en el mercado.",
   peticion: "Esa entrega no es válida.",
@@ -72,7 +125,13 @@ const ERRORES: Record<string, string> = {
 };
 
 export default function MercadoPage() {
-  const { isSignedIn, isLoaded } = useUser();
+  // `useIdentidad` y no `useUser().isLoaded`: sin conexión Clerk no resuelve
+  // nunca y «Abriendo el mercado» giraba para siempre, sin llegar al error con
+  // reintento. Y distingue al invitado de quien tiene cuenta pero no red, para
+  // no decirle "Inicia sesión para cobrar" a quien ya la tiene iniciada (ver
+  // utils/identidad.ts).
+  const identidad = useIdentidad();
+  const isSignedIn = identidad === "cuenta";
   const { setCoins } = useCurrency();
   const toast = useToast();
   const haptic = useHaptics();
@@ -85,6 +144,8 @@ export default function MercadoPage() {
   const [caduca, setCaduca] = useState(0);
   const [ahora, setAhora] = useState(0);
   const [enCurso, setEnCurso] = useState<string | null>(null);
+  /** Ids de las ofertas en el orden en que se pintan: ver `ordenDeOfertas`. */
+  const [orden, setOrden] = useState<string[]>([]);
 
   /**
    * LO QUE EL JUGADOR HA CLAVADO, por oferta y por requisito.
@@ -101,8 +162,13 @@ export default function MercadoPage() {
   >(null);
 
   const cargar = useCallback(
-    async (conSpinner = true) => {
-      if (!isLoaded) return;
+    // `reordenar`: al entrar, al reintentar y con el botón de actualizar. Las
+    // recargas que la pantalla hace sola tras un cobro NO reordenan (ver
+    // `ordenDeOfertas`), salvo que el tablón sea otro.
+    async (conSpinner = true, reordenar = conSpinner) => {
+      // "resolviendo" deja el esqueleto; "cuenta-sin-conexion" pinta su propia
+      // pantalla más abajo y aquí no hay nada que pedir.
+      if (identidad !== "cuenta" && identidad !== "invitado") return;
       if (conSpinner) setEstado("cargando");
       try {
         // El invitado guarda su colección en este dispositivo: se mandan los
@@ -142,6 +208,15 @@ export default function MercadoPage() {
         setDestino(null);
 
         setOfertas(tablon.ofertas);
+        setOrden((previo) => {
+          // Un ciclo nuevo trae otras ofertas: el orden viejo ya no dice nada.
+          const mismoTablon =
+            previo.length === tablon.ofertas.length &&
+            tablon.ofertas.every((o) => previo.includes(o.id));
+          return reordenar || !mismoTablon
+            ? ordenDeOfertas(tablon.ofertas, lista, tablon.cumplidas)
+            : previo;
+        });
         setNombresSet(tablon.nombresSet ?? {});
         setCumplidas(tablon.cumplidas);
         setCaduca(tablon.caduca);
@@ -153,7 +228,7 @@ export default function MercadoPage() {
         setEstado("error");
       }
     },
-    [isLoaded, isSignedIn],
+    [identidad, isSignedIn],
   );
 
   useEffect(() => {
@@ -199,6 +274,23 @@ export default function MercadoPage() {
     }
     return mapa;
   }, [ofertas, cartas, fijadas]);
+
+  /** Las ofertas en el orden en que se pintan: ver `ordenDeOfertas`. */
+  const ofertasOrdenadas = useMemo(() => {
+    const porId = new Map(ofertas.map((o) => [o.id, o]));
+    const enOrden = orden.flatMap((id) => {
+      const o = porId.get(id);
+      return o ? [o] : [];
+    });
+    // Una oferta que no esté en el orden guardado no se pierde: va al final.
+    const colocadas = new Set(orden);
+    return [...enOrden, ...ofertas.filter((o) => !colocadas.has(o.id))];
+  }, [orden, ofertas]);
+
+  /** Cuántos encargos se pueden cobrar AHORA, con lo que hay pintado. */
+  const listosParaCobrar = isSignedIn
+    ? ofertas.filter((o) => !cumplidas.includes(o.id) && repartos.get(o.id)?.completa).length
+    : 0;
 
   /* ---------------------------------------------------------------- *
    * ELEGIR A MANO
@@ -372,7 +464,7 @@ export default function MercadoPage() {
       } catch (e) {
         console.error("Error cumpliendo la oferta:", e);
         haptic("warning");
-        toast("No se pudo cobrar. Revisa tu conexión.", "error");
+        if (!esAccionCaducada(e)) toast("No se pudo cobrar. Revisa tu conexión.", "error");
       } finally {
         setEnCurso(null);
       }
@@ -380,12 +472,25 @@ export default function MercadoPage() {
     [repartos, enCurso, haptic, toast, setCoins, cargar, onSoltarTodo],
   );
 
+  // ANTES que el esqueleto: `estado` sigue en "cargando" porque no se ha
+  // pedido nada. Con cuenta y sin red no se pinta ni un giro sin fin ni el
+  // tablón de invitado con su "Inicia sesión para cobrar".
+  if (identidad === "cuenta-sin-conexion") {
+    return (
+      <>
+        <PageHeader title="Mercado" subtitle="Lotes que alguien paga por encima de su precio" />
+        <SinConexion detalle="No se ha podido comprobar tu sesión, y el tablón se cobra con las cartas de tu cuenta. Se abrirá en cuanto vuelva la conexión." />
+      </>
+    );
+  }
+
   if (estado === "cargando") return <Loader label="Abriendo el mercado" />;
 
   if (estado === "error") {
     return (
       <>
         <PageHeader title="Mercado" subtitle="Lotes que alguien paga por encima de su precio" />
+        <FilaAccesos grupo="mercado" className="-mt-2 mb-5 md:-mt-3 md:mb-6" />
         <EstadoError
           titulo="No se pudo cargar el tablón de ofertas"
           onReintentar={() => cargar()}
@@ -398,36 +503,34 @@ export default function MercadoPage() {
     <>
       <PageHeader
         title="Mercado"
-        subtitle={restante(caduca - ahora)}
+        /* Lo que se puede cobrar va DELANTE de la cuenta atrás: es lo que el
+           jugador ha venido a mirar, y si el renglón se corta en un móvil
+           estrecho, que se corte el plazo y no el aviso. */
+        subtitle={
+          listosParaCobrar > 0
+            ? `${listosParaCobrar} ${listosParaCobrar === 1 ? "encargo listo" : "encargos listos"} para cobrar · ${restante(caduca - ahora)}`
+            : restante(caduca - ahora)
+        }
         actions={
-          <>
-          {/* LA PUERTA AL BAZAR ENTRE JUGADORES.
-              Cuelga del Mercado y no de una pestaña propia porque son las dos
-              mitades de lo mismo: aquí se le vende a la máquina, allí a otras
-              personas. La pestaña de Mercado cubre ya la ruta /bazar (ver
-              components/nav-items.tsx), así que la barra inferior no se apaga
-              al entrar. */}
-          <Link
-            href="/bazar"
-            aria-label="Ir al bazar entre jugadores"
-            className="flex items-center gap-2 chip ink-soft hover:ink px-3 py-2 rounded-xl t-cuerpo-2 font-medium transition press touch-target justify-center"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4" aria-hidden="true">
-              <path d="M3 21h18M5 21V10l7-5 7 5v11" />
-              <path d="M9 21v-6h6v6" />
-            </svg>
-            <span className="hidden sm:inline">Bazar</span>
-          </Link>
+          /* AQUÍ ESTABA LA PUERTA AL BAZAR: un icono de casa sin texto,
+             idéntico al de la pestaña Inicio. Ha bajado a la fila de accesos
+             de debajo de la cabecera (components/ui/FilaAccesos.tsx), con su
+             nombre escrito. */
           <button
-            onClick={() => cargar(false)}
+            onClick={() => cargar(false, true)}
             aria-label="Actualizar el tablón"
             className="touch-target w-11 h-11 rounded-xl btn-ghost press flex items-center justify-center"
           >
             <IconoRefrescar tam={16} />
           </button>
-          </>
         }
       />
+
+      {/* LAS DOS MITADES DEL MERCADO, CON NOMBRE. Aquí se le vende a la
+          máquina y en el bazar a otras personas; la pestaña de Mercado cubre
+          las dos rutas (ver components/nav-items.tsx), así que la barra
+          inferior no se apaga al pasar de una a otra. */}
+      <FilaAccesos grupo="mercado" className="-mt-2 mb-5 md:-mt-3 md:mb-6" />
 
       {!isSignedIn && (
         // El `mb-5` que llevaba la copia se queda aquí, fuera del componente:
@@ -451,7 +554,7 @@ export default function MercadoPage() {
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {ofertas.map((oferta) => (
+          {ofertasOrdenadas.map((oferta) => (
             <TarjetaOferta
               key={oferta.id}
               oferta={oferta}
@@ -601,7 +704,13 @@ function TarjetaOferta({
             >
               {ETIQUETA_DIFICULTAD[oferta.dificultad]}
             </span>
-            <span className="chip t-micro px-2 py-0.5 ink-soft truncate max-w-[60%]">
+            {/* `max-w-full` y no `max-w-[60%]`: con el 60 %, "Cualquier
+                expansión" (113 px) salía "Cualquier …" a 320 y cortada por 2 px
+                a 375, en las siete tarjetas. La fila ya es `flex-wrap`, así que
+                si el chip no cabe al lado de la dificultad baja de renglón
+                entero; el `truncate` queda sólo para un nombre más ancho que
+                la tarjeta. */}
+            <span className="chip t-micro px-2 py-0.5 ink-soft truncate max-w-full">
               {nombreDeSet(oferta.setId, nombresSet)}
             </span>
             {cumplida && (
@@ -750,6 +859,22 @@ function TarjetaOferta({
                       // progreso dice 3/5 con cinco cartas que encajan en el álbum.
                       "Te faltan duplicados"}
         </button>
+
+        {/* A POR LOS QUE FALTAN. "Te faltan duplicados" dejaba al jugador
+            delante de un botón apagado y sin camino: cuando el encargo pide
+            cartas de UNA expansión, se le ofrece ir a abrir sobres de ésa (la
+            portada lee `?set=`). No sale si lo que falla son sus propios
+            cambios —eso se arregla con el botón de arriba, no con sobres— ni
+            cuando el encargo vale para cualquier expansión, que no hay tienda
+            concreta a la que mandarle. */}
+        {!completa && !cumplida && oferta.setId && !(hayFijadas && autoCompleta) && (
+          <Link
+            href={`/?set=${encodeURIComponent(oferta.setId)}`}
+            className="w-full touch-target py-2.5 rounded-xl t-cuerpo-2 font-medium btn-ghost ink-soft press flex items-center justify-center min-w-0"
+          >
+            <span className="truncate">Abrir sobres de {nombreDeSet(oferta.setId, nombresSet)}</span>
+          </Link>
+        )}
       </div>
     </article>
   );

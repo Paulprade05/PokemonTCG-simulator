@@ -76,6 +76,27 @@ export function guardarArchivadorLocal(fundas: FundaLocal[]): boolean {
 }
 
 /**
+ * Vacía el archivador del invitado.
+ *
+ * Existe para "Borrar datos de este dispositivo" (Ajustes): esa opción vaciaba
+ * la colección y el saldo pero dejaba esto, y como las fundas de cartas que ya
+ * no están se conservan a propósito (components/vitrina/modelo.ts), quien tenía
+ * 20 fundas montadas veía después "20 fundas ocupadas" con 20 huecos en blanco
+ * y ni una carta. Empezar de cero es empezar también con la vitrina vacía.
+ *
+ * No lanza: sin almacenamiento no hay archivador que vaciar.
+ */
+export function limpiarArchivadorLocal(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    localStorage.removeItem(CLAVE);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Pone una carta en una funda, sustituyendo lo que hubiera.
  *
  * `copiasDisponibles` es cuántas tiene el jugador de esa carta: la misma puede

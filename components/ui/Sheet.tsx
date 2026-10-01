@@ -2,9 +2,12 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useRef, type ReactNode } from "react";
+import { useFondoQuieto } from "../../hooks/useBloqueoScroll";
 import { useHaptics } from "../../hooks/useHaptics";
 import { useSwipe, touchActionFor } from "../../hooks/useSwipe";
+import { useTrampaDeFoco } from "../../hooks/useTrampaDeFoco";
 import { D, EASE_IOS, MUELLE_PANEL } from "../../utils/motion";
+import { IconoCerrar } from "../icons";
 import Portal from "./Portal";
 
 interface SheetProps {
@@ -31,6 +34,11 @@ const RECORRIDO_FONDO = 260;
    también es lo que impide leer el contenido de detrás, y una hoja que se
    arrastra sobre una pantalla plenamente legible pierde el sentido de capa. */
 const FONDO_MINIMO = 0.42;
+/* Lo que se espera a que la hoja se vaya después de un gesto de cierre antes
+   de devolverle al fondo su opacidad. Es el mismo margen que useSwipe le da al
+   panel (RETENCION_MAX): si el dueño de la hoja ignora el `onClose` —una
+   escritura en vuelo que no deja cerrar—, panel y fondo vuelven a la vez. */
+const ESPERA_CIERRE = 450;
 
 /* La escala de movimiento (--d-base, --ease-ios y el muelle del panel) llega
    importada de utils/motion.ts: framer-motion no lee variables CSS, pero eso no
@@ -53,14 +61,9 @@ export default function Sheet({
 }: SheetProps) {
   const haptic = useHaptics();
 
-  useEffect(() => {
-    if (!open) return;
-    const { overflow } = document.body.style;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = overflow;
-    };
-  }, [open]);
+  // El porqué de no escribir `body.style.overflow` a mano, y de que esto no
+  // sea todavía el bloqueo del body fijo, está en hooks/useBloqueoScroll.ts.
+  useFondoQuieto(open);
 
   useEffect(() => {
     if (!open) return;
@@ -79,6 +82,17 @@ export default function Sheet({
   // Distingue "he soltado a medias" de "el gesto ha cerrado la hoja": en el
   // segundo caso el fondo NO debe volver a su opacidad, porque ya se está yendo.
   const cerrandoRef = useRef(false);
+  const esperaCierreRef = useRef(0);
+  useEffect(() => () => window.clearTimeout(esperaCierreRef.current), []);
+  /** `open` al día para el temporizador de abajo, que corre fuera del render. */
+  const abiertaRef = useRef(open);
+  useEffect(() => {
+    abiertaRef.current = open;
+  }, [open]);
+
+  // El foco entra en la hoja al abrirse, no sale con Tab y vuelve a lo que la
+  // abrió al cerrarse. Sin esto VoiceOver se quedaba en el botón de detrás.
+  const trampaDeFoco = useTrampaDeFoco(panelRef, open);
 
   useSwipe(handleRef, {
     axis: "y",
@@ -88,8 +102,13 @@ export default function Sheet({
     follow: true,
     followTarget: panelRef,
     enabled: open,
+    // Al confirmarse el cierre el panel se queda donde lo deja el dedo y la
+    // salida continúa desde ahí. Antes volvía en seco a su sitio y la
+    // animación de salida arrancaba desde arriba: un salto justo al soltar.
+    mantenerAlDisparar: true,
     onStart: () => {
       cerrandoRef.current = false;
+      window.clearTimeout(esperaCierreRef.current);
       // Si venía de un retorno a medio animar, se corta: durante el arrastre el
       // fondo tiene que ir pegado al dedo, no con 0,22 s de retraso.
       if (fondoRef.current) fondoRef.current.style.transition = "";
@@ -119,6 +138,18 @@ export default function Sheet({
       cerrandoRef.current = true;
       haptic("tap");
       onClose();
+      // Si la hoja se ha cerrado, no hay nada que devolver (y con el navegador
+      // frenado puede que el fondo siga montado a media salida: no se toca).
+      // Si quien la abrió ha decidido no cerrarla, el panel vuelve solo
+      // (useSwipe) y el fondo no puede quedarse aclarado para siempre.
+      window.clearTimeout(esperaCierreRef.current);
+      esperaCierreRef.current = window.setTimeout(() => {
+        cerrandoRef.current = false;
+        const fondo = fondoRef.current;
+        if (!fondo || !abiertaRef.current) return;
+        fondo.style.transition = "opacity var(--d-base) var(--ease-out)";
+        fondo.style.opacity = "1";
+      }, ESPERA_CIERRE);
     },
     onEnd: () => {
       const fondo = fondoRef.current;
@@ -145,11 +176,17 @@ export default function Sheet({
           {/* El desenfoque vive AQUÍ, en el telón, y sólo aquí. El telón es
               HERMANO del panel, nunca su ancestro, así que las cartas que se
               pintan dentro de la hoja no lo heredan. --scrim es el mismo telón
-              que usan el detalle de carta, el buscador y el intercambio. */}
+              que usan el detalle de carta, el buscador y el intercambio.
+              `touch-action: none`: un arrastre que empieza en el telón no
+              tiene nada que desplazar aquí, y sin esto iOS se lo daba a la
+              página de detrás. `aria-hidden`: cierra al tocarlo, pero no es un
+              control que un lector de pantalla deba anunciar; para eso está el
+              botón "Cerrar" de dentro del diálogo. */}
           <div
             ref={fondoRef}
+            aria-hidden="true"
             className="absolute inset-0 backdrop-blur-md"
-            style={{ background: "var(--scrim)" }}
+            style={{ background: "var(--scrim)", touchAction: "none" }}
             onClick={onClose}
           />
 
@@ -159,33 +196,20 @@ export default function Sheet({
               las acciones de una funda, el paso 1 y 2 de publicar en el bazar
               y la ficha del álbum. Un backdrop-filter en un ANCESTRO de la
               carta la manda a una capa rasterizada a escala fija y en iPhone
-              sale borrosa (la trampa documentada en PokemonCard.tsx:140-163).
+              sale borrosa (la trampa documentada en PokemonCard.tsx, en la nota de `settled`).
               El esmerilado se queda en el telón de arriba, que es hermano. */}
+          {/* DOS CAJAS, UNA PARA CADA MOVIMIENTO. La de fuera la mueve
+              framer-motion (entrar y salir); la de dentro, que es el panel de
+              verdad, la mueve el dedo (useSwipe escribe ahí su translate). Eran
+              la misma, y las dos escrituras se pisaban: al soltar para cerrar,
+              el hook tenía que borrar su transform para que la salida de
+              framer no arrancara encima, y ese borrado era el salto hacia
+              arriba. Separadas se SUMAN: el panel se queda donde lo dejó el
+              dedo y la caja de fuera se lo lleva desde ahí. La de fuera no
+              pinta nada (ni fondo, ni borde, ni recorte), así que el panel
+              puede bajar dentro de ella sin que nada lo corte. */}
           <motion.div
-            ref={panelRef}
-            role="dialog"
-            aria-modal="true"
-            aria-label={label}
-            /* `flex flex-col` + `min-h-0` en el área de scroll, y no
-               `max-h-[inherit]`: POR ESTO NO SE LLEGABA AL FINAL DE LAS HOJAS.
-               El panel lleva `max-height` con box-sizing border-box, así que
-               ese tope INCLUYE el borde y el relleno inferior de la barra de
-               gestos (--sab, 34 px en iPhone). El área de scroll heredaba el
-               mismo tope entero, sin descontar ni eso ni el asa (26 px), y el
-               overflow-hidden del panel se comía sus últimos ~62 px (~28 en
-               escritorio): el botón "Cerrar" de la ficha del álbum y el pie de
-               cualquier hoja larga quedaban fuera aunque se hiciera scroll
-               hasta el final. Medido en 375×812 con insets 47/34. Como columna
-               flex, el área recibe lo que sobra tras el asa y el relleno, y
-               el `min-h-0` le permite encoger y desplazar su contenido. */
-            className="ink relative flex w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl border border-[var(--border)] sm:mb-4 sm:rounded-3xl"
-            style={{
-              maxHeight,
-              background: "var(--grain), var(--surface)",
-              boxShadow: "var(--shadow-lg)",
-              // Con el teclado desplegado ya no hay barra de gestos que esquivar.
-              paddingBottom: "max(0px, calc(var(--sab) - var(--keyboard)))",
-            }}
+            className="relative w-full max-w-2xl sm:mb-4"
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             /* LA SALIDA NO ES UN MUELLE, ES UNA CURVA.
@@ -204,16 +228,79 @@ export default function Sheet({
             exit={{ y: "100%", transition: { duration: D.base, ease: EASE_IOS } }}
             transition={MUELLE_PANEL}
           >
+          <div
+            ref={panelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={label}
+            // Enfocable por programa (useTrampaDeFoco), fuera del orden de Tab.
+            tabIndex={-1}
+            onKeyDown={trampaDeFoco}
+            /* `flex flex-col` + `min-h-0` en el área de scroll, y no
+               `max-h-[inherit]`: POR ESTO NO SE LLEGABA AL FINAL DE LAS HOJAS.
+               El panel lleva `max-height` con box-sizing border-box, así que
+               ese tope INCLUYE el borde y el relleno inferior de la barra de
+               gestos (--sab, 34 px en iPhone). El área de scroll heredaba el
+               mismo tope entero, sin descontar ni eso ni el asa (26 px), y el
+               overflow-hidden del panel se comía sus últimos ~62 px (~28 en
+               escritorio): el botón "Cerrar" de la ficha del álbum y el pie de
+               cualquier hoja larga quedaban fuera aunque se hiciera scroll
+               hasta el final. Medido en 375×812 con insets 47/34. Como columna
+               flex, el área recibe lo que sobra tras el asa y el relleno, y
+               el `min-h-0` le permite encoger y desplazar su contenido. */
+            className="ink relative flex w-full flex-col overflow-hidden rounded-t-3xl border border-[var(--border)] sm:rounded-3xl"
+            style={{
+              maxHeight,
+              background: "var(--grain), var(--surface)",
+              boxShadow: "var(--shadow-lg)",
+              // Con el teclado desplegado ya no hay barra de gestos que esquivar.
+              paddingBottom: "max(0px, calc(var(--sab) - var(--keyboard)))",
+              // El foco que recibe el panel al abrirse no se dibuja: un anillo
+              // alrededor de la hoja entera no señala nada. En línea porque la
+              // regla global de :focus-visible va sin capa y gana a cualquier
+              // utilidad de Tailwind.
+              outline: "none",
+            }}
+          >
+            {/* EL CIERRE PARA QUIEN NO PUEDE ARRASTRAR NI VER EL TELÓN.
+                El asa decía ser un botón ("Arrastra hacia abajo para cerrar,
+                botón") y al activarla con VoiceOver no pasaba nada: no tenía
+                `onClick`. En Ajustes era además el ÚNICO control de cierre que
+                el lector encontraba, y sin teclado no hay Escape: no se podía
+                salir. Ahora el asa es lo que es —un tirador, invisible para el
+                lector— y el cierre es un botón de verdad, el primero del
+                diálogo.
+
+                No se ve porque para quien ve ya hay tres formas de cerrar (el
+                asa, el telón, Escape) y una cuarta a un toque del borde se
+                pulsaría sin querer. Se recorta con la receta de siempre (1 px
+                y clip-path) en vez de con `sr-only`, para poder DESHACER el
+                recorte al recibir el foco por teclado sin depender del orden
+                en que Tailwind emite `not-sr-only` y `absolute`: un control
+                enfocado que no se ve es peor que uno que sobra. */}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Cerrar"
+              className="btn-ghost absolute right-2 top-2 z-10 flex h-px w-px items-center justify-center overflow-hidden rounded-full [clip-path:inset(50%)] focus-visible:h-11 focus-visible:w-11 focus-visible:overflow-visible focus-visible:[clip-path:none]"
+            >
+              <IconoCerrar tam={16} />
+            </button>
             {!hideHandle && (
               <div
                 ref={handleRef}
-                role="button"
-                aria-label="Arrastra hacia abajo para cerrar"
+                aria-hidden="true"
                 // `group` para que la barrita reaccione al tocar CUALQUIER punto
-                // de la franja, que es ancha (todo el panel) pero de sólo 26px
-                // de alto: la barrita visible mide 44×6 y sin acuse de recibo no
-                // hay forma de saber si se ha agarrado el asa o se ha fallado.
-                className="group flex shrink-0 cursor-grab justify-center pt-3 pb-2 active:cursor-grabbing"
+                // de la franja, que es ancha (todo el panel) pero baja: la
+                // barrita visible mide 44×6 y sin acuse de recibo no hay forma
+                // de saber si se ha agarrado el asa o se ha fallado.
+                // `pt-4 pb-3`: la franja medía 26 px de alto (`pt-3 pb-2`) y
+                // es lo único que cierra la hoja arrastrando; ahora son 34. No
+                // se llega a los 44 a propósito: cada píxel de aquí baja el
+                // contenido de TODAS las hojas, y la franja ocupa el ancho
+                // entero del panel, así que el dedo sólo tiene que acertar en
+                // vertical.
+                className="group flex shrink-0 cursor-grab justify-center pt-4 pb-3 active:cursor-grabbing"
                 style={{ touchAction: touchActionFor("y") }}
               >
                 <div className="h-1.5 w-11 rounded-full bg-[var(--border-strong)] transition-[width,background-color] duration-[var(--d-fast)] group-active:w-14 group-active:bg-[var(--ink-faint)]" />
@@ -227,6 +314,7 @@ export default function Sheet({
             >
               {children}
             </div>
+          </div>
           </motion.div>
         </motion.div>
       )}

@@ -2,6 +2,26 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
+import { recargarApp } from "../utils/versionApp";
+
+/**
+ * ¿El fallo es "no se ha podido cargar un trozo de la app"?
+ *
+ * Es lo que pasa tras un despliegue con la app abierta desde antes: al entrar
+ * en una pantalla que aún no se había visitado, el navegador pide un fichero de
+ * /_next/static/ con el nombre del build VIEJO, que el servidor ya no tiene.
+ * No es un error de la pantalla y "Reintentar" no lo arregla —vuelve a pedir el
+ * mismo fichero—: lo que hace falta es la versión nueva. Cada motor lo dice a
+ * su manera, y por eso se mira el nombre y el texto.
+ */
+function esFalloDeCarga(error: Error): boolean {
+  return (
+    error.name === "ChunkLoadError" ||
+    /Loading chunk|Loading CSS chunk|dynamically imported module|Importing a module script failed/i.test(
+      String(error.message),
+    )
+  );
+}
 
 /**
  * Frontera de error de la app. Vive dentro de RootLayout, así que se pinta
@@ -20,6 +40,8 @@ export default function GlobalErrorBoundary({
     // Sin esto el fallo se pierde: en producción React no lo imprime.
     console.error(error);
   }, [error]);
+
+  const versionNueva = esFalloDeCarga(error);
 
   return (
     <div
@@ -59,21 +81,22 @@ export default function GlobalErrorBoundary({
 
         <div className="flex flex-col gap-1.5">
           <h1 className="ink t-titulo font-bold tracking-tight">
-            Algo ha salido mal
+            {versionNueva ? "Hay una versión nueva" : "Algo ha salido mal"}
           </h1>
           <p className="ink-soft t-cuerpo leading-relaxed">
-            No hemos podido cargar esta pantalla. Puedes reintentarlo o volver a
-            los sobres.
+            {versionNueva
+              ? "La app se ha actualizado mientras la tenías abierta y esta pantalla ya no se puede cargar con la versión anterior. Actualízala para seguir."
+              : "No hemos podido cargar esta pantalla. Puedes reintentarlo o volver a los sobres."}
           </p>
         </div>
 
         <div className="flex flex-col sm:flex-row gap-2.5 w-full pt-1">
           <button
             type="button"
-            onClick={reset}
+            onClick={versionNueva ? recargarApp : reset}
             className="btn-accent touch-target flex-1 rounded-xl px-4 t-cuerpo font-semibold flex items-center justify-center"
           >
-            Reintentar
+            {versionNueva ? "Actualizar" : "Reintentar"}
           </button>
           <Link
             href="/"
@@ -82,6 +105,22 @@ export default function GlobalErrorBoundary({
             Ir a los sobres
           </Link>
         </div>
+
+        {/* RECARGAR, SIEMPRE A MANO. En la app instalada no hay barra de
+            direcciones ni gesto de recargar: si "Reintentar" no bastaba, la
+            única salida era matar la app desde el selector. `recargarApp` pide
+            además la versión nueva al service worker, sin el plazo que le
+            haría servir la copia guardada (utils/versionApp.ts). Cuando el
+            botón principal ya es ése, no se repite. */}
+        {!versionNueva && (
+          <button
+            type="button"
+            onClick={recargarApp}
+            className="touch-target ink-soft t-cuerpo-2 font-medium underline underline-offset-2"
+          >
+            Recargar la app
+          </button>
+        )}
 
         {/* ink-faint (3,66:1) sólo se permite de 12px en adelante; a los 11
             de este pie de referencia baja a ink-soft. */}

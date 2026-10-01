@@ -4,6 +4,7 @@ import NotaGraduada from "./NotaGraduada";
 import { formatNumber } from "../../utils/format";
 import { MAX_ANUNCIOS_ABIERTOS } from "../../utils/bazar";
 import EstadoVacio from "../ui/EstadoVacio";
+import { IconoBazar } from "../icons";
 import type { MiAnuncio } from "./tipos";
 
 /**
@@ -72,16 +73,11 @@ export default function MisAnuncios({
       <EstadoVacio
         titulo="No has puesto nada a la venta"
         detalle="Publica una carta que te sobre y espera a que alguien la compre."
-        /* La bolsa de la compra es el icono de la pestaña del bazar en la barra
-           de navegación: el vacío enseña el mismo dibujo que el sitio donde se
-           está, que es lo que lo ata a esta pantalla y no a otra. Se queda
-           escrito aquí porque sólo aparece en este vacío. */
-        icono={
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={24} height={24} aria-hidden="true">
-            <path d="M3 9h18l-1.5 10.5a2 2 0 0 1-2 1.5H6.5a2 2 0 0 1-2-1.5z" />
-            <path d="M8 9V6a4 4 0 0 1 8 0v3" />
-          </svg>
-        }
+        /* El puesto con toldo es EL icono del bazar (components/icons.tsx): el
+           mismo del atajo del menú lateral. Aquí había una bolsa de la compra
+           dibujada a mano, que ya no era el icono de nada: el vacío tiene que
+           enseñar el dibujo del sitio donde se está. */
+        icono={<IconoBazar tam={24} />}
         accion={
           <button
             type="button"
@@ -184,7 +180,7 @@ export default function MisAnuncios({
 
       {/* Publicar NO toca `user_collection`: la carta no se mueve hasta que
           alguien compra. Lo único que hace el anuncio es contar como copia
-          comprometida en el guard del INSERT (app/action.ts:3630-3643), o sea
+          comprometida en el guard del INSERT de `publicarEnBazarAction`, o sea
           que gasta una de las copias que te sobran para futuras publicaciones.
           Se dice tal cual para que nadie abra el álbum a comprobar si su carta
           ha desaparecido. */}

@@ -52,7 +52,16 @@ export interface CollectionCard {
  */
 const leerColeccion = (): CollectionCard[] => {
   if (typeof window === 'undefined') return [];
-  const data = localStorage.getItem(STORAGE_KEY);
+  // El getItem también va protegido: con el almacenamiento bloqueado (Safari
+  // con "Bloquear todas las cookies") el propio acceso lanza SecurityError, y
+  // esta función se llama desde efectos de pantallas enteras. Sin
+  // almacenamiento no hay colección local que leer: lista vacía.
+  let data: string | null = null;
+  try {
+    data = localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return [];
+  }
   if (!data) return [];
   try {
     const parsed = JSON.parse(data);
@@ -116,6 +125,17 @@ export const saveToCollection = (newPack: any[]): boolean => {
   }
 };
 
+/**
+ * Escribe la colección entera tal cual se le da.
+ *
+ * ÉSTA SÍ LANZA SI NO PUEDE ESCRIBIR, Y TIENE QUE SEGUIR LANZANDO. Sus
+ * llamadores (las ventas del invitado en app/collection/page.tsx y en
+ * app/page.tsx) la llaman dentro de un try y deshacen la venta en el catch, o
+ * la llaman ANTES de abonar las monedas contando con que una excepción corta
+ * el abono. Convertirla en "devuelve false" sin tocar esos sitios regalaría
+ * monedas por cartas que no han salido de la colección. Quien quiera un
+ * booleano tiene `ajustarCopiasEnLocal`, más abajo.
+ */
 export const saveCollectionRaw = (collection: any[]) => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(collection));
     // Después del setItem a propósito: si lanza por cuota no ha cambiado nada
@@ -125,7 +145,80 @@ export const saveCollectionRaw = (collection: any[]) => {
 
 export const getCollection = (): CollectionCard[] => leerColeccion();
 
-export const clearCollection = () => {
-    localStorage.removeItem(STORAGE_KEY);
+/**
+ * CAMBIA CUÁNTAS COPIAS HAY DE UNAS CARTAS, LEYENDO LA COLECCIÓN EN EL MOMENTO.
+ *
+ * EL FALLO QUE CIERRA. La pantalla de colección carga la lista del invitado una
+ * vez y, al vender, escribía con `saveCollectionRaw` SU copia en memoria. Con
+ * /collection abierta en una pestaña y cinco sobres abiertos en otra, vender
+ * una copia en la primera grababa la lista vieja menos una: las cartas de los
+ * cinco sobres desaparecían. De paso grababa los nombres ya traducidos que
+ * tenía en pantalla, cuando la colección guardada es la del idioma original.
+ *
+ * Aquí la lectura y la escritura son la misma operación, sobre lo que hay
+ * guardado AHORA, y sólo se toca `quantity`: lo que otra pestaña haya añadido
+ * se conserva, y de la carta no se reescribe ni el nombre ni la imagen.
+ *
+ * `cambios` va de id de carta a copias que se suman (positivo) o se quitan
+ * (negativo). `minimo` es lo mínimo que puede quedar de una carta de la que se
+ * QUITAN copias: 1 por defecto, la copia protegida que no se vende.
+ *
+ * ES TODO O NADA y no lanza: devuelve `false`, sin haber escrito, si alguna
+ * carta no está, si de alguna quedarían menos de `minimo` (otra pestaña ya la
+ * vendió) o si el almacenamiento no deja. Con `false` no ha cambiado nada, así
+ * que quien llama no abona monedas. Deshacer una venta es la misma llamada con
+ * el signo contrario.
+ */
+export const ajustarCopiasEnLocal = (
+  cambios: Record<string, number>,
+  minimo = 1,
+): boolean => {
+  if (typeof window === 'undefined') return false;
+  const ids = Object.keys(cambios).filter((id) => cambios[id] !== 0);
+  if (ids.length === 0) return true;
+
+  const coleccion = leerColeccion();
+  const porId = new Map(coleccion.map((c) => [c.id, c]));
+  for (const id of ids) {
+    const delta = cambios[id];
+    const carta = porId.get(id);
+    if (!carta || !Number.isInteger(delta)) return false;
+    const quedan = (Number(carta.quantity) || 0) + delta;
+    if (delta < 0 && quedan < minimo) return false;
+  }
+  // Validado todo, se aplica. Hasta aquí no se ha tocado ningún objeto.
+  for (const id of ids) {
+    const carta = porId.get(id)!;
+    carta.quantity = (Number(carta.quantity) || 0) + cambios[id];
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(coleccion));
+  } catch {
+    return false;
+  }
+  avisarDeCambio();
+  return true;
+};
+
+/** Quita `n` copias de una carta del invitado. Ver `ajustarCopiasEnLocal`. */
+export const venderCopiasEnLocal = (cardId: string, n = 1): boolean =>
+  Number.isInteger(n) && n > 0 ? ajustarCopiasEnLocal({ [cardId]: -n }) : false;
+
+/** Devuelve `n` copias: lo contrario de `venderCopiasEnLocal`, para deshacer. */
+export const devolverCopiasEnLocal = (cardId: string, n = 1): boolean =>
+  Number.isInteger(n) && n > 0 ? ajustarCopiasEnLocal({ [cardId]: n }) : false;
+
+/**
+ * Vacía la colección local. No lanza: sin almacenamiento no hay nada que
+ * vaciar. Devuelve si se pudo retirar la clave.
+ */
+export const clearCollection = (): boolean => {
+    let hecho = true;
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      hecho = false;
+    }
     avisarDeCambio();
+    return hecho;
 }

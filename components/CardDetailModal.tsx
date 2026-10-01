@@ -11,18 +11,20 @@ import DesperfectosCarta, {
   estadoDeCopia,
   estiloDescentrado,
 } from "./DesperfectosCarta";
-import type { Desperfectos, MarcasDeCarta } from "../utils/graduacion";
 import { precioDeCartaSuelta, valorDeVenta } from "../utils/constanst";
 import { etiquetaNota, valorGraduado } from "../utils/graduacion";
 import { getCardFromDB, toggleWishlist, getWishlistIds } from "../app/action";
+import { useFondoQuieto } from "../hooks/useBloqueoScroll";
 import { useHaptics } from "../hooks/useHaptics";
 import { D, EASE_OUT, MUELLE_PANEL } from "../utils/motion";
 import { useSwipe, touchActionFor } from "../hooks/useSwipe";
+import { useTrampaDeFoco } from "../hooks/useTrampaDeFoco";
 import { RARITY_GLOW } from "../utils/rarityGlow";
 import CardZoom from "./ui/CardZoom";
 import { IconoAvanzar, IconoCerrar, IconoMoneda, IconoVolver } from "./icons";
 import Portal from "./ui/Portal";
 import { useToast } from "./ui/Toast";
+import { esAccionCaducada } from "../utils/versionApp";
 
 // Umbrales del gesto de cierre (los mismos que usa components/ui/Sheet).
 const CLOSE_OFFSET = 110;
@@ -30,6 +32,49 @@ const CLOSE_VELOCITY = 520;
 // Umbrales del gesto de navegación entre cartas.
 const NAV_OFFSET = 70;
 const NAV_VELOCITY = 420;
+
+/* ==================================================================== *
+ * LA FICHA DE CADA CARTA SE PIDE UNA VEZ, Y NO MIENTRAS SE PASA DE LARGO
+ * ====================================================================
+ *
+ * Cada cambio de carta lanzaba `getCardFromDB`, y las server actions de un
+ * cliente van EN FILA: deslizar ocho cartas en dos segundos encolaba ocho
+ * peticiones (más las ocho de la lista de deseos, ver más abajo) y la carta en
+ * la que el jugador se paraba enseñaba «Cargando detalles…» hasta que acababan
+ * las de todas las que había saltado. La guarda `cancelled` descartaba las
+ * respuestas viejas, pero no las quitaba de la fila.
+ *
+ * Dos cosas lo arreglan:
+ *  · ESPERA_FICHA: al PASAR de carta se espera a que el dedo pare antes de
+ *    pedir nada. La primera carta de cada apertura no espera: ahí no hay nada
+ *    que saltarse y cada milisegundo se nota.
+ *  · FICHAS: lo que ya se trajo no se vuelve a pedir. Es el catálogo (ataques,
+ *    debilidades, expansión), que no cambia en una sesión; volver a la carta
+ *    anterior es instantáneo. La clave lleva el idioma porque la ficha llega
+ *    traducida. Se acota a MAX_FICHAS para que una sesión larga recorriendo
+ *    álbumes no acumule sin fin; al llenarse sale la más antigua.
+ */
+const ESPERA_FICHA = 250;
+const MAX_FICHAS = 80;
+/** Lo que devuelve `getCardFromDB` cuando encuentra la carta. */
+type Ficha = NonNullable<Awaited<ReturnType<typeof getCardFromDB>>>;
+const FICHAS = new Map<string, Ficha>();
+const claveDeFicha = (id: string) =>
+  `${document.documentElement.getAttribute("data-idioma") ?? ""}:${id}`;
+const guardarFicha = (clave: string, ficha: Ficha) => {
+  if (FICHAS.size >= MAX_FICHAS && !FICHAS.has(clave)) {
+    const masAntigua = FICHAS.keys().next().value;
+    if (masAntigua !== undefined) FICHAS.delete(masAntigua);
+  }
+  FICHAS.set(clave, ficha);
+};
+
+/** Las flechas de navegación cuando la carta ya ha salido por arriba (ver
+ *  `fichaDesplazada`). En línea, para que gane a `disabled:opacity-25`. */
+const FLECHA_RETIRADA = { opacity: 0, pointerEvents: "none" } as const;
+
+/** La lista de deseos antes de que llegue: vacía, y siempre el mismo objeto. */
+const SIN_DESEOS: ReadonlySet<string> = new Set();
 
 interface CardDetailModalProps {
   card: any | null;
@@ -104,8 +149,41 @@ export default function CardDetailModal({
   const { isSignedIn } = useUser();
   const [enriched, setEnriched] = useState<any | null>(null);
   const [loadingEnrich, setLoadingEnrich] = useState(false);
-  const [wishlisted, setWishlisted] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
+  /* LA LISTA DE DESEOS ENTERA, UNA VEZ POR APERTURA. Antes se pedía
+     `getWishlistIds()` en cada cambio de carta para mirar UN id: veinte cartas
+     deslizadas eran veinte veces la misma lista, cada una en la fila delante de
+     la ficha de su propia carta. Ahora se guarda como conjunto y el marcador de
+     cada carta se consulta en local. */
+  const [deseos, setDeseos] = useState<ReadonlySet<string>>(SIN_DESEOS);
+  const wishlisted = !!card?.id && deseos.has(card.id);
+  /** Lo que el jugador ha marcado o quitado desde que se abrió la ficha. Si la
+   *  lista llega del servidor DESPUÉS de un toque, no puede deshacerlo. */
+  const cambiosDeDeseoRef = useRef(new Map<string, boolean>());
+  const fijarDeseo = useCallback((id: string, esta: boolean) => {
+    cambiosDeDeseoRef.current.set(id, esta);
+    setDeseos((prev) => {
+      if (prev.has(id) === esta) return prev;
+      const sig = new Set(prev);
+      if (esta) sig.add(id);
+      else sig.delete(id);
+      return sig;
+    });
+  }, []);
+  /** El diálogo está en pantalla, sea cual sea la carta que enseña. */
+  const modalOpen = !!card;
+  /* El valor inicial se LEE, no se supone. Con `useState(false)` a secas, un
+     modal que se montara ya con carta en un móvil pintaba su primer fotograma
+     como diálogo de escritorio: el panel nacía con el `initial` de md+
+     (`opacity: 0`), el efecto de abajo lo pasaba a móvil un instante después,
+     y como el `animate` de móvil no hablaba de opacidad, nadie la subía: la
+     ficha se quedaba invisible sobre el telón. No rompe la hidratación porque
+     nada de lo que depende de `isMobile` se pinta en el servidor (todo cuelga
+     del Portal, que allí devuelve null). */
+  const [isMobile, setIsMobile] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 767px)").matches,
+  );
   const haptic = useHaptics();
   const toast = useToast();
   const detailsRef = useRef<HTMLDivElement>(null);
@@ -120,6 +198,33 @@ export default function CardDetailModal({
   const tiltRef = useRef<HTMLDivElement>(null);
   /** Vista de sólo la carta, a pantalla completa. */
   const [zoomed, setZoomed] = useState(false);
+  /**
+   * En móvil la ficha se ha desplazado: la carta ya sale por arriba.
+   *
+   * Desde que carta y ficha se desplazan juntas, las flechas de "anterior" y
+   * "siguiente" —que cuelgan de la columna de la carta— suben con ella, y la de
+   * la derecha pasaba por la misma columna en la que está clavado "Cerrar":
+   * medido a 320 px, hasta 40×36 px de un botón montado sobre el otro. Con la
+   * carta medio fuera de la pantalla esas flechas ya no señalan a nada, así que
+   * se retiran en cuanto empieza el desplazamiento (el gesto de deslizar y las
+   * teclas siguen funcionando). En md+ este envoltorio no se desplaza y el
+   * valor no cambia nunca.
+   */
+  const [fichaDesplazada, setFichaDesplazada] = useState(false);
+  const flechasFuera = isMobile && fichaDesplazada;
+  // Al cerrarse la ficha este componente sigue montado, con su estado: sin
+  // reponer el valor, la siguiente apertura nacería arriba del todo con las
+  // flechas escondidas. Se repone AL CAMBIAR de abierta a cerrada (o al revés),
+  // ajustando el estado durante el render, que es la forma que React da para
+  // "este estado depende de una prop que ha cambiado". No se espera a que el
+  // envoltorio se desmonte: la salida va animada, y quien cierra y vuelve a
+  // abrir antes de que termine se encuentra el mismo envoltorio.
+  const abierta = card != null;
+  const [abiertaAntes, setAbiertaAntes] = useState(abierta);
+  if (abierta !== abiertaAntes) {
+    setAbiertaAntes(abierta);
+    setFichaDesplazada(false);
+  }
   /**
    * Id de la carta cuya imagen YA está cargada. La ilustración se funde a la
    * vista sólo cuando el navegador la tiene: sin esto, al navegar con red
@@ -187,7 +292,7 @@ export default function CardDetailModal({
    * `perspective(900px) rotateY() rotateX()` sobre tiltRef, que es el PADRE de
    * la carta. Un `perspective` en un ancestro de la carta la manda a una capa
    * rasterizada a escala fija y en iPhone la ilustración salía borrosa
-   * (la trampa documentada en components/PokemonCard.tsx:140-163). Y el
+   * (la trampa documentada en components/PokemonCard.tsx, en la nota de `settled`). Y el
    * retorno se hacía con una transición de 0,55 s y un setTimeout(580) sin
    * guardar el id: dos arrastres seguidos hacían que el primer temporizador
    * borrara la transición a mitad del rebote del segundo y la carta saltaba
@@ -220,32 +325,42 @@ export default function CardDetailModal({
     fn?.();
   };
 
+  // Anclado a la PRESENCIA del diálogo, no a la carta: se pide al abrir y no
+  // se vuelve a pedir al deslizar. Reabrir sí la refresca, por si la lista ha
+  // cambiado en otra pantalla mientras tanto.
   useEffect(() => {
-    if (!card?.id || !isSignedIn) return;
-    // Guardia de obsolescencia: al deslizar rápido entre cartas, la respuesta
-    // de una carta anterior no debe pisar el marcador de la que se ve ahora.
+    if (!modalOpen || !isSignedIn) return;
     let cancelled = false;
+    const cambios = cambiosDeDeseoRef.current;
+    cambios.clear();
     getWishlistIds()
-      .then((ids: string[]) => { if (!cancelled) setWishlisted(ids.includes(card.id)); })
+      .then((ids: string[]) => {
+        if (cancelled) return;
+        const lista = new Set(ids);
+        // Un toque dado mientras la lista venía de camino manda sobre ella:
+        // esa respuesta salió del servidor antes que el toque.
+        cambios.forEach((esta, id) => {
+          if (esta) lista.add(id);
+          else lista.delete(id);
+        });
+        setDeseos(lista);
+      })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [card?.id, isSignedIn]);
+  }, [modalOpen, isSignedIn]);
+
+  // La página de detrás, quieta mientras la ficha está abierta. El porqué de
+  // no escribir `body.style.overflow` a mano está en hooks/useBloqueoScroll.ts.
+  useFondoQuieto(modalOpen);
 
   useEffect(() => {
     if (!card) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prevOverflow;
-    };
+    return () => window.removeEventListener("keydown", onKey);
   }, [card, onClose]);
 
   // Flechas del teclado: el equivalente de escritorio al deslizamiento.
-  // Va en su propio efecto para no reenganchar el de Escape (que guarda y
-  // restaura el overflow del body) en cada render.
   useEffect(() => {
     if (!card || !hasNav) return;
     const onKey = (e: KeyboardEvent) => {
@@ -260,69 +375,86 @@ export default function CardDetailModal({
   // el foco se queda en la carta de fondo: Tab recorre la página tapada (con el
   // scroll bloqueado) y un lector de pantalla no entra en el diálogo pese al
   // aria-modal. Se ancla a la PRESENCIA del modal (no a la identidad de la
-  // carta) para no re-enfocar al navegar entre cartas.
-  const modalOpen = !!card;
-  useEffect(() => {
-    if (!modalOpen) return;
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    panelRef.current?.focus({ preventScroll: true });
-    // Al cerrar, el foco vuelve al elemento que abrió el diálogo.
-    return () => { previouslyFocused?.focus?.(); };
-  }, [modalOpen]);
-
-  /** Atrapa el Tab dentro del panel mientras el diálogo está abierto. */
-  const trapTab = (e: React.KeyboardEvent) => {
-    if (e.key !== "Tab") return;
-    const panel = panelRef.current;
-    if (!panel) return;
-    const focusables = panel.querySelectorAll<HTMLElement>(
-      'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    );
-    if (focusables.length === 0) { e.preventDefault(); panel.focus({ preventScroll: true }); return; }
-    const first = focusables[0];
-    const last = focusables[focusables.length - 1];
-    const active = document.activeElement;
-    if (e.shiftKey) {
-      if (active === first || active === panel) { e.preventDefault(); last.focus(); }
-    } else if (active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
+  // carta) para no re-enfocar al navegar entre cartas. Vivía escrito aquí; se
+  // sacó a un hook para que las hojas (components/ui/Sheet.tsx) hagan lo mismo.
+  const trapTab = useTrampaDeFoco(panelRef, modalOpen);
 
   const handleToggleWishlist = async () => {
     if (!card?.id) return;
     if (wishBusyRef.current) return;
     wishBusyRef.current = true;
-    const prev = wishlisted;
-    setWishlisted(!prev);
+    // El id se fija AQUÍ: si el jugador pasa de carta mientras la petición
+    // vuela, la respuesta es de ésta y no de la que se esté viendo entonces.
+    const id: string = card.id;
+    const prev = deseos.has(id);
+    fijarDeseo(id, !prev);
     try {
-      const res: any = await toggleWishlist(card.id);
+      const res: any = await toggleWishlist(id);
       // toast en vez de alert(): en la PWA instalada alert() muestra el dominio
       // en la cabecera nativa y congela la interacción.
-      if (res?.error) { setWishlisted(prev); toast(res.error, "error"); }
-      else if (typeof res?.wishlisted === "boolean") setWishlisted(res.wishlisted);
-    } catch {
-      setWishlisted(prev);
-      toast("No se pudo actualizar deseos. Revisa tu conexión.", "error");
+      if (res?.error) { fijarDeseo(id, prev); toast(res.error, "error"); }
+      else if (typeof res?.wishlisted === "boolean") fijarDeseo(id, res.wishlisted);
+    } catch (e) {
+      fijarDeseo(id, prev);
+      if (!esAccionCaducada(e)) toast("No se pudo actualizar deseos. Revisa tu conexión.", "error");
     } finally {
       wishBusyRef.current = false;
     }
   };
 
+  /** La carta que se enseña es la primera desde que se abrió el diálogo: ésa
+   *  se pide en el acto. Se rearma al cerrar. */
+  const primeraFichaRef = useRef(true);
+  useEffect(() => {
+    if (!modalOpen) primeraFichaRef.current = true;
+  }, [modalOpen]);
+
   useEffect(() => {
     setEnriched(null);
     if (!card?.id) return;
+    const id: string = card.id;
+    const clave = claveDeFicha(id);
+    const esLaPrimera = primeraFichaRef.current;
+    primeraFichaRef.current = false;
+
+    const guardada = FICHAS.get(clave);
+    if (guardada) {
+      setEnriched(guardada);
+      setLoadingEnrich(false);
+      return;
+    }
+
     setLoadingEnrich(true);
     // Sin guardia, abrir A y deslizar a B antes de que resuelva A hacía que
     // setEnriched(A) llegara mientras se muestra B (mergeCard rellenaba B con
     // datos de A). Descartamos toda respuesta que ya no corresponde a la carta.
     let cancelled = false;
-    getCardFromDB(card.id)
-      .then((db) => { if (!cancelled && db) setEnriched(db); })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setLoadingEnrich(false); });
-    return () => { cancelled = true; };
+    const pedir = () => {
+      // Otra petición de esta misma carta pudo llegar mientras se esperaba.
+      const yaEsta = FICHAS.get(clave);
+      if (yaEsta) {
+        if (!cancelled) { setEnriched(yaEsta); setLoadingEnrich(false); }
+        return;
+      }
+      getCardFromDB(id)
+        .then((db) => {
+          if (!db) return;
+          // Se guarda aunque el jugador ya esté en otra carta: el viaje está
+          // pagado y, si vuelve, no hay que repetirlo.
+          guardarFicha(clave, db);
+          if (!cancelled) setEnriched(db);
+        })
+        .catch(() => {})
+        .finally(() => { if (!cancelled) setLoadingEnrich(false); });
+    };
+    // Ver la nota de ESPERA_FICHA: la carta por la que se pasa de largo no
+    // llega a pedir nada, porque su temporizador se cancela al cambiar.
+    const espera = esLaPrimera ? 0 : window.setTimeout(pedir, ESPERA_FICHA);
+    if (esLaPrimera) pedir();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(espera);
+    };
   }, [card?.id]);
 
   const isEmpty = (v: any) =>
@@ -347,7 +479,12 @@ export default function CardDetailModal({
     return out;
   };
 
-  const c = card ? mergeCard(card, enriched) : null;
+  // `enriched` sólo vale si es de ESTA carta. El efecto de arriba lo vacía al
+  // cambiar, pero un efecto corre después de pintar: sin esta comprobación, el
+  // primer fotograma de la carta nueva salía con los ataques de la anterior.
+  const c = card
+    ? mergeCard(card, enriched && enriched.id === card.id ? enriched : null)
+    : null;
   const aura = auraFor(c?.rarity);
   /**
    * El estado sale de `c` y no de `card` porque `mergeCard` es quien decide qué
@@ -449,11 +586,13 @@ export default function CardDetailModal({
               y de la carta: un backdrop-filter en un ancestro rasteriza la
               carta a escala fija y en iPhone salía borrosa. Como hermano
               absoluto detrás del panel desenfoca la página de fondo y no
-              toca nada de lo que hay encima. Mismo --scrim que Sheet. */}
+              toca nada de lo que hay encima. Mismo --scrim que Sheet, y el
+              mismo `touch-action: none`: un arrastre sobre el telón no tiene
+              nada que desplazar y en iOS acababa moviendo la página. */}
           <div
             aria-hidden="true"
             className="absolute inset-0 backdrop-blur-md"
-            style={{ background: "var(--scrim)" }}
+            style={{ background: "var(--scrim)", touchAction: "none" }}
           />
           <motion.div
             ref={panelRef}
@@ -467,7 +606,11 @@ export default function CardDetailModal({
                —aunque sea transitoria— la rasteriza a otro tamaño y queda
                borrosa hasta que el navegador la repinta. */
             initial={isMobile ? { y: "100%" } : { opacity: 0, y: 12 }}
-            animate={isMobile ? { y: 0 } : { opacity: 1, y: 0 }}
+            /* `opacity: 1` también en móvil, aunque ahí no se anime: es el
+               cinturón de la nota de `isMobile`. Si el panel llegara a nacer
+               con el `initial` de escritorio (o se cruza el corte de 768 px
+               con la ficha abierta), esto garantiza que acaba visible. */
+            animate={isMobile ? { y: 0, opacity: 1 } : { opacity: 1, y: 0 }}
             exit={isMobile ? { y: "100%" } : { opacity: 0, y: 12 }}
             transition={
               isMobile
@@ -509,13 +652,21 @@ export default function CardDetailModal({
             onClick={(e) => e.stopPropagation()}
           >
             {/* Asa del gesto (sólo móvil): es el único punto que inicia el
-                arrastre, con una zona táctil holgada alrededor. */}
+                arrastre, con una zona táctil holgada alrededor. Fuera del
+                árbol de accesibilidad: se anunciaba como «Arrastra hacia
+                abajo para cerrar, botón» y al activarla con VoiceOver no
+                hacía nada. El cierre que un lector puede usar es el botón
+                "Cerrar" de aquí abajo. */}
             {isMobile && (
               <div
                 ref={handleRef}
-                role="button"
-                aria-label="Arrastra hacia abajo para cerrar"
-                className="absolute top-0 left-1/2 -translate-x-1/2 z-50 flex h-7 w-24 cursor-grab items-center justify-center active:cursor-grabbing"
+                aria-hidden="true"
+                // 44 px de alto (medía 28): es lo único que inicia el arrastre
+                // de cerrar y con 28 el pulgar caía fuera uno de cada pocos
+                // intentos. Cabe en los 56 px que la columna de la carta deja
+                // libres arriba (`pt-14`). La barrita se queda donde estaba:
+                // `items-start` y el relleno la dejan a la misma altura.
+                className="absolute top-0 left-1/2 -translate-x-1/2 z-50 flex h-11 w-24 cursor-grab items-start justify-center pt-[11px] active:cursor-grabbing"
                 style={{ touchAction: touchActionFor("y") }}
               >
                 <div
@@ -536,23 +687,71 @@ export default function CardDetailModal({
               />
             )}
 
-            {/* CLOSE */}
+            {/* CLOSE. En móvil lleva FONDO OPACO: está clavado al panel y el
+                contenido —el nombre, los PS— pasa por debajo al desplazar. Con
+                el relleno translúcido de `btn-ghost` el texto se leía a través
+                del botón. Es el mismo tinte (tinta al 7 %) mezclado con la
+                superficie en vez de con transparente, así que en reposo se ve
+                igual que antes. */}
             <button
               onClick={onClose}
               className="absolute top-3 right-3 md:top-4 md:right-4 control-44 z-50 btn-ghost rounded-full transition press"
+              style={
+                isMobile
+                  ? { background: "color-mix(in srgb, var(--ink) 7%, var(--surface))" }
+                  : undefined
+              }
               aria-label="Cerrar"
             >
               <IconoCerrar tam={16} />
             </button>
 
+            {/* ============================================================
+                EN MÓVIL, CARTA Y FICHA SE DESPLAZAN JUNTAS
+                ============================================================
+                Eran dos hermanas: la columna de la carta, fija (`shrink-0`),
+                y la ficha, que se quedaba con el alto que sobrara y hacía
+                scroll ahí dentro. Con la carta a la mitad del alto del panel
+                —que es como la quiere el dueño, y no se toca—, a la ficha le
+                sobraban 231 px en un iPhone de 812 y 109 en una pantalla de
+                568: el nombre y los precios se leían por una rendija y el
+                botón de vender repetidas estaba siempre bajo el pliegue.
+
+                Ahora en móvil el que se desplaza es este envoltorio, con las
+                dos dentro: la carta sale por arriba al arrastrar y la ficha
+                se queda con el panel entero. Al abrir se ve exactamente lo
+                mismo que antes; lo que cambia es lo que pasa al desplazar.
+
+                En md+ no cambia nada: el envoltorio es la fila de siempre y la
+                que hace scroll sigue siendo la columna de la ficha. Por eso el
+                desplazamiento va con utilidades `max-md:`/`md:` y no con
+                `.scroll-area`: esa clase se declara DESPUÉS de las utilidades
+                de Tailwind dentro de la misma capa y un `md:overflow-visible`
+                encima sería letra muerta (lo mismo que le pasa a `.pb-nav`,
+                está contado en app/globals.css).
+
+                El asa, el aspa y el resplandor quedan fuera, clavados al
+                panel: son absolutos respecto a él y no deben irse con el
+                contenido. */}
+            <div
+              data-lenis-prevent
+              // Ver `fichaDesplazada`. React descarta el render si el booleano
+              // no cambia, así que casi ningún evento de scroll cuesta nada.
+              onScroll={(e) => setFichaDesplazada(e.currentTarget.scrollTop > 24)}
+              className="min-h-0 w-full max-md:overflow-y-auto max-md:overscroll-y-contain md:flex md:flex-row"
+            >
             {/* LEFT — CARD IMAGE PANEL */}
             {/* shrink-0: la caja de la carta es fija; si esta columna pudiera
                 encogerse al competir con la ficha, la carta desbordaría sobre
                 ella. El pb-12 reserva sitio para el contador de posición, que
-                antes quedaba montado sobre la carta. */}
+                antes quedaba montado sobre la carta. Y `md:pb-14` porque en
+                md+ el `md:p-8` de aquí al lado GANABA al pb-12 (una variante
+                se emite después que la utilidad base): el hueco se quedaba en
+                32 px, el contador necesita 38 y volvía a morder el canto
+                inferior de la carta justo en escritorio. */}
             <div
               ref={imageColRef}
-              className={`relative w-full md:w-[44%] shrink-0 p-5 md:p-8 pt-14 md:pt-10 ${hasNav ? "pb-12" : ""} flex items-center justify-center`}
+              className={`relative w-full md:w-[44%] shrink-0 p-5 md:p-8 pt-14 md:pt-10 ${hasNav ? "pb-12 md:pb-14" : ""} flex items-center justify-center`}
               style={{
                 background: aura
                   ? `radial-gradient(circle at 50% 35%, ${conAlfa(aura, 0.18)}, transparent 70%), var(--surface-2)`
@@ -671,6 +870,10 @@ export default function CardDetailModal({
                         src={c.images?.large}
                         alt={c.name}
                         loading="eager"
+                        // Mantener el dedo sobre la carta no debe "levantarla"
+                        // como imagen arrastrable (iOS 15+): el arrastre nativo
+                        // cancela el puntero y se lleva nuestro gesto.
+                        draggable={false}
                         onClick={(e) => {
                           e.stopPropagation();
                           // Un arrastre acaba en click sintético: no abrir el zoom.
@@ -775,7 +978,10 @@ export default function CardDetailModal({
                     onClick={afterSwipeGuard(goPrev)}
                     disabled={!canPrev}
                     aria-label="Carta anterior"
-                    className="absolute left-2 top-1/2 -translate-y-1/2 z-40 transform-gpu control-44 rounded-full btn-ghost press disabled:opacity-25 disabled:cursor-not-allowed"
+                    aria-hidden={flechasFuera || undefined}
+                    tabIndex={flechasFuera ? -1 : undefined}
+                    style={flechasFuera ? FLECHA_RETIRADA : undefined}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 z-40 transform-gpu control-44 rounded-full btn-ghost press transition-opacity disabled:opacity-25 disabled:cursor-not-allowed"
                   >
                     <IconoVolver tam={16} />
                   </button>
@@ -783,7 +989,10 @@ export default function CardDetailModal({
                     onClick={afterSwipeGuard(goNext)}
                     disabled={!canNext}
                     aria-label="Carta siguiente"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 z-40 transform-gpu control-44 rounded-full btn-ghost press disabled:opacity-25 disabled:cursor-not-allowed"
+                    aria-hidden={flechasFuera || undefined}
+                    tabIndex={flechasFuera ? -1 : undefined}
+                    style={flechasFuera ? FLECHA_RETIRADA : undefined}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 z-40 transform-gpu control-44 rounded-full btn-ghost press transition-opacity disabled:opacity-25 disabled:cursor-not-allowed"
                   >
                     <IconoAvanzar tam={16} />
                   </button>
@@ -802,10 +1011,12 @@ export default function CardDetailModal({
             {/* RIGHT — DETAILS */}
             {/* min-h-0 explícito: sin él, algunos motores no dejan encoger la
                 columna dentro del panel (overflow-hidden) y la fila del pie se
-                recorta en vez de quedar alcanzable con scroll. */}
+                recorta en vez de quedar alcanzable con scroll. Sólo en md+,
+                que es donde esta columna es la que se desplaza; en móvil se
+                desplaza el envoltorio (ver la nota larga de arriba). */}
             <div
               ref={detailsRef}
-              className="w-full md:w-[56%] min-h-0 flex flex-col bg-[var(--surface)] scroll-area custom-scrollbar relative"
+              className="w-full md:w-[56%] md:min-h-0 flex flex-col bg-[var(--surface)] md:overflow-y-auto md:overscroll-y-contain custom-scrollbar relative"
               data-lenis-prevent
             >
               <div className="p-5 md:p-7 pb-7 md:pb-8 flex flex-col gap-4 relative">
@@ -815,6 +1026,13 @@ export default function CardDetailModal({
                       tamaño la tinta tenue (3,66:1) no llega al mínimo. */}
                   <div className="flex items-center gap-2 flex-wrap mb-1">
                     <span className="t-etiqueta ink-soft">{c.supertype || "Pokémon"}</span>
+                    {/* La carta que no se tiene sólo se distinguía por el velo
+                        sobre la ilustración, que parece un fallo de carga más
+                        que un mensaje. Desde el álbum ahora se abren los HUECOS
+                        en esta ficha: tiene que decirlo con palabras. */}
+                    {c.owned === false && (
+                      <span className="t-etiqueta ink-soft chip px-2 py-0.5">No la tienes</span>
+                    )}
                     {c.subtypes?.slice(0, 3).map((s: string) => (
                       <span key={s} className="t-etiqueta ink-soft chip px-2 py-0.5">{s}</span>
                     ))}
@@ -996,7 +1214,11 @@ export default function CardDetailModal({
                         <div key={i} className="p-4 flex flex-col gap-2">
                           <div className="flex items-center gap-3">
                             <div className="shrink-0"><EnergyCost cost={atk.cost || []} /></div>
-                            <span className="t-cuerpo font-semibold truncate flex-1">{atk.name}</span>
+                            {/* Sin `truncate`: a 320-375 px, con cuatro
+                                energías delante y el daño detrás, al nombre le
+                                quedaban ~60 px y se leía «Hydro P…». Un nombre
+                                de ataque en dos líneas se lee; cortado, no. */}
+                            <span className="t-cuerpo font-semibold leading-snug min-w-0 flex-1">{atk.name}</span>
                             {atk.damage && <span className="t-base tnum font-bold shrink-0" style={{ color: "var(--danger-ink)" }}>{atk.damage}</span>}
                           </div>
                           {atk.text && <p className="t-cuerpo-2 ink-soft leading-snug">{atk.text}</p>}
@@ -1007,11 +1229,26 @@ export default function CardDetailModal({
                 )}
 
                 {/* WEAK / RES / RETREAT */}
-                <div className="grid grid-cols-3 gap-2">
+                {/* TRES TESELAS QUE SE REPARTEN SOLAS, y no `grid-cols-3`.
+                    En tres columnas fijas cada tesela medía 87 px a 320 de
+                    ancho (63 útiles) y dentro había que meter «⚡ Lightning ×2»,
+                    que pide 106: el «×2» se pintaba encima de la tesela vecina,
+                    a 1,4 px del guion de "Resistencia"; y el propio rótulo
+                    RESISTENCIA (81 px) se salía de su caja con cualquier carta.
+                    A 375 el «×2» pisaba el borde. Y no era sólo el móvil: a 768
+                    la columna de la ficha mide 347 px y pasaba lo mismo.
+
+                    Con `flex-wrap` y una base de 132 px (106 de la fila más el
+                    relleno) caben dos por fila en cualquier teléfono y la
+                    tercera baja y ocupa el ancho entero; en cuanto hay sitio
+                    para las tres (412 px de ficha) vuelven a ir en una fila. Lo
+                    decide el ancho de ESTA caja, no el de la pantalla, que es
+                    por lo que una media query no servía. */}
+                <div className="flex flex-wrap gap-2">
                   <StatTile label="Debilidad">
                     {c.weaknesses?.length > 0
                       ? c.weaknesses.map((w: any, i: number) => (
-                          <div key={i} className="flex items-center gap-1">
+                          <div key={i} className={FILA_DE_TESELA}>
                             <TypeBadge type={w.type} size="xs" />
                             <span className="t-meta font-semibold" style={{ color: "var(--danger-ink)" }}>{w.value}</span>
                           </div>
@@ -1021,7 +1258,7 @@ export default function CardDetailModal({
                   <StatTile label="Resistencia">
                     {c.resistances?.length > 0
                       ? c.resistances.map((w: any, i: number) => (
-                          <div key={i} className="flex items-center gap-1">
+                          <div key={i} className={FILA_DE_TESELA}>
                             <TypeBadge type={w.type} size="xs" />
                             <span className="t-meta font-semibold" style={{ color: "var(--ok)" }}>{w.value}</span>
                           </div>
@@ -1039,7 +1276,7 @@ export default function CardDetailModal({
                 {c.set && (
                   <div className="border-t border-[var(--border)] pt-4 mt-1 flex items-center gap-3">
                     {c.set.images?.logo && (
-                      <img src={c.set.images.logo} alt="" loading="lazy" className="h-7 object-contain opacity-90" />
+                      <img src={c.set.images.logo} alt="" loading="lazy" draggable={false} className="h-7 max-w-[40%] object-contain opacity-90" />
                     )}
                     <div className="flex-1 min-w-0 t-meta">
                       <p className="font-medium truncate">{c.set.name}</p>
@@ -1055,6 +1292,7 @@ export default function CardDetailModal({
                   <p className="t-etiqueta ink-soft animate-pulse text-center">Cargando detalles…</p>
                 )}
               </div>
+            </div>
             </div>
           </motion.div>
         </motion.div>
@@ -1126,9 +1364,16 @@ function PriceTile({ label, value, unit, color }: { label: string; value: string
   );
 }
 
+/** Chapa de tipo + valor. `flex-wrap` es el cinturón: si un tipo de nombre más
+ *  largo que los de hoy no cupiera, el «×2» baja bajo la chapa en vez de
+ *  pintarse sobre la tesela de al lado. */
+const FILA_DE_TESELA = "flex flex-wrap items-center gap-x-1 gap-y-0.5";
+
 function StatTile({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="surface-2 rounded-2xl p-3">
+    // `min-w-0`: un hijo flex no encoge por debajo de su contenido sin esto, y
+    // entonces el contenido largo ensancha la tesela en vez de ajustarse.
+    <div className="surface-2 min-w-0 flex-1 basis-[8.25rem] rounded-2xl px-2.5 py-3">
       <p className="t-etiqueta ink-soft mb-1.5">{label}</p>
       <div className="flex flex-col gap-1">{children}</div>
     </div>

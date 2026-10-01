@@ -260,6 +260,27 @@ export function IconoMoneda(props: PropsIcono) {
 }
 
 /**
+ * EL BAZAR: un puesto con su toldo. Es un icono SÓLO suyo, que es lo que le
+ * faltaba: la puerta al bazar desde el mercado era una casa (casi el dibujo de
+ * la pestaña Inicio, así que el botón parecía un "volver al inicio") y el
+ * atajo del menú lateral y "Mis anuncios" usaban la bolsa, que es el icono de
+ * la pestaña Mercado. Dos iconos para una cosa, y ninguno propio.
+ *
+ * El toldo con sus tres ondas es lo que lo separa de la casa (tejado en pico)
+ * y de la bolsa (asa): se reconoce a 16px sin leer el rótulo.
+ */
+export function IconoBazar(props: PropsIcono) {
+  return (
+    <Base {...props}>
+      <path d="M5 4h14l2 5H3l2-5Z" />
+      <path d="M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0" />
+      <path d="M5 12.5V20h14v-7.5" />
+      <path d="M10 20v-4.5h4V20" />
+    </Base>
+  );
+}
+
+/**
  * Ajustes. Estaba copiado en la barra superior (trazo 2, 18px) y en el menú
  * lateral (trazo 1,8, 22px): el mismo botón, en dos sitios, con dos pesos de
  * tinta y dos tamaños.

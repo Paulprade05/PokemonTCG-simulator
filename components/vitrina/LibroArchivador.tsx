@@ -13,7 +13,7 @@
 // las dos están PROHIBIDAS en este repositorio sobre cualquier ancestro de una
 // carta: WebKit promociona esa capa y la rasteriza a una escala fija, así que
 // la ilustración sale borrosa en un iPhone aunque la fuente sea la de alta
-// resolución (medido y documentado en components/PokemonCard.tsx:140-163 y en
+// resolución (medido y documentado en components/PokemonCard.tsx, en la nota de `settled` y en
 // la cabecera de components/MazoCartas.tsx).
 //
 // La salida es la MISMA que ya usa PokemonCard para su propio giro, y está

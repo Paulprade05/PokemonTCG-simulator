@@ -29,12 +29,12 @@
 //
 // Ninguna animación de las cartas puede llevar `scale`, `filter` ni
 // `mix-blend-mode`: la carta se rasterizaría a escala fija y saldría borrosa en
-// iPhone (components/PokemonCard.tsx:140-163). El sello de la nota SÍ se anima
-// con muelle y escala, y es correcto: vive fuera del contenedor de la carta, no
-// es ancestro suyo. Ese es el único sitio de esta pantalla donde hay un `scale`
-// y por eso está aquí escrito.
+// iPhone (el comentario de `settled` en components/PokemonCard.tsx). El sello
+// de la nota SÍ se anima con muelle y escala, y es correcto: vive fuera del
+// contenedor de la carta, no es ancestro suyo. Ese es el único sitio de esta
+// pantalla donde hay un `scale` y por eso está aquí escrito.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import CartaConDesperfectos from "./CartaConDesperfectos";
 import {
@@ -75,6 +75,46 @@ interface Props {
   cobrado: number;
   descuento: number;
 }
+
+/* ==================================================================== *
+ * EL ANCHO DE LA CARTA EN LA CEREMONIA SALE TAMBIÉN DEL ALTO DE LA PANTALLA
+ * ====================================================================
+ *
+ * Era `min(62vw, 230px)`: sólo miraba el ancho. A 375 px eso son 230 de ancho
+ * y 322 de alto, y con lo que la carta lleva encima y debajo «Abrir el
+ * informe» caía en y=642-691 sin contar zonas seguras. Instalada en un iPhone
+ * de 812 px hay que sumar 47 de barra de estado: el botón quedaba medio tapado
+ * por la barra de pestañas, y en un SE (667 px) o en Safari con sus barras,
+ * entero por debajo.
+ *
+ * Mismo remedio que la apertura de sobre (BoosterPack) y el archivador
+ * (LibroArchivador): el ancho es el menor entre el de siempre y el que sale de
+ * repartir el alto que queda. La reserva de 324 px es la suma de lo que rodea
+ * a la carta dentro del <main>, medida con la tipografía de la casa:
+ *
+ *     24  relleno superior del <main>
+ *     70  PageHeader con su margen
+ *     44  fila «Informe N de M» + «Revelar todas»
+ *     48  dos huecos de 20 y las tiras de progreso (4)
+ *     55  hueco de 16 y el nombre con su línea de apoyo
+ *     20  hueco hasta el pie
+ *     61  el botón (49) y el aire de debajo (12)
+ *    ---
+ *    322, más 2 de holgura
+ *
+ * TopBar, zona segura superior y barra de pestañas van aparte, con sus
+ * variables. 0,714 es la proporción de una carta (63 × 88 mm).
+ *
+ * EL SUELO DE 9,5rem: en una pantalla muy baja (un SE, o Safari con el teclado
+ * o las barras fuera) la cuenta daría una carta de sello de correos. Antes que
+ * eso se deja que el nombre quede unos píxeles bajo el pie pegado: el botón
+ * sigue a la vista, que es lo que no podía fallar, y lo demás se desplaza.
+ */
+const ANCHO_CARTA_CEREMONIA =
+  "max(9.5rem, min(62vw, 230px, calc((var(--app-height) - var(--sat) - var(--topbar-h) - var(--content-bottom) - 324px) * 0.714)))";
+
+/** Aire que se deja entre el sello y el pie pegado al llevarlo a la vista. */
+const AIRE_SOBRE_EL_PIE = 16;
 
 /**
  * Los desperfectos en palabras. Es la parte del informe que explica la nota:
@@ -123,7 +163,10 @@ function Informe({
   compacto,
   onVender,
   onGuardar,
+  selloRef,
 }: {
+  /** Sólo la ceremonia: le deja a la pantalla medir dónde ha caído el sello. */
+  selloRef?: RefObject<HTMLDivElement | null>;
   resultado: Resultado;
   abierto: boolean;
   decision: Decision | undefined;
@@ -180,7 +223,10 @@ function Informe({
       {/* La carta y, mientras está sellada, la banda que lo dice. El envoltorio
           es `relative` a secas: sin transform, sin filtro, sin nada que promueva
           la carta a capa compositada. */}
-      <div className={compacto ? "relative w-full" : "relative w-[min(62vw,230px)]"}>
+      <div
+        className={compacto ? "relative w-full" : "relative"}
+        style={compacto ? undefined : { width: ANCHO_CARTA_CEREMONIA }}
+      >
         <CartaConDesperfectos
           carta={carta}
           desperfectos={desperfectos}
@@ -224,6 +270,7 @@ function Informe({
         {abierto && (
           <motion.div
             key="sello"
+            ref={selloRef}
             initial={{ opacity: 0, scale: 0.82 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={MUELLE_PILDORA}
@@ -248,27 +295,45 @@ function Informe({
 
           {/* LO QUE VALE AHORA. Se dice el multiplicador y el valor anterior
               porque un "vale 38" a secas no informa: lo que se está juzgando es
-              si la graduación ha subido o hundido la carta. */}
+              si la graduación ha subido o hundido la carta.
+
+              LA PASTILLA PARTE POR DONDE SE LE DICE, no por donde le pilla. Era
+              un `flex` sin `flex-wrap` con tres textos que se rompían palabra a
+              palabra: en la rejilla de dos columnas del resumen, a 320 px, la
+              pastilla medía 112 y su contenido 146, y «×1,5 sobre 823» se
+              pintaba 9 px dentro de la ficha de al lado. Ahora el rótulo y la
+              cifra no se parten nunca, saltan de línea enteros si no caben, y
+              en la ficha pequeña la comparación va siempre en su propio
+              renglón. Allí la cifra baja además un escalón (16 px y no 20): en
+              112 px de caja, la de 20 no dejaba sitio ni al rótulo. */}
           <div
-            className="rounded-xl px-3 py-2 flex items-baseline gap-2 tnum"
+            className={`rounded-xl py-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 tnum ${
+              compacto ? "px-2.5" : "px-3"
+            }`}
             style={{ background: "var(--surface-2)" }}
           >
-            <span className="t-meta ink-soft">Ahora vale</span>
-            <span className="t-titulo font-bold" style={{ color: tintaDeNota(nota) }}>
+            <span className="t-meta ink-soft whitespace-nowrap">Ahora vale</span>
+            <span
+              className={`font-bold whitespace-nowrap ${compacto ? "t-base" : "t-titulo"}`}
+              style={{ color: tintaDeNota(nota) }}
+            >
               {formatNumber(valor)}
             </span>
-            <span className="t-meta ink-soft">
+            <span className={`t-meta ink-soft min-w-0 ${compacto ? "basis-full" : ""}`}>
               {multiplicador(MULTIPLICADOR_NOTA[nota] ?? 0)} sobre{" "}
               {formatNumber(carta.valorDeReferencia)}
             </span>
           </div>
 
-          {/* El "antes y después": la misma copia sin las marcas encima. */}
+          {/* El "antes y después": la misma copia sin las marcas encima.
+              `touch-target`: medía 29 px de alto y en la ficha pequeña cae justo
+              encima de «Vender», que es el botón que no se puede tocar sin
+              querer. */}
           <button
             type="button"
             onClick={() => setVerLimpia((v) => !v)}
             aria-pressed={verLimpia}
-            className="chip ink-soft t-meta px-3 py-1.5 press"
+            className="chip ink-soft t-meta px-3 py-1.5 press touch-target"
           >
             {verLimpia ? "Ver los desperfectos" : "Ver la carta limpia"}
           </button>
@@ -285,12 +350,21 @@ function Informe({
           ) : decision === "guardada" ? (
             <p className="t-meta ink-soft">Guardada en la vitrina</p>
           ) : (
-            <div className={`flex gap-2 ${compacto ? "" : "w-full max-w-xs"}`}>
+            /* EN LA FICHA PEQUEÑA LOS DOS BOTONES VAN APILADOS, cada uno a todo
+               el ancho. Lado a lado se repartían 112 px: «Guardar» medía 46 en
+               un botón de 53 con relleno y asomaba 6 por la derecha, y «Vender
+               · 1.050» se partía en dos líneas. «Vender» queda arriba —es el
+               único de los dos que hace algo; guardar sólo anota la decisión—
+               con `flex-col-reverse`, para no cambiar el orden del DOM (y con
+               él el del foco) entre la ceremonia y el resumen. */
+            <div className={`flex gap-2 ${compacto ? "flex-col-reverse" : "w-full max-w-xs"}`}>
               <button
                 type="button"
                 onClick={onGuardar}
                 disabled={vendiendo}
-                className="btn-ghost press touch-target flex-1 rounded-xl t-cuerpo-2 font-medium px-3 disabled:opacity-40"
+                className={`btn-ghost press touch-target rounded-xl t-cuerpo-2 font-medium disabled:opacity-40 ${
+                  compacto ? "w-full px-2" : "flex-1 px-3"
+                }`}
               >
                 Guardar
               </button>
@@ -299,7 +373,9 @@ function Informe({
                 onClick={onVender}
                 disabled={!sePuedeVender || vendiendo}
                 aria-busy={vendiendo}
-                className="btn-accent press touch-target flex-1 rounded-xl t-cuerpo-2 font-semibold px-3 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                className={`btn-accent press touch-target rounded-xl t-cuerpo-2 leading-tight font-semibold flex items-center justify-center gap-2 text-center disabled:opacity-40 disabled:cursor-not-allowed ${
+                  compacto ? "w-full px-2" : "flex-1 px-3"
+                }`}
               >
                 {vendiendo ? (
                   <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
@@ -372,6 +448,31 @@ export default function Revelacion({
   /** Con `true` se dejan de pasar copias y se enseñan todas a la vez. */
   const [resumen, setResumen] = useState(false);
   const haptic = useHaptics();
+  const selloRef = useRef<HTMLDivElement>(null);
+  const pieRef = useRef<HTMLDivElement>(null);
+
+  /* AL ABRIR, EL SELLO TIENE QUE VERSE, y con el pie pegado ya no está
+   * garantizado: la nota aparece justo debajo del nombre, que es donde ahora
+   * se queda clavado el botón cuando la ficha crece. Sin esto, el instante por
+   * el que se ha pagado —ver la nota— ocurriría tapado.
+   *
+   * Se desplaza LO JUSTO para que el sello asome por encima del pie, no hasta
+   * centrarlo: así la carta sigue entera en pantalla y se ven a la vez la nota
+   * y las marcas que la justifican, que es la secuencia que cuenta la cabecera
+   * de este fichero. Si ya se ve (pantalla alta, escritorio), no se mueve nada.
+   *
+   * El sello entra con muelle desde escala 0,82, así que en este momento su
+   * caja mide un poco menos de lo que acabará midiendo: AIRE_SOBRE_EL_PIE cubre
+   * esa diferencia y deja además un respiro. */
+  useEffect(() => {
+    if (!abierto) return;
+    const sello = selloRef.current;
+    const pie = pieRef.current;
+    if (!sello || !pie) return;
+    const tapado =
+      sello.getBoundingClientRect().bottom + AIRE_SOBRE_EL_PIE - pie.getBoundingClientRect().top;
+    if (tapado > 0) window.scrollBy({ top: tapado, behavior: "smooth" });
+  }, [abierto]);
 
   const total = resultados.length;
   const actual = resultados[indice];
@@ -520,9 +621,35 @@ export default function Revelacion({
         vendiendo={actual.gradedId !== undefined && actual.gradedId === vendiendoId}
         onVender={() => onVender(actual)}
         onGuardar={() => onGuardar(actual)}
+        selloRef={selloRef}
       />
 
-      <div className="flex justify-center">
+      {/* EL PIE, PEGADO AL BORDE INFERIOR. «Abrir el informe» y «Siguiente
+          copia» son el único camino hacia delante de esta pantalla, y al abrir
+          una copia la ficha crece unos 350 px (sello, desperfectos, valor,
+          decisión): «Siguiente copia» se iba fuera y había que desplazar en
+          CADA copia, cuarenta veces en una tacada entera.
+
+          `sticky` y no `fixed`, por lo mismo que BarraEnvio.tsx: app/template
+          envuelve la ruta en un ancestro con transform. El fondo es el del
+          papel, fundido hacia arriba, para que lo que pasa por debajo no se
+          lea a través del hueco de los lados; es HERMANO de la ficha, no
+          ancestro, y no lleva ni filtro ni transform, así que la carta no
+          cambia de capa. Va por encima de la banda «Sellado» (z-40).
+
+          La línea de pegado es el borde de la barra de pestañas y el aire lo
+          pone el relleno: con `--content-bottom` a secas quedaban 12 px de
+          rendija entre el pie y la barra por los que asomaba el contenido. El
+          `-mt-4` compensa el relleno de arriba, para que con la copia sellada
+          el botón siga a los 20 px de siempre bajo el nombre. */}
+      <div
+        ref={pieRef}
+        className="sticky z-50 -mt-4 flex justify-center pt-4 pb-3"
+        style={{
+          bottom: "calc(var(--content-bottom) - 12px)",
+          background: "linear-gradient(to top, var(--bg) 70%, transparent)",
+        }}
+      >
         {!abierto ? (
           <button
             type="button"

@@ -5,6 +5,7 @@ import "./globals.css";
 import { ClerkProvider } from "@clerk/nextjs";
 import SmoothScroll from "../components/SmoothScroll";
 import AppShell from "../components/AppShell";
+import { clerkEs } from "./clerk-es";
 
 // Fija el tema antes del primer pintado y, con él, el color de la barra del
 // navegador: si theme-color se dejara al valor estático, el tema claro saldría
@@ -32,7 +33,16 @@ const idiomaInit = `(function(){var l;try{l=localStorage.getItem('lang');}catch(
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 /** Pantallas de arranque de iOS. La media query debe coincidir exactamente con
- *  el tamaño lógico y el pixel ratio del dispositivo o iOS la ignora. */
+ *  el tamaño lógico y el pixel ratio del dispositivo o iOS la ignora.
+ *
+ *  DOS POR TAMAÑO, UNA POR TEMA. Sólo existía la oscura: quien usa la app en
+ *  claro veía en cada arranque una pantalla negra y, un instante después, la
+ *  app crema. Aquí no se puede preguntar por `data-theme` —la imagen se elige
+ *  antes de que corra ni una línea de la app—, así que se elige por el tema del
+ *  SISTEMA, que es el mismo que usa la app mientras el jugador no haya elegido
+ *  otro en Ajustes. Las dos condiciones son excluyentes y entre las dos cubren
+ *  todos los casos, así que siempre casa exactamente una. Las claras
+ *  (`-claro.png`) son las oscuras con el fondo cambiado a --bg del tema claro. */
 const STARTUP_IMAGES = [
   { w: 440, h: 956, r: 3, file: "1320x2868" }, // iPhone 16 Pro Max
   { w: 420, h: 912, r: 3, file: "1260x2736" }, // iPhone Air (2025)
@@ -45,10 +55,19 @@ const STARTUP_IMAGES = [
   { w: 414, h: 896, r: 3, file: "1242x2688" }, // XS Max · 11 Pro Max
   { w: 414, h: 896, r: 2, file: "828x1792" }, //  XR · 11
   { w: 375, h: 667, r: 2, file: "750x1334" }, //  SE 2/3 · 8
-].map(({ w, h, r, file }) => ({
-  url: `/splash/splash-${file}.png`,
-  media: `(device-width: ${w}px) and (device-height: ${h}px) and (-webkit-device-pixel-ratio: ${r}) and (orientation: portrait)`,
-}));
+].flatMap(({ w, h, r, file }) => {
+  const pantalla = `(device-width: ${w}px) and (device-height: ${h}px) and (-webkit-device-pixel-ratio: ${r}) and (orientation: portrait)`;
+  return [
+    {
+      url: `/splash/splash-${file}-claro.png`,
+      media: `${pantalla} and (prefers-color-scheme: light)`,
+    },
+    {
+      url: `/splash/splash-${file}.png`,
+      media: `${pantalla} and (prefers-color-scheme: dark)`,
+    },
+  ];
+});
 
 export const metadata: Metadata = {
   applicationName: "TCG Sim",
@@ -68,7 +87,14 @@ export const metadata: Metadata = {
       { url: "/icons/favicon-32.png", sizes: "32x32", type: "image/png" },
       { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
     ],
-    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180" }],
+    // EL ICONO DE LA PANTALLA DE INICIO, A SANGRE (`-v2`). El anterior llevaba
+    // el cuadrado redondeado de la marca dibujado DENTRO de un fondo oscuro, y
+    // iOS recorta el icono con su propia forma: salía una ficha negra con otra
+    // ficha más pequeña dentro. El nuevo es el degradado hasta el borde, con el
+    // dibujo al mismo tamaño, y la forma la pone el sistema. Lleva otro nombre
+    // porque iOS guarda el icono por su dirección. El antiguo sigue en
+    // public/icons/ sin que nadie lo use.
+    apple: [{ url: "/icons/apple-touch-icon-v2.png", sizes: "180x180" }],
   },
   other: {
     // Next 16 sólo emite la variante estándar; iOS anterior a 16.4 sigue
@@ -106,8 +132,32 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider>
-      <html lang="es" className={inter.variable} suppressHydrationWarning>
+    <ClerkProvider
+      // El modal de entrar salía en inglés en una app en español; el porqué de
+      // que sea un objeto parcial escrito a mano está en ./clerk-es.ts.
+      localization={clerkEs}
+      // Los campos de Clerk nacen a 13px y la regla `input { font-size: 16px }`
+      // de globals.css no les gana (llevan su propia clase). Por debajo de 16,
+      // iOS amplía la página al enfocarlos. Hoy lo tapa `maximumScale: 1`, pero
+      // que no dependa de eso: si algún día se reabre el zoom, el formulario de
+      // entrada sería lo primero en descolocarse.
+      appearance={{ elements: { formFieldInput: { fontSize: "16px" } } }}
+    >
+      {/* data-scroll-behavior="smooth": la pareja de `html { scroll-behavior:
+          smooth }` de globals.css. Next 16 dejó de apagar el scroll suave por
+          su cuenta al cambiar de ruta y sólo lo hace si encuentra este
+          atributo. Sin él, y en táctil (donde Lenis no se monta y la regla CSS
+          está viva), entrar en Mercado desde una Colección desplazada enseñaba
+          la pantalla nueva a media altura y la subía animada, encima de la
+          transición de entrada. Es sólo un atributo: Next pone `auto` mientras
+          dura la navegación y lo devuelve después, así que los `scrollTo`
+          suaves de dentro de una pantalla siguen igual. */}
+      <html
+        lang="es"
+        className={inter.variable}
+        data-scroll-behavior="smooth"
+        suppressHydrationWarning
+      >
         <head>
           <script dangerouslySetInnerHTML={{ __html: themeInit }} />
           <script dangerouslySetInnerHTML={{ __html: idiomaInit }} />

@@ -44,8 +44,21 @@ const obtenerCtx = (): AudioContext | null => {
       return null;
     }
   }
-  // iOS lo suspende al bloquear la pantalla o al perder el foco.
-  if (ctx.state === "suspended") ctx.resume().catch(() => {});
+  // iOS lo suspende al bloquear la pantalla o al perder el foco, y tras una
+  // llamada o un cambio de app lo deja en un estado PROPIO de WebKit,
+  // "interrupted", que no es "suspended". Preguntando sólo por "suspended" el
+  // contexto se quedaba interrumpido y el resto de la sesión en silencio con
+  // "Efectos de sonido" encendido. Se reanuda siempre que no esté sonando;
+  // estamos dentro de un gesto del usuario, que es cuando iOS lo permite.
+  // El try de fuera es por los WebKit antiguos, donde resume() no devuelve una
+  // promesa y el `.catch` lanzaría.
+  if (ctx.state !== "running") {
+    try {
+      ctx.resume().catch(() => {});
+    } catch {
+      /* se intentará de nuevo en el siguiente gesto */
+    }
+  }
   return ctx;
 };
 

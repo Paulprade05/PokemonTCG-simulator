@@ -469,6 +469,20 @@ export const STARTING_COINS = 1000;
 export const DAILY_BASE = 150;
 export const DAILY_STREAK_STEP = 15;
 export const DAILY_STREAK_CAP = 150;
+/**
+ * Los dos plazos de la diaria, en horas: cuánto hay que esperar entre una y la
+ * siguiente, y hasta cuándo sigue viva la racha contando desde la anterior.
+ * Eran dos números sueltos dentro de `claimDailyReward` y la hoja de la
+ * recompensa (components/DailyReward.tsx) los repetía a mano para poder decir
+ * «vuelve en…» y «la racha se pierde…». Con nombre los leen los dos del mismo
+ * sitio.
+ *
+ * OJO: el UPDATE de `claimDailyReward` lleva el primero escrito como
+ * INTERVAL '20 hours' dentro del SQL, que es quien arbitra de verdad. Si se
+ * cambia DAILY_ESPERA_H hay que cambiar también ese literal.
+ */
+export const DAILY_ESPERA_H = 20;
+export const DAILY_PLAZO_RACHA_H = 48;
 
 // Bonus por completar un set
 export const SET_COMPLETION_BONUS = 1000;

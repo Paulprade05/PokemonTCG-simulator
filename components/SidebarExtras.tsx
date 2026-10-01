@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import {
   COLLECTION_CHANGED_EVENT,
   COLLECTION_STORAGE_KEY,
   getCollection,
 } from "../utils/storage";
 import { formatNumber } from "../utils/format";
+import { IconoBazar } from "./icons";
 
 /**
  * LOS 495 PÍXELES VACÍOS DE LA BARRA LATERAL.
@@ -21,22 +22,33 @@ import { formatNumber } from "../utils/format";
  * LO QUE VA AQUÍ NO SON PESTAÑAS NUEVAS. Las cuatro de components/nav-items.tsx
  * se quedan como están y por el motivo que allí se razona: Colección cubre
  * álbum, vitrina y graduación, y Mercado cubre el bazar. Lo que se añade son
- * ATAJOS a tres pantallas que hoy sólo tienen UNA puerta cada una, y todas
- * dentro de otra pantalla:
+ * ATAJOS a tres pantallas a las que, además de por aquí, sólo se llega desde
+ * dentro de otra: la fila de accesos de debajo de la cabecera
+ * (components/ui/FilaAccesos.tsx), que está en Colección, Vitrina y Graduación
+ * por un lado y en Mercado y Bazar por otro.
  *
- *   /vitrina     ← app/collection/page.tsx
- *   /graduacion  ← app/collection/page.tsx
- *   /bazar       ← app/mercado/page.tsx
+ *   /vitrina     ← Colección
+ *   /graduacion  ← Colección
+ *   /bazar       ← Mercado
  *
  * O sea que en escritorio, con media barra lateral vacía, para ver la vitrina
- * hay que entrar antes en la colección. Eso es lo que arregla este bloque.
+ * había que entrar antes en la colección. Eso es lo que arregla este bloque.
  *
  * Van deliberadamente en otro registro visual que los enlaces de arriba —más
  * pequeños, con su rótulo de sección y sin el indicador de pestaña activa—
  * para que nadie los lea como una quinta y una sexta pestaña.
  */
 
-const ATAJOS = [
+interface Atajo {
+  href: string;
+  label: string;
+  /** El dibujo suelto: trazos que este fichero envuelve en su propio <svg>. */
+  icon?: ReactNode;
+  /** O un icono ya hecho del vocabulario común (components/icons.tsx). */
+  icono?: ReactNode;
+}
+
+const ATAJOS: Atajo[] = [
   {
     href: "/vitrina",
     label: "Vitrina",
@@ -55,12 +67,10 @@ const ATAJOS = [
   {
     href: "/bazar",
     label: "Bazar",
-    icon: (
-      <>
-        <path d="M3 9h18l-1.5 10.5a2 2 0 0 1-2 1.5H6.5a2 2 0 0 1-2-1.5z" />
-        <path d="M8 9V6a4 4 0 0 1 8 0v3" />
-      </>
-    ),
+    // El puesto con toldo, y no la bolsa que había: la bolsa es LITERALMENTE
+    // el icono de la pestaña Mercado, cuatro filas más arriba en esta misma
+    // barra, y dos enlaces distintos con el mismo dibujo no se distinguen.
+    icono: <IconoBazar tam={20} />,
   },
 ];
 
@@ -248,9 +258,11 @@ export default function SidebarExtras() {
                   con trazo 1,8, dos valores que no existen en ninguna otra
                   parte. Siguen siendo más pequeños que los 22px de las pestañas
                   de arriba, que es lo que estos atajos quieren decir. */}
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5" aria-hidden="true">
-                {a.icon}
-              </svg>
+              {a.icono ?? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5" aria-hidden="true">
+                  {a.icon}
+                </svg>
+              )}
             </span>
             <span className={`t-cuerpo-2 transition-colors ${activo ? "ink font-medium" : "ink-soft group-hover:text-[var(--ink)]"}`}>
               {a.label}

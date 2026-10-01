@@ -42,7 +42,7 @@
 //      la cuenta.
 //
 //   4. LA COPIA RESERVADA SÍ APLICA, al revés que en el trueque. La asimetría
-//      es deliberada y está razonada en app/social.ts:227-250: el trueque sólo
+//      es deliberada y está razonada en la cabecera de createTradeOffer (app/social.ts): el trueque sólo
 //      MUEVE cartas y su delta neto suma cero, así que reservar una copia
 //      impediría intercambiar las cartas únicas, que son justo las que se
 //      quieren intercambiar. El bazar, en cambio, SACA la carta a cambio de

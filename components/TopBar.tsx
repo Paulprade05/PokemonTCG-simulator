@@ -8,8 +8,17 @@ import { useCurrency } from "../hooks/useGameCurrency";
 import GlobalSearch from "./GlobalSearch";
 import DailyReward from "./DailyReward";
 import SettingsSheet from "./ui/SettingsSheet";
-import { formatNumber } from "../utils/format";
+import { cifraCorta, formatNumber } from "../utils/format";
 import { IconoAjustes, IconoMarca, IconoMoneda } from "./icons";
+
+/* EL SALDO, EN CORTO, PARA LA BARRA DEL MÓVIL (`cifraCorta`, utils/format.ts).
+ *
+ * El chip de monedas es `shrink-0` (una cifra recortada con puntos suspensivos
+ * no es una cifra), así que cada dígito de más se lo quita a la fila: con
+ * 1.234.567 monedas y sesión iniciada el grupo de controles llegaba a x = 327
+ * en una pantalla de 320 y el avatar salía cortado. Por eso en móvil se
+ * abrevia a partir de seis cifras; en escritorio y para el lector de pantalla
+ * se sigue dando la cifra entera. */
 
 export default function TopBar() {
   // `loaded` del proveedor, no `isLoaded` de Clerk: lo que hay que esperar es a
@@ -65,13 +74,20 @@ export default function TopBar() {
       // saldo y el botón de ajustes quedaban debajo del recorte. El max()
       // conserva los 16px (32 en escritorio) de siempre cuando no hay inset, y
       // va en clases y no en `style` para no perder el salto de md.
-      className="sticky top-0 z-30 glass border-b border-[var(--border)] px-[max(var(--sal),1rem)] md:px-[max(var(--sal),2rem)]"
+      className="sticky top-0 z-30 glass border-b border-[var(--border)] pl-[max(var(--sal),1rem)] pr-[max(var(--sar),1rem)] md:pl-[max(var(--sal),2rem)] md:pr-[max(var(--sar),2rem)]"
       // Con viewport-fit=cover el contenido pinta bajo la barra de estado:
       // desplazamos la cabecera para que no quede tapada por el notch. El alto
-      // se declara sólo aquí (4rem + notch); una clase h-16 quedaría muerta.
+      // se declara sólo aquí (--topbar-h + notch); una clase h-16 quedaría muerta.
+      //
+      // Con las VARIABLES de globals.css y no con env() ni con 4rem a pelo: era
+      // la única pieza de la app que leía el inset por su cuenta. En el iPhone
+      // coinciden, pero todo lo que se coloca "debajo de la barra" (el cartel de
+      // set completado, los altos mínimos de los estados centrados) lo calcula
+      // con --sat y --topbar-h, y así la barra y esas cuentas salen del mismo
+      // número en vez de coincidir por casualidad.
       style={{
-        paddingTop: "env(safe-area-inset-top)",
-        height: "calc(4rem + env(safe-area-inset-top))",
+        paddingTop: "var(--sat)",
+        height: "calc(var(--topbar-h) + var(--sat))",
         // Estos dos pisan lo que trae `glass` (sombra fija) y la clase de borde.
         // La transición sólo nombra sombra y borde: el transform lo lleva
         // framer fotograma a fotograma y una transición de CSS encima lo
@@ -119,26 +135,67 @@ export default function TopBar() {
          *
          * `press` y no `press-flat` a propósito: aquí no hay ninguna carta ni
          * ninguna fotografía debajo, así que la escala del toque es inofensiva
-         * y es la que lleva el resto de la barra. */}
-        <Link
-          href="/"
-          aria-label="Ir al inicio"
-          className="press flex h-11 min-w-0 shrink items-center gap-2 overflow-hidden rounded-xl md:hidden"
-        >
-          <span className="btn-accent flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
-            <IconoMarca tam={16} className="text-[#04110c]" />
-          </span>
-          {/* truncate: es lo primero que cede si el saldo crece, y al llegar a
-              cero deja el icono intacto en lugar de empujar la fila.
-              Las dos tallas del rótulo están LAS DOS en el DOM y sólo se
-              esconde una con CSS; da igual de cara al lector de pantalla
-              porque el nombre accesible del enlace lo fija el aria-label de
-              arriba, y un aria-label gana siempre al contenido. */}
-          <span className="truncate t-cuerpo font-bold tracking-tight">
-            <span className="hidden min-[420px]:inline">Pokémon TCG</span>
-            <span className="hidden min-[360px]:inline min-[420px]:hidden">TCG</span>
-          </span>
-        </Link>
+         * y es la que lleva el resto de la barra.
+         *
+         * ---------------------------------------------------------------
+         * Y POR QUÉ AHORA ES TODO O NADA, Y LO DECIDE EL HUECO, NO LA VENTANA.
+         *
+         * Lo de arriba funcionaba para el invitado, que es con quien se midió.
+         * Con SESIÓN el grupo de controles gana la recompensa diaria con su
+         * racha y el avatar (unos 110px más), y entonces "encogerse hasta
+         * cero" se veía: el cuadro del icono es shrink-0 dentro de un
+         * overflow-hidden, así que la marca no desaparecía, se quedaba en una
+         * ASTILLA. A 375px con 1.250 monedas y racha ×7 quedaban 28px de un
+         * icono de 32; con 12.345 y ×12, 14px; a 320, 8px. Media marca cortada
+         * a cuchillo es peor que ninguna.
+         *
+         * Los cortes por ancho de ventana (360 / 420) no podían arreglarlo
+         * porque el dato que manda no es la ventana: es CUÁNTO HUECO DEJA el
+         * grupo, y eso depende de si hay sesión, de la racha y de las cifras
+         * del saldo. Así que la caja de la marca es un contenedor de consulta
+         * que se queda con lo que sobra de la fila (`flex-1`), y la marca
+         * pregunta por ese ancho:
+         *
+         *   menos de 32px   no se pinta nada: ni astilla ni medio icono;
+         *   desde 32px      el icono ENTERO, que es lo que mide;
+         *   desde 80px      icono + "TCG";
+         *   desde 136px     icono + "Pokémon TCG".
+         *
+         * Para el invitado sale lo mismo que antes a 375 y a 420, y a 320
+         * gana el "TCG" que cabía y no se pintaba. Con sesión, a 375px y un
+         * saldo de tres cifras quedan 37px y sale el icono; con cinco cifras
+         * quedan 18 y no sale nada (medido con una réplica del botón de la
+         * recompensa y del avatar). El enlace va DENTRO del contenedor y mide
+         * lo que su contenido: si fuera él quien se estira, todo el hueco
+         * vacío de la barra sería un botón de ir al inicio.
+         *
+         * El icono solo son 32×44px de dedo, 12 menos de ancho que la regla de
+         * los 44. Se acepta aquí y sólo aquí: es el caso en que no cabe más, y
+         * "ir al inicio" lo ofrece también la primera pestaña de la barra de
+         * abajo. Forzarle 44px lo montaría sobre el botón de buscar. */}
+        <div className="@container min-w-0 flex-1 md:hidden">
+          <Link
+            href="/"
+            aria-label="Ir al inicio"
+            className="press hidden h-11 items-center gap-2 rounded-xl @[32px]:inline-flex"
+          >
+            <span className="btn-accent flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
+              <IconoMarca tam={16} className="text-[#04110c]" />
+            </span>
+            {/* Las dos tallas del rótulo están LAS DOS en el DOM y sólo se
+                enseña una con CSS; da igual de cara al lector de pantalla
+                porque el nombre accesible del enlace lo fija el aria-label de
+                arriba, y un aria-label gana siempre al contenido. El tramo de
+                "TCG" lleva tope por arriba en la misma clase para no depender
+                del orden en que Tailwind emita las dos consultas. */}
+            <span className="hidden whitespace-nowrap t-cuerpo font-bold tracking-tight @[136px]:inline">
+              Pokémon TCG
+            </span>
+            <span className="hidden whitespace-nowrap t-cuerpo font-bold tracking-tight @[80px]:@max-[136px]:inline">
+              TCG
+            </span>
+          </Link>
+        </div>
 
         {/* El buscador es la herramienta principal de la app: en escritorio se
             le deja crecer con el ancho en vez de dejar un hueco muerto en medio
@@ -176,11 +233,26 @@ export default function TopBar() {
                 de desbordar la pantalla. Se sacrifica el adorno, nunca la
                 cifra, y el lector de pantalla sigue oyendo "Monedas". */}
             <IconoMoneda tam={16} className="accent hidden min-[360px]:block" />
-            <span className="sr-only">Monedas:</span>
+            {/* El lector de pantalla oye SIEMPRE la cifra entera; la abreviada
+                del móvil ("123k") es sólo para el ojo, y por eso el número
+                visible va con aria-hidden. */}
+            <span className="sr-only">
+              Monedas: {loaded ? formatNumber(coins) : "cargando"}
+            </span>
             {/* tnum + ancho mínimo: al pasar de "…" al saldo, y al
                 cambiar de cifras, la barra no da un salto. */}
-            <span className="min-w-[2.5ch] t-cuerpo-2 font-semibold tnum md:t-cuerpo">
-              {loaded ? formatNumber(coins) : "…"}
+            <span
+              aria-hidden="true"
+              className="min-w-[2.5ch] t-cuerpo-2 font-semibold tnum md:t-cuerpo"
+            >
+              {loaded ? (
+                <>
+                  <span className="md:hidden">{cifraCorta(coins)}</span>
+                  <span className="hidden md:inline">{formatNumber(coins)}</span>
+                </>
+              ) : (
+                "…"
+              )}
             </span>
           </div>
 
@@ -214,7 +286,11 @@ export default function TopBar() {
           </SignedOut>
 
           <SignedIn>
-            <div className="chip flex items-center justify-center p-1">
+            {/* Por debajo de 360px el avatar pierde el relleno de su chapa: son
+                8px, justo los que le faltaban a la fila para no desbordar a
+                320px con sesión, cinco cifras de saldo y racha de dos. Se
+                recorta el adorno, no un control. */}
+            <div className="chip flex items-center justify-center p-1 max-[359px]:p-0">
               <UserButton />
             </div>
           </SignedIn>

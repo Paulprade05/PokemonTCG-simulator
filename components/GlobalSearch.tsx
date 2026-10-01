@@ -2,10 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useUser } from "@clerk/nextjs";
 import { searchCardsInDB } from "../app/action";
 import CardDetailModal from "./CardDetailModal";
 import Portal from "./ui/Portal";
+import { useFondoQuieto } from "../hooks/useBloqueoScroll";
 import { useHaptics } from "../hooks/useHaptics";
+import { getCollection } from "../utils/storage";
 import { IconoAvanzar, IconoLupa, IconoVolver } from "./icons";
 import { D, EASE_OUT } from "../utils/motion";
 
@@ -20,12 +23,63 @@ interface Hit {
 
 const PAGE_SIZE = 10;
 
+/* ==================================================================== *
+ * LO QUE SE ENSEÑA CON EL CAMPO VACÍO
+ * ====================================================================
+ *
+ * Aquí había cuatro "ejemplos" y tres no devolvían nada: `name:pikachu
+ * subtypes:vmax`, `types:fire hp:[150 TO *]` y `nationalPokedexNumbers:[1 TO
+ * 151]` son sintaxis de api.pokemontcg.io, y desde que la búsqueda va contra
+ * la base propia (searchCardsInDB) el texto se compara tal cual con el NOMBRE
+ * de la carta. Quien copiaba el segundo recibía «Sin resultados.» habiendo
+ * cientos de Pikachu. Encima no se podían tocar: había que teclearlos.
+ *
+ * Ahora son nombres, que es lo único que el buscador entiende, y se tocan. Los
+ * cuatro se escriben igual en inglés y en español, así que valen con la app en
+ * cualquiera de los dos idiomas.
+ */
+const SUGERENCIAS = ["Charizard", "Pikachu", "Mewtwo", "Eevee"];
+
+/* Las últimas búsquedas que acabaron en una carta abierta. Se apunta al ABRIR
+   un resultado y no al teclear: así no se llena de prefijos a medio escribir
+   ("pik", "pika", "pikac") ni de búsquedas que no encontraron nada. */
+const CLAVE_RECIENTES = "tcg:busquedas";
+const MAX_RECIENTES = 5;
+const LARGO_RECIENTE = 40;
+
+/** Lo guardado puede venir de otra versión o estar manipulado: sólo cadenas,
+ *  recortadas y sin vacías. */
+function leerRecientes(): string[] {
+  try {
+    const crudo = JSON.parse(localStorage.getItem(CLAVE_RECIENTES) || "[]");
+    if (!Array.isArray(crudo)) return [];
+    const limpias = crudo
+      .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      .map((x) => x.trim().slice(0, LARGO_RECIENTE));
+    // Sin repetidas: cada una es la `key` de su chapa.
+    return [...new Set(limpias)].slice(0, MAX_RECIENTES);
+  } catch {
+    return [];
+  }
+}
+
+function guardarRecientes(lista: string[]): void {
+  try {
+    localStorage.setItem(CLAVE_RECIENTES, JSON.stringify(lista));
+  } catch {
+    /* modo privado o cuota agotada: las recientes son una comodidad, y sin
+       ellas el buscador funciona exactamente igual. */
+  }
+}
+
 export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | "bar" }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Hit[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchError, setSearchError] = useState(false);
+  /** Sube con cada "Reintentar": relanza la MISMA búsqueda sin tocar el texto. */
+  const [intento, setIntento] = useState(0);
   const [selected, setSelected] = useState<any | null>(null);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -33,6 +87,68 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
   const haptic = useHaptics();
   const inputRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const { isSignedIn } = useUser();
+  const [recientes, setRecientes] = useState<string[]>([]);
+  /**
+   * Ids que el INVITADO tiene en su colección local. Con sesión, `owned` lo
+   * calcula el servidor; sin ella devuelve siempre false, y al invitado le
+   * salían veladas como "no la posees" todas las cartas, también las suyas.
+   */
+  const [localesIds, setLocalesIds] = useState<ReadonlySet<string> | null>(null);
+  /**
+   * Se vuelve de una ficha en un dispositivo táctil: el campo NO se reenfoca.
+   * Reenfocarlo subía el teclado encima de la rejilla de resultados justo
+   * cuando el jugador volvía a ella para abrir otra carta. Con ratón o teclado
+   * físico sí se reenfoca, que ahí no tapa nada y permite seguir escribiendo.
+   */
+  const [sinTeclado, setSinTeclado] = useState(false);
+
+  // localStorage sólo dentro de un efecto, y sólo al abrir: lo que haya podido
+  // cambiar con el buscador cerrado (un sobre abierto, por ejemplo) se relee.
+  useEffect(() => {
+    if (!open) return;
+    setRecientes(leerRecientes());
+    if (isSignedIn) {
+      setLocalesIds(null);
+      return;
+    }
+    try {
+      setLocalesIds(
+        new Set(getCollection().filter((c) => (c.quantity ?? 1) > 0).map((c) => c.id)),
+      );
+    } catch {
+      setLocalesIds(null);
+    }
+  }, [open, isSignedIn]);
+
+  const laTiene = (c: Hit) => !!c.owned || (localesIds?.has(c.id) ?? false);
+
+  const recordar = (texto: string) => {
+    const t = texto.trim().slice(0, LARGO_RECIENTE);
+    // Una letra suelta no es una búsqueda que apetezca repetir.
+    if (t.length < 2) return;
+    const sig = [
+      t,
+      ...recientes.filter((r) => r.toLowerCase() !== t.toLowerCase()),
+    ].slice(0, MAX_RECIENTES);
+    setRecientes(sig);
+    guardarRecientes(sig);
+  };
+
+  const olvidarRecientes = () => {
+    haptic("tap");
+    setRecientes([]);
+    guardarRecientes([]);
+  };
+
+  const abrirCarta = (c: Hit) => {
+    haptic("select");
+    recordar(query);
+    setSinTeclado(window.matchMedia("(pointer: coarse)").matches);
+    // `owned` viaja ya resuelto: la ficha vela la carta si es false, y el
+    // invitado vería velada una carta que tiene.
+    setSelected({ ...c, owned: laTiene(c) });
+  };
 
   // Keyboard: Ctrl/Cmd+K opens, Esc cierra, ← → paginan
   useEffect(() => {
@@ -46,6 +162,11 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
         if (triggerRef.current?.offsetParent) setOpen(true);
       }
       if (!open) return;
+      // Con una ficha abierta encima, el teclado es suyo: ella ya escucha
+      // Escape para cerrarse y las flechas para pasar de carta. Sin esta línea
+      // un solo Escape cerraba la ficha Y el buscador, y había que volver a
+      // abrirlo y a buscar para mirar el resultado siguiente.
+      if (selected) return;
       if (e.key === "Escape") { setOpen(false); return; }
       // Con el campo enfocado (el caso normal: se autoenfoca al abrir) las
       // flechas mueven el cursor del texto; no deben paginar la rejilla por
@@ -57,23 +178,19 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, total]);
+  }, [open, total, selected]);
 
-  // Bloquear scroll del fondo mientras el buscador está abierto
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
-  }, [open]);
+  // La página de detrás, quieta mientras el buscador está abierto. El porqué
+  // de no escribir `body.style.overflow` a mano: hooks/useBloqueoScroll.ts.
+  useFondoQuieto(open);
 
   // iOS ignora autoFocus dentro de un elemento que acaba de aparecer: se
   // enfoca en el siguiente frame para que el teclado suba de verdad.
   useEffect(() => {
-    if (!open || selected) return;
+    if (!open || selected || sinTeclado) return;
     const id = window.setTimeout(() => inputRef.current?.focus(), 60);
     return () => window.clearTimeout(id);
-  }, [open, selected]);
+  }, [open, selected, sinTeclado]);
 
   // Reset page on query change
   useEffect(() => { setPage(1); }, [query]);
@@ -104,9 +221,18 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
       }
     }, 250);
     return () => { cancelled = true; clearTimeout(handle); };
-  }, [query, page]);
+  }, [query, page, intento]);
 
-  const openSearch = () => { haptic("tap"); setOpen(true); };
+  const openSearch = () => { haptic("tap"); setSinTeclado(false); setOpen(true); };
+  /** Una sugerencia o una reciente: rellena el campo y la búsqueda arranca sola
+   *  (el efecto de arriba la lanza al cambiar `query`). */
+  const buscar = (texto: string) => {
+    haptic("tap");
+    setQuery(texto);
+    // En iOS tocar un botón no le quita el foco al campo: sin esto el teclado
+    // se quedaba abierto encima de los resultados que se acaban de pedir.
+    inputRef.current?.blur();
+  };
   const closeSearch = () => { setOpen(false); };
   const goToPage = (next: number) => { haptic("tap"); setPage(next); };
 
@@ -166,7 +292,9 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
               <div
                 aria-hidden="true"
                 className="absolute inset-0 backdrop-blur-md"
-                style={{ background: "var(--scrim)" }}
+                // Un arrastre sobre el telón no tiene nada que desplazar: sin
+                // esto, en iOS se lo quedaba la página de detrás.
+                style={{ background: "var(--scrim)", touchAction: "none" }}
               />
               <motion.div
                 initial={{ opacity: 0, y: -10 }}
@@ -186,7 +314,7 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                     <IconoLupa tam={20} className="ink-faint" />
                     <input
                       ref={inputRef}
-                      autoFocus
+                      autoFocus={!sinTeclado}
                       type="search"
                       inputMode="search"
                       enterKeyHint="search"
@@ -199,7 +327,12 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                       onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
                       placeholder="Buscar carta..."
                       aria-label="Buscar carta"
-                      className="bg-transparent ink outline-none flex-1 t-base placeholder:text-[var(--ink-faint)] min-w-0 [&::-webkit-search-cancel-button]:hidden"
+                      // `min-h-11`: el campo medía 24px de alto dentro de una
+                      // fila de 44, y tocar 10px por encima o por debajo no lo
+                      // enfocaba. Desde que en táctil no se reenfoca solo al
+                      // volver de una ficha, hay que acertarle con el dedo. La
+                      // fila no crece: el botón «Cerrar» ya mide 44.
+                      className="bg-transparent ink outline-none flex-1 min-h-11 t-base placeholder:text-[var(--ink-faint)] min-w-0 [&::-webkit-search-cancel-button]:hidden"
                     />
                     <button
                       onClick={closeSearch}
@@ -216,30 +349,82 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                   style={{ paddingBottom: "max(1rem, calc(var(--sab) - var(--keyboard) + 1rem))" }}
                 >
                   {loading && <p className="t-cuerpo-2 ink-faint text-center py-8">Buscando…</p>}
+                  {/* CON SU "REINTENTAR". El error sólo decía que revisaras la
+                      conexión: para volver a buscar había que borrar una letra
+                      y escribirla otra vez, que es la única forma de mover el
+                      efecto. En la app instalada, saliendo de un túnel, eso es
+                      lo que se quiere hacer con un toque. */}
                   {!loading && searchError && (
-                    <p className="t-cuerpo-2 text-center py-8" style={{ color: "var(--danger-ink)" }}>
-                      No se pudo buscar. Revisa tu conexión.
-                    </p>
+                    <div className="flex flex-col items-center gap-3 py-8">
+                      <p className="t-cuerpo-2 text-center" style={{ color: "var(--danger-ink)" }}>
+                        No se pudo buscar. Revisa tu conexión.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          haptic("tap");
+                          setIntento((n) => n + 1);
+                        }}
+                        className="btn-ghost press control-44 t-cuerpo rounded-xl px-5 font-medium"
+                      >
+                        Reintentar
+                      </button>
+                    </div>
                   )}
                   {!loading && !searchError && query && results.length === 0 && (
                     <p className="t-cuerpo-2 ink-faint text-center py-8">Sin resultados.</p>
                   )}
+                  {/* Campo vacío: qué se puede buscar, y atajos para hacerlo
+                      sin teclear. Ver la nota de SUGERENCIAS, arriba. */}
                   {!loading && !searchError && !query && (
-                    <div className="t-cuerpo-2 ink-faint px-2 py-4 leading-relaxed">
-                      <p className="mb-2">Ejemplos:</p>
-                      {/* Sin `.tnum` en la lista: esto es sintaxis de consulta,
-                          no una columna de cifras, y unas cifras tabulares
-                          sobre "name:pikachu" no hacían absolutamente nada. Los
-                          ejemplos siguen saliendo en monoespaciada por estar en
-                          un <code> —el preflight de Tailwind se la da—, y ahora
-                          los puntos que hacen de viñeta ya no, que era lo único
-                          que la clase de familia de la lista aportaba. */}
-                      <ul className="space-y-1">
-                        <li>· <code className="ink-soft">charizard</code></li>
-                        <li>· <code className="ink-soft">name:pikachu subtypes:vmax</code></li>
-                        <li>· <code className="ink-soft">types:fire hp:[150 TO *]</code></li>
-                        <li>· <code className="ink-soft">nationalPokedexNumbers:[1 TO 151]</code></li>
-                      </ul>
+                    <div className="px-2 py-4">
+                      <p className="t-cuerpo-2 ink-soft leading-relaxed">
+                        Busca por el nombre de la carta. No hace falta
+                        escribirlo entero.
+                      </p>
+                      {recientes.length > 0 && (
+                        <>
+                          <div className="mt-5 flex items-center justify-between gap-2">
+                            <p className="t-etiqueta ink-soft">Recientes</p>
+                            {/* Los márgenes negativos meten los 44 px de zona
+                                tocable sin separar la fila de sus chapas. */}
+                            <button
+                              type="button"
+                              onClick={olvidarRecientes}
+                              className="control-44 -my-3 -mr-2 px-2 t-cuerpo-2 ink-soft hover:ink rounded-lg press"
+                            >
+                              Borrar
+                            </button>
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {recientes.map((r) => (
+                              <button
+                                key={r}
+                                type="button"
+                                onClick={() => buscar(r)}
+                                // `max-w-full` + `truncate`: una reciente de 40
+                                // caracteres no puede ensanchar el panel a 320.
+                                className="chip control-44 max-w-full px-4 t-cuerpo press"
+                              >
+                                <span className="min-w-0 truncate">{r}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                      <p className="t-etiqueta ink-soft mt-5">Prueba con</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {SUGERENCIAS.map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            onClick={() => buscar(s)}
+                            className="chip control-44 px-4 t-cuerpo press"
+                          >
+                            {s}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                   <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
@@ -249,28 +434,36 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                       // borrosa en iPhone (app/globals.css, junto a .press-flat).
                       <button
                         key={c.id}
-                        onClick={() => { haptic("select"); setSelected(c); }}
+                        onClick={() => abrirCarta(c)}
                         className="group surface-2 surface-hover border border-[var(--border)] rounded-xl p-1.5 transition text-left press-flat"
-                        title={c.owned ? "" : "No la posees"}
+                        title={laTiene(c) ? "" : "No la posees"}
                       >
                         {c.images?.small && (
                           // La carta que no se posee se apaga con un velo
                           // HERMANO del color del papel, no con `grayscale`
                           // sobre la imagen: un filter sobre la carta la
                           // rasteriza. El velo se retira al pasar el ratón.
-                          <div className="relative">
+                          // EL HUECO DE LA CARTA, RESERVADO. La imagen iba con
+                          // `h-auto`: hasta que cargaba, la celda medía 0 de
+                          // alto, así que las treinta entraban "en pantalla" a
+                          // la vez, el `loading="lazy"` las pedía todas de
+                          // golpe y la rejilla saltaba según iban llegando.
+                          <div className="relative aspect-[5/7] overflow-hidden rounded-[4.5%]">
                             <img
                               src={c.images.small}
                               alt={c.name}
                               loading="lazy"
                               decoding="async"
+                              // Mantener el dedo no debe levantar la miniatura
+                              // como imagen arrastrable (ver PokemonCard.tsx).
+                              draggable={false}
                               // El radio de una carta es 4,5%, no 6px sueltos:
                               // es el mismo que pintan PokemonCard, el álbum y
                               // la vitrina, y el velo de debajo tiene que
                               // llevarlo igual para no asomar por las esquinas.
-                              className="w-full h-auto rounded-[4.5%]"
+                              className="block h-full w-full rounded-[4.5%] object-cover"
                             />
-                            {!c.owned && (
+                            {!laTiene(c) && (
                               <div
                                 aria-hidden="true"
                                 className="absolute inset-0 rounded-[4.5%] pointer-events-none transition-opacity opacity-55 group-hover:opacity-20"
@@ -283,7 +476,7 @@ export default function GlobalSearch({ variant = "icon" }: { variant?: "icon" | 
                             en 3,66:1 y la regla de la casa lo limita a 12px en
                             adelante. Es el mismo ajuste que ya lleva la
                             etiqueta de la barra de pestañas. */}
-                        <p className={`t-micro truncate mt-1 ${c.owned ? "ink" : "ink-soft"}`}>{c.name}</p>
+                        <p className={`t-micro truncate mt-1 ${laTiene(c) ? "ink" : "ink-soft"}`}>{c.name}</p>
                         <p className="t-micro ink-soft truncate">{c.set?.name}</p>
                       </button>
                     ))}

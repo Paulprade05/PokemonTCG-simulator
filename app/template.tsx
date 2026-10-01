@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { usePathname } from "next/navigation";
 import { RAICES_DE_PESTANA } from "../components/nav-items";
 import { D, EASE_IOS } from "../utils/motion";
+import { isStandaloneDisplay } from "../utils/platform";
 
 /**
  * TRANSICIÓN DE RUTA CON DIRECCIÓN.
@@ -78,6 +79,9 @@ const DETALLES: { prefijo: string; pestana: number }[] = [
   { prefijo: "/graduacion", pestana: 1 },
   { prefijo: "/bazar", pestana: 2 },
   { prefijo: "/trainer", pestana: 3 },
+  // La página de una invitación de amistad cuelga de Social, como el álbum de
+  // un entrenador: llegar a ella desde la pestaña es bajar un nivel.
+  { prefijo: "/invitar", pestana: 3 },
 ];
 
 interface Ubicacion {
@@ -110,6 +114,48 @@ let rutaPrevia: string | null = null;
  * `rutaPrevia` para vivir en el módulo: tiene que sobrevivir al remontaje.
  */
 let primeraPintura = true;
+
+/**
+ * ¿LA PANTALLA QUE VA A MONTARSE LLEGA DEL HISTORIAL (atrás / adelante)?
+ *
+ * En Safari de iPhone, sin instalar, se vuelve deslizando desde el borde: iOS
+ * enseña la pantalla anterior con SU animación, y al soltar el dedo ya está a
+ * la vista y en su sitio. Entonces esta plantilla se remontaba y la hacía
+ * entrar otra vez desde `opacity: 0` y 22px de lado: la pantalla que ya se
+ * estaba viendo parpadeaba y se recolocaba. Animar dos veces la misma llegada
+ * es peor que no animarla.
+ *
+ * `popstate` es la señal: sólo salta con atrás/adelante, nunca con un enlace
+ * ni con la barra de pestañas, que conservan su entrada con dirección. El
+ * oyente se instala UNA vez, al cargar el módulo, por el mismo motivo que las
+ * dos banderas de arriba viven aquí: el componente se remonta en cada
+ * navegación.
+ *
+ * La bandera se baja en dos sitios. El normal es el efecto de montaje de la
+ * pantalla que llega. El de seguridad es cualquier `click`: un popstate que no
+ * remonta nada (un cambio de sólo el `#ancla`) la dejaría subida, y la
+ * siguiente navegación por enlace —que siempre empieza con un click— se
+ * quedaría sin su entrada.
+ *
+ * SÓLO FUERA DE LA APP INSTALADA. Instalada, quien vuelve es el gesto propio
+ * (components/ui/EdgeBackGesture.tsx), que llama a router.back() sin enseñar
+ * antes la pantalla anterior: ahí la entrada desde la izquierda sigue contando
+ * algo y se conserva. Se comprueba al montar, no aquí arriba, porque este
+ * módulo también se evalúa en el servidor.
+ */
+let vueltaPorHistorial = false;
+if (typeof window !== "undefined") {
+  window.addEventListener("popstate", () => {
+    vueltaPorHistorial = true;
+  });
+  window.addEventListener(
+    "click",
+    () => {
+      vueltaPorHistorial = false;
+    },
+    true,
+  );
+}
 
 /** Desplazamiento inicial en X. 0 = la pantalla entra sin lateral. */
 function desplazamiento(desde: string | null, hasta: string): number {
@@ -151,9 +197,17 @@ export default function Template({ children }: { children: React.ReactNode }) {
   // en cualquier montaje posterior ya está a `false`.
   const [esLaPrimera] = useState(() => primeraPintura);
 
+  // Y lo mismo con la vuelta por el historial: se LEE aquí, sin tocarla (un
+  // inicializador de estado tiene que ser puro: en desarrollo React lo llama
+  // dos veces), y la baja el efecto.
+  const [yaEstabaALaVista] = useState(
+    () => vueltaPorHistorial && !isStandaloneDisplay(),
+  );
+
   useEffect(() => {
     rutaPrevia = pathname;
     primeraPintura = false;
+    vueltaPorHistorial = false;
   }, [pathname]);
 
   // Sin lateral, la entrada es la de siempre: fundido con 10px de subida. Con
@@ -164,8 +218,10 @@ export default function Template({ children }: { children: React.ReactNode }) {
   return (
     <motion.div
       // `false` en la primera pintura del documento: se sirve y se hidrata ya
-      // en reposo (opacity 1, sin transform). Ver la cabecera.
-      initial={esLaPrimera ? false : { opacity: 0, x, y }}
+      // en reposo (opacity 1, sin transform). Ver la cabecera. Y `false`
+      // también cuando la pantalla vuelve del historial en el navegador: iOS
+      // ya la ha enseñado con su gesto (ver `vueltaPorHistorial`).
+      initial={esLaPrimera || yaEstabaALaVista ? false : { opacity: 0, x, y }}
       animate={{ opacity: 1, x: 0, y: 0 }}
       transition={{
         // La opacidad termina antes que el recorrido a propósito: el contenido

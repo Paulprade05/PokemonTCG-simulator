@@ -1,10 +1,18 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { useUser } from "@clerk/nextjs";
 import { getUserLang, getUserTheme, setUserLang, setUserTheme } from "../../app/action";
 import { useCurrency } from "../../hooks/useGameCurrency";
-import { useHaptics } from "../../hooks/useHaptics";
+import { useIdentidad } from "../../hooks/useIdentidad";
+import { hayVibracion, useHaptics } from "../../hooks/useHaptics";
+import { limpiarArchivadorLocal } from "../../utils/archivadorLocal";
 import { STARTING_COINS } from "../../utils/constanst";
 import {
   aplicarIdioma,
@@ -16,8 +24,21 @@ import {
   type Ajustes,
   type Idioma,
 } from "../../utils/settings";
+import { CLAVES_DE_QUIEN_JUEGA } from "../../utils/identidad";
+import { borrarLocal } from "../../utils/almacen";
+import { isIOS, isSafari, isStandaloneDisplay } from "../../utils/platform";
 import { clearCollection } from "../../utils/storage";
-import { IconoMarca } from "../icons";
+import {
+  EVENTO_APERTURA_RAPIDA,
+  guardarAperturaRapida,
+  leerAperturaRapida,
+} from "../tienda/memoria";
+import {
+  BUILD_ID,
+  buscarActualizacionYRecargar,
+  versionDelServiceWorker,
+} from "../../utils/versionApp";
+import { IconoMarca, IconoRefrescar } from "../icons";
 import CabeceraDeHoja from "./CabeceraDeHoja";
 import ConfirmSheet from "./ConfirmSheet";
 import Sheet from "./Sheet";
@@ -44,6 +65,22 @@ const aplicarTema = (t: Tema) => {
     localStorage.setItem("theme", t);
   } catch {}
 };
+
+/** Que el dispositivo vibre o no no cambia mientras la página vive: no hay nada
+ *  a lo que suscribirse. Es una constante de módulo porque useSyncExternalStore
+ *  se vuelve a suscribir cada vez que cambia la identidad de esta función. */
+const sinSuscripcion = () => () => {};
+
+/** La apertura rápida avisa con un evento cuando cambia (la portada pinta el
+ *  mismo interruptor): con esto las dos copias se mueven a la vez. */
+const suscribirseAperturaRapida = (alCambiar: () => void) => {
+  window.addEventListener(EVENTO_APERTURA_RAPIDA, alCambiar);
+  return () => window.removeEventListener(EVENTO_APERTURA_RAPIDA, alCambiar);
+};
+
+/** Safari SIN instalar: es donde lo que guarda un sitio caduca a los siete días
+ *  sin uso. La app instalada y los demás navegadores no tienen ese plazo. */
+const esSafariSinInstalar = () => (isIOS() || isSafari()) && !isStandaloneDisplay();
 
 // Hay dos hojas montadas a la vez (la de la cabecera y la del menú lateral):
 // sin este cerrojo de módulo, compartido por ambas, la preferencia de la cuenta
@@ -178,6 +215,15 @@ const estiloOpcion = (activo: boolean): CSSProperties =>
  */
 export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
   const { isSignedIn, isLoaded } = useUser();
+  /* QUIÉN MIRA, también sin red (utils/identidad.ts). `isLoaded` sigue mandando
+   * en lo que NECESITA a Clerk —leer y guardar el tema y el idioma de la
+   * cuenta—; la identidad decide lo que se enseña. Con `isLoaded` a secas, sin
+   * conexión el idioma se quedaba con los dos botones apagados y la sección
+   * Datos no salía nunca, también para el invitado, que no depende de Clerk
+   * para nada. */
+  const identidad = useIdentidad();
+  /** Cuenta confirmada o invitado: se sabe con quién se habla. */
+  const identidadFirme = identidad === "cuenta" || identidad === "invitado";
   const { setCoins } = useCurrency();
   const toast = useToast();
   const haptic = useHaptics();
@@ -283,14 +329,16 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
    * arriba —que antes hacía ganar siempre a la cuenta— el resultado era que
    * poner español no servía de nada: la página volvía sola a inglés.
    *
-   * Los botones están desactivados mientras `!isLoaded`, así que esta guarda es
-   * el segundo cerrojo, no el único.
+   * Los botones están desactivados mientras la identidad no es firme, así que
+   * esta guarda es el segundo cerrojo, no el único. Firme es "cuenta" o
+   * "invitado": a una cuenta sin red no se la trata como invitado —sería el
+   * mismo fallo de arriba—, pero al invitado sin red sí se le deja cambiar.
    */
   const cambiarIdioma = (i: Idioma) => {
-    if (!isLoaded) return;
+    if (!identidadFirme) return;
     if (i === idioma) return;
     haptic("select");
-    cambiarIdiomaYRecargar(i, Boolean(isSignedIn));
+    cambiarIdiomaYRecargar(i, identidad === "cuenta");
   };
 
   const alternar = (clave: "sonido" | "hapticos" | "reducirEfectos") => {
@@ -302,12 +350,79 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
 
   const [confirmarBorrado, setConfirmarBorrado] = useState(false);
   const borrarDatosLocales = () => {
+    // La vitrina del invitado también: si se quedara, tras borrar habría
+    // "20 fundas ocupadas" con 20 huecos en blanco y ninguna carta. Va ANTES
+    // que la colección porque `clearCollection` es quien avisa del cambio: quien
+    // escuche ese aviso y relea, que encuentre ya las dos cosas vacías.
+    limpiarArchivadorLocal();
     clearCollection();
+    // Y lo que la app recuerda de quien juega (búsquedas recientes, filtros de
+    // la colección): "borrar mis datos" que deja mis búsquedas no es borrar.
+    for (const clave of CLAVES_DE_QUIEN_JUEGA) borrarLocal(clave);
     // Reponer el saldo inicial equivale a empezar de cero: si sólo se borrara
     // la clave, el proveedor en memoria reescribiría el saldo viejo al persistir.
     setCoins(STARTING_COINS);
     toast("Datos de este dispositivo borrados", "success");
   };
+
+  /* LA VIBRACIÓN SÓLO SE OFRECE DONDE EXISTE. Safari en iOS no implementa
+   * `navigator.vibrate`, así que en un iPhone —el dispositivo principal de la
+   * app— el interruptor "Respuesta háptica" se encendía y se apagaba sin que
+   * pasara nada: un ajuste que promete algo que no ocurre. Se lee con
+   * useSyncExternalStore y no directamente en el render porque el servidor no
+   * tiene `navigator`: así el servidor y la hidratación dicen "no" los dos, y
+   * la respuesta de verdad entra justo después, sin desajuste. */
+  const puedeVibrar = useSyncExternalStore(sinSuscripcion, hayVibracion, () => false);
+
+  /* SALTAR LA ANIMACIÓN DEL SOBRE. El interruptor nació en la tienda, dentro de
+   * una expansión, que es donde se usa; pero un ajuste que cambia cómo se
+   * comporta la app se busca en Ajustes, y aquí no estaba. Es la misma
+   * preferencia (components/tienda/memoria.ts), no una copia: se lee del mismo
+   * sitio y el evento mantiene las dos filas de acuerdo. Con
+   * useSyncExternalStore, como la vibración: el servidor dice "no" y el valor
+   * de verdad entra tras hidratar, sin desajuste. */
+  const aperturaRapida = useSyncExternalStore(
+    suscribirseAperturaRapida,
+    leerAperturaRapida,
+    () => false,
+  );
+  const avisoDeSafari = useSyncExternalStore(sinSuscripcion, esSafariSinInstalar, () => false);
+
+  /* QUÉ VERSIÓN CORRE Y CÓMO RECARGARLA. En la app instalada no hay barra de
+   * direcciones ni gesto de recargar: si algo se quedaba raro tras un
+   * despliegue, la única salida era matar la app desde el selector, que mucha
+   * gente no sabe hacer. Y cuando alguien cuenta un fallo, no había forma de
+   * saber con qué versión lo estaba viendo.
+   *
+   * La versión del service worker se pregunta al abrir la hoja, no al montar:
+   * hay dos hojas montadas a la vez y casi nunca se abre ninguna. */
+  const [versionSw, setVersionSw] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let vigente = true;
+    versionDelServiceWorker().then((v) => {
+      if (vigente) setVersionSw(v);
+    });
+    return () => {
+      vigente = false;
+    };
+  }, [open]);
+  const [buscandoVersion, setBuscandoVersion] = useState(false);
+  const recargar = () => {
+    if (buscandoVersion) return;
+    haptic("select");
+    setBuscandoVersion(true);
+    // No hace falta volver a poner el estado en false: lo siguiente que ocurre
+    // es la recarga de la página.
+    buscarActualizacionYRecargar();
+  };
+  // Siete caracteres, como el hash corto de git: lo que cabe en un mensaje.
+  const versionVisible = [
+    BUILD_ID ? `Versión ${BUILD_ID.slice(0, 7)}` : null,
+    versionSw ? `caché ${versionSw}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const porcentajeVolumen = Math.round(ajustes.volumen * 100);
 
@@ -370,7 +485,7 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                   <button
                     type="button"
                     aria-pressed={idioma === "en"}
-                    disabled={!isLoaded}
+                    disabled={!identidadFirme}
                     onClick={() => cambiarIdioma("en")}
                     className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 t-cuerpo-2 font-medium transition-colors"
                     style={estiloOpcion(idioma === "en")}
@@ -384,7 +499,7 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                   <button
                     type="button"
                     aria-pressed={idioma === "es"}
-                    disabled={!isLoaded}
+                    disabled={!identidadFirme}
                     onClick={() => cambiarIdioma("es")}
                     className="touch-target press flex items-center justify-center gap-2 rounded-xl py-2.5 t-cuerpo-2 font-medium transition-colors"
                     style={estiloOpcion(idioma === "es")}
@@ -447,16 +562,19 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
             </div>
           </Seccion>
 
-          <Seccion titulo="Vibración">
-            <div className="surface overflow-hidden rounded-2xl">
-              <FilaInterruptor
-                titulo="Respuesta háptica"
-                descripcion="Vibración breve al tocar y al abrir sobres"
-                activo={ajustes.hapticos}
-                onToggle={() => alternar("hapticos")}
-              />
-            </div>
-          </Seccion>
+          {/* Sólo donde el dispositivo vibra: ver `puedeVibrar`. */}
+          {puedeVibrar && (
+            <Seccion titulo="Vibración">
+              <div className="surface overflow-hidden rounded-2xl">
+                <FilaInterruptor
+                  titulo="Respuesta háptica"
+                  descripcion="Vibración breve al tocar y al abrir sobres"
+                  activo={ajustes.hapticos}
+                  onToggle={() => alternar("hapticos")}
+                />
+              </div>
+            </Seccion>
+          )}
 
           <Seccion titulo="Efectos">
             <div className="surface overflow-hidden rounded-2xl">
@@ -466,15 +584,29 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                 activo={ajustes.reducirEfectos}
                 onToggle={() => alternar("reducirEfectos")}
               />
+              <div className="border-t border-[var(--border)]">
+                <FilaInterruptor
+                  titulo="Saltar la animación del sobre"
+                  descripcion="Un sobre suelto va directo al resumen, como el ×10"
+                  activo={aperturaRapida}
+                  onToggle={() => {
+                    guardarAperturaRapida(!aperturaRapida);
+                    haptic("select");
+                  }}
+                />
+              </div>
             </div>
           </Seccion>
 
-          {/* Hasta saber si hay sesión no se pinta nada: evita ofrecer el
-              borrado local a un usuario que en realidad tiene cuenta. */}
-          {isLoaded && (
+          {/* Hasta saber quién mira no se pinta nada: evita ofrecer el borrado
+              local a un usuario que en realidad tiene cuenta. Por lo mismo, el
+              botón de borrar sólo sale para el invitado FIRME: una cuenta sin
+              red ve el texto de la nube, no una papelera sobre la partida de
+              invitado de este dispositivo. */}
+          {identidad !== "resolviendo" && (
             <Seccion titulo="Datos">
               <div className="surface overflow-hidden rounded-2xl">
-                {isSignedIn ? (
+                {identidad !== "invitado" ? (
                   <div className="flex items-start gap-3 px-4 py-3.5">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="accent mt-0.5 h-5 w-5 shrink-0" aria-hidden="true">
                       <path d="M17.5 19a4.5 4.5 0 0 0 .42-8.98 7 7 0 0 0-13.6 1.8A4 4 0 0 0 6 19z" />
@@ -505,36 +637,82 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
                     Borrar datos de este dispositivo
                   </button>
                 )}
+                {/* EL PLAZO DE SAFARI, dicho donde se habla de los datos. Safari
+                    borra lo que guarda un sitio NO instalado si pasan siete días
+                    sin abrirlo, y la partida del invitado vive entera ahí: quien
+                    volvía a las dos semanas la encontraba vacía sin que nadie le
+                    hubiera avisado. Sólo al invitado y sólo en Safari sin
+                    instalar: a los demás no les pasa. */}
+                {identidad === "invitado" && avisoDeSafari && (
+                  <p className="ink-faint border-t border-[var(--border)] px-4 py-3 t-cuerpo-2 leading-relaxed">
+                    Como invitado, tu partida se guarda sólo en este navegador, y Safari
+                    la borra si pasas siete días sin abrir la app. Para conservarla,
+                    añádela a la pantalla de inicio o juega con una cuenta.
+                  </p>
+                )}
               </div>
             </Seccion>
           )}
 
           <Seccion titulo="Acerca de">
-            <div className="surface flex items-center gap-3 rounded-2xl px-4 py-3.5">
-              <div className="btn-accent flex h-9 w-9 shrink-0 items-center justify-center rounded-xl">
-                {/* Era el sobre de la marca copiado a mano, con trazo 2,2 y sin
-                    cabos redondos: es exactamente IconoMarca, el mismo que ya
-                    montan la barra superior y el menú lateral. */}
-                <IconoMarca tam={20} className="text-[#04110c]" />
+            <div className="surface overflow-hidden rounded-2xl">
+              <div className="flex items-center gap-3 px-4 py-3.5">
+                <div className="btn-accent flex h-9 w-9 shrink-0 items-center justify-center rounded-xl">
+                  {/* Era el sobre de la marca copiado a mano, con trazo 2,2 y sin
+                      cabos redondos: es exactamente IconoMarca, el mismo que ya
+                      montan la barra superior y el menú lateral. */}
+                  <IconoMarca tam={20} className="text-[#04110c]" />
+                </div>
+                <div className="min-w-0">
+                  <p className="ink t-cuerpo leading-tight font-semibold">
+                    Pokémon TCG Simulator
+                  </p>
+                  <p className="ink-faint mt-0.5 t-cuerpo-2">
+                    Datos e imágenes de pokemontcg.io
+                  </p>
+                  {/* Sólo si se sabe algo: en desarrollo no hay ni build ni
+                      service worker, y una línea "Versión —" no informa. */}
+                  {versionVisible && (
+                    <p className="ink-faint mt-0.5 t-cuerpo-2 tnum">
+                      {versionVisible}
+                    </p>
+                  )}
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="ink t-cuerpo leading-tight font-semibold">
-                  Pokémon TCG Simulator
-                </p>
-                <p className="ink-faint mt-0.5 t-cuerpo-2">
-                  Datos e imágenes de pokemontcg.io
-                </p>
-              </div>
+              <button
+                type="button"
+                onClick={recargar}
+                disabled={buscandoVersion}
+                className="touch-target flex w-full items-center gap-3 border-t border-[var(--border)] px-4 py-3 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--ink)_4%,transparent)] disabled:opacity-60"
+              >
+                <IconoRefrescar tam={20} className="ink-soft" />
+                <span className="min-w-0">
+                  <span className="ink block t-cuerpo font-medium">
+                    {buscandoVersion ? "Buscando actualización…" : "Buscar actualización y recargar"}
+                  </span>
+                  <span className="ink-faint mt-0.5 block t-cuerpo-2 leading-snug">
+                    Vuelve a cargar la app con la última versión
+                  </span>
+                </span>
+              </button>
             </div>
           </Seccion>
         </div>
 
         {/* Los pseudoelementos del deslizador no se pueden estilar en línea y
-            globals.css pertenece a otra pieza: el estilo viaja con la hoja. */}
+            globals.css pertenece a otra pieza: el estilo viaja con la hoja.
+
+            `touch-action:none`, como en el deslizador del bazar
+            (components/bazar/PublicarSheet.tsx): el <body> declara
+            `touch-action: pan-x pan-y` y esta hoja se desplaza en vertical, así
+            que iOS podía quedarse el arrastre del dedo como scroll y el volumen
+            no se movía, o se movía la hoja. Declarado SÓLO sobre el control, el
+            arrastre le llega entero y el resto de la hoja sigue desplazándose. */}
         <style>{`
           .ajustes-rango{
             -webkit-appearance:none; appearance:none;
             height:44px; background:transparent; cursor:pointer;
+            touch-action:none;
           }
           .ajustes-rango:disabled{ opacity:.35; cursor:default; }
           .ajustes-rango::-webkit-slider-runnable-track{
@@ -572,7 +750,7 @@ export default function SettingsSheet({ open, onClose }: SettingsSheetProps) {
         open={confirmarBorrado}
         onClose={() => setConfirmarBorrado(false)}
         title="¿Borrar los datos locales?"
-        description="Se eliminarán la colección y las monedas guardadas en este dispositivo. Esta acción no se puede deshacer."
+        description="Se eliminarán la colección, la vitrina y las monedas guardadas en este dispositivo. Esta acción no se puede deshacer."
         confirmLabel="Borrar datos"
         cancelLabel="Cancelar"
         destructive

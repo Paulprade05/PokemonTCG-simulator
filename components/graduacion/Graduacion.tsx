@@ -44,7 +44,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // `next/link` ya no se importa: el único enlace que quedaba era el "Ir al
 // inicio" del aviso de invitado, que ahora lo pinta components/ui/AvisoInvitado.
 import { motion } from "framer-motion";
-import { useUser } from "@clerk/nextjs";
 import {
   getCartasGraduables,
   getUserData,
@@ -55,11 +54,13 @@ import {
 import {
   costeDeGraduar,
   descuentoPorVolumen,
+  etiquetaNota,
   valorGraduado,
 } from "../../utils/graduacion";
 import { formatNumber } from "../../utils/format";
 import { D, EASE_OUT } from "../../utils/motion";
 import { useCurrency } from "../../hooks/useGameCurrency";
+import { useIdentidad } from "../../hooks/useIdentidad";
 import { useHaptics } from "../../hooks/useHaptics";
 import { useToast } from "../ui/Toast";
 import PageHeader from "../PageHeader";
@@ -67,7 +68,10 @@ import Loader from "../Loader";
 import HuecoCentrado from "../HuecoCentrado";
 import AvisoInvitado from "../ui/AvisoInvitado";
 import EstadoError from "../ui/EstadoError";
+import FilaAccesos from "../ui/FilaAccesos";
+import SinConexion from "../ui/SinConexion";
 import Segmentado from "../ui/Segmentado";
+import ConfirmSheet from "../ui/ConfirmSheet";
 import ListaGraduables from "./ListaGraduables";
 import BarraEnvio from "./BarraEnvio";
 import Revelacion from "./Revelacion";
@@ -114,13 +118,63 @@ const ERRORES_VENDER: Record<string, string> = {
   servidor: "No se pudo vender. Nada ha cambiado.",
 };
 
-type Estado = "cargando" | "listo" | "error" | "invitado";
+type Estado = "cargando" | "listo" | "error" | "invitado" | "sin-conexion";
+
+/* LA FILA "Cartas · Vitrina · Graduación", igual que en Colección y en la
+ * Vitrina. Faltaba aquí: se llegaba a Graduación tocándola en esa fila y, al
+ * llegar, la fila ya no estaba —sólo una flecha de volver—, así que saltar a la
+ * Vitrina eran dos pantallas. Los márgenes son los de las otras dos, para que
+ * caiga a la misma altura en las tres. NO se monta durante la ceremonia: ahí
+ * no hay ni pestañas, para que nadie se salga de un revelado a medias. */
+const ACCESOS = <FilaAccesos grupo="coleccion" className="-mt-2 mb-4 md:-mt-3 md:mb-6" />;
+/** Lo que hay sobre un HuecoCentrado: la cabecera (5,5rem) más esa fila (4rem). */
+const SOBRE_EL_HUECO = "9.5rem";
 type Pestana = "enviar" | "graduadas";
 
+/** Lo que hace falta para preguntar antes de vender, y para vender después. */
+interface VentaPendiente {
+  gradedId: number;
+  cardId: string;
+  copia: number;
+  nombre: string;
+  nota: number;
+  /** Lo que abonará la tienda según la última lectura; `undefined` si no llegó. */
+  importe: number | undefined;
+}
+
+/**
+ * El párrafo de la hoja de confirmar. Dice las tres cosas que hacen que esto
+ * no sea un toque cualquiera: qué copia es, cuánto se cobra y que la tasa de
+ * graduarla no vuelve. La cifra es la última que mandó el servidor; el abono
+ * de verdad lo calcula él al vender, y el aviso de después lo dice.
+ */
+function descripcionDeVenta(venta: VentaPendiente, tasa: number | undefined): string {
+  const partes = [
+    `Es tu copia n.º ${venta.copia}, con nota ${venta.nota} (${etiquetaNota(venta.nota)}).`,
+    venta.importe !== undefined
+      ? `La tienda te paga ${formatNumber(venta.importe)} monedas y la copia sale de tu vitrina.`
+      : "La tienda te la paga y la copia sale de tu vitrina.",
+  ];
+  if (tasa !== undefined && tasa > 0) {
+    partes.push(`Pagaste ${formatNumber(tasa)} de tasa por graduarla, y no se devuelven.`);
+  }
+  partes.push("No se puede deshacer.");
+  return partes.join(" ");
+}
+
+/**
+ * A partir de qué nota la ceremonia pregunta antes de vender. Es el tramo alto
+ * de `tintaDeNota` (Comun.tsx) y el mismo corte con el que Revelacion elige la
+ * vibración de "ha salido algo bueno": un 9 multiplica por 1,5 y un 10 por 3.
+ */
+const NOTA_QUE_SE_CONFIRMA = 9;
+
 export default function Graduacion() {
-  // Sólo la sesión: el `user` que se sacaba aquí era para recomponer semillas
-  // en el cliente, y eso ya no se hace (el porqué, unas líneas más abajo).
-  const { isSignedIn, isLoaded } = useUser();
+  // Sólo QUIÉN mira, no su id: el `user` que se sacaba aquí era para recomponer
+  // semillas en el cliente, y eso ya no se hace (el porqué, unas líneas más
+  // abajo). Y `useIdentidad` en vez de `isLoaded`/`isSignedIn`: sin red Clerk no
+  // contesta nunca y esto se quedaba en "Abriendo el graduador" para siempre.
+  const identidad = useIdentidad();
   const { coins, setCoins } = useCurrency();
   const haptic = useHaptics();
   const toast = useToast();
@@ -162,6 +216,8 @@ export default function Graduacion() {
 
   const [enviando, setEnviando] = useState(false);
   const [vendiendoId, setVendiendoId] = useState<number | null>(null);
+  /** La venta que espera el «sí» del jugador. Ver `pedirVenta`. */
+  const [pendienteDeVenta, setPendienteDeVenta] = useState<VentaPendiente | null>(null);
 
   // Los dos cerrojos. Ver la cabecera: el estado de arriba pinta, éstos mandan.
   const envioLockRef = useRef(false);
@@ -187,8 +243,14 @@ export default function Graduacion() {
 
   const cargar = useCallback(
     async (conSpinner = true) => {
-      if (!isLoaded) return;
-      if (!isSignedIn) {
+      if (identidad === "resolviendo") return;
+      if (identidad === "cuenta-sin-conexion") {
+        // Tiene cuenta y no hay red: ni es un invitado ni se le puede cargar
+        // nada. Se dice lo que pasa (components/ui/SinConexion.tsx).
+        setEstado("sin-conexion");
+        return;
+      }
+      if (identidad === "invitado") {
         // La graduación vive entera en el servidor: la colección del invitado
         // está en localStorage y no tiene ni copias numeradas ni monedero real.
         setEstado("invitado");
@@ -245,7 +307,7 @@ export default function Graduacion() {
         setEstado("error");
       }
     },
-    [isLoaded, isSignedIn, setCoins],
+    [identidad, setCoins],
   );
 
   useEffect(() => {
@@ -531,6 +593,70 @@ export default function Graduacion() {
     [haptic, toast, setCoins, cargar],
   );
 
+  /* ================================================================== *
+   * VENDER UNA GRADUADA SE PREGUNTA ANTES
+   * ==================================================================
+   *
+   * «Mis graduadas» es una rejilla de dos columnas en la que cada ficha acaba
+   * en un botón «Vender por N» a todo su ancho: al desplazarla con el pulgar,
+   * un toque que cayera en el botón vendía la copia —un 10 incluido— sin paso
+   * intermedio. No hay vuelta atrás (la fila se borra y la tasa de graduar ya
+   * se pagó), y mientras tanto retirar un anuncio del bazar, que no pierde
+   * nada, sí pedía confirmación. Estaba al revés.
+   *
+   * La hoja se monta AQUÍ y no en VitrinaGraduadas porque el dinero de esta
+   * pantalla lo mueve esta pieza (ver la cabecera): la ficha sólo avisa, igual
+   * que antes, y sigue sin saber si se pregunta o no.
+   *
+   * EN LA CEREMONIA SÓLO SE PREGUNTA POR LAS NOTAS ALTAS. Allí el jugador
+   * acaba de ver la nota y está eligiendo entre «Guardar» y «Vender», que es
+   * una decisión y no un toque perdido; y se pueden mandar cuarenta copias de
+   * una vez, así que una hoja por cada cuatro o cinco convertiría la limpieza
+   * de repetidas en un peaje (el mismo argumento que el «Revelar todas» de
+   * Revelacion.tsx). Lo que no se puede regalar por un dedo torpe es un 9 o un
+   * 10, y ésos sí se preguntan.
+   */
+  const pedirVenta = useCallback(
+    (venta: VentaPendiente) => {
+      // Con una venta en vuelo no se abre otra hoja: el cerrojo la rechazaría
+      // después del «sí», que es peor que no preguntar.
+      if (ventaLockRef.current) return;
+      haptic("tap");
+      setPendienteDeVenta(venta);
+    },
+    [haptic],
+  );
+
+  const hojaDeVenta = (
+    <ConfirmSheet
+      open={pendienteDeVenta !== null}
+      title={pendienteDeVenta ? `¿Vender ${pendienteDeVenta.nombre}?` : "¿Vender la copia?"}
+      description={
+        pendienteDeVenta
+          ? descripcionDeVenta(
+              pendienteDeVenta,
+              // La tasa sale de la fila de la vitrina (`graded_cards.coste`: lo
+              // que se cobró de verdad, con su descuento), no de la tarifa.
+              vitrina.find((v) => v.gradedId === pendienteDeVenta.gradedId)?.coste,
+            )
+          : undefined
+      }
+      confirmLabel={
+        pendienteDeVenta?.importe !== undefined
+          ? `Vender por ${formatNumber(pendienteDeVenta.importe)}`
+          : "Vender"
+      }
+      cancelLabel="Me la quedo"
+      destructive
+      onConfirm={() => {
+        if (pendienteDeVenta) {
+          vender(pendienteDeVenta.gradedId, pendienteDeVenta.cardId, pendienteDeVenta.copia);
+        }
+      }}
+      onClose={() => setPendienteDeVenta(null)}
+    />
+  );
+
   const guardar = useCallback(
     (resultado: Resultado) => {
       // Guardar no llama a nada: la copia ya está en la vitrina desde que se
@@ -576,6 +702,18 @@ export default function Graduacion() {
           vendiendoId={vendiendoId}
           onVender={(r) => {
             if (r.gradedId === undefined) return;
+            // Sólo las notas altas pasan por la hoja: ver `pedirVenta`.
+            if (r.nota >= NOTA_QUE_SE_CONFIRMA) {
+              pedirVenta({
+                gradedId: r.gradedId,
+                cardId: r.cardId,
+                copia: r.copia,
+                nombre: r.carta.name,
+                nota: r.nota,
+                importe: r.valorDeVentaAhora,
+              });
+              return;
+            }
             vender(r.gradedId, r.cardId, r.copia);
           }}
           onGuardar={guardar}
@@ -590,11 +728,28 @@ export default function Graduacion() {
           cobrado={cobrado}
           descuento={descuentoCobrado}
         />
+        {hojaDeVenta}
       </>
     );
   }
 
   if (estado === "cargando") return <Loader label="Abriendo el graduador" />;
+
+  if (estado === "sin-conexion") {
+    return (
+      <>
+        <PageHeader
+          title="Graduación"
+          subtitle="La nota que tu copia ya tenía"
+          back="/collection"
+        />
+        {ACCESOS}
+        <HuecoCentrado descuento={SOBRE_EL_HUECO}>
+          <SinConexion detalle="No se ha podido comprobar tu sesión, y las notas y el cobro viven en tu cuenta. El graduador se abrirá en cuanto vuelva la conexión." />
+        </HuecoCentrado>
+      </>
+    );
+  }
 
   if (estado === "invitado") {
     return (
@@ -604,6 +759,7 @@ export default function Graduacion() {
           subtitle="La nota que tu copia ya tenía"
           back="/collection"
         />
+        {ACCESOS}
         {/* EL AVISO, CENTRADO EN EL HUECO Y NO PEGADO ARRIBA.
          *
          * Esto era una tira de `p-5` con `items-start` colgada del primer hijo:
@@ -623,7 +779,7 @@ export default function Graduacion() {
          * El texto y el enlace no se tocan: son los mismos. El enlace sale del
          * párrafo y se convierte en el botón de salida, que es donde lo pone el
          * patrón y donde se ve sin tener que leerse el párrafo entero. */}
-        <HuecoCentrado>
+        <HuecoCentrado descuento={SOBRE_EL_HUECO}>
           <AvisoInvitado variante="hueco">
             La nota de una copia se calcula a partir de tu cuenta y de qué número de copia es, y
             el cobro se hace en el servidor. Como invitado tus cartas viven sólo en este
@@ -642,10 +798,11 @@ export default function Graduacion() {
           subtitle="La nota que tu copia ya tenía"
           back="/collection"
         />
+        {ACCESOS}
         {/* Mismo tratamiento que el aviso de invitado: es la otra pantalla de
             esta ruta que no tiene contenido debajo, y pegada arriba dejaba el
             mismo medio metro de fondo vacío. */}
-        <HuecoCentrado>
+        <HuecoCentrado descuento={SOBRE_EL_HUECO}>
           <EstadoError
             titulo="No se pudo abrir el graduador"
             onReintentar={() => {
@@ -665,6 +822,7 @@ export default function Graduacion() {
         subtitle="La nota que tu copia ya tenía"
         back="/collection"
       />
+      {ACCESOS}
 
       <div className="flex flex-col gap-4">
         {/* LAS DOS SECCIONES. Sin iconos: son dos sitios, no dos acciones.
@@ -732,11 +890,21 @@ export default function Graduacion() {
               cartas={vitrina}
               copiasPorCarta={copiasPorCarta}
               vendiendo={vendiendoId}
-              onVender={(c) => vender(c.gradedId, c.id, c.copia)}
+              onVender={(c) =>
+                pedirVenta({
+                  gradedId: c.gradedId,
+                  cardId: c.id,
+                  copia: c.copia,
+                  nombre: c.name,
+                  nota: c.nota,
+                  importe: c.valorDeVentaAhora,
+                })
+              }
             />
           </motion.div>
         )}
       </div>
+      {hojaDeVenta}
     </>
   );
 }

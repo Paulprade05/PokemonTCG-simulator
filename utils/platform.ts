@@ -15,6 +15,24 @@ export function isSafari(): boolean {
   return /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS|Chrome/.test(ua);
 }
 
+/**
+ * ¿Es el navegador embebido de otra app (Instagram, Facebook, Line, la app de
+ * Google, TikTok…)? Ahí "Añadir a pantalla de inicio" NO EXISTE: el aviso de
+ * instalar pedía algo imposible justo a quien llega por un enlace compartido,
+ * que es como llegan los amigos invitados. La única salida es abrir la página
+ * en Safari.
+ *
+ * Los que abren los enlaces en la vista de Safari del sistema (WhatsApp,
+ * Telegram) no se pueden distinguir por el agente de usuario y se quedan con
+ * las instrucciones normales.
+ */
+export function esNavegadorEmbebido(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /FBAN|FBAV|FB_IAB|Instagram|Line\/|GSA\/|musical_ly|TikTok|Twitter|LinkedInApp|Snapchat|Pinterest/.test(
+    navigator.userAgent,
+  );
+}
+
 export function isStandaloneDisplay(): boolean {
   if (typeof window === "undefined") return false;
   return (

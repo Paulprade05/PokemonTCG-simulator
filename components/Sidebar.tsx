@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import { SignedIn } from "@clerk/nextjs";
 import { useState, useSyncExternalStore } from "react";
 import { NAV_ITEMS } from "./nav-items";
-import { CLASES_PILDORA_NAV } from "./BottomNav";
+import { CLASES_INSIGNIA_NAV, CLASES_PILDORA_NAV } from "./BottomNav";
+import { textoDeInsignia, useSocialPendientes } from "../hooks/useSocialPendientes";
 import SettingsSheet from "./ui/SettingsSheet";
 import SidebarExtras from "./SidebarExtras";
 import { IconoAjustes, IconoMarca } from "./icons";
@@ -20,6 +20,7 @@ const SIN_SUSCRIPCION = () => () => {};
 export default function Sidebar() {
   const pathname = usePathname();
   const [ajustesAbiertos, setAjustesAbiertos] = useState(false);
+  const { total: pendientes } = useSocialPendientes();
 
   // El año se calcula tras montar, nunca durante el render: el servidor de
   // Vercel corre en UTC y el navegador en la zona del usuario, así que en
@@ -39,11 +40,15 @@ export default function Sidebar() {
 
   const renderItem = (it: (typeof NAV_ITEMS)[number]) => {
     const active = it.match(pathname);
+    const insignia = it.pendientes ? pendientes : 0;
     return (
       <Link
         key={it.href}
         href={it.href}
         aria-current={active ? "page" : undefined}
+        // Igual que en la barra inferior: con insignia el nombre accesible dice
+        // cuántos, y la píldora queda oculta al lector.
+        aria-label={insignia > 0 ? `${it.label}, ${insignia} ${insignia === 1 ? "pendiente" : "pendientes"}` : undefined}
         // press-flat, igual que en la barra inferior: en escritorio se toca con
         // ratón, pero el hundimiento sirve de acuse de recibo en el clic y no
         // escala nada (ver la nota de .press-flat en globals.css).
@@ -81,6 +86,13 @@ export default function Sidebar() {
         <span className={`relative z-10 t-cuerpo font-medium transition-colors ${active ? "ink" : "ink-soft group-hover:text-[var(--ink)]"}`}>
           {it.label}
         </span>
+        {insignia > 0 && (
+          // Al final de la fila, que es donde un menú lateral lleva sus
+          // recuentos; `ml-auto` la empuja al borde sin tocar el rótulo.
+          <span aria-hidden="true" className={`relative z-10 ml-auto ${CLASES_INSIGNIA_NAV}`}>
+            {textoDeInsignia(insignia)}
+          </span>
+        )}
       </Link>
     );
   };
@@ -93,7 +105,16 @@ export default function Sidebar() {
     // recetas distintas para el mismo material se notan justo donde se tocan,
     // en la esquina de arriba a la izquierda. Aquí no hay ninguna carta debajo,
     // así que el backdrop-filter es seguro (la prohibición es sobre las cartas).
-    <aside className="hidden md:flex fixed left-0 top-0 bottom-0 z-40 w-60 flex-col px-3 py-5 glass border-r border-[var(--border)]">
+    //
+    // LOS INSETS DE LA PANTALLA: un iPhone girado mide 852 px de ancho y entra
+    // en este diseño de escritorio. Con la isla a la izquierda (inset de unos
+    // 59 px) los iconos y los rótulos del menú quedaban debajo de ella, y el
+    // botón de Ajustes, al pie, pisaba el indicador de inicio. El relleno
+    // izquierdo y el inferior suman ahora el inset; sin inset son los 12 y
+    // 20 px de siempre. El ancho NO cambia (la columna de contenido se
+    // desplaza esos mismos 240 px en AppShell), así que en apaisado el menú
+    // pierde ancho útil, y le sobra: su fila más larga pide 160 px.
+    <aside className="hidden md:flex fixed left-0 top-0 bottom-0 z-40 w-60 flex-col pl-[max(var(--sal),0.75rem)] pr-3 pt-[max(var(--sat),1.25rem)] pb-[calc(1.25rem+var(--sab))] glass border-r border-[var(--border)]">
       {/* Brand */}
       <Link href="/" className="press-flat flex items-center gap-2.5 px-3 mb-8">
         <div className="w-9 h-9 rounded-xl btn-accent flex items-center justify-center shrink-0">
@@ -116,9 +137,9 @@ export default function Sidebar() {
           este bloque crece y empuja el pie al fondo. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <nav className="flex flex-col gap-1">
-          {NAV_ITEMS.map((it) =>
-            it.requireAuth ? <SignedIn key={it.href}>{renderItem(it)}</SignedIn> : renderItem(it),
-          )}
+          {/* Las cuatro siempre, sin esperar a Clerk: ver la pestaña Social
+              de components/nav-items.tsx. */}
+          {NAV_ITEMS.map(renderItem)}
         </nav>
 
         <SidebarExtras />

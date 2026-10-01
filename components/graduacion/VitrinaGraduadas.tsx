@@ -39,6 +39,11 @@ interface Props {
   copiasPorCarta: Record<string, number>;
   /** gradedId de la venta en vuelo, o null. */
   vendiendo: number | null;
+  /**
+   * Avisa de que se quiere vender; NO vende. El botón de cada ficha ocupa todo
+   * su ancho en una rejilla que se desplaza con el pulgar, así que quien recibe
+   * esto (Graduacion.tsx) pregunta antes con una hoja: ver `pedirVenta` allí.
+   */
   onVender: (copia: CopiaGraduada) => void;
 }
 

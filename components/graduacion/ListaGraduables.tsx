@@ -176,13 +176,25 @@ export default function ListaGraduables({
               // Tope al retardo, como en el resumen del sobre: sin él la fila
               // veinticuatro no aparecería hasta pasado un segundo largo.
               transition={{ duration: D.base, delay: Math.min(i, 10) * 0.025 }}
-              className="surface rounded-2xl p-3 flex flex-wrap items-center gap-3"
+              /* DOS PISOS DECLARADOS, Y NO `flex-wrap`.
+               *
+               * Con `flex-wrap` la fila se partía por donde le pillaba y en un
+               * iPhone (320-390 px) salían TRES pisos: miniatura y texto; «Por
+               * copia» y el contador empujados a la derecha; y el atajo solo,
+               * a la izquierda, en una tercera línea. 201 px por fila: dos o
+               * tres cartas por pantalla con la barra de coste pegada debajo.
+               *
+               * Ahora el móvil tiene dos pisos fijos —arriba qué carta es,
+               * abajo lo que cuesta y cuántas mandas— y de `sm` en adelante
+               * todo cabe en una línea, como antes. */
+              className="surface rounded-2xl p-3 flex flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-3"
               style={
                 elegidas > 0
                   ? { borderColor: "color-mix(in srgb, var(--accent) 45%, transparent)" }
                   : undefined
               }
             >
+              <div className="flex min-w-0 items-center gap-3 sm:flex-1">
               {/* La miniatura va por PokemonCard con interactive={false} y
                   reveal: es el camino rápido, una imagen dentro de un marco, sin
                   motion values ni capa compositada. */}
@@ -190,7 +202,7 @@ export default function ListaGraduables({
                 <PokemonCard card={carta} reveal interactive={false} />
               </div>
 
-              <div className="flex-1 min-w-[7.5rem]">
+              <div className="min-w-0 flex-1">
                 <p className="t-cuerpo font-semibold truncate">{carta.name}</p>
                 {/* "TARIFA" Y NO "VALE", que es lo que ponía y no era verdad.
                     Este número es el precio plano de la rareza, o sea la base
@@ -205,12 +217,17 @@ export default function ListaGraduables({
                 </p>
                 <p className="t-meta ink-soft tnum mt-0.5">
                   {formatNumber(carta.libres)} {carta.libres === 1 ? "copia libre" : "copias libres"}
-                  {carta.graduadas > 0 && ` · ${formatNumber(carta.graduadas)} ya en la vitrina`}
+                  {carta.graduadas > 0 && ` · ${formatNumber(carta.graduadas)} ya graduadas`}
                 </p>
               </div>
+              </div>
 
-              <div className="flex items-center gap-2 ml-auto">
-                <div className="text-right">
+              {/* EL PISO DE ABAJO: precio a un lado, contador al otro y el atajo
+                  en medio. `justify-between` en móvil para que el contador —lo
+                  que más se toca— caiga siempre bajo el pulgar derecho, haya o
+                  no atajo en la fila. */}
+              <div className="flex items-center justify-between gap-2 sm:shrink-0 sm:justify-end sm:gap-3">
+                <div className="min-w-0 sm:text-right">
                   <p className="t-etiqueta ink-soft">Por copia</p>
                   <p className="t-cuerpo font-semibold tnum" style={rebajada ? { color: "var(--ok)" } : undefined}>
                     {formatNumber(precio)}
@@ -225,10 +242,36 @@ export default function ListaGraduables({
                   )}
                 </div>
 
+                {/* Atajo para las repetidas de verdad: con nueve copias libres,
+                    llegar a nueve a base de toques es un castigo.
+
+                    `touch-target`: medía 29 px de alto y es un control que
+                    cambia lo que se va a cobrar, a un dedo de distancia del
+                    «+». Y EN MÓVIL DICE «Todas»: el rótulo entero mide 136 px,
+                    y junto al precio y al contador (124) no cabe en ninguna
+                    pantalla de menos de 400 —era justo lo que lo mandaba a un
+                    tercer piso—. El nombre completo sigue en `aria-label` y, de
+                    `sm` en adelante, a la vista. */}
+                {carta.libres > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      haptic("select");
+                      onFijar(carta.id, Math.min(carta.libres, elegidas + hueco));
+                    }}
+                    disabled={!puedeSubir}
+                    aria-label={`Añadir todas las copias de ${carta.name} que quepan en el envío`}
+                    className="chip ink-soft t-meta px-2.5 sm:px-3 press touch-target shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span className="sm:hidden">Todas</span>
+                    <span className="hidden sm:inline">Todas las que quepan</span>
+                  </button>
+                )}
+
                 <div
                   role="group"
                   aria-label={`Copias de ${carta.name} a graduar`}
-                  className="flex items-center gap-1"
+                  className="flex shrink-0 items-center gap-1"
                 >
                   <button
                     type="button"
@@ -261,22 +304,6 @@ export default function ListaGraduables({
                   </button>
                 </div>
               </div>
-
-              {/* Atajo para las repetidas de verdad: con nueve copias libres,
-                  llegar a nueve a base de toques es un castigo. */}
-              {carta.libres > 1 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    haptic("select");
-                    onFijar(carta.id, Math.min(carta.libres, elegidas + hueco));
-                  }}
-                  disabled={!puedeSubir}
-                  className="chip ink-soft t-meta px-3 py-1.5 press disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  Todas las que quepan
-                </button>
-              )}
             </motion.li>
           );
         })}

@@ -82,7 +82,14 @@
   --bg-2: #ece5d4;
   --ink: #2b241a;
   --ink-soft: #6d6353;      /* 5.56:1 sobre --surface */
-  --ink-faint: #8a8071;     /* 3.66:1 sobre --surface */
+  /* Era #8a8071 (3,66:1): servía para un icono, no para texto, y se usa como
+     texto en unos 65 sitios (las descripciones de los ajustes, "Buscando…",
+     "Sin resultados", pies de 12 px). Se arregla en el token y no persiguiendo
+     los usos uno a uno. El valor es el más claro que pasa de 4,5:1 sobre los
+     TRES papeles en los que cae texto, no sólo sobre --surface: 4,93 ahí, 4,56
+     sobre --bg y 4,53 sobre --surface-2. Sigue un escalón por debajo de
+     --ink-soft, así que la jerarquía se conserva. */
+  --ink-faint: #756b5c;     /* 4.93:1 sobre --surface */
   --surface: #fbf8f0;
   --surface-2: #f4eee1;
   --surface-text: #2b241a;  /* 14.4:1 sobre --surface */
@@ -131,7 +138,9 @@ html[data-theme="dark"] {
   --bg-2: #1a1710;
   --ink: #efe9db;
   --ink-soft: #a89f8d;      /* 6.69:1 sobre --surface */
-  --ink-faint: #7d7565;     /* 3.84:1 sobre --surface */
+  /* Era #7d7565 (3,84:1). Mismo arreglo y mismo criterio que en claro: 4,94
+     sobre --surface, 5,28 sobre --bg y 4,57 sobre --surface-2. */
+  --ink-faint: #908777;     /* 4.94:1 sobre --surface */
   --surface: #1c1913;
   --surface-2: #242017;
   --surface-text: #efe9db;  /* 14.5:1 sobre --surface */
@@ -198,6 +207,10 @@ html[data-theme="dark"] body {
   --default-transition-timing-function: var(--ease-out);
 }
 
+/* OJO: esta regla tiene pareja en app/layout.tsx. Next 16 sólo apaga el scroll
+   suave durante un cambio de ruta si <html> lleva data-scroll-behavior="smooth";
+   sin el atributo, cada pantalla nueva llegaba desplazada y subía animada. Si
+   algún día se quita esta línea, se quita también el atributo. */
 html { scroll-behavior: smooth; }
 
 body {
@@ -226,6 +239,16 @@ body {
 }
 
 button, a, select, input { -webkit-tap-highlight-color: transparent; }
+
+/* LAS IMÁGENES NO SE ARRASTRAN. Mantener el dedo sobre una carta tiene que
+   abrir su hoja de acciones; en Safari, además, despegaba la miniatura como
+   una imagen arrastrable (la sombra translúcida que sigue al dedo) y el gesto
+   se lo quedaba el sistema. `draggable={false}` lo apaga carta a carta, pero
+   sólo donde alguien se acordó de ponerlo (PokemonCard, la ficha, el
+   buscador): esto lo cierra para todas, también para las de pantallas que no
+   lo llevan y para las que se escriban después. Sólo WebKit lo entiende, que
+   es justo donde pasa; los demás motores lo ignoran. */
+img { -webkit-user-drag: none; }
 
 /* Excepción a la regla de arriba: en un campo de escritura hay que poder
    seleccionar, cortar y pegar. Sin esto, el buscador de la colección y el de
@@ -368,7 +391,7 @@ input, textarea, [contenteditable="true"] {
 
   /* PRESS SIN ESCALA — la versión que se puede poner encima de una carta.
      `.press` escala, y escalar (o cualquier ancestro que escale) es la trampa
-     documentada en PokemonCard.tsx:140-163: WebKit promociona la capa, la
+     documentada en PokemonCard.tsx, en la nota de `settled`: WebKit promociona la capa, la
      rasteriza a una escala fija y la ilustración sale borrosa en el iPhone.
      Ese es el motivo de que media aplicación no pueda usar `.press` y se quede
      sin respuesta al toque. Esta variante da el mismo acuse de recibo sólo con
@@ -519,12 +542,38 @@ html.lenis, html.lenis body { height: auto; }
   --app-height: 100dvh;
   --keyboard: 0px;
 
-  /* Alturas del cromo fijo (TopBar h-16, BottomNav ~59px). */
+  /* Alturas del cromo fijo. --topbar-h es la que usa la propia TopBar para
+     declarar su alto (más --sat), así que no puede desajustarse. --tabbar-h es
+     una MEDIDA de BottomNav, que no declara alto: 16 de relleno + 20 de icono
+     + 4 de separación + 13 de etiqueta + 2 de borde = 55 px, medido a 375.
+     Decía 59, y esos 4 px de más iban a parar al hueco inferior de TODAS las
+     páginas y a la posición del aviso de instalar. Si la barra de pestañas
+     cambia de alto, este número se cambia con ella. */
   --topbar-h: 4rem;
-  --tabbar-h: 59px;
+  --tabbar-h: 55px;
 
-  /* Hueco inferior para que la barra de pestañas no tape contenido. */
-  --content-bottom: calc(var(--tabbar-h) + var(--sab) + 12px);
+  /* DÓNDE SE APOYA EL AVISO DE INSTALAR (components/pwa/InstallPrompt.tsx):
+     8 px por encima de la barra de pestañas. Antes leía --content-bottom + 12,
+     que ya llevaba otros 12 dentro, y quedaba a 28 px. Va en variable y no en
+     su `style` porque en escritorio no hay barra de pestañas y un style en
+     línea no admite media queries. */
+  --install-prompt-bottom: calc(var(--tabbar-h) + var(--sab) + 8px);
+
+  /* Hueco inferior para que la barra de pestañas no tape contenido.
+   *
+   * --install-prompt-h LO ESCRIBE EL AVISO DE INSTALAR mientras está a la
+   * vista (su alto real más los 8 px de arriba) y lo retira al irse; sin
+   * aviso no existe y vale 0. Es una capa fija de unos 80-160 px sobre la
+   * barra de pestañas, y como el hueco de las páginas sólo reservaba la barra,
+   * lo último de cada pantalla quedaba DEBAJO del aviso sin scroll posible que
+   * lo descubriera: los botones de compra de la tienda, la paginación del
+   * bazar. Sumado aquí, sube de una vez todo lo que cuelga de esta variable:
+   * el relleno de <main> (.pb-nav), la barra de coste de la graduación y los
+   * cálculos de alto mínimo de los estados centrados.
+   *
+   * Para quien escriba una capa propia pegada al pie: usar --content-bottom y
+   * no recalcular barra + inset a mano, o volverá a quedar bajo el aviso. */
+  --content-bottom: calc(var(--tabbar-h) + var(--sab) + 12px + var(--install-prompt-h, 0px));
 }
 
 /* En escritorio no hay barra de pestañas (BottomNav es md:hidden), así que ese
@@ -534,9 +583,40 @@ html.lenis, html.lenis body { height: auto; }
    encima es letra muerta. */
 @media (min-width: 768px) {
   :root {
-    --content-bottom: 3rem;
+    --content-bottom: calc(3rem + var(--install-prompt-h, 0px));
+    --install-prompt-bottom: 1rem;
   }
 }
+
+/* ============================================================
+   LA ESCALA DE CAPAS — quién va encima de quién
+   ============================================================
+   No son variables porque Tailwind las quiere como clase (z-30, z-[120]);
+   esto es el mapa, para que el siguiente número no se elija a ojo.
+
+     dentro de <main>   lo que la página quiera. <main> lleva `isolate`
+                        (components/AppShell.tsx), así que sus z-index son
+                        LOCALES: un z-30 o un z-40 de una página ya no puede
+                        pasar por encima del cromo.
+     30                 barra superior
+     40                 barra de pestañas (móvil) y menú lateral (escritorio)
+     50                 aviso de instalar la PWA
+     60                 aviso de versión nueva
+                        (components/pwa/ServiceWorkerRegister.tsx): por encima
+                        del cromo y por debajo de cualquier capa a pantalla
+                        completa, que es lo que tiene delante el jugador
+     100                ficha de carta, intercambio, "Preparando cartas"
+     110                buscador global
+     120                hojas (Sheet) y apertura de sobre
+     130                indicador del gesto de volver
+     140                zoom de carta
+     150                franja de la barra de estado (más abajo, sólo instalada
+                        y en tema claro)
+     200                avisos (Toast) y cartel de set completado
+
+   DOS REGLAS: todo lo que esté en 100 o más cuelga de <body> por Portal
+   (components/ui/Portal.tsx), nunca de la página; y una capa de página que
+   necesite tapar el cromo se saca por Portal, no se le sube el número. */
 
 /* Con el teclado abierto la barra se retira: el hueco pasa a ser mínimo. */
 html[data-keyboard="open"] {
@@ -574,9 +654,46 @@ select optgroup {
 /* Comportamiento de app nativa sólo cuando está instalada: en el navegador
    se respeta el pull-to-refresh y el rebote que el usuario espera. */
 @media (display-mode: standalone) {
+  /* EN `html` ADEMÁS DE EN `body`. Estaba sólo en body y no hacía nada: el
+     valor que cuenta para el rebote del documento es el del elemento raíz, y
+     WebKit no lo propaga desde body. Resultado en el iPhone: al tirar hacia
+     abajo en lo alto de una página la barra superior (sticky) bajaba con el
+     contenido y la de pestañas (fixed) se quedaba quieta. Las hojas no cambian:
+     su `.scroll-area` ya usa `contain`. */
+  html {
+    overscroll-behavior-y: none;
+  }
   body {
     overscroll-behavior-y: none;
     -webkit-touch-callout: none;
+  }
+
+  /* LA BARRA DE ESTADO EN TEMA CLARO.
+   *
+   * La app se instala con `black-translucent` (app/layout.tsx): iOS pinta la
+   * hora, la cobertura y la batería SIEMPRE en blanco y deja ver la página por
+   * debajo. En tema oscuro va bien. En tema claro lo que hay debajo es papel
+   * crema —la barra superior, la apertura de sobre, el buscador a pantalla
+   * completa— y blanco sobre crema no se lee. No se puede cambiar el estilo
+   * según el tema: iOS lo lee una sola vez, al instalar.
+   *
+   * Lo que sí se puede es poner debajo algo oscuro: una franja fija del alto
+   * exacto de la barra de estado. Es `position: fixed` sobre el viewport, sin
+   * transform ni filtro, y no es ancestro de nada, así que no toca la nitidez
+   * de las cartas. Z-150: por encima del buscador y de la apertura de sobre
+   * (que también pintan crema ahí arriba) y por debajo de los avisos, que de
+   * todos modos empiezan 10 px más abajo. En apaisado, en escritorio y en
+   * Android --sat vale 0 y la franja no existe. */
+  html[data-theme="light"] body::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--sat);
+    background: #14120c;
+    z-index: 150;
+    pointer-events: none;
   }
 }
 
@@ -749,12 +866,26 @@ button, a, [role="button"] { touch-action: manipulation; }
    cualquier clase de Tailwind, sólo se emiten LAS QUE ALGUIEN USA. Buscar
    `.t-display` en la hoja compilada y no encontrarla no significa que
    esté rota; significa que todavía no la usa nadie. Aparecerá sola en
-   cuanto el primer barrido la escriba. */
-@utility t-micro    { font-size: 10px; line-height: var(--tw-leading, 1.3); }
-@utility t-meta     { font-size: 11px; line-height: var(--tw-leading, 1.35); }
-@utility t-cuerpo-2 { font-size: 12px; line-height: var(--tw-leading, 1.45); }
-@utility t-cuerpo   { font-size: 14px; line-height: var(--tw-leading, 1.5); }
-@utility t-base     { font-size: 16px; line-height: var(--tw-leading, 1.5); }
+   cuanto el primer barrido la escriba.
+
+   --escala-texto: EL ENCHUFE PARA UN "TAMAÑO DEL TEXTO", HOY SIN NADA
+   CONECTADO. El zoom de página está apagado a propósito (app/layout.tsx) y
+   las tallas van en px, así que quien ve mal de cerca no tiene forma de
+   agrandar los 10-12 px: ni el pellizco ni el "texto más grande" de iOS
+   llegan aquí. La salida que no descoloca la app es un ajuste propio que
+   agrande SÓLO la letra. Las cinco tallas de lectura y la etiqueta se
+   multiplican por esta variable, que sin declarar vale 1: hoy no cambia ni
+   un píxel. El día que se decida, basta con que la hoja de ajustes escriba
+   `data-texto="grande"` en <html> (la regla está justo debajo). Es
+   font-size, no scale ni zoom: no toca la nitidez de las cartas. Los dos
+   títulos se quedan fijos: a 20 y 24 px ya se leen y son los que antes
+   desbordan una cabecera. Antes de encenderlo hay que repasar a 375 px la
+   barra de pestañas, los chips y los interruptores. */
+@utility t-micro    { font-size: calc(10px * var(--escala-texto, 1)); line-height: var(--tw-leading, 1.3); }
+@utility t-meta     { font-size: calc(11px * var(--escala-texto, 1)); line-height: var(--tw-leading, 1.35); }
+@utility t-cuerpo-2 { font-size: calc(12px * var(--escala-texto, 1)); line-height: var(--tw-leading, 1.45); }
+@utility t-cuerpo   { font-size: calc(14px * var(--escala-texto, 1)); line-height: var(--tw-leading, 1.5); }
+@utility t-base     { font-size: calc(16px * var(--escala-texto, 1)); line-height: var(--tw-leading, 1.5); }
 @utility t-titulo   { font-size: 20px; line-height: var(--tw-leading, 1.3); }
 @utility t-display  { font-size: 24px; line-height: var(--tw-leading, 1.2); }
 
@@ -769,12 +900,16 @@ button, a, [role="button"] { touch-action: manipulation; }
    No lleva color: el rótulo puede ser ink-faint en un sitio y accent en
    otro, y eso sí es una decisión de cada pantalla. */
 @utility t-etiqueta {
-  font-size: 10px;
+  font-size: calc(10px * var(--escala-texto, 1));
   line-height: var(--tw-leading, 1.2);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.14em;
 }
+
+/* Lo único que hace falta escribir para encender la escala de arriba. Nadie
+   pone este atributo todavía: es una decisión pendiente del dueño. */
+html[data-texto="grande"] { --escala-texto: 1.15; }
 
 /* ============================================================
    LOS 44 PÍXELES QUE PIDE UN DEDO
@@ -832,8 +967,13 @@ button, a, [role="button"] { touch-action: manipulation; }
 /* ============================================================
    LA TESELA DE EXPANSIÓN — las capas del sobre en la portada
    ============================================================
-   Las usa components/SetPackTile.tsx, que es quien explica el porqué
-   largo. Aquí sólo queda el porqué de que vivan en CSS y no en un
+   HOY SIN USO. Las usaba components/SetPackTile.tsx, que nadie importa desde
+   que la portada volvió a los logos: el componente y estas reglas se quedan
+   juntos, y juntos se pueden retirar el día que se decida. Mientras tanto no
+   pintan nada (ninguna pantalla lleva estas clases).
+
+   Era components/SetPackTile.tsx quien explicaba el porqué largo. Aquí sólo
+   queda el porqué de que vivieran en CSS y no en un
    `style` inline: son cadenas CONSTANTES, iguales para las 171
    expansiones. Lo único que cambia de una a otra son las ocho custom
    properties `--sb-*` que la tesela pone en su `style`, y que estas

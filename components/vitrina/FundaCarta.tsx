@@ -20,7 +20,7 @@ import type { CartaEnColeccion } from "../../utils/tipos";
  * no hay `filter`, ni `drop-shadow`, ni `backdrop-filter`, ni `mix-blend-mode`,
  * ni `perspective`, ni `preserve-3d`, ni un solo `transform` con `scale`:
  * WebKit rasteriza esa capa a una escala fija y la ilustración sale borrosa en
- * iPhone (está documentado en components/PokemonCard.tsx:140-163 y en la
+ * iPhone (está documentado en components/PokemonCard.tsx, en la nota de `settled` y en la
  * cabecera de components/MazoCartas.tsx).
  *
  * De ahí dos decisiones que parecen caprichos y no lo son:

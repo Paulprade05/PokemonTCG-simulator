@@ -3,6 +3,22 @@
 import { useEffect } from "react";
 
 /**
+ * Recarga pidiendo la versión nueva. Es `recargarApp` de utils/versionApp.ts
+ * ESCRITO OTRA VEZ A MANO, a propósito: esta pantalla sale cuando ha fallado
+ * algo básico, y no debe depender de importar ningún otro módulo de la app
+ * para poder ofrecer su única salida. "SIN_PLAZO" le pide al service worker
+ * que espere a la red en vez de servir la copia guardada (public/sw.js).
+ */
+function recargar() {
+  try {
+    navigator.serviceWorker?.controller?.postMessage("SIN_PLAZO");
+  } catch {
+    /* sin service worker la recarga ya va directa a la red */
+  }
+  window.location.reload();
+}
+
+/**
  * Última red de seguridad: cubre los fallos lanzados en el propio RootLayout
  * (ClerkProvider, AppShell, TopBar…), que `app/error.tsx` no puede atrapar
  * porque vive por debajo de él.
@@ -72,6 +88,27 @@ export default function GlobalError({
             }}
           >
             Reintentar
+          </button>
+          {/* En la app instalada no hay cómo recargar: si "Reintentar" vuelve a
+              caer aquí —pasa cuando lo que falla es un fichero de un build que
+              el servidor ya no tiene—, esto es lo único que saca de la
+              pantalla sin matar la app. */}
+          <button
+            type="button"
+            onClick={recargar}
+            style={{
+              minHeight: 44,
+              border: "1px solid rgba(240, 230, 208, 0.2)",
+              borderRadius: 12,
+              padding: "0 1.5rem",
+              fontSize: "0.875rem",
+              fontWeight: 600,
+              color: "#eef1f5",
+              background: "transparent",
+              cursor: "pointer",
+            }}
+          >
+            Recargar la app
           </button>
           {error.digest && (
             <p

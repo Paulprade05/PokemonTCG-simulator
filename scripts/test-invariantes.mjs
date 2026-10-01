@@ -4328,6 +4328,1975 @@ comprueba(
         " separan, que es lo que documenta la sección B.",
     );
   }
+
+  /* ================================================================
+   * H. AMIGOS, QR Y ARMAZÓN: LO QUE SE ARREGLÓ PARA EL IPHONE NO SE DESHACE SOLO
+   * ================================================================
+   *
+   * POR QUÉ ESTÁ AQUÍ DENTRO. No es «anuncio contra realidad»: vive en este
+   * bloque, como la G, por las herramientas (`codigoDe`, `sinComentarios`,
+   * `ficherosVivos`), que son de este ámbito y no se ven desde fuera.
+   *
+   * QUÉ TIENEN EN COMÚN LAS TRES COSAS QUE SE VIGILAN: cuando se rompen NO
+   * FALLA NADA. No hay excepción ni pantalla en blanco, y en el ordenador de
+   * quien programa todo sigue igual:
+   *
+   *   · EL CÓDIGO DE AMIGO es una regla escrita tres veces —el alfabeto con el
+   *     que se sortea, la expresión con la que se valida y el CHECK de la
+   *     base— más una función que lee lo que teclea una persona. Si se
+   *     separan, se sortean códigos que la base rechaza o se guardan códigos
+   *     que nadie puede teclear, y sólo lo nota quien intenta añadir a alguien.
+   *   · EL QR está escrito a mano (no hay dependencia que lo haga). Un QR mal
+   *     hecho se pinta igual de bonito que uno bueno: sólo se nota con una
+   *     cámara delante.
+   *   · EL ARMAZÓN se arregló con cosas muy pequeñas: una clase en <main>, que
+   *     nadie escriba `env(safe-area-inset-*)` a mano, tres nombres de caché
+   *     que no se pueden tocar. Cualquiera de ellas se va en una limpieza de
+   *     clases «que no hacen nada», y el fallo sólo existe en un iPhone.
+   *
+   * EL CRITERIO, EL DEL FICHERO: lo que se puede EJECUTAR se ejecuta —los dos
+   * módulos puros y el service worker, que es JavaScript suelto y corre aquí
+   * con un navegador de mentira—; lo estático queda para lo que arrastra React
+   * o la base, y cada escáner se queja si se queda ciego.
+   */
+  {
+    /* Carga un módulo PURO sin tumbar el fichero si falta o si ha empezado a
+     * importar algo: eso es un invariante roto más, no un fallo del test. */
+    const cargaSegura = async (rel) => {
+      try {
+        return await cargarModulo(rel);
+      } catch (e) {
+        return { __error: String(e?.message ?? e) };
+      }
+    };
+
+    /* Azar DE MENTIRA: un generador congruencial con semilla fija. Mismas
+     * tiradas en cada pasada, que es la condición de este fichero. */
+    const sorteo = (semilla) => {
+      let s = semilla >>> 0;
+      return (tope) => {
+        s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+        return Math.floor((s / 4294967296) * tope);
+      };
+    };
+
+    /* CADA INVARIANTE DE ESTE BLOQUE VA DENTRO DE `vigila`. Lo que se ejecuta
+     * aquí es código de OTROS ficheros, y un fallo suyo puede ser una excepción
+     * (o un bucle que acaba en excepción) en vez de un valor equivocado. Eso
+     * tiene que salir como un invariante roto con su «qué tocar», no como una
+     * traza que corta el fichero y se lleva por delante los que van detrás. */
+    const vigila = async (que, trabajo) => {
+      try {
+        await trabajo();
+      } catch (e) {
+        mal(
+          que,
+          "no ha podido terminar: " +
+            String(e?.stack ?? e).split("\n")[0] +
+            "\n          QUÉ TOCAR: aquí se ejecuta código del juego (utils/codigoAmigo.ts, utils/qr.ts," +
+            " public/sw.js) y se leen ficheros por su nombre. La excepción ES el fallo: o una función" +
+            " lanza donde antes devolvía un valor, o el fichero que se busca ya no está en su sitio.",
+        );
+      }
+    };
+
+    const ORIGEN_DE_PRUEBA = "https://tcg.ejemplo.test";
+
+    /* ---------------------------------------------------------------- */
+    seccion("Amigos: el código que se sortea, se teclea y se guarda es el mismo");
+    /* ---------------------------------------------------------------- */
+
+    const amigo = await cargaSegura("utils/codigoAmigo.ts");
+    const esquemaSocial = await cargaSegura("services/esquemaSocial.ts");
+
+    if (amigo.__error || esquemaSocial.__error) {
+      mal(
+        "utils/codigoAmigo.ts y services/esquemaSocial.ts se cargan solos",
+        (amigo.__error ? "utils/codigoAmigo.ts: " + amigo.__error + "\n          " : "") +
+          (esquemaSocial.__error ? "services/esquemaSocial.ts: " + esquemaSocial.__error + "\n          " : "") +
+          "QUÉ TOCAR: los dos son módulos PUROS y SIN IMPORTS a propósito (lo dice su" +
+          " cabecera): los cargan el servidor, el navegador y este fichero. Si necesitan" +
+          " algo de fuera, se les pasa por parámetro, como `randomInt` a `generarCodigoAmigo`.",
+      );
+    } else {
+      const {
+        ALFABETO_CODIGO_AMIGO: ALFABETO,
+        LONGITUD_CODIGO_AMIGO: LARGO,
+        FORMA_CODIGO_AMIGO: FORMA,
+        esCodigoAmigo,
+        generarCodigoAmigo,
+        normalizarCodigoAmigo,
+        formatearCodigoAmigo,
+        etiquetaDeCodigo,
+        rutaDeInvitacion,
+        matizDeCodigo,
+      } = amigo;
+
+      /* LA MUESTRA. Primero los 31 símbolos paseados por las ocho posiciones
+       * (ninguno se queda sin probar en ninguna), después dos mil sorteos con
+       * el generador de verdad y el azar de mentira. */
+      const MUESTRA = [];
+      for (let i = 0; i < ALFABETO.length; i++) {
+        let c = "";
+        for (let k = 0; k < LARGO; k++) c += ALFABETO[(i + k * 7) % ALFABETO.length];
+        MUESTRA.push(c);
+      }
+      let sorteoRoto = null;
+      try {
+        const azar = sorteo(20261001);
+        for (let i = 0; i < 2000; i++) MUESTRA.push(generarCodigoAmigo(azar));
+      } catch (e) {
+        sorteoRoto = String(e?.message ?? e);
+      }
+      const partido = (c, separador) => c.slice(0, 4) + separador + c.slice(4);
+
+      await vigila("el alfabeto, la expresión de validación y el CHECK de la base son la misma regla", () => {
+        /* UNA REGLA ESCRITA TRES VECES. `ALFABETO_CODIGO_AMIGO` sortea,
+         * `FORMA_CODIGO_AMIGO` valida y el CHECK de `friend_codes` es el último
+         * sitio donde un código mal formado puede pararse. Los dos ficheros se
+         * avisan entre sí en sus comentarios («las tres van juntas»); esto es
+         * lo que lo comprueba.
+         *
+         * La clase de caracteres NO se compara como texto contra el alfabeto
+         * —`[2-9A-HJKMNP-Z]` y «23456789ABC…» no se parecen—: se le pregunta a
+         * la expresión, carácter a carácter, qué acepta. El CHECK sí se compara
+         * como texto, porque Postgres no se puede ejecutar aquí: tiene que ser,
+         * letra por letra, el `.source` de la expresión. */
+        const pegas = [];
+        const simbolos = [...ALFABETO];
+        if (new Set(simbolos).size !== simbolos.length) pegas.push("el alfabeto repite símbolos: el sorteo deja de ser uniforme");
+        const ambiguos = simbolos.filter((c) => "01ILO".includes(c));
+        if (ambiguos.length > 0) {
+          pegas.push(`el alfabeto tiene ${ambiguos.join(", ")}: es justo lo que se confunde al dictarlo (0/O, 1/I/L)`);
+        }
+        const raros = simbolos.filter((c) => !/^[0-9A-Z]$/.test(c));
+        if (raros.length > 0) pegas.push(`el alfabeto tiene símbolos que no son dígitos ni mayúsculas: ${raros.join(" ")}`);
+
+        if (FORMA.flags !== "") {
+          pegas.push(
+            `FORMA_CODIGO_AMIGO lleva banderas («${FORMA.flags}»): con «g» o «y» \`.test()\` recuerda dónde se quedó y` +
+              " acierta una vez sí y otra no; con «i» da por canónico un código en minúsculas",
+          );
+        } else {
+          const aceptados = [];
+          for (let cp = 32; cp < 127; cp++) {
+            const c = String.fromCharCode(cp);
+            if (FORMA.test(c.repeat(LARGO))) aceptados.push(c);
+          }
+          const delAlfabeto = [...simbolos].sort().join("");
+          if (aceptados.join("") !== delAlfabeto) {
+            pegas.push(`la expresión acepta «${aceptados.join("")}» y el alfabeto sortea «${delAlfabeto}»`);
+          }
+          const uno = simbolos[0] ?? "2";
+          if (FORMA.test(uno.repeat(LARGO - 1)) || FORMA.test(uno.repeat(LARGO + 1)) || !FORMA.test(uno.repeat(LARGO))) {
+            pegas.push(`la expresión no exige exactamente ${LARGO} caracteres (LONGITUD_CODIGO_AMIGO)`);
+          }
+        }
+
+        const sqlDeCodigos = (esquemaSocial.SENTENCIAS_CODIGOS_AMIGO ?? []).join("\n");
+        const checks = [...sqlDeCodigos.matchAll(/CHECK\s*\(\s*code\s*~\s*'([^']*)'\s*\)/g)].map((m) => m[1]);
+        if (checks.length !== 1) {
+          pegas.push(
+            `en SENTENCIAS_CODIGOS_AMIGO hay ${checks.length} CHECK de la forma \`code ~ '…'\` y tiene que haber uno` +
+              " (ojo: `~*` no vale, no distingue mayúsculas)",
+          );
+        } else if (checks[0] !== FORMA.source) {
+          pegas.push(`el CHECK de la base dice ${checks[0]} y FORMA_CODIGO_AMIGO dice ${FORMA.source}`);
+        }
+        if (!/UNIQUE\s*\(\s*code\s*\)/.test(sqlDeCodigos)) {
+          pegas.push("`friend_codes.code` ya no es UNIQUE: el código se sortea sin mirar la base, y ese índice es el árbitro del choque");
+        }
+        // La tabla se crea en UN sitio. Una segunda copia de la sentencia es una
+        // segunda regla que nadie compara con ésta.
+        const otrasTablas = ficherosVivos()
+          .filter((f) => nombreCorto(f) !== "services/esquemaSocial.ts")
+          .filter((f) => /CREATE\s+TABLE[^;`]*\bfriend_codes\b/i.test(sinComentarios(readFileSync(f, "utf8"))))
+          .map(nombreCorto);
+        if (otrasTablas.length > 0) pegas.push(`friend_codes se crea también en ${otrasTablas.join(", ")}, fuera de services/esquemaSocial.ts`);
+
+        // Y lo que sale del sorteo de verdad pasa las dos puertas.
+        if (sorteoRoto) pegas.push("generarCodigoAmigo lanza con un generador correcto: " + sorteoRoto);
+        const noValidos = MUESTRA.filter((c) => !esCodigoAmigo(c) || !FORMA.test(c));
+        if (noValidos.length > 0) pegas.push(`se sortean códigos que la validación rechaza: ${noValidos.slice(0, 3).join(", ")}`);
+        for (const fuera of [ALFABETO.length, -1, 1.5, NaN]) {
+          let lanzo = false;
+          let salio = "";
+          try {
+            salio = generarCodigoAmigo(() => fuera);
+          } catch {
+            lanzo = true;
+          }
+          if (!lanzo && !FORMA.test(salio)) {
+            pegas.push(`con un generador que devuelve ${fuera}, generarCodigoAmigo entrega «${salio}» en vez de lanzar`);
+          }
+        }
+
+        comprueba(
+          pegas.length === 0 && MUESTRA.length > 2000,
+          `el alfabeto, la expresión de validación y el CHECK de la base son la misma regla (${simbolos.length} símbolos sin 0/O/1/I/L, ${LARGO} caracteres, ${MUESTRA.length} códigos sorteados)`,
+          pegas.slice(0, 6).join("\n          ") +
+            "\n          QUÉ TOCAR: `ALFABETO_CODIGO_AMIGO` y `FORMA_CODIGO_AMIGO` (utils/codigoAmigo.ts) y el" +
+            " CHECK `friend_codes_code_forma` (services/esquemaSocial.ts) se cambian LOS TRES A LA VEZ." +
+            " Y cambiar la regla con códigos ya repartidos pide migración: el CHECK de una tabla que ya" +
+            " existe no se actualiza con `CREATE TABLE IF NOT EXISTS`.",
+        );
+      });
+
+      await vigila("normalizarCodigoAmigo lee el código en las formas en que lo escribe o lo pega una persona", () => {
+        /* LO QUE TECLEA O PEGA UNA PERSONA. El campo «Nombre o código…» y el
+         * servidor (`resolverDestino`, `buscarEntrenadores`) pasan por
+         * `normalizarCodigoAmigo`: si deja de leer una de estas formas, el
+         * código «no existe» para quien lo ha copiado bien. */
+        const FORMAS = [
+          ["tal cual", (c) => c],
+          ["en minúsculas", (c) => c.toLowerCase()],
+          ["con el guion con el que se enseña", (c) => partido(c, "-")],
+          ["con guion y en minúsculas", (c) => partido(c.toLowerCase(), "-")],
+          ["con un espacio en medio", (c) => partido(c, " ")],
+          ["con espacios y un salto de línea alrededor", (c) => "  " + partido(c.toLowerCase(), "-") + " \n"],
+          ["dictado símbolo a símbolo", (c) => [...c].join(" ")],
+          ["con la almohadilla de la etiqueta", (c) => "#" + c],
+          ["con la raya que pone el teclado del iPhone (–)", (c) => partido(c, "\u2013")],
+          ["la ruta de la invitación", (c) => rutaDeInvitacion(c)],
+          ["el enlace entero", (c) => ORIGEN_DE_PRUEBA + rutaDeInvitacion(c)],
+          ["el enlace con guion, minúsculas y parámetros", (c) => ORIGEN_DE_PRUEBA + "/invitar/" + partido(c.toLowerCase(), "-") + "?desde=qr"],
+          ["el enlace al final de una frase, con su punto", (c) => "Entra aquí: " + ORIGEN_DE_PRUEBA + rutaDeInvitacion(c) + "."],
+          ["con guion dentro de una frase", (c) => "mi código es " + partido(c.toLowerCase(), "-") + ", añádeme"],
+        ];
+
+        /* EL MENSAJE DE «COMPARTIR», EL DE VERDAD. La hoja promete que su propio
+         * campo «reconoce el mensaje entero si se pega tal cual», y el mensaje
+         * vive en un componente que este cargador no puede abrir. Se saca la
+         * plantilla del fichero y se rellena aquí: si alguien la reescribe de
+         * forma que el código ya no se pueda leer, salta. Se prueba entero y
+         * también SIN el enlace, que es lo que queda cuando alguien copia sólo
+         * la primera línea. */
+        const pegas = [];
+        const hoja = codigoDe("components/social/AnadirAmigoSheet.tsx");
+        const plantilla = /const\s+mensaje\s*=\s*`([^`]*)`/.exec(hoja)?.[1] ?? null;
+        const HUECO_CODIGO = "${formatearCodigoAmigo(codigo)}";
+        const HUECO_ENLACE = "${enlace}";
+        let conMensaje = false;
+        if (plantilla === null) {
+          pegas.push(
+            "no se encuentra el mensaje de «Compartir» (const mensaje = `…`) en components/social/AnadirAmigoSheet.tsx:" +
+              " si se ha movido, apunta este invariante al sitio nuevo",
+          );
+        } else if (
+          !plantilla.includes(HUECO_CODIGO) ||
+          plantilla.replace(HUECO_CODIGO, "").replace(HUECO_ENLACE, "").includes("${")
+        ) {
+          pegas.push(
+            "el mensaje de «Compartir» ya no se monta con ${formatearCodigoAmigo(codigo)} y ${enlace}: este" +
+              " invariante no sabe rellenarlo y hay que enseñarle la forma nueva",
+          );
+        } else {
+          conMensaje = true;
+          const rellena = (c, enlace) =>
+            plantilla.replace(HUECO_CODIGO, formatearCodigoAmigo(c)).replace(HUECO_ENLACE, enlace).replace(/\\n/g, "\n");
+          FORMAS.push(["el mensaje de «Compartir» pegado entero", (c) => rellena(c, ORIGEN_DE_PRUEBA + rutaDeInvitacion(c))]);
+          FORMAS.push(["el mensaje de «Compartir» sin la línea del enlace", (c) => rellena(c, "")]);
+        }
+
+        let leidas = 0;
+        for (const c of MUESTRA.slice(0, 120)) {
+          for (const [nombre, forma] of FORMAS) {
+            const entrada = forma(c);
+            const leido = normalizarCodigoAmigo(entrada);
+            leidas++;
+            if (leido !== c && pegas.length < 8) {
+              pegas.push(`${nombre}: ${JSON.stringify(entrada)} se lee como ${JSON.stringify(leido)} y es ${c}`);
+            }
+          }
+        }
+
+        comprueba(
+          pegas.length === 0 && conMensaje && leidas > 1000,
+          `normalizarCodigoAmigo lee el código en las ${FORMAS.length} formas en que lo escribe o lo pega una persona, incluido el mensaje de «Compartir» (${leidas} lecturas)`,
+          pegas.join("\n          ") +
+            "\n          QUÉ TOCAR: `normalizarCodigoAmigo` y `limpiar` (utils/codigoAmigo.ts). Las tres vías" +
+            " —el enlace `/invitar/…`, el texto entero y el `XXXX-XXXX` dentro de una frase— son las que" +
+            " salen de un uso normal; si lo que ha cambiado es el mensaje de «Compartir»" +
+            " (components/social/AnadirAmigoSheet.tsx), tiene que seguir llevando el código CON guion o el enlace.",
+        );
+      });
+
+      await vigila("normalizarCodigoAmigo rechaza lo que no es un código y nunca devuelve uno a medias", () => {
+        /* Y RECHAZA LO DEMÁS, SIN DEVOLVER NADA A MEDIAS. Lo que sale de aquí
+         * va derecho a `WHERE code = $1`: o son los ocho caracteres válidos o
+         * es `null`. Un «casi código» corregido por su cuenta (una O por un 0)
+         * acabaría añadiendo a otra persona. */
+        const pegas = [];
+        const c0 = MUESTRA[0];
+        const RECHAZOS = [
+          ["le falta un carácter", c0.slice(0, -1)],
+          ["le sobra un carácter", c0 + c0[0]],
+          ["con guion y un carácter de más", partido(c0, "-") + c0[0]],
+          ["pegado a otra letra por delante", c0[0] + partido(c0, "-")],
+          ["con una barra en medio", partido(c0, "/")],
+          ["con un signo más en medio", partido(c0, "+")],
+          ["dentro de una frase y SIN guion (cualquier palabra de ocho letras colaría)", "hola " + c0 + " qué tal"],
+          ["el enlace con un carácter de menos", ORIGEN_DE_PRUEBA + "/invitar/" + c0.slice(0, -1)],
+          ["el enlace con un carácter de más", ORIGEN_DE_PRUEBA + "/invitar/" + c0 + c0[0]],
+          ["el enlace con guion y un carácter de más", ORIGEN_DE_PRUEBA + "/invitar/" + partido(c0, "-") + c0[0]],
+          ["más largo que el tope de lectura", c0 + " ".repeat(400)],
+          ["vacío", ""],
+          ["sólo espacios", "  \n "],
+          ["null", null],
+          ["undefined", undefined],
+          ["un número con pinta de código", 23456789],
+          ["un array con el código dentro", [c0]],
+          ["un objeto que se hace pasar por cadena", { toString: () => c0, length: LARGO }],
+        ];
+        for (const ambiguo of "01ILO") {
+          const malo = ambiguo + c0.slice(1);
+          RECHAZOS.push([`con «${ambiguo}», que no está en el alfabeto`, malo]);
+          RECHAZOS.push([`con «${ambiguo}» y guion`, partido(malo, "-")]);
+          RECHAZOS.push([`con «${ambiguo}» en el enlace`, ORIGEN_DE_PRUEBA + "/invitar/" + malo]);
+          RECHAZOS.push([`con «${ambiguo}» dentro de una frase`, "mi código es " + partido(malo, "-") + ", añádeme"]);
+        }
+        for (const [nombre, entrada] of RECHAZOS) {
+          let leido;
+          try {
+            leido = normalizarCodigoAmigo(entrada);
+          } catch (e) {
+            pegas.push(`${nombre}: lanza (${e?.message ?? e}) en vez de devolver null`);
+            continue;
+          }
+          if (leido !== null) pegas.push(`${nombre}: ${JSON.stringify(entrada) ?? String(entrada)} se da por bueno como ${JSON.stringify(leido)}`);
+        }
+
+        /* Barrido: seis mil cadenas de mentira con los símbolos del alfabeto,
+         * los ambiguos y los separadores. De cada una sale `null` o un código
+         * entero, y ese código ESTABA en lo tecleado: no se inventa ni se
+         * corrige ningún carácter. */
+        const azar = sorteo(7);
+        const PIEZAS = [...ALFABETO, ..."01ILOilo", ..."abcdefghjkmnpqrstuvwxyz", " ", "-", "#", "/", ".", "\n", "\u2013"];
+        let barridas = 0;
+        let conCodigo = 0;
+        for (let i = 0; i < 6000; i++) {
+          let entrada = "";
+          const largo = 6 + azar(7);
+          for (let k = 0; k < largo; k++) entrada += PIEZAS[azar(PIEZAS.length)];
+          const leido = normalizarCodigoAmigo(entrada);
+          barridas++;
+          if (leido === null) continue;
+          conCodigo++;
+          const soloLetras = entrada.toUpperCase().replace(/[^0-9A-Z]/g, "");
+          if (!FORMA.test(leido) || !esCodigoAmigo(leido) || !soloLetras.includes(leido)) {
+            if (pegas.length < 8) pegas.push(`${JSON.stringify(entrada)} se lee como ${JSON.stringify(leido)}, que no es un código o no estaba ahí`);
+          }
+        }
+
+        comprueba(
+          pegas.length === 0 && conCodigo > 0 && conCodigo < barridas,
+          `normalizarCodigoAmigo rechaza lo que no es un código y nunca devuelve uno a medias (${RECHAZOS.length} rechazos, ${barridas} cadenas barridas, ${conCodigo} con código dentro)`,
+          (pegas.slice(0, 8).join("\n          ") ||
+            `el barrido encontró código en ${conCodigo} de ${barridas} cadenas: o lo acepta todo o no acepta nada, y así no vigila`) +
+            "\n          QUÉ TOCAR: `normalizarCodigoAmigo` (utils/codigoAmigo.ts). No corrige caracteres" +
+            " ambiguos A PROPÓSITO: el alfabeto no tiene 0, O, 1, I ni L, así que un código con ellos está" +
+            " mal copiado y tiene que rechazarse. Y el tope `MAX_ENTRADA` va antes de cualquier expresión" +
+            " regular: lo que llega aquí viene de una petición HTTP.",
+        );
+      });
+
+      await vigila("enseñar y leer un código son inversas, y el enlace de invitación lleva a una pantalla que existe", () => {
+        /* ENSEÑAR Y LEER SON INVERSAS, y la ruta del enlace existe. El código se
+         * guarda sin guion, se enseña con él, viaja sin él en el enlace y vuelve
+         * a entrar por el campo: cuatro formas del mismo dato que tienen que
+         * cerrarse en círculo para los 31 símbolos en las 8 posiciones. */
+        const pegas = [];
+        for (const c of MUESTRA) {
+          const visto = formatearCodigoAmigo(c);
+          const etiqueta = etiquetaDeCodigo(c);
+          const matiz = matizDeCodigo(c);
+          const fallo =
+            !/^.{4}-.{4}$/.test(visto) || visto.replace("-", "") !== c
+              ? `formatearCodigoAmigo(${c}) da «${visto}» y tiene que ser «${partido(c, "-")}»`
+              : normalizarCodigoAmigo(visto) !== c
+                ? `«${visto}» (lo que se enseña) se lee como ${JSON.stringify(normalizarCodigoAmigo(visto))}`
+                : normalizarCodigoAmigo(c) !== c
+                  ? `el código canónico ${c} no se lee como sí mismo`
+                  : normalizarCodigoAmigo(rutaDeInvitacion(c)) !== c
+                    ? `la ruta ${rutaDeInvitacion(c)} no devuelve su código`
+                    : etiqueta !== c.slice(-4) || !visto.endsWith(etiqueta)
+                      ? `la etiqueta de ${c} es «${etiqueta}» y tienen que ser sus cuatro últimos`
+                      : !Number.isInteger(matiz) || matiz < 0 || matiz > 359 || matiz !== matizDeCodigo(etiqueta)
+                        ? `el color de ${c} es ${matiz} con el código y ${matizDeCodigo(etiqueta)} con la etiqueta: la misma persona sale de dos colores`
+                        : null;
+          if (fallo) {
+            pegas.push(fallo);
+            if (pegas.length >= 5) break;
+          }
+        }
+        if (formatearCodigoAmigo("hola") !== "hola") {
+          pegas.push("formatearCodigoAmigo le pone guion a lo que no es un código");
+        }
+        // La ruta que se imprime en el QR tiene que ser una pantalla que existe.
+        const tramos = rutaDeInvitacion(MUESTRA[0]).split("/").filter(Boolean);
+        let hayPantalla = false;
+        if (tramos.length === 2 && tramos[1] === MUESTRA[0]) {
+          try {
+            hayPantalla = readdirSync(join(raiz, "app", tramos[0]), { withFileTypes: true }).some(
+              (e) => e.isDirectory() && /^\[\w+\]$/.test(e.name) && readdirSync(join(raiz, "app", tramos[0], e.name)).includes("page.tsx"),
+            );
+          } catch {
+            hayPantalla = false;
+          }
+        }
+        if (!hayPantalla) {
+          pegas.push(`rutaDeInvitacion da ${rutaDeInvitacion(MUESTRA[0])} y no hay ninguna pantalla app/${tramos[0] ?? "?"}/[…]/page.tsx que la atienda`);
+        }
+
+        comprueba(
+          pegas.length === 0,
+          `enseñar y leer un código son inversas, y el enlace de invitación lleva a una pantalla que existe (${MUESTRA.length} códigos)`,
+          pegas.join("\n          ") +
+            "\n          QUÉ TOCAR: `formatearCodigoAmigo`, `etiquetaDeCodigo`, `rutaDeInvitacion` y" +
+            " `matizDeCodigo` (utils/codigoAmigo.ts). Si lo que se ha movido es la pantalla" +
+            " app/invitar/[codigo], hay que mover con ella `rutaDeInvitacion` Y la primera expresión de" +
+            " `normalizarCodigoAmigo`, que busca `/invitar/` en lo que se pega: los QR ya impresos" +
+            " llevan esa ruta.",
+        );
+      });
+    }
+
+    /* ---------------------------------------------------------------- */
+    seccion("Amigos: el QR de la invitación lo lee una cámara");
+    /* ---------------------------------------------------------------- */
+
+    /* POR QUÉ HAY UN LECTOR AQUÍ DENTRO. Las propiedades de forma (el tamaño,
+     * las tres esquinas, la temporización) las cumple también un QR que no se
+     * puede leer: basta una máscara con la fila y la columna cambiadas, o el
+     * zigzag empezando por el otro lado, y el dibujo sigue pareciendo un QR.
+     * Lo único que demuestra que se lee es LEERLO. Así que más abajo hay un
+     * lector mínimo, escrito DESDE EL ESTÁNDAR y no desde utils/qr.ts —máscaras
+     * con (fila, columna) como en la norma, zigzag con un «sube/baja» que se
+     * alterna, Reed-Solomon por síndromes con tablas de logaritmos— para que un
+     * error del codificador no esté repetido en quien lo comprueba. Cubre lo
+     * mismo que el codificador: modo byte, nivel L, versiones 1 a 5. */
+    const qr = await cargaSegura("utils/qr.ts");
+
+    if (qr.__error || amigo.__error) {
+      mal(
+        "utils/qr.ts se carga solo",
+        (qr.__error ?? amigo.__error) +
+          "\n          QUÉ TOCAR: utils/qr.ts es un módulo PURO y SIN IMPORTS (lo cargan el navegador y este" +
+          " fichero). Lo que necesite de fuera se le pasa por parámetro.",
+      );
+    } else {
+      const { codificarQR, matrizQR, trazadoQR, bitsDeFormato, correccionReedSolomon, MAX_BYTES_QR, VERSION_MAXIMA_QR } = qr;
+      const { rutaDeInvitacion, LONGITUD_CODIGO_AMIGO, ALFABETO_CODIGO_AMIGO } = amigo;
+
+      /* LAS TABLAS DEL ESTÁNDAR (ISO/IEC 18004) para el nivel L, versiones 1 a
+       * 5, escritas aquí a mano y no leídas del módulo: son contra lo que se
+       * mide. Índice = versión. */
+      const PALABRAS_EN_TOTAL = [0, 26, 44, 70, 100, 134];
+      const PALABRAS_DE_CORRECCION = [0, 7, 10, 15, 20, 26];
+      const BYTES_QUE_CABEN = [0, 17, 32, 53, 78, 106];
+      // Los 15 bits de formato de las ocho máscaras con corrección L.
+      const FORMATO_L = [0x77c4, 0x72f3, 0x7daa, 0x789d, 0x662f, 0x6318, 0x6c41, 0x6976];
+      // Las ocho máscaras tal como las escribe la norma: i = fila, j = columna.
+      const MASCARA = [
+        (i, j) => (i + j) % 2 === 0,
+        (i) => i % 2 === 0,
+        (_i, j) => j % 3 === 0,
+        (i, j) => (i + j) % 3 === 0,
+        (i, j) => (Math.floor(i / 2) + Math.floor(j / 3)) % 2 === 0,
+        (i, j) => ((i * j) % 2) + ((i * j) % 3) === 0,
+        (i, j) => (((i * j) % 2) + ((i * j) % 3)) % 2 === 0,
+        (i, j) => (((i + j) % 2) + ((i * j) % 3)) % 2 === 0,
+      ];
+
+      // GF(256) con el polinomio 0x11D, por tablas: otra cuenta que la del módulo.
+      const EXP = new Array(510);
+      const LOG = new Array(256);
+      for (let i = 0, v = 1; i < 255; i++) {
+        EXP[i] = EXP[i + 255] = v;
+        LOG[v] = i;
+        v <<= 1;
+        if (v & 0x100) v ^= 0x11d;
+      }
+      const por = (a, b) => (a && b ? EXP[LOG[a] + LOG[b]] : 0);
+      /* Un bloque Reed-Solomon con `n` palabras de corrección es válido si y
+       * sólo si su polinomio se anula en α⁰…αⁿ⁻¹. */
+      const sindromes = (palabras, n) => {
+        const s = [];
+        for (let k = 0; k < n; k++) {
+          let v = 0;
+          for (const p of palabras) v = por(v, EXP[k]) ^ p;
+          s.push(v);
+        }
+        return s;
+      };
+
+      const bytesDe = (texto) => [...new TextEncoder().encode(texto)];
+
+      /* Qué módulos son de FUNCIÓN en las versiones 1 a 5, por geometría: las
+       * tres esquinas con su separador y su franja de formato (9×9 arriba a la
+       * izquierda, 8×9 y 9×8 las otras dos), la fila y la columna 6, y desde la
+       * versión 2 el alineamiento de 5×5 centrado a 7 módulos de la esquina
+       * inferior derecha. */
+      const esDeFuncion = (x, y, n, version) =>
+        (x <= 8 && y <= 8) ||
+        (x >= n - 8 && y <= 8) ||
+        (x <= 8 && y >= n - 8) ||
+        x === 6 ||
+        y === 6 ||
+        (version >= 2 && Math.abs(x - (n - 7)) <= 2 && Math.abs(y - (n - 7)) <= 2);
+
+      /** Las dos copias de los 15 bits de formato, leídas de la matriz. */
+      function formatoDe(m) {
+        const n = m.length;
+        const bit = (x, y) => (m[y][x] ? 1 : 0);
+        let a = 0;
+        for (let i = 0; i <= 5; i++) a |= bit(8, i) << i;
+        a |= bit(8, 7) << 6;
+        a |= bit(8, 8) << 7;
+        a |= bit(7, 8) << 8;
+        for (let i = 9; i <= 14; i++) a |= bit(14 - i, 8) << i;
+        let b = 0;
+        for (let i = 0; i <= 7; i++) b |= bit(n - 1 - i, 8) << i;
+        for (let i = 8; i <= 14; i++) b |= bit(8, n - 15 + i) << i;
+        return [a, b];
+      }
+
+      /** Lo que NO depende del contenido: la forma. Devuelve las pegas. */
+      function pegasDeForma(codigo) {
+        const { version, mascara, modulos: m } = codigo;
+        if (!Number.isInteger(version) || version < 1 || version > 5) return [`versión ${version}: este lector sólo sabe de la 1 a la 5`];
+        const n = m.length;
+        if (n !== 17 + 4 * version) return [`mide ${n} de lado y la versión ${version} mide ${17 + 4 * version} (17 + 4·versión)`];
+        if (m.some((fila) => !Array.isArray(fila) || fila.length !== n || fila.some((v) => v !== true && v !== false))) {
+          return ["la matriz no es cuadrada o tiene algo que no es true/false"];
+        }
+        const pegas = [];
+        // Las tres esquinas de localización: 7×7 con anillo claro y, alrededor,
+        // un módulo de separador claro. Sin ellas el lector no encuentra el código.
+        for (const [ox, oy, cual] of [[0, 0, "superior izquierda"], [n - 7, 0, "superior derecha"], [0, n - 7, "inferior izquierda"]]) {
+          let bien = true;
+          for (let dy = -1; dy <= 7; dy++) {
+            for (let dx = -1; dx <= 7; dx++) {
+              const x = ox + dx;
+              const y = oy + dy;
+              if (x < 0 || y < 0 || x >= n || y >= n) continue;
+              const dentro = dx >= 0 && dx <= 6 && dy >= 0 && dy <= 6;
+              const anillo = Math.max(Math.abs(dx - 3), Math.abs(dy - 3));
+              if (m[y][x] !== (dentro && anillo !== 2)) bien = false;
+            }
+          }
+          if (!bien) pegas.push(`la esquina de localización ${cual} no es el 7×7 del estándar con su separador claro`);
+        }
+        // Temporización: fila 6 y columna 6, alternando, oscuro en las pares.
+        for (let i = 8; i <= n - 9; i++) {
+          if (m[6][i] !== (i % 2 === 0) || m[i][6] !== (i % 2 === 0)) {
+            pegas.push("las líneas de temporización (fila 6 y columna 6) no alternan empezando en oscuro");
+            break;
+          }
+        }
+        if (m[n - 8][8] !== true) pegas.push("falta el módulo siempre oscuro de (columna 8, fila n−8)");
+        if (version >= 2) {
+          let bien = true;
+          for (let dy = -2; dy <= 2; dy++) {
+            for (let dx = -2; dx <= 2; dx++) {
+              if (m[n - 7 + dy][n - 7 + dx] !== (Math.max(Math.abs(dx), Math.abs(dy)) !== 1)) bien = false;
+            }
+          }
+          if (!bien) pegas.push("el patrón de alineamiento no está centrado a 7 módulos de la esquina inferior derecha");
+        }
+        const [a, b] = formatoDe(m);
+        if (a !== b) pegas.push("las dos copias de la información de formato no dicen lo mismo");
+        if (a !== FORMATO_L[mascara]) {
+          pegas.push(
+            `la información de formato pintada (0x${a.toString(16)}) no es la de nivel L con la máscara ${mascara} (0x${(FORMATO_L[mascara] ?? 0).toString(16)})`,
+          );
+        }
+        return pegas;
+      }
+
+      /** Lee la matriz como la leería una cámara. Devuelve los bytes del texto o
+       *  lanza diciendo en qué paso se ha quedado. */
+      function leerQR(m) {
+        const n = m.length;
+        const version = (n - 17) / 4;
+        if (!Number.isInteger(version) || version < 1 || version > 5) throw new Error(`lado ${n}: no es una versión de la 1 a la 5`);
+        const [formato] = formatoDe(m);
+        const mascara = FORMATO_L.indexOf(formato);
+        if (mascara < 0) throw new Error(`formato 0x${formato.toString(16)}: no es ninguno de los ocho de nivel L`);
+        // Zigzag: columnas de dos en dos desde la derecha, la primera subiendo,
+        // y cada pareja en sentido contrario a la anterior. La columna 6 no cuenta.
+        const bits = [];
+        let sube = true;
+        for (let col = n - 1; col > 0; col -= 2) {
+          if (col === 6) col--;
+          for (let k = 0; k < n; k++) {
+            const y = sube ? n - 1 - k : k;
+            for (const x of [col, col - 1]) {
+              if (esDeFuncion(x, y, n, version)) continue;
+              bits.push(m[y][x] !== MASCARA[mascara](y, x) ? 1 : 0);
+            }
+          }
+          sube = !sube;
+        }
+        const total = PALABRAS_EN_TOTAL[version];
+        if (bits.length < total * 8 || bits.length - total * 8 > 7) {
+          throw new Error(`hay ${bits.length} módulos de datos y la versión ${version} lleva ${total * 8} (más 7 de sobra como mucho)`);
+        }
+        const palabras = [];
+        for (let i = 0; i < total; i++) {
+          let p = 0;
+          for (let k = 0; k < 8; k++) p = (p << 1) | bits[i * 8 + k];
+          palabras.push(p);
+        }
+        if (sindromes(palabras, PALABRAS_DE_CORRECCION[version]).some((s) => s !== 0)) {
+          throw new Error("el Reed-Solomon no cuadra: una cámara lo daría por dañado");
+        }
+        const datos = bits.slice(0, (total - PALABRAS_DE_CORRECCION[version]) * 8);
+        const numero = (desde, cuantos) => datos.slice(desde, desde + cuantos).reduce((v, bitN) => (v << 1) | bitN, 0);
+        if (numero(0, 4) !== 0b0100) throw new Error(`el modo es ${numero(0, 4)} y tiene que ser 4 (byte)`);
+        const largo = numero(4, 8);
+        if (12 + largo * 8 > datos.length) throw new Error(`dice llevar ${largo} bytes y no caben`);
+        const bytes = [];
+        for (let i = 0; i < largo; i++) bytes.push(numero(12 + i * 8, 8));
+        return bytes;
+      }
+
+      /* LA BATERÍA. Textos de mentira justo a cada lado de la frontera de cada
+       * versión (17|18, 32|33, 53|54, 78|79 y el tope, 106), texto con acentos
+       * y un emoji —lo que cuenta son los BYTES, no los caracteres— y sesenta
+       * enlaces de invitación de verdad, que son lo que se va a pintar.
+       *
+       * Y TRES TEXTOS DE UNA SOLA LETRA, que están por la máscara 1. Con un
+       * enlace de verdad esa máscara no gana NUNCA (medido en 400 enlaces: con
+       * texto ASCII penaliza un 20% más que las otras siete), así que un error
+       * en ella pasaría sin que la tocara nadie hasta el día en que un enlace
+       * raro la eligiera. Una letra repetida sí la saca, y entonces el lector
+       * la tiene que deshacer como a las demás. */
+      const azarTexto = sorteo(18004);
+      const LETRAS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:/.-_?=&%";
+      const textoDe = (n) => {
+        let t = "";
+        for (let i = 0; i < n; i++) t += LETRAS[azarTexto(LETRAS.length)];
+        return t;
+      };
+      const azarCodigo = sorteo(8);
+      // La ruta sale de `rutaDeInvitacion`, que es lo que se pinta de verdad. Si
+      // lanzara, eso ya lo dice la sección de arriba: aquí no puede cortar la batería.
+      const rutaDe = (codigo) => {
+        try {
+          return String(rutaDeInvitacion(codigo));
+        } catch {
+          return "/invitar/" + codigo;
+        }
+      };
+      const codigoDeMentira = () => {
+        let c = "";
+        for (let k = 0; k < LONGITUD_CODIGO_AMIGO; k++) c += ALFABETO_CODIGO_AMIGO[azarCodigo(ALFABETO_CODIGO_AMIGO.length)];
+        return c;
+      };
+      const BATERIA = [1, 2, 16, 17, 18, 31, 32, 33, 52, 53, 54, 77, 78, 79, 105, 106].map(textoDe);
+      BATERIA.push("ñ".repeat(9), "Añádeme en TCG Sim 🃏", "\u0000\u00ff\u0100");
+      BATERIA.push("e".repeat(8), "e".repeat(17), "a".repeat(106));
+      for (let i = 0; i < 60; i++) {
+        const origen = i % 3 === 0 ? "http://localhost:3210" : i % 3 === 1 ? ORIGEN_DE_PRUEBA : "https://tcg-simulador-de-sobres.vercel.app";
+        BATERIA.push(origen + rutaDe(codigoDeMentira()));
+      }
+      const codificados = BATERIA.map((texto) => {
+        try {
+          return { texto, bytes: bytesDe(texto), codigo: codificarQR(texto) };
+        } catch (e) {
+          return { texto, bytes: bytesDe(texto), codigo: null, lanzo: String(e?.message ?? e) };
+        }
+      });
+      const corto = (t) => (t.length > 44 ? t.slice(0, 41) + "…" : t);
+
+      await vigila("el Reed-Solomon y los bits de formato del QR coinciden con los ejemplos publicados del estándar", () => {
+        /* LA ARITMÉTICA, CONTRA RESPUESTAS PUBLICADAS. Son los dos sitios donde
+         * un número mal copiado no se ve: el polinomio del cuerpo (0x11D), el
+         * generador del BCH (0x537) y la máscara de formato (0x5412). El bloque
+         * de prueba es el ejemplo clásico «HELLO WORLD» en versión 1-M, con sus
+         * diez palabras de corrección. */
+        const pegas = [];
+        const HELLO = [32, 91, 11, 120, 209, 114, 220, 77, 67, 64, 236, 17, 236, 17, 236, 17];
+        const CORRECCION = [196, 35, 39, 119, 235, 215, 231, 226, 93, 23];
+        let sale = [];
+        try {
+          sale = correccionReedSolomon(HELLO, CORRECCION.length);
+        } catch (e) {
+          pegas.push("correccionReedSolomon lanza: " + (e?.message ?? e));
+        }
+        if (sale.join(",") !== CORRECCION.join(",")) {
+          pegas.push(`Reed-Solomon de «HELLO WORLD» 1-M: sale [${sale.join(",")}] y el publicado es [${CORRECCION.join(",")}]`);
+        }
+        // Y el contraste cruzado con la otra cuenta: todo bloque que monta el
+        // módulo se anula en las raíces del generador.
+        for (const n of [7, 10, 15, 20, 26]) {
+          const datos = Array.from({ length: PALABRAS_EN_TOTAL[PALABRAS_DE_CORRECCION.indexOf(n)] - n }, (_, i) => (i * 37 + n) & 255);
+          const bloque = datos.concat(correccionReedSolomon(datos, n));
+          if (bloque.length !== datos.length + n || sindromes(bloque, n).some((s) => s !== 0)) {
+            pegas.push(`un bloque con ${n} palabras de corrección no es un código Reed-Solomon válido`);
+          }
+        }
+        const formatos = FORMATO_L.map((_, mascara) => bitsDeFormato(mascara));
+        if (formatos.join(",") !== FORMATO_L.join(",")) {
+          pegas.push(
+            `bits de formato: salen [${formatos.map((f) => "0x" + f.toString(16)).join(", ")}] y la tabla del estándar para el nivel L es [${FORMATO_L.map((f) => "0x" + f.toString(16)).join(", ")}]`,
+          );
+        }
+        comprueba(
+          pegas.length === 0,
+          "el Reed-Solomon y los bits de formato del QR coinciden con los ejemplos publicados del estándar",
+          pegas.join("\n          ") +
+            "\n          QUÉ TOCAR: `multiplicar`, `generador`, `correccionReedSolomon` y `bitsDeFormato`" +
+            " (utils/qr.ts). Los tres números mágicos son del estándar y no se ajustan: 0x11D" +
+            " (el cuerpo), 0x537 (el BCH del formato) y 0x5412 (su máscara). El nivel L son los bits 01.",
+        );
+      });
+
+      await vigila("cada QR tiene la forma de su versión", () => {
+        /* LA FORMA. Lo que una cámara busca ANTES de leer nada, y lo que hace
+         * que encuentre el código: el tamaño de la versión, las tres esquinas,
+         * la temporización, el módulo oscuro, el alineamiento y el formato dos
+         * veces. Más dos cosas del codificador: que sea determinista (el mismo
+         * enlace no puede pintar dos dibujos) y que elija la versión MÁS
+         * PEQUEÑA en la que cabe, que es la de módulos más grandes en pantalla. */
+        const pegas = [];
+        const versiones = new Set();
+        for (const { texto, bytes, codigo, lanzo } of codificados) {
+          if (lanzo || !codigo) {
+            pegas.push(`«${corto(texto)}» (${bytes.length} bytes): ${lanzo ? "lanza " + lanzo : "devuelve null y cabe"}`);
+            continue;
+          }
+          const esperada = BYTES_QUE_CABEN.findIndex((cabe, v) => v >= 1 && bytes.length <= cabe);
+          if (codigo.version !== esperada) {
+            pegas.push(`«${corto(texto)}» (${bytes.length} bytes) sale en versión ${codigo.version} y la más pequeña en la que cabe es la ${esperada}`);
+          }
+          versiones.add(codigo.version);
+          for (const pega of pegasDeForma(codigo)) pegas.push(`«${corto(texto)}» (versión ${codigo.version}): ${pega}`);
+          const otraVez = codificarQR(texto);
+          if (JSON.stringify(otraVez) !== JSON.stringify(codigo)) pegas.push(`«${corto(texto)}»: dos llamadas seguidas dan dos dibujos distintos`);
+          if (JSON.stringify(matrizQR(texto)) !== JSON.stringify(codigo.modulos)) {
+            pegas.push(`«${corto(texto)}»: matrizQR y codificarQR no pintan lo mismo`);
+          }
+          if (pegas.length >= 8) break;
+        }
+        comprueba(
+          pegas.length === 0 && versiones.size === 5,
+          `cada QR tiene la forma de su versión: 17 + 4·versión de lado, tres esquinas, temporización, módulo oscuro, alineamiento y formato por duplicado (${codificados.length} textos, versiones ${[...versiones].sort().join(", ")})`,
+          (pegas.slice(0, 8).join("\n          ") ||
+            `la batería sólo ha producido las versiones ${[...versiones].sort().join(", ")} y tienen que salir las cinco`) +
+            "\n          QUÉ TOCAR: `codificarQR` (utils/qr.ts). Las esquinas, la temporización, el" +
+            " alineamiento y `pintarFormato` son módulos de FUNCIÓN: se pintan antes que los datos, se" +
+            " marcan como `reservado` y no se enmascaran. Si se ha subido VERSION_MAXIMA_QR por encima" +
+            " de 5, este invariante y el lector de abajo se quedan cortos: desde la 6 el nivel L parte" +
+            " los datos en dos bloques que se intercalan, y desde la 7 hay información de versión.",
+        );
+      });
+
+      await vigila("el QR se lee: desenmascarado, recorrido en zigzag y corregido devuelve el mismo texto", () => {
+        /* SE LEE. Cada matriz se desenmascara, se recorre en zigzag, se le pasa
+         * el Reed-Solomon y se le saca el texto, y tienen que volver los mismos
+         * bytes que entraron. Es lo que caza una máscara con fila y columna
+         * cambiadas, un zigzag al revés o los bits de una palabra en otro orden:
+         * los tres dejan un dibujo con la forma perfecta que ninguna cámara lee. */
+        const pegas = [];
+        const mascaras = new Set();
+        let leidos = 0;
+        for (const { texto, bytes, codigo } of codificados) {
+          if (!codigo) continue;
+          mascaras.add(codigo.mascara);
+          try {
+            const vuelta = leerQR(codigo.modulos);
+            leidos++;
+            if (vuelta.join(",") !== bytes.join(",")) {
+              pegas.push(`«${corto(texto)}»: al leerlo salen ${vuelta.length} bytes que no son los ${bytes.length} que entraron`);
+            }
+          } catch (e) {
+            pegas.push(`«${corto(texto)}» (versión ${codigo.version}, máscara ${codigo.mascara}): ${e?.message ?? e}`);
+          }
+          if (pegas.length >= 6) break;
+        }
+        comprueba(
+          pegas.length === 0 && leidos === codificados.length && mascaras.size === 8,
+          `el QR se lee: desenmascarado, recorrido en zigzag y corregido devuelve el mismo texto (${leidos} lecturas, máscaras ${[...mascaras].sort().join(", ")})`,
+          (pegas.join("\n          ") ||
+            `sólo se han leído ${leidos} de ${codificados.length}, o la batería sólo ejercita las máscaras ${[...mascaras].sort().join(", ")}` +
+              " y tienen que salir las ocho: la que no sale no la comprueba nadie. Si ha cambiado" +
+              " `penalizacion` y ahora gana siempre la misma, el fallo está ahí; si es que la batería ya" +
+              " no saca alguna, añádele un texto que la saque (una letra repetida suele bastar)") +
+            "\n          QUÉ TOCAR: `codificarQR` (utils/qr.ts): la colocación en zigzag, `MASCARAS`" +
+            " —ojo, ahí están escritas con (x, y) = (columna, fila) y el estándar las da con (fila," +
+            " columna): la 1 mira la fila y la 2 la columna— y `palabrasDeDatos`. El lector de aquí" +
+            " está escrito desde el estándar; si los dos discrepan, quien manda es el estándar.",
+        );
+      });
+
+      await vigila("el enlace de invitación más largo previsto cabe, lo que no cabe no se pinta y el dibujo es la matriz", () => {
+        /* CABE Y SE PINTA COMO ES. Tres cosas que sólo se notan con el móvil en
+         * la mano:
+         *
+         *  · EL ENLACE MÁS LARGO PREVISTO CABE. El QR lleva `origen + ruta`, y el
+         *    origen no se conoce aquí. El peor caso razonable es un despliegue
+         *    de vista previa: `https://` + una etiqueta de DNS al máximo (63) +
+         *    `.vercel.app`. Si no cabe, `matrizQR` devuelve null y la hoja
+         *    esconde el botón del QR sin decir nada.
+         *  · LO QUE NO CABE NO SE PINTA: null, no un dibujo truncado.
+         *  · EL DIBUJO ES LA MATRIZ. `trazadoQR` la convierte en un único
+         *    <path>; se vuelve a rasterizar aquí y tiene que salir la misma
+         *    matriz, con sus cuatro módulos de silencio alrededor. Y el
+         *    componente lo pinta NEGRO SOBRE BLANCO en los dos temas: un QR con
+         *    los colores del tema oscuro es un QR invertido y muchas cámaras no
+         *    lo leen. */
+        const pegas = [];
+        const codigoMasLargo = ALFABETO_CODIGO_AMIGO[ALFABETO_CODIGO_AMIGO.length - 1].repeat(LONGITUD_CODIGO_AMIGO);
+        const ORIGEN_MAS_LARGO = "https://" + "x".repeat(63) + ".vercel.app";
+        const enlaceMasLargo = ORIGEN_MAS_LARGO + rutaDeInvitacion(codigoMasLargo);
+        const delMasLargo = codificarQR(enlaceMasLargo);
+        if (!delMasLargo) {
+          pegas.push(
+            `el enlace de invitación más largo previsto mide ${bytesDe(enlaceMasLargo).length} bytes y no cabe (MAX_BYTES_QR = ${MAX_BYTES_QR}, VERSION_MAXIMA_QR = ${VERSION_MAXIMA_QR})`,
+          );
+        } else {
+          if (delMasLargo.version > VERSION_MAXIMA_QR) pegas.push(`el enlace más largo sale en versión ${delMasLargo.version}, por encima de VERSION_MAXIMA_QR`);
+          try {
+            if (leerQR(delMasLargo.modulos).join(",") !== bytesDe(enlaceMasLargo).join(",")) pegas.push("el enlace más largo se pinta pero no se lee igual");
+          } catch (e) {
+            pegas.push("el enlace más largo se pinta pero no se lee: " + (e?.message ?? e));
+          }
+        }
+        if (MAX_BYTES_QR !== BYTES_QUE_CABEN[VERSION_MAXIMA_QR]) {
+          pegas.push(`MAX_BYTES_QR vale ${MAX_BYTES_QR} y en la versión ${VERSION_MAXIMA_QR} con nivel L caben ${BYTES_QUE_CABEN[VERSION_MAXIMA_QR] ?? "?"} bytes`);
+        }
+        if (codificarQR("x".repeat(MAX_BYTES_QR)) === null) pegas.push(`un texto de ${MAX_BYTES_QR} bytes, que cabe justo, devuelve null`);
+        for (const [nombre, texto] of [["un byte más del tope", "x".repeat(MAX_BYTES_QR + 1)], ["el tope en caracteres pero el doble en bytes", "ñ".repeat(MAX_BYTES_QR)], ["vacío", ""]]) {
+          let sale;
+          try {
+            sale = matrizQR(texto);
+          } catch (e) {
+            sale = "lanza " + (e?.message ?? e);
+          }
+          if (sale !== null) pegas.push(`${nombre}: tiene que devolver null y ${typeof sale === "string" ? sale : "pinta una matriz"}`);
+        }
+
+        // El trazado, vuelto a rasterizar.
+        let trazados = 0;
+        for (const { texto, codigo } of codificados) {
+          if (!codigo) continue;
+          const m = codigo.modulos;
+          const n = m.length;
+          const { lado, d } = trazadoQR(m);
+          if (lado !== n + 8) {
+            pegas.push(`trazadoQR sin margen explícito da un lado de ${lado} para ${n} módulos: la zona de silencio del estándar son 4 a cada lado (${n + 8})`);
+            break;
+          }
+          const lienzo = Array.from({ length: lado }, () => new Array(lado).fill(false));
+          let resto = d;
+          let bien = true;
+          for (const tramo of d.matchAll(/M(\d+) (\d+)h(\d+)v1h-(\d+)z/g)) {
+            const [todo, x, y, ancho, vuelta] = tramo;
+            resto = resto.replace(todo, "");
+            if (ancho !== vuelta || +y >= lado || +x + +ancho > lado) {
+              bien = false;
+              break;
+            }
+            for (let k = 0; k < +ancho; k++) lienzo[+y][+x + k] = true;
+          }
+          for (let y = 0; bien && y < lado; y++) {
+            for (let x = 0; x < lado; x++) {
+              const dentro = x >= 4 && y >= 4 && x < n + 4 && y < n + 4;
+              if (lienzo[y][x] !== (dentro ? m[y - 4][x - 4] : false)) bien = false;
+            }
+          }
+          if (!bien || resto !== "") {
+            pegas.push(`«${corto(texto)}»: el <path> de trazadoQR no dibuja la matriz módulo a módulo con 4 de silencio alrededor`);
+            break;
+          }
+          trazados++;
+        }
+
+        // Quien lo pinta, en estático: el componente arrastra React.
+        const pintor = codigoDe("components/social/CodigoQR.tsx");
+        const llamada = /\btrazadoQR\(\s*\w+\s*(?:,\s*(\d+)\s*)?\)/.exec(pintor);
+        if (!llamada) pegas.push("components/social/CodigoQR.tsx ya no llama a `trazadoQR(modulos[, margen])`: este escáner no sabe qué margen pinta");
+        else if (llamada[1] !== undefined && Number(llamada[1]) < 4) pegas.push(`CodigoQR pinta con ${llamada[1]} módulos de silencio y el estándar pide 4`);
+        if (!/<rect\b[^>]*\bfill="#fff(?:fff)?"/i.test(pintor)) pegas.push("CodigoQR ya no pone el fondo BLANCO fijo (`<rect … fill=\"#fff\">`)");
+        if (!/<path\b[^>]*\bfill="#000(?:000)?"/i.test(pintor)) pegas.push("CodigoQR ya no pinta los módulos en NEGRO fijo (`<path … fill=\"#000\">`)");
+        if (!/shapeRendering="crispEdges"/.test(pintor)) pegas.push("CodigoQR ha perdido `shapeRendering=\"crispEdges\"`: el suavizado deja una raya gris entre módulos");
+
+        comprueba(
+          pegas.length === 0 && trazados === codificados.length,
+          `el enlace de invitación más largo previsto (${bytesDe(enlaceMasLargo).length} bytes) cabe en la versión ${VERSION_MAXIMA_QR}, lo que no cabe no se pinta, y el dibujo es la matriz en negro sobre blanco con su zona de silencio (${trazados} trazados)`,
+          pegas.join("\n          ") +
+            "\n          QUÉ TOCAR: si no cabe el enlace, o se acorta la ruta (`rutaDeInvitacion`," +
+            " utils/codigoAmigo.ts) o se sube VERSION_MAXIMA_QR (utils/qr.ts), y subirla de 5 obliga a" +
+            " intercalar bloques. Si es el dibujo: `trazadoQR` (utils/qr.ts) y" +
+            " components/social/CodigoQR.tsx, que explica por qué el blanco y el negro NO salen de" +
+            " las variables del tema.",
+        );
+      });
+    }
+
+    /* ---------------------------------------------------------------- */
+    seccion("Amigos: el id de Clerk de un desconocido no sale del servidor");
+    /* ---------------------------------------------------------------- */
+
+    /* El cuerpo de una función con sus llaves, emparejándolas y saltándose las
+     * cadenas y las plantillas (el SQL de app/social.ts está lleno de paréntesis
+     * y alguna llave). Propio y no el `cuerpoDeAccion` de arriba porque aquél
+     * corta hasta el siguiente `export`, y aquí hay funciones privadas entre
+     * una acción y la siguiente que son justo las que interesa separar. */
+    function cuerpoConLlaves(codigo, nombre) {
+      const m = new RegExp("\\bfunction\\s+" + nombre + "\\s*\\(").exec(codigo);
+      if (!m) return null;
+      const saltaCadena = (i) => {
+        const comilla = codigo[i];
+        i++;
+        while (i < codigo.length && codigo[i] !== comilla) {
+          if (codigo[i] === "\\") i++;
+          i++;
+        }
+        return i + 1;
+      };
+      // Los parámetros…
+      let i = m.index + m[0].length;
+      let prof = 1;
+      while (i < codigo.length && prof > 0) {
+        const c = codigo[i];
+        if (c === "'" || c === '"' || c === "`") {
+          i = saltaCadena(i);
+          continue;
+        }
+        if (c === "(") prof++;
+        else if (c === ")") prof--;
+        i++;
+      }
+      // …el tipo de retorno, que puede traer llaves propias dentro de <…>…
+      let angulos = 0;
+      while (i < codigo.length && !(codigo[i] === "{" && angulos === 0)) {
+        if (codigo[i] === "<") angulos++;
+        else if (codigo[i] === ">" && codigo[i - 1] !== "=") angulos--;
+        i++;
+      }
+      // …y el cuerpo.
+      const abre = i;
+      prof = 0;
+      while (i < codigo.length) {
+        const c = codigo[i];
+        if (c === "'" || c === '"' || c === "`") {
+          i = saltaCadena(i);
+          continue;
+        }
+        if (c === "{") prof++;
+        else if (c === "}") {
+          prof--;
+          if (prof === 0) return codigo.slice(abre, i + 1);
+        }
+        i++;
+      }
+      return null;
+    }
+
+    /* Las claves de PRIMER NIVEL de un literal de objeto (el texto entre sus
+     * llaves). `...x` sale como "...": un spread mete lo que traiga la fila. */
+    function clavesDeLiteral(interior) {
+      const claves = [];
+      let trozo = "";
+      let prof = 0;
+      const cierra = () => {
+        const t = trozo.trim();
+        trozo = "";
+        if (!t) return;
+        if (t.startsWith("...")) claves.push("...");
+        else claves.push(/^["']?([\w$]+)["']?/.exec(t)?.[1] ?? "?" + t.slice(0, 12));
+      };
+      for (let i = 0; i < interior.length; i++) {
+        const c = interior[i];
+        if (c === "'" || c === '"' || c === "`") {
+          const desde = i;
+          i++;
+          while (i < interior.length && interior[i] !== c) {
+            if (interior[i] === "\\") i++;
+            i++;
+          }
+          trozo += interior.slice(desde, i + 1);
+          continue;
+        }
+        if (c === "(" || c === "[" || c === "{") prof++;
+        else if (c === ")" || c === "]" || c === "}") prof--;
+        if (c === "," && prof === 0) cierra();
+        else trozo += c;
+      }
+      cierra();
+      return claves;
+    }
+
+    await vigila("la búsqueda de entrenadores entrega código de amigo y nunca el id de Clerk", () => {
+      /* LA BÚSQUEDA ENTREGA CÓDIGO Y NUNCA ID. El id de Clerk basta hoy para
+       * abrir el álbum de alguien (`getTrainerCollection` sólo pide sesión y un
+       * id), y `searchUsersByName` se lo daba a cualquiera con sesión por cada
+       * resultado: era regalar la llave. `buscarEntrenadores` lo cambia por el
+       * código de amigo, y la única puerta por la que un id ajeno puede salir
+       * es `amigoId`, cuando ya sois amigos.
+       *
+       * No se puede ejecutar (app/social.ts arrastra Clerk y la base), así que
+       * se ata por los tres sitios por los que el id volvería a colarse:
+       *
+       *   1. EL TIPO de lo que viaja (utils/tiposSocial.ts): en las filas de
+       *      búsqueda, peticiones y bloqueados no hay más TEXTO que el de una
+       *      lista cerrada. Un campo de texto nuevo se discute aquí.
+       *   2. LA FILA que monta `filasDeBusqueda`: sólo claves de ese tipo y
+       *      ningún spread, que es como se cuela una fila de SQL entera.
+       *   3. DE DÓNDE SALE `resultados` en `buscarEntrenadores`: siempre de
+       *      `filasDeBusqueda` o vacío, nunca las `rows` de la consulta, que
+       *      son `any` y TypeScript no las frena. */
+      const pegas = [];
+      const tipos = codigoDe("utils/tiposSocial.ts");
+      const social = codigoDe("app/social.ts");
+
+      const camposDe = (nombre) => {
+        const m = new RegExp("export\\s+interface\\s+" + nombre + "\\s*\\{([^}]*)\\}").exec(tipos);
+        if (!m) return null;
+        return [...m[1].matchAll(/([\w$]+)\??\s*:\s*([^;]+);/g)].map((c) => ({ campo: c[1], tipo: c[2].replace(/\s+/g, "") }));
+      };
+      // Qué puede viajar como texto, por tipo. Lo demás tiene que ser un número.
+      const TEXTO_PERMITIDO = {
+        EntrenadorEncontrado: ["codigo", "nombre", "etiqueta", "relacion"],
+        PeticionRecibida: ["nombre", "etiqueta"],
+        PeticionEnviada: ["nombre", "etiqueta"],
+        EntrenadorBloqueado: ["nombre", "etiqueta"],
+        FichaEntrenador: ["codigo", "nombre", "etiqueta", "relacion", "amigoId"],
+      };
+      const ES_NUMERO = /^number(\|null)?$/;
+      let camposMirados = 0;
+      for (const [nombre, permitidos] of Object.entries(TEXTO_PERMITIDO)) {
+        const campos = camposDe(nombre);
+        if (!campos || campos.length === 0) {
+          pegas.push(`no se encuentra \`export interface ${nombre}\` en utils/tiposSocial.ts`);
+          continue;
+        }
+        for (const { campo, tipo } of campos) {
+          camposMirados++;
+          if (ES_NUMERO.test(tipo) || permitidos.includes(campo)) continue;
+          pegas.push(`${nombre}.${campo}: ${tipo} — un campo que no es un número y no está en la lista de lo que puede viajar`);
+        }
+      }
+
+      const filas = cuerpoConLlaves(social, "filasDeBusqueda");
+      const busqueda = cuerpoConLlaves(social, "buscarEntrenadores");
+      const delTipo = (camposDe("EntrenadorEncontrado") ?? []).map((c) => c.campo);
+      let filasMontadas = 0;
+      if (!filas) {
+        pegas.push("`filasDeBusqueda` ya no está en app/social.ts: este invariante no sabe dónde se monta la fila de la búsqueda");
+      } else {
+        for (const m of filas.matchAll(/\.push\(\s*\{/g)) {
+          // Del `{` que abre el literal al `}` que lo cierra.
+          let i = m.index + m[0].length;
+          let prof = 1;
+          const desde = i;
+          while (i < filas.length && prof > 0) {
+            if (filas[i] === "{") prof++;
+            else if (filas[i] === "}") prof--;
+            i++;
+          }
+          filasMontadas++;
+          for (const clave of clavesDeLiteral(filas.slice(desde, i - 1))) {
+            if (clave === "...") pegas.push("`filasDeBusqueda` monta la fila con un spread (`...`): mete todo lo que traiga el objeto de origen, id incluido");
+            else if (!delTipo.includes(clave)) pegas.push(`\`filasDeBusqueda\` mete en cada resultado el campo \`${clave}\`, que no es de EntrenadorEncontrado`);
+          }
+        }
+        if (filasMontadas === 0) pegas.push("en `filasDeBusqueda` ya no hay ningún `.push({ … })`: el escáner no ve la fila que se devuelve");
+      }
+
+      let devoluciones = 0;
+      if (!busqueda) {
+        pegas.push("`buscarEntrenadores` ya no está en app/social.ts");
+      } else {
+        const deFilas = new Set([...busqueda.matchAll(/\bconst\s+(\w+)\s*=\s*await\s+filasDeBusqueda\(/g)].map((m) => m[1]));
+        for (const m of busqueda.matchAll(/\bresultados\b\s*(?::\s*([^,}]+?)\s*)?(?=[,}])/g)) {
+          devoluciones++;
+          const valor = m[1] ?? "resultados";
+          if (valor === "[]" || deFilas.has(valor)) continue;
+          pegas.push(`\`buscarEntrenadores\` devuelve \`resultados: ${valor}\`, que no sale de \`filasDeBusqueda\``);
+        }
+        if (devoluciones < 2) pegas.push("en `buscarEntrenadores` no se encuentran sus `resultados`: el escáner se ha quedado ciego");
+      }
+
+      comprueba(
+        pegas.length === 0 && camposMirados >= 15,
+        `la búsqueda de entrenadores entrega código de amigo y nunca el id de Clerk (${camposMirados} campos de ${Object.keys(TEXTO_PERMITIDO).length} tipos, ${filasMontadas} fila montada, ${devoluciones} devoluciones)`,
+        pegas.slice(0, 8).join("\n          ") +
+          "\n          QUÉ TOCAR: lo que identifica a otra persona ante la pantalla es su CÓDIGO" +
+          " (búsqueda), el id numérico de la fila de `friendships` (peticiones, bloqueados) o, sólo si" +
+          " ya sois amigos, `amigoId`. Si el campo nuevo de verdad no identifica a la cuenta, se" +
+          " añade a `TEXTO_PERMITIDO` de este invariante. Si lo que hace falta es abrir el álbum de" +
+          " un desconocido, eso es `getTrainerCollection` y una decisión del dueño, no un campo más" +
+          " en la búsqueda.",
+      );
+    });
+
+    await vigila("las acciones exportadas de app/social.ts sacan el usuario de auth() antes de tocar la base", () => {
+      /* TODO LO QUE SE EXPORTA DE app/social.ts ES UN ENDPOINT. El fichero es
+       * "use server": cada función exportada se puede llamar por HTTP con los
+       * argumentos que quiera quien llama. Las privadas de este bloque
+       * convierten códigos y anuncios en ids (`resolverDestino`), ids en
+       * códigos (`codigosDe`) y parejas en filas de `friendships` (`leerPar`),
+       * y ninguna pide sesión porque quien las llama ya la ha pedido. Exportar
+       * una «para reutilizarla desde el bazar» la publica tal cual.
+       *
+       * La regla que lo cubre sin lista de nombres: toda función exportada
+       * saca el `userId` de `auth()` ANTES de tocar la base. */
+      const pegas = [];
+      const social = codigoDe("app/social.ts");
+      const exportadas = [];
+      for (const m of social.matchAll(/^export\s+([^\n]*)/gm)) {
+        const linea = m[1];
+        if (/^(type|interface)\b/.test(linea)) continue;
+        const f = /^async\s+function\s+(\w+)/.exec(linea);
+        if (!f) pegas.push(`\`export ${linea.slice(0, 40).trim()}…\`: de un fichero "use server" sólo salen funciones asíncronas`);
+        else exportadas.push(f[1]);
+      }
+      for (const nombre of exportadas) {
+        const cuerpo = cuerpoConLlaves(social, nombre);
+        if (!cuerpo) {
+          pegas.push(`no se puede leer el cuerpo de \`${nombre}\``);
+          continue;
+        }
+        const pide = /\bawait\s+auth\(\)/.exec(cuerpo);
+        const base = /\bsql\b|\basegurarEsquemaSocial\(|\bresolverDestino\(/.exec(cuerpo);
+        if (!pide) pegas.push(`\`${nombre}\` se exporta y no llama a \`auth()\`: es un endpoint abierto`);
+        else if (base && base.index < pide.index) pegas.push(`\`${nombre}\` toca la base antes de pedir la sesión`);
+        else if (!/if\s*\(\s*!\s*userId\s*\)/.test(cuerpo)) pegas.push(`\`${nombre}\` llama a \`auth()\` pero no corta cuando no hay \`userId\``);
+      }
+      const privadas = ["resolverDestino", "codigosDe", "leerPar", "paresCon", "filasDeBusqueda"];
+      const desaparecidas = privadas.filter((n) => !new RegExp("\\bfunction\\s+" + n + "\\s*\\(").test(social));
+
+      comprueba(
+        pegas.length === 0 && exportadas.length >= 15 && desaparecidas.length === 0,
+        `las ${exportadas.length} acciones exportadas de app/social.ts sacan el usuario de auth() antes de tocar la base, y las que manejan ids siguen siendo privadas`,
+        (pegas.slice(0, 8).join("\n          ") ||
+          (desaparecidas.length > 0
+            ? `ya no existen ${desaparecidas.join(", ")}: si se han renombrado, actualiza la lista de este invariante`
+            : `sólo se han visto ${exportadas.length} exportaciones: el escáner se ha quedado ciego`)) +
+          "\n          QUÉ TOCAR: si otra pantalla necesita una de las funciones privadas, se le" +
+          " escribe una ACCIÓN con su `auth()` y su validación (como `getFichaEntrenador`, que resuelve" +
+          " un destino y devuelve la ficha sin el id), no se le pone `export` a la privada.",
+      );
+    });
+
+    /* ---------------------------------------------------------------- */
+    seccion("Armazón: los arreglos del iPhone siguen puestos");
+    /* ---------------------------------------------------------------- */
+
+    await vigila("el <main> de AppShell confina el apilado de las páginas", () => {
+      /* EL CONTENIDO NO PASA POR ENCIMA DEL CROMO. Era la superposición que
+       * veía el dueño en su iPhone: las chapas de las cartas (contador de
+       * copias, corazón, nota) llevan `z-30`, la barra superior también, y sin
+       * nada entre <body> y las cartas que creara un contexto de apilado
+       * competían en la raíz: ganaba la página, que va después en el DOM. Al
+       * desplazar, las chapas tapaban el saldo y se quedaban con el toque de la
+       * lupa.
+       *
+       * El arreglo es UNA CLASE en el <main> de AppShell (`isolate`), que no
+       * pinta nada y que cualquier limpieza de clases quitaría sin que cambie
+       * nada a la vista hasta desplazar una rejilla en un móvil. */
+      const armazon = codigoDe("components/AppShell.tsx");
+      const pegas = [];
+      const etiquetas = [];
+      for (const m of armazon.matchAll(/<main(?=[\s>])/g)) {
+        // Hasta el `>` que cierra la etiqueta, saltando cadenas y llaves.
+        let i = m.index + 5;
+        let llaves = 0;
+        let comilla = "";
+        for (; i < armazon.length; i++) {
+          const c = armazon[i];
+          if (comilla) {
+            if (c === "\\") i++;
+            else if (c === comilla) comilla = "";
+            continue;
+          }
+          if (c === '"' || c === "'" || c === "`") comilla = c;
+          else if (c === "{") llaves++;
+          else if (c === "}") llaves--;
+          else if (c === ">" && llaves === 0) break;
+        }
+        etiquetas.push(armazon.slice(m.index, i + 1));
+      }
+      if (etiquetas.length === 0) pegas.push("no se encuentra ningún <main> en components/AppShell.tsx");
+      for (const etiqueta of etiquetas) {
+        const clases = [...etiqueta.matchAll(/(["'`])((?:\\.|(?!\1)[^\\])*)\1/g)].flatMap((m) => m[2].split(/\s+/));
+        const aisla = clases.includes("isolate") || /isolation\s*:\s*["']isolate["']/.test(etiqueta);
+        const deshace = clases.filter((c) => /(^|:)isolation-auto$/.test(c));
+        if (!aisla) pegas.push("el <main> ya no lleva `isolate`: " + etiqueta.replace(/\s+/g, " ").slice(0, 110) + "…");
+        if (deshace.length > 0) pegas.push(`el <main> lleva \`${deshace.join(" ")}\`, que deshace el aislamiento`);
+      }
+      comprueba(
+        pegas.length === 0,
+        "el <main> de AppShell confina el apilado de las páginas (`isolate`): ninguna chapa de carta puede tapar la barra superior",
+        pegas.join("\n          ") +
+          "\n          QUÉ TOCAR: components/AppShell.tsx. `isolate` en el <main> hace locales los z-index" +
+          " de las páginas, así que el bloque entero queda por debajo del cromo (barra superior 30," +
+          " pestañas 40, aviso de instalar 50; la escala está en app/globals.css). Es `isolation:" +
+          " isolate` y NO un `transform`, `filter` o `will-change`: ésos también crean contexto, pero" +
+          " promocionan capa y emborronan las cartas en WebKit. Lo que tenga que tapar el cromo sale" +
+          " por Portal.",
+      );
+    });
+
+    await vigila("env(safe-area-inset-*) sólo se lee en app/globals.css", () => {
+      /* LAS ZONAS SEGURAS SE LEEN DE UN SOLO SITIO. `env(safe-area-inset-*)`
+       * se declara una vez en app/globals.css (--sat, --sar, --sab, --sal) y
+       * todo lo demás usa esas variables. No es estética:
+       *
+       *   · las variables se pueden INYECTAR para probar sin iPhone
+       *     (`--sat: 59px` en el inspector) y un `env()` suelto no;
+       *   · `--content-bottom` ya lleva `--sab` dentro, y un componente que
+       *     suma por su cuenta `env(safe-area-inset-bottom)` acaba contando el
+       *     inset dos veces;
+       *   · y sin `viewportFit: "cover"` las cuatro valen 0 en iOS (lo explica
+       *     app/layout.tsx): en el ordenador no cambia nada y en el iPhone la
+       *     barra de pestañas se queda sin su relleno.
+       *
+       * public/offline.html queda fuera a propósito: es una página suelta que
+       * no carga globals.css y no tiene de dónde sacar las variables. */
+      const pegas = [];
+      const sinComentariosCss = (css) => css.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ""));
+      const mirados = [];
+      const anda = (dir) => {
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+          if (e.name === "node_modules" || e.name === ".next") continue;
+          const p = join(dir, e.name);
+          if (e.isDirectory()) anda(p);
+          else if (/\.(tsx?|jsx?|mjs|css)$/.test(e.name)) mirados.push(p);
+        }
+      };
+      for (const d of ["app", "components", "hooks", "utils"]) anda(join(raiz, d));
+      let hojaGlobal = null;
+      for (const f of mirados.sort()) {
+        const crudo = readFileSync(f, "utf8");
+        if (!crudo.includes("safe-area-inset")) continue;
+        const codigo = f.endsWith(".css") ? sinComentariosCss(crudo) : sinComentarios(crudo);
+        if (nombreCorto(f) === "app/globals.css") {
+          hojaGlobal = codigo;
+          continue;
+        }
+        codigo.split("\n").forEach((linea, i) => {
+          if (linea.includes("safe-area-inset")) pegas.push(`${nombreCorto(f)}:${i + 1} usa safe-area-inset a mano: ${linea.trim().slice(0, 90)}`);
+        });
+      }
+      const LADOS = { "--sat": "top", "--sar": "right", "--sab": "bottom", "--sal": "left" };
+      if (hojaGlobal === null) {
+        pegas.push("app/globals.css ya no nombra safe-area-inset: las cuatro variables se han quedado sin valor");
+      } else {
+        for (const [variable, lado] of Object.entries(LADOS)) {
+          if (!new RegExp(variable + "\\s*:\\s*env\\(\\s*safe-area-inset-" + lado + "\\b").test(hojaGlobal)) {
+            pegas.push(`app/globals.css ya no declara ${variable}: env(safe-area-inset-${lado}, 0px)`);
+          }
+        }
+        // Y dentro de la hoja, el env() sólo aparece para declararlas.
+        hojaGlobal.split("\n").forEach((linea, i) => {
+          for (const m of linea.matchAll(/safe-area-inset-(top|right|bottom|left)/g)) {
+            const declarada = Object.entries(LADOS).some(
+              ([variable, lado]) => lado === m[1] && new RegExp(variable + "\\s*:[^;]*$").test(linea.slice(0, m.index)),
+            );
+            if (!declarada) pegas.push(`app/globals.css:${i + 1} usa env(safe-area-inset-${m[1]}) fuera de la declaración de su variable`);
+          }
+        });
+      }
+      if (!/viewportFit\s*:\s*["']cover["']/.test(codigoDe("app/layout.tsx"))) {
+        pegas.push("app/layout.tsx ya no declara `viewportFit: \"cover\"`: sin él los cuatro insets valen 0 en iOS");
+      }
+      comprueba(
+        pegas.length === 0 && mirados.length > 100,
+        `env(safe-area-inset-*) sólo se lee en app/globals.css, para declarar --sat, --sar, --sab y --sal, y el viewport sigue en «cover» (${mirados.length} ficheros)`,
+        (pegas.slice(0, 8).join("\n          ") || `sólo se han mirado ${mirados.length} ficheros: el recorrido se ha quedado ciego`) +
+          "\n          QUÉ TOCAR: usa la variable —`var(--sab)`, o en Tailwind `pb-[var(--sab)]` y" +
+          " `pl-[max(var(--sal),1rem)]`— en vez de `env(safe-area-inset-*)`. Para dejar sitio a la" +
+          " barra de pestañas está `--content-bottom`, que ya incluye el inset y el aviso de instalar.",
+      );
+    });
+
+    /* ---------------------------------------------------------------- */
+    seccion("Remate: lo que cerró la revisión del conjunto sigue cerrado");
+    /* ---------------------------------------------------------------- */
+
+    await vigila("sin Clerk, el rastro de la última sesión distingue al invitado de la cuenta sin red", async () => {
+      /* A QUIÉN SE DEJA DE ESPERAR. Sin red clerk-js no resuelve la sesión, y
+       * pasado el plazo la app seguía «como invitado»: a quien tenía cuenta la
+       * portada le dejaba abrir sobres con el saldo del invitado mientras
+       * Colección decía «Sin conexión». `rastroDeSesion` (utils/identidad.ts)
+       * decide con lo que quedó de la última sesión, y de ahí cuelga que toda
+       * la app diga lo mismo. Se ejecuta de verdad, con `document` y
+       * `localStorage` de mentira. */
+      await cargarModulo("utils/storage.ts");
+      const { rastroDeSesion, CLAVE_ULTIMA_IDENTIDAD } = await cargarModulo("utils/identidad.ts");
+      const CLAVE_COLECCION = (await cargarModulo("utils/storage.ts")).COLLECTION_STORAGE_KEY;
+      const rastro = ({ cookie = "", ls = {}, cookieLanza = false, lsLanza = false }) => {
+        const claves = Object.keys(ls);
+        const localStorage = {
+          get length() {
+            if (lsLanza) throw new Error("bloqueado");
+            return claves.length;
+          },
+          key: (i) => claves[i] ?? null,
+          getItem: (k) => {
+            if (lsLanza) throw new Error("bloqueado");
+            return k in ls ? ls[k] : null;
+          },
+        };
+        const documento = {};
+        Object.defineProperty(documento, "cookie", {
+          get() {
+            if (cookieLanza) throw new Error("sin cookies");
+            return cookie;
+          },
+        });
+        const antes = { document: globalThis.document, window: globalThis.window };
+        globalThis.document = documento;
+        globalThis.window = { localStorage };
+        try {
+          return rastroDeSesion();
+        } finally {
+          if (antes.document === undefined) delete globalThis.document;
+          else globalThis.document = antes.document;
+          if (antes.window === undefined) delete globalThis.window;
+          else globalThis.window = antes.window;
+        }
+      };
+      const SESION = "__client_uat=1727770000";
+      const CASOS = [
+        ["sin ningún indicio", {}, { tipo: "invitado" }],
+        ["con la cookie de sesión y la cuenta apuntada", { cookie: "a=1; " + SESION, ls: { [CLAVE_ULTIMA_IDENTIDAD]: "user_a" } }, { tipo: "cuenta", id: "user_a" }],
+        ["con la cookie a 0, diga lo que diga el almacén", { cookie: "__client_uat=0", ls: { [CLAVE_ULTIMA_IDENTIDAD]: "user_a", "coins:user_a": "500" } }, { tipo: "invitado" }],
+        ["con la cookie de sesión, sin apunte y una sola cuenta con saldo", { cookie: SESION, ls: { "coins:user_x": "900", "coins:guest": "300" } }, { tipo: "cuenta", id: "user_x" }],
+        ["con la cookie de sesión, sin apunte y dos cuentas con saldo", { cookie: SESION, ls: { "coins:user_x": "900", "coins:user_y": "10" } }, { tipo: "cuenta", id: null }],
+        ["sin cookie y con «guest» apuntado", { ls: { [CLAVE_ULTIMA_IDENTIDAD]: "guest", "coins:user_x": "9" } }, { tipo: "invitado" }],
+        ["sin cookie y con una cuenta apuntada", { ls: { [CLAVE_ULTIMA_IDENTIDAD]: "user_z" } }, { tipo: "cuenta", id: "user_z" }],
+        ["sin cookie ni apunte, con cartas de invitado", { ls: { [CLAVE_COLECCION]: '[{"id":"sv1-1"}]', "coins:user_x": "9" } }, { tipo: "invitado" }],
+        ["sin cookie ni apunte, sin cartas y con el saldo de una cuenta", { ls: { [CLAVE_COLECCION]: "[]", "coins:user_x": "9" } }, { tipo: "cuenta", id: "user_x" }],
+        ["con las cookies inaccesibles", { cookieLanza: true, ls: { [CLAVE_ULTIMA_IDENTIDAD]: "user_z" } }, { tipo: "cuenta", id: "user_z" }],
+        ["con el almacenamiento bloqueado y la cookie de sesión", { cookie: SESION, lsLanza: true }, { tipo: "cuenta", id: null }],
+        ["con todo bloqueado", { cookieLanza: true, lsLanza: true }, { tipo: "invitado" }],
+      ];
+      const pegas = [];
+      for (const [nombre, entrada, esperado] of CASOS) {
+        const sale = rastro(entrada);
+        if (JSON.stringify(sale) !== JSON.stringify(esperado)) {
+          pegas.push(`${nombre}: sale ${JSON.stringify(sale)} y debe ser ${JSON.stringify(esperado)}`);
+        }
+      }
+      // Y la respuesta la da UNO: el proveedor del saldo. Si una pantalla
+      // volviera a calcularla por su cuenta, dos pantallas podrían discrepar.
+      const proveedor = codigoDe("hooks/useGameCurrency.tsx");
+      if (!/rastroDeSesion\(\)/.test(proveedor)) pegas.push("hooks/useGameCurrency.tsx ya no lee el rastro: nadie decide a quién se deja de esperar");
+      if (!/escribirLocal\(\s*CLAVE_ULTIMA_IDENTIDAD/.test(proveedor)) pegas.push("hooks/useGameCurrency.tsx ya no apunta la última identidad: la próxima vez sin red no habrá rastro");
+      const otros = ficherosVivos().filter(
+        (f) => !/hooks[\\/]useGameCurrency\.tsx$/.test(f) && !/scripts[\\/]/.test(f) && /\brastroDeSesion\(/.test(sinComentarios(readFileSync(f, "utf8"))) && !/utils[\\/]identidad\.ts$/.test(f),
+      );
+      if (otros.length > 0) pegas.push(`también calculan la identidad por su cuenta: ${otros.map(nombreCorto).join(", ")}`);
+
+      comprueba(
+        pegas.length === 0,
+        `sin Clerk, el rastro de la última sesión distingue al invitado de la cuenta sin red (${CASOS.length} casos) y lo decide sólo el proveedor del saldo`,
+        pegas.slice(0, 8).join("\n          ") +
+          "\n          QUÉ TOCAR: utils/identidad.ts (`rastroDeSesion`). El orden es cookie de Clerk, apunte" +
+          " `tcg-ultima-identidad`, y sólo después lo que haya en el dispositivo. «Cuenta» sin poder" +
+          " confirmarla NO es invitado: las pantallas enseñan components/ui/SinConexion.tsx y la" +
+          " portada no deja comprar (ver `identidadFirme` en app/page.tsx).",
+      );
+    });
+
+    await vigila("la portada no compra con la identidad sin confirmar, y «Ver sobre» no puede cobrar", () => {
+      /* DOS BOTONES QUE HACÍAN MÁS DE LO QUE DECÍAN.
+       *
+       *  · «Comprar» con Clerk sin resolver entraba por la rama del invitado:
+       *    un jugador con cuenta y sin red sorteaba el sobre en local y lo
+       *    pagaba del espejo de su saldo.
+       *  · «Ver sobre» reenviaba la clave por `comprarSobreAction`: si el recibo
+       *    ya no existía, un botón que dice «ver» compraba un sobre nuevo. */
+      const pegas = [];
+      const portada = codigoDe("app/page.tsx");
+      const trozo = (nombre) => {
+        const desde = portada.indexOf(`const ${nombre} = async (`);
+        if (desde < 0) return null;
+        const hasta = portada.indexOf("\n  };\n", desde);
+        return hasta < 0 ? null : portada.slice(desde, hasta);
+      };
+      for (const nombre of ["handleBuyPack", "handleBuyMulti"]) {
+        const cuerpo = trozo(nombre);
+        if (!cuerpo) {
+          pegas.push(`no se encuentra \`${nombre}\` en app/page.tsx`);
+          continue;
+        }
+        const guarda = cuerpo.indexOf("identidadFirme()");
+        // handleBuyPack delega en handleBuyMulti con la apertura rápida: esa
+        // salida puede ir antes, porque la guarda la pone el otro.
+        const compra = cuerpo.search(/\banotarIntento\(|\bopen(Standard|Premium|Golden)Pack\(/);
+        if (guarda < 0) pegas.push(`\`${nombre}\` ya no pregunta \`identidadFirme()\` antes de comprar`);
+        else if (compra >= 0 && compra < guarda) pegas.push(`\`${nombre}\` sortea o anota la compra antes de comprobar la identidad`);
+      }
+      if (!/const identidadFirme = \(\): boolean => \{\s*if \(identidad === "cuenta" \|\| esInvitado\) return true;/.test(portada)) {
+        pegas.push("`identidadFirme` ya no exige cuenta confirmada o invitado firme");
+      }
+      if (!/const esInvitado = identidad === "invitado";/.test(portada)) {
+        pegas.push("`esInvitado` ya no sale de la identidad: «sin cuenta confirmada» volvería a contar como invitado");
+      }
+
+      const acciones = codigoDe("app/action.ts");
+      const recuperar = cuerpoConLlaves(acciones, "recuperarSobreAction");
+      if (!recuperar) pegas.push("no existe `recuperarSobreAction` en app/action.ts");
+      else {
+        if (!/\bawait\s+auth\(\)/.test(recuperar)) pegas.push("`recuperarSobreAction` no pide la sesión");
+        if (!/\bsobreYaServido\(/.test(recuperar)) pegas.push("`recuperarSobreAction` ya no lee el recibo con `sobreYaServido`");
+        if (/\bcomprarSobreAction\(|\b(INSERT|UPDATE|DELETE)\b/.test(recuperar)) pegas.push("`recuperarSobreAction` escribe o compra: tiene que ser de sólo lectura");
+      }
+      const servido = cuerpoConLlaves(acciones, "sobreYaServido");
+      if (servido && /\b(INSERT|UPDATE|DELETE)\b/.test(servido)) pegas.push("`sobreYaServido` escribe en la base: reenviar un sobre no puede mover nada");
+
+      const compra = codigoDe("components/tienda/compra.ts");
+      const ver = cuerpoConLlaves(compra, "recuperarConClave");
+      if (!ver) pegas.push("no existe `recuperarConClave` en components/tienda/compra.ts");
+      else if (!/\brecuperarSobreAction\(/.test(ver) || /\bcomprarSobreAction\(/.test(ver)) pegas.push("`recuperarConClave` no va por `recuperarSobreAction`");
+      if (!/pendiente\.confirmada\s*\?\s*await recuperarConClave\(pendiente\)/.test(portada)) {
+        pegas.push("«Ver sobre» (compra ya confirmada) ya no va por `recuperarConClave` en app/page.tsx");
+      }
+
+      comprueba(
+        pegas.length === 0,
+        "la portada sólo compra con cuenta confirmada o invitado firme, y «Ver sobre» lee el sobre sin poder comprarlo",
+        pegas.join("\n          ") +
+          "\n          QUÉ TOCAR: app/page.tsx (`identidadFirme` al principio de `handleBuyPack` y" +
+          " `handleBuyMulti`; `recuperarCompra` elige `recuperarConClave` cuando la compra consta como" +
+          " cobrada) y app/action.ts (`recuperarSobreAction` sólo llama a `sobreYaServido`).",
+      );
+    });
+
+    await vigila("los estados de bloqueo de una amistad van siempre juntos", () => {
+      /* TRES ESTADOS SON «BLOQUEO»: 'blocked', 'blocked_both' y
+       * 'blocked_declined' (services/esquemaSocial.ts). El tercero nació para
+       * cerrar un atajo: quien había sido rechazado bloqueaba, desbloqueaba —la
+       * fila se borraba— y volvía a pedir amistad, sin límite. Un estado nuevo
+       * que se olvide en UNA consulta es un bloqueo que no bloquea ahí. */
+      const pegas = [];
+      const social = codigoDe("app/social.ts");
+      const estados = Object.values(esquemaSocial.ESTADOS_AMISTAD ?? {});
+      const deBloqueo = estados.filter((e) => String(e).startsWith("blocked"));
+      if (deBloqueo.length < 3) pegas.push(`ESTADOS_AMISTAD sólo declara ${deBloqueo.length} estados de bloqueo`);
+
+      const pesos = /const PESO_DE_ESTADO[^=]*=\s*\{([^}]*)\}/.exec(social)?.[1] ?? "";
+      for (const e of estados) {
+        if (!new RegExp("\\b" + e + "\\s*:").test(pesos)) pegas.push(`\`PESO_DE_ESTADO\` (app/social.ts) no tiene peso para '${e}'`);
+      }
+
+      for (const rel of ["app/social.ts", "app/action.ts"]) {
+        const codigo = codigoDe(rel);
+        for (const m of codigo.matchAll(/\bIN\s*\(([^()]*)\)/g)) {
+          if (/'blocked'/.test(m[1]) && !/'blocked_declined'/.test(m[1])) {
+            pegas.push(`${rel}: la lista IN (${m[1].trim()}) nombra 'blocked' y no 'blocked_declined'`);
+          }
+        }
+        codigo.split("\n").forEach((linea, i) => {
+          if (/===\s*"blocked"/.test(linea) && !/"blocked_declined"/.test(linea)) {
+            pegas.push(`${rel}:${i + 1} compara con "blocked" y no con "blocked_declined"`);
+          }
+        });
+        for (const m of codigo.matchAll(/case "blocked":\s*\n\s*(.*)/g)) {
+          if (!/case "blocked_declined":/.test(m[1])) pegas.push(`${rel}: un \`case "blocked"\` no lleva al lado el de "blocked_declined"`);
+        }
+      }
+
+      // Desbloquear NO borra la fila de quien había sido rechazado.
+      const desbloquear = /const SENTENCIA_DESBLOQUEAR = `([^`]*)`/.exec(social)?.[1] ?? "";
+      const borra = /DELETE FROM friendships f\s+WHERE([^)]*?)RETURNING/.exec(desbloquear)?.[1] ?? "";
+      if (!desbloquear) pegas.push("no se encuentra `SENTENCIA_DESBLOQUEAR` en app/social.ts");
+      else {
+        if (!/f\.status = 'blocked'/.test(borra) || /blocked_declined|IN\s*\(/.test(borra)) {
+          pegas.push("el DELETE de `desbloquear` ya no se limita a status = 'blocked': borraría el rastro del rechazo");
+        }
+        if (!/SET status = 'withdrawn'\s+WHERE[^)]*f\.status = 'blocked_declined'/.test(desbloquear)) {
+          pegas.push("`desbloquear` ya no devuelve a 'withdrawn' el bloqueo que venía de un rechazo");
+        }
+      }
+      const bloquear = /const SENTENCIA_BLOQUEAR = `([^`]*)`/.exec(social)?.[1] ?? "";
+      if (!/WHEN f\.status IN \('declined', 'withdrawn'\) AND f\.user_id = \$1::text\s+THEN 'blocked_declined'/.test(bloquear)) {
+        pegas.push("`bloquearEntrenador` ya no conserva el rechazo al bloquear (debe pasar a 'blocked_declined')");
+      }
+
+      // Y un bloqueo cierra el álbum.
+      const album = cuerpoConLlaves(codigoDe("app/action.ts"), "getTrainerCollection") ?? "";
+      const cierre = album.indexOf("friendships");
+      const lectura = album.indexOf("user_collection");
+      if (cierre < 0) pegas.push("`getTrainerCollection` ya no mira si hay un bloqueo entre los dos");
+      else if (lectura >= 0 && lectura < cierre) pegas.push("`getTrainerCollection` lee la colección antes de comprobar el bloqueo");
+
+      comprueba(
+        pegas.length === 0,
+        `los ${deBloqueo.length} estados de bloqueo van juntos en cada consulta, desbloquear no borra el rastro de un rechazo y un bloqueo cierra el álbum`,
+        pegas.slice(0, 8).join("\n          ") +
+          "\n          QUÉ TOCAR: app/social.ts. Un estado de bloqueo nuevo se añade en `ESTADOS_AMISTAD`," +
+          " en `PESO_DE_ESTADO`, en `relacionDesde`, en `pedirAmistad` y en TODAS las listas" +
+          " `status IN (…)` que ya nombren 'blocked' (también la de `getTrainerCollection`, en" +
+          " app/action.ts). En `desbloquear`, el DELETE es sólo para 'blocked' a secas.",
+      );
+    });
+
+    await vigila("el service worker sólo guarda páginas HTML y una recarga espera a la red", async () => {
+      /* DOS COSAS DE public/sw.js QUE SÓLO SE VEN EJECUTÁNDOLO CON CACHÉ:
+       *
+       *  · La caché de páginas guardaba cualquier 200. Como al servir se ignora
+       *    la query, un JSON servido por una ruta sin extensión se le habría
+       *    devuelto después a una navegación a esa ruta.
+       *  · Con copia guardada la navegación compite contra un plazo de cuatro
+       *    segundos. Una RECARGA pide la versión nueva: no puede recibir la
+       *    copia vieja porque la red tardó. Se mira que para ella no se arme
+       *    ningún temporizador. */
+      const fuente = readFileSync(join(raiz, "public", "sw.js"), "utf8");
+      const ORIGEN = "https://tcg.ejemplo.test";
+      const montar = () => {
+        const oyentes = new Map();
+        const almacen = new Map();
+        const temporizadores = [];
+        const sinQuery = (u) => u.split("?")[0];
+        const urlDe = (r) => (typeof r === "string" ? new URL(r, ORIGEN).href : r.url);
+        const cacheDe = (nombre) => {
+          if (!almacen.has(nombre)) almacen.set(nombre, []);
+          const entradas = almacen.get(nombre);
+          return {
+            match: async (req, opts = {}) => {
+              const u = urlDe(req);
+              return entradas.find((e) => (opts.ignoreSearch ? sinQuery(e.url) === sinQuery(u) : e.url === u))?.res;
+            },
+            put: async (req, res) => {
+              const u = urlDe(req);
+              const i = entradas.findIndex((e) => e.url === u);
+              if (i >= 0) entradas.splice(i, 1);
+              entradas.push({ url: u, res });
+            },
+            keys: async () => entradas.map((e) => ({ url: e.url })),
+            delete: async () => true,
+            add: async () => {},
+            addAll: async () => {},
+          };
+        };
+        const caches = {
+          open: async (n) => cacheDe(n),
+          match: async () => undefined,
+          keys: async () => [...almacen.keys()],
+          delete: async (n) => almacen.delete(n),
+        };
+        const estado = { red: async () => { throw new TypeError("sin red"); } };
+        const yo = {
+          addEventListener: (tipo, fn) => oyentes.set(tipo, fn),
+          location: { origin: ORIGEN, href: ORIGEN + "/sw.js" },
+          navigator: { onLine: true },
+          registration: {},
+          clients: { claim: async () => {} },
+          skipWaiting: async () => {},
+        };
+        const mudo = () => {};
+        new Function("self", "caches", "fetch", "setTimeout", "clearTimeout", "console", "Date", "Math", fuente)(
+          yo,
+          caches,
+          (peticion) => estado.red(peticion),
+          (fn, ms) => {
+            temporizadores.push({ fn, ms });
+            return temporizadores.length;
+          },
+          mudo,
+          { log: mudo, info: mudo, warn: mudo, error: mudo, debug: mudo },
+          { now: () => 0, parse: Date.parse },
+          Object.create(Math, { random: { value: () => 0.5 } }),
+        );
+        const navegar = (ruta, cacheDePeticion = "default") => {
+          let respuesta = null;
+          const esperas = [];
+          oyentes.get("fetch")({
+            request: {
+              method: "GET",
+              url: ORIGEN + ruta,
+              mode: "navigate",
+              destination: "document",
+              cache: cacheDePeticion,
+              headers: { get: () => null },
+            },
+            preloadResponse: Promise.resolve(undefined),
+            respondWith: (p) => {
+              respuesta = Promise.resolve(p);
+            },
+            waitUntil: (p) => esperas.push(Promise.resolve(p).catch(() => {})),
+          });
+          return { respuesta, fin: () => Promise.all(esperas) };
+        };
+        return { estado, cacheDe, temporizadores, navegar };
+      };
+      const hecha = (cuerpo, tipo, redirigida = false) => {
+        const r = {
+          ok: true,
+          status: 200,
+          type: "basic",
+          redirected: redirigida,
+          cuerpo,
+          headers: { get: (n) => (String(n).toLowerCase() === "content-type" ? tipo : null) },
+          clone: () => r,
+          text: async () => cuerpo,
+        };
+        return r;
+      };
+      const asienta = async () => {
+        for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+      };
+      const pegas = [];
+
+      // 1. Qué entra en la caché de páginas.
+      {
+        const sw = montar();
+        const paginas = sw.cacheDe("pages-v9");
+        for (const [ruta, respuesta, debeGuardarse, que] of [
+          ["/exporta", hecha('{"a":1}', "application/json"), false, "un 200 que no es HTML"],
+          ["/vieja", hecha("<html></html>", "text/html", true), false, "una respuesta redirigida"],
+          ["/collection", hecha("<html>coleccion</html>", "text/html; charset=utf-8"), true, "una página HTML"],
+        ]) {
+          sw.estado.red = async () => respuesta;
+          const n = sw.navegar(ruta);
+          await n.respuesta;
+          await n.fin();
+          await asienta();
+          const guardada = !!(await paginas.match(ORIGEN + ruta));
+          if (guardada !== debeGuardarse) pegas.push(`${que} ${debeGuardarse ? "NO se guarda" : "SE GUARDA"} en la caché de páginas`);
+        }
+      }
+
+      // 2. La recarga no compite contra el plazo.
+      {
+        const PLAZO = Number(/const PLAZO_NAVEGACION_MS = (\d+);/.exec(fuente)?.[1] ?? NaN);
+        if (!Number.isFinite(PLAZO)) pegas.push("no se encuentra PLAZO_NAVEGACION_MS en public/sw.js");
+        for (const [cachePeticion, debeHaberPlazo] of [["default", true], ["reload", false], ["no-cache", false]]) {
+          const sw = montar();
+          await sw.cacheDe("pages-v9").put(ORIGEN + "/", hecha("<html>copia</html>", "text/html"));
+          sw.estado.red = () => new Promise(() => {}); // la red no contesta
+          sw.navegar("/", cachePeticion);
+          await asienta();
+          const hayPlazo = sw.temporizadores.some((t) => t.ms === PLAZO);
+          if (hayPlazo !== debeHaberPlazo) {
+            pegas.push(
+              debeHaberPlazo
+                ? "una navegación normal con copia guardada ya no arma el plazo: con mala cobertura la app no arrancaría"
+                : `una recarga (request.cache = "${cachePeticion}") compite contra el plazo y puede recibir la copia vieja`,
+            );
+          }
+        }
+      }
+
+      comprueba(
+        pegas.length === 0,
+        "el service worker sólo guarda como página un 200 de HTML sin redirección, y una recarga espera a la red aunque haya copia",
+        pegas.join("\n          ") +
+          "\n          QUÉ TOCAR: public/sw.js. `esPaginaGuardable` decide qué entra en la caché de páginas" +
+          " (HTML, 200, sin redirección) y `esRecarga`, en `networkFirstPage`, saca del plazo las" +
+          " navegaciones que el navegador marca como recarga.",
+      );
+    });
+
+    /* EL SERVICE WORKER, EJECUTADO. public/sw.js es JavaScript suelto que sólo
+     * conoce `self`, `caches` y `fetch`, así que se puede arrancar aquí con los
+     * tres de mentira y despacharle eventos como haría el navegador. Es mejor
+     * que mirar el texto: lo que importa no es que exista una línea con
+     * `request.method`, sino que una petición POST NO llegue a `respondWith`.
+     *
+     * Sin red, sin reloj y sin azar: `fetch` y `caches` son de mentira,
+     * `setTimeout` apunta la llamada y no dispara nunca, y `Date.now` y
+     * `Math.random` devuelven siempre lo mismo. */
+    const ORIGEN_SW = "https://tcg.ejemplo.test";
+    function arrancarSW(fuente, { cachesQueHay = [], fallaListar = false } = {}) {
+      const oyentes = new Map();
+      const registro = { abiertas: [], borradas: [], pedidas: [], reclamado: 0 };
+      const nombres = new Set(cachesQueHay);
+      const cacheVacia = () => ({
+        match: async () => undefined,
+        put: async () => {},
+        add: async () => {},
+        addAll: async () => {},
+        keys: async () => [],
+        delete: async () => true,
+      });
+      const caches = {
+        open: async (nombre) => {
+          registro.abiertas.push(nombre);
+          nombres.add(nombre);
+          return cacheVacia();
+        },
+        match: async () => {
+          registro.abiertas.push("(búsqueda en todas)");
+          return undefined;
+        },
+        keys: async () => {
+          if (fallaListar) throw new Error("caches.keys de mentira: falla");
+          return [...nombres];
+        },
+        delete: async (nombre) => {
+          registro.borradas.push(nombre);
+          return nombres.delete(nombre);
+        },
+        has: async (nombre) => nombres.has(nombre),
+      };
+      const respuesta = () => ({
+        ok: true,
+        status: 200,
+        type: "basic",
+        redirected: false,
+        headers: { get: () => null },
+        clone: respuesta,
+        text: async () => "",
+      });
+      const pedir = async (peticion) => {
+        registro.pedidas.push(typeof peticion === "string" ? peticion : peticion.url);
+        return respuesta();
+      };
+      const yo = {
+        addEventListener: (tipo, oyente) => {
+          if (!oyentes.has(tipo)) oyentes.set(tipo, []);
+          oyentes.get(tipo).push(oyente);
+        },
+        location: { origin: ORIGEN_SW, href: ORIGEN_SW + "/sw.js" },
+        navigator: { onLine: true },
+        registration: { scope: ORIGEN_SW + "/" },
+        clients: {
+          claim: async () => {
+            registro.reclamado++;
+          },
+          matchAll: async () => [],
+        },
+        skipWaiting: async () => {},
+        caches,
+        fetch: pedir,
+      };
+      yo.self = yo;
+      const mudo = () => {};
+      const relojParado = { now: () => 0, parse: Date.parse };
+      const sinAzar = Object.create(Math, { random: { value: () => 0.5 } });
+      new Function("self", "caches", "fetch", "setTimeout", "clearTimeout", "console", "Date", "Math", fuente)(
+        yo,
+        caches,
+        pedir,
+        () => 0,
+        mudo,
+        { log: mudo, info: mudo, warn: mudo, error: mudo, debug: mudo },
+        relojParado,
+        sinAzar,
+      );
+      return { oyentes, registro, nombres };
+    }
+
+    /** Despacha un `fetch` y dice, en el mismo tic, si el service worker se ha
+     *  hecho cargo (respondWith) y si ha tocado la caché o la red. */
+    function despacharFetch(sw, { metodo = "GET", url, modo = "no-cors", destino = "", cabeceras = {} }) {
+      const antes = sw.registro.abiertas.length + sw.registro.pedidas.length;
+      let respondio = 0;
+      const tragar = (p) => Promise.resolve(p).catch(() => {});
+      const request = {
+        method: metodo,
+        url,
+        mode: modo,
+        destination: destino,
+        headers: { get: (nombre) => cabeceras[nombre] ?? cabeceras[String(nombre).toLowerCase()] ?? null },
+        clone() {
+          return this;
+        },
+      };
+      const evento = {
+        request,
+        preloadResponse: Promise.resolve(undefined),
+        respondWith: (p) => {
+          respondio++;
+          tragar(p);
+        },
+        waitUntil: tragar,
+      };
+      let lanzo = null;
+      for (const oyente of sw.oyentes.get("fetch") ?? []) {
+        try {
+          oyente(evento);
+        } catch (e) {
+          lanzo = String(e?.message ?? e);
+        }
+      }
+      return { respondio, lanzo, toco: sw.registro.abiertas.length + sw.registro.pedidas.length - antes };
+    }
+    const asentar = async () => {
+      for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    };
+
+    let fuenteSW = null;
+    let swNoArranca = null;
+    try {
+      fuenteSW = readFileSync(join(raiz, "public", "sw.js"), "utf8");
+      arrancarSW(fuenteSW);
+    } catch (e) {
+      swNoArranca = String(e?.message ?? e);
+    }
+
+    // Lo que el service worker SÍ atiende. Cada caso se usa dos veces: con GET
+    // tiene que hacerse cargo (el control: si no, el banco está ciego) y con
+    // cualquier otro método tiene que dejarlo pasar.
+    const ATENDIDAS = [
+      { nombre: "una navegación", url: ORIGEN_SW + "/collection", modo: "navigate", destino: "document" },
+      { nombre: "un chunk de /_next/static/", url: ORIGEN_SW + "/_next/static/chunks/app-1a2b3c.js", destino: "script" },
+      { nombre: "un icono propio", url: ORIGEN_SW + "/icons/icon-192.png", destino: "image" },
+      { nombre: "la imagen de una carta", url: "https://images.pokemontcg.io/sv8/1.png", destino: "image" },
+      { nombre: "el script de Clerk", url: "https://clerk.tcg.ejemplo.test/npm/@clerk/clerk-js@5/dist/clerk.browser.js", destino: "script" },
+    ];
+
+    if (swNoArranca) {
+      mal(
+        "public/sw.js arranca en el banco de pruebas",
+        swNoArranca +
+          "\n          QUÉ TOCAR: o public/sw.js tiene un error de sintaxis (y entonces NINGÚN iPhone" +
+          " instalará la versión nueva), o ha empezado a usar al cargarse algo que el navegador de" +
+          " mentira de este fichero no tiene (`arrancarSW`): añádeselo.",
+      );
+    } else {
+      await vigila("el service worker no toca ninguna petición que no sea GET", async () => {
+        /* NADA QUE NO SEA GET. Las server actions de Next son POST al mismo
+         * origen: comprar un sobre, vender, aceptar un intercambio. Un service
+         * worker que se hiciera cargo de una de ellas podría contestarla desde
+         * la caché —la compra «funciona» y no ha pasado nada— o repetirla al
+         * revalidar. La primera línea del oyente lo impide, y es una línea. */
+        const pegas = [];
+        const sw = arrancarSW(fuenteSW);
+        let despachadas = 0;
+        for (const metodo of ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
+          for (const caso of ATENDIDAS) {
+            const r = despacharFetch(sw, { ...caso, metodo, cabeceras: metodo === "POST" ? { "Next-Action": "abc123" } : {} });
+            despachadas++;
+            if (r.lanzo) pegas.push(`${metodo} de ${caso.nombre}: el oyente lanza (${r.lanzo})`);
+            else if (r.respondio > 0) pegas.push(`${metodo} de ${caso.nombre}: el service worker se hace cargo de la petición`);
+            else if (r.toco > 0) pegas.push(`${metodo} de ${caso.nombre}: no responde, pero abre la caché o pide a la red`);
+          }
+        }
+        await asentar();
+        const tocado = sw.registro.abiertas.length + sw.registro.pedidas.length;
+        if (tocado > 0 && pegas.length === 0) pegas.push("tras las peticiones que no son GET, el service worker ha tocado la caché o la red por detrás");
+        // El control: las mismas peticiones, con GET, sí se atienden.
+        const control = arrancarSW(fuenteSW);
+        const sinAtender = ATENDIDAS.filter((caso) => despacharFetch(control, caso).respondio !== 1).map((c) => c.nombre);
+        await asentar();
+        comprueba(
+          pegas.length === 0 && sinAtender.length === 0 && (sw.oyentes.get("fetch") ?? []).length === 1,
+          `el service worker no toca ninguna petición que no sea GET (${despachadas} peticiones con 6 métodos; las mismas ${ATENDIDAS.length} con GET sí las atiende)`,
+          (pegas.slice(0, 6).join("\n          ") ||
+            (sinAtender.length > 0
+              ? `el control falla: con GET ya no atiende ${sinAtender.join(", ")}, así que este banco no demuestra nada`
+              : `hay ${(sw.oyentes.get("fetch") ?? []).length} oyentes de «fetch» y tiene que haber uno`)) +
+            "\n          QUÉ TOCAR: public/sw.js, el oyente de `fetch`. `if (request.method !== \"GET\") return;`" +
+            " va LO PRIMERO, antes de mirar la URL: salir sin llamar a `respondWith` es lo que hace que" +
+            " el navegador siga como si el service worker no existiera.",
+        );
+      });
+
+      await vigila("el service worker deja pasar lo que no se puede guardar", async () => {
+        /* NI LO QUE ES GET PERO NO SE PUEDE GUARDAR. La cabecera del fichero
+         * lo promete —«ni las RSC, ni /api»— y es la otra mitad de lo mismo:
+         * una respuesta RSC o de /api servida desde la caché es el saldo o la
+         * colección de hace una hora (o de otra cuenta), y las llamadas a la
+         * API de Clerk guardadas son una sesión que no caduca. */
+        const INTOCABLES = [
+          { nombre: "una llamada a /api", url: ORIGEN_SW + "/api/version", modo: "cors" },
+          { nombre: "una navegación a /api (la vuelta de un pago o de un inicio de sesión)", url: ORIGEN_SW + "/api/retorno?estado=ok", modo: "navigate", destino: "document" },
+          { nombre: "una imagen servida por /api", url: ORIGEN_SW + "/api/og/carta.png", destino: "image" },
+          { nombre: "una petición RSC (cabecera)", url: ORIGEN_SW + "/collection", modo: "cors", cabeceras: { RSC: "1" } },
+          { nombre: "una petición RSC (parámetro _rsc)", url: ORIGEN_SW + "/collection?_rsc=1a2b3", modo: "cors" },
+          { nombre: "una llamada a la ruta propia de Clerk", url: ORIGEN_SW + "/__clerk/v1/client", modo: "cors" },
+          { nombre: "una navegación a la ruta propia de Clerk", url: ORIGEN_SW + "/__clerk/v1/client/handshake", modo: "navigate", destino: "document" },
+          { nombre: "la API de Clerk en su dominio", url: "https://clerk.tcg.ejemplo.test/v1/client?_clerk_js_version=5", modo: "cors" },
+          { nombre: "la API de Clerk de desarrollo", url: "https://tcg.clerk.accounts.dev/v1/environment", modo: "cors" },
+          { nombre: "un script de un tercero cualquiera", url: "https://cdn.ejemplo.org/analitica.js", destino: "script" },
+        ];
+        const pegas = [];
+        const sw = arrancarSW(fuenteSW);
+        for (const caso of INTOCABLES) {
+          const r = despacharFetch(sw, caso);
+          if (r.lanzo) pegas.push(`${caso.nombre}: el oyente lanza (${r.lanzo})`);
+          else if (r.respondio > 0) pegas.push(`${caso.nombre} (${caso.url}): el service worker se hace cargo y puede acabar en la caché`);
+          else if (r.toco > 0) pegas.push(`${caso.nombre}: no responde, pero abre la caché o pide a la red`);
+        }
+        await asentar();
+        comprueba(
+          pegas.length === 0,
+          `el service worker deja pasar lo que no se puede guardar: /api, las peticiones RSC, Clerk y lo de terceros (${INTOCABLES.length} casos)`,
+          pegas.join("\n          ") +
+            "\n          QUÉ TOCAR: public/sw.js, el oyente de `fetch`. Las salidas sin `respondWith` para" +
+            " `/api`, `clerk`, la cabecera `RSC` y `_rsc` van ANTES de la rama de navegación y de la de" +
+            " estáticos. Del dominio de Clerk sólo se guarda el SCRIPT (`destination === \"script\"`)," +
+            " nunca sus llamadas.",
+        );
+      });
+
+      await vigila("activar un service worker nuevo conserva las cachés de cartas, páginas y estáticos", async () => {
+        /* ACTUALIZAR NO VACÍA EL IPHONE. Antes las cuatro cachés llevaban la
+         * versión en el nombre y `activate` borraba todo lo que no terminara en
+         * ella: subir VERSION por un arreglo de dos líneas tiraba hasta 1.400
+         * ilustraciones, y quien abría la app sin cobertura justo después sólo
+         * veía offline.html. Ahora sólo el armazón lleva la versión y las otras
+         * tres tienen el nombre CONGELADO.
+         *
+         * Los tres nombres están escritos aquí a mano A PROPÓSITO: son, letra
+         * por letra, los que tienen hoy los iPhone con la app instalada. Si el
+         * service worker los renombra, este invariante tiene que saltar aunque
+         * el fichero siga siendo coherente consigo mismo. */
+        const CONGELADAS = ["static-v9", "cards-v9", "pages-v9"];
+        const VIEJAS = ["shell-v9", "cards-v8", "pages-v7", "static-v3"];
+        const pegas = [];
+        const activar = async (opciones) => {
+          const sw = arrancarSW(fuenteSW, opciones);
+          const esperas = [];
+          for (const oyente of sw.oyentes.get("activate") ?? []) oyente({ waitUntil: (p) => esperas.push(p) });
+          let lanzo = null;
+          try {
+            await Promise.all(esperas);
+          } catch (e) {
+            lanzo = String(e?.message ?? e);
+          }
+          return { sw, lanzo, oyentes: (sw.oyentes.get("activate") ?? []).length };
+        };
+
+        const normal = await activar({ cachesQueHay: [...CONGELADAS, ...VIEJAS] });
+        if (normal.oyentes !== 1) pegas.push(`hay ${normal.oyentes} oyentes de «activate» y tiene que haber uno`);
+        if (normal.lanzo) pegas.push("la activación lanza: " + normal.lanzo);
+        const perdidas = CONGELADAS.filter((c) => normal.sw.registro.borradas.includes(c) || !normal.sw.nombres.has(c));
+        if (perdidas.length > 0) pegas.push(`al activarse borra ${perdidas.join(", ")}: son las ilustraciones, las páginas y los chunks que el iPhone ya tenía`);
+        const sobran = VIEJAS.filter((c) => normal.sw.nombres.has(c));
+        if (sobran.length > 0) pegas.push(`al activarse no borra ${sobran.join(", ")}: las cachés de generaciones anteriores se quedan ocupando cuota`);
+        if (normal.sw.registro.reclamado !== 1) pegas.push("al activarse no llama a `clients.claim()`");
+
+        // Aunque la limpieza falle, el service worker toma el control.
+        const conFallo = await activar({ cachesQueHay: CONGELADAS, fallaListar: true });
+        if (conFallo.lanzo || conFallo.sw.registro.reclamado !== 1) {
+          pegas.push("si `caches.keys()` falla, la activación se cae y el service worker nuevo no llega a tomar el control");
+        }
+
+        // Y escribe donde ya están las cosas: las tres peticiones de control
+        // abren las tres congeladas y ninguna otra con esos prefijos.
+        const uso = arrancarSW(fuenteSW);
+        for (const caso of ATENDIDAS) despacharFetch(uso, caso);
+        await asentar();
+        const abiertas = [...new Set(uso.registro.abiertas)].filter((n) => /^(static|cards|pages)-/.test(n));
+        const fueraDeSitio = abiertas.filter((n) => !CONGELADAS.includes(n));
+        const sinUsar = CONGELADAS.filter((n) => !abiertas.includes(n));
+        if (fueraDeSitio.length > 0) pegas.push(`guarda en ${fueraDeSitio.join(", ")}: un nombre nuevo es una caché vacía en todos los dispositivos`);
+        if (sinUsar.length > 0) pegas.push(`ya no usa ${sinUsar.join(", ")}: lo que el iPhone tiene guardado ahí se queda huérfano`);
+
+        comprueba(
+          pegas.length === 0,
+          `activar un service worker nuevo conserva las cachés de cartas, páginas y estáticos (${CONGELADAS.join(", ")}), borra las de generaciones anteriores y toma el control aunque falle la limpieza`,
+          pegas.join("\n          ") +
+            "\n          QUÉ TOCAR: public/sw.js. `STATIC_CACHE`, `IMAGE_CACHE` y `PAGES_CACHE` NO se" +
+            " renombran y NO llevan `VERSION`; `activate` borra por lista blanca (`conservar`), no por" +
+            " `endsWith(VERSION)`, con cada paso en su `try`. Si de verdad hay que vaciar una (un" +
+            " formato de respuesta incompatible), es una decisión con coste —cada iPhone vuelve a" +
+            " bajarse sus cartas— y se cambia el nombre aquí y allí a la vez.",
+        );
+      });
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */

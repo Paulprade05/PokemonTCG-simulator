@@ -31,7 +31,7 @@ import type { CartaEnColeccion, Expansion } from "../../utils/tipos";
  * 2. NADA DE `press` NI DE `scale` SOBRE LAS CARTAS. Es la regla de toda la
  *    vitrina y aquí vuelve a aplicar: un ancestro con `transform: scale` manda
  *    la ilustración a una capa compositada y en iPhone se ve borrosa
- *    (components/PokemonCard.tsx:140-163). El realce es el borde, exactamente
+ *    (components/PokemonCard.tsx, en la nota de `settled`). El realce es el borde, exactamente
  *    como en components/bazar/PublicarSheet.tsx, que resuelve este mismo
  *    problema para el bazar.
  *    Con una excepción que no es nuestra y conviene no "arreglar" por sorpresa:
@@ -209,7 +209,8 @@ export default function SelectorCarta({
                   setTope(TANDA);
                 }}
                 aria-label="Filtrar por expansión"
-                className="input-field w-full min-w-0 cursor-pointer truncate rounded-xl px-3 py-2.5 t-cuerpo-2 sm:w-auto sm:max-w-[45%]"
+                // `min-h-11`: sin él medía 42,4 px (ver app/collection/page.tsx).
+                className="input-field min-h-11 w-full min-w-0 cursor-pointer truncate rounded-xl px-3 py-2.5 t-cuerpo-2 sm:w-auto sm:max-w-[45%]"
               >
                 <option value="todas">
                   Todas · {formatNumber(cartas.length)}

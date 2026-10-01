@@ -8,7 +8,7 @@
   // calcula con `precioDeCartaSuelta` + `valorDeVenta`, que son la curva real
   // que paga la tienda. Multiplicar SELL_PRICES por la cantidad inflaba el
   // patrimonio y premiaba acaparar repetidas que valen la octava parte.
-  import { AVAILABLE_SETS, RARITY_RANK, STARTING_COINS, DAILY_BASE, DAILY_STREAK_STEP, DAILY_STREAK_CAP, SET_COMPLETION_BONUS, PACK_PRICES, valorDeVenta, precioDeCartaSuelta } from "../utils/constanst";
+  import { AVAILABLE_SETS, RARITY_RANK, STARTING_COINS, DAILY_BASE, DAILY_STREAK_STEP, DAILY_STREAK_CAP, DAILY_ESPERA_H, DAILY_PLAZO_RACHA_H, SET_COMPLETION_BONUS, PACK_PRICES, valorDeVenta, precioDeCartaSuelta } from "../utils/constanst";
   import { loadLocalSets, loadLocalCards } from "../services/localData";
   // Capa de presentación en español. Se aplica AQUÍ, en el servidor y en el
   // punto en el que las cartas salen hacia la interfaz, por dos razones: el
@@ -201,23 +201,92 @@
 
   // --- 1. GESTIÓN DE USUARIO Y MONEDAS ---
 
+  /* A quién se le ha intentado ya poner nombre en ESTA instancia (ver
+   * `getUserData`). Es lo que hace que el intento sea UNO: la portada, la
+   * cabecera y la diaria llaman a `getUserData` a la vez, y sin esto un usuario
+   * nuevo lanzaría tres consultas a Clerk; y si Clerk falla, cada lectura de
+   * saldo volvería a intentarlo. El tope es sólo para que el conjunto no
+   * crezca sin fin en una instancia longeva. */
+  const nombreIntentado = new Set<string>();
+
+  /* ¿FALTA `users.username` EN ESTA BASE? La columna no la crea `ensureSchema`
+   * (sólo /migrate-core y /migrate-social), y `getUserData` la lee para saber
+   * si hay que sincronizar el nombre. En una base donde no se hubiera aplicado
+   * ninguna de las dos migraciones esa lectura fallaba con 42703, y con ella
+   * EL SALDO de todo el mundo: la acción más llamada de la aplicación colgando
+   * de una columna que sólo le importa a Social. Si falta, se apunta aquí una
+   * vez por instancia y se sigue sin nombre: lo que se pierde es que el jugador
+   * salga en la búsqueda de amigos, no su saldo. */
+  let sinColumnaNombre = false;
+
+  /** Saldo y nombre de la fila de `users`, o null si la fila no existe. */
+  async function leerSaldoYNombre(
+    userId: string,
+  ): Promise<{ coins: unknown; username: unknown } | null> {
+    if (!sinColumnaNombre) {
+      try {
+        const { rows } = await sql`SELECT coins, username FROM users WHERE id = ${userId}`;
+        return rows.length > 0 ? { coins: rows[0].coins, username: rows[0].username } : null;
+      } catch (error) {
+        // 42703 = undefined_column. Cualquier otra cosa es un fallo de verdad.
+        if ((error as { code?: string } | null)?.code !== "42703") throw error;
+        sinColumnaNombre = true;
+        console.error("getUserData: falta users.username; ejecuta /migrate-social");
+      }
+    }
+    const { rows } = await sql`SELECT coins FROM users WHERE id = ${userId}`;
+    return rows.length > 0 ? { coins: rows[0].coins, username: null } : null;
+  }
+
   export async function getUserData() {
     const { userId } = await auth();
     if (!userId) return null;
 
     try {
-      // Un único upsert idempotente hace de lectura, de creación y de reparación
-      // a la vez. Antes eran un SELECT y, si faltaba, un INSERT: dos peticiones
-      // simultáneas de un usuario nuevo (home + cabecera + diaria arrancan a la
-      // vez) pasaban ambas el SELECT vacío y la segunda reventaba con clave
-      // duplicada, devolviendo saldo vacío. El COALESCE además repara filas que
-      // syncUserName pudiera haber creado sin `coins`.
-      const { rows } = await sql`
-        INSERT INTO users (id, coins) VALUES (${userId}, ${STARTING_COINS})
-        ON CONFLICT (id) DO UPDATE SET coins = COALESCE(users.coins, ${STARTING_COINS})
-        RETURNING coins
-      `;
-      return { coins: Number(rows[0].coins) };
+      /* PRIMERO SE LEE, Y SÓLO SE ESCRIBE SI HACE FALTA.
+       *
+       * Esto era un upsert en cada llamada: una ESCRITURA en la fila de `users`
+       * —con su candado y su entrada en el registro— para leer un número. Era
+       * asumible cuando sólo lo pedían la portada y Graduación al montar; desde
+       * que el proveedor del saldo lo pide al resolverse la sesión y en cada
+       * vuelta a primer plano (hooks/useGameCurrency.tsx), es la acción más
+       * llamada de la aplicación. Y cada una de esas escrituras hace cola con
+       * las que sí importan sobre la misma fila: la compra de un sobre, una
+       * venta, la diaria.
+       *
+       * Ahora el caso normal —la fila existe y tiene saldo— es un SELECT por
+       * clave primaria. El upsert se queda para lo que de verdad necesita
+       * escribir: el usuario nuevo y la fila que `syncUserName` pudiera haber
+       * creado sin `coins`. Sigue siendo un upsert idempotente y no un INSERT,
+       * por lo que ya resolvía: la portada, la cabecera y la diaria de un
+       * usuario nuevo arrancan a la vez, las tres leen "no hay fila", y con un
+       * INSERT a secas dos de ellas reventaban con clave duplicada. */
+      let fila = await leerSaldoYNombre(userId);
+      if (!fila || fila.coins == null) {
+        const { rows } = await sql`
+          INSERT INTO users (id, coins) VALUES (${userId}, ${STARTING_COINS})
+          ON CONFLICT (id) DO UPDATE SET coins = COALESCE(users.coins, ${STARTING_COINS})
+          RETURNING coins
+        `;
+        fila = { coins: rows[0].coins, username: fila?.username ?? null };
+      }
+      // EL NOMBRE, SIN TENER QUE ABRIR SOCIAL. `username` sólo lo escribía
+      // `syncUserName`, y a `syncUserName` sólo la llamaba la pantalla de
+      // amigos: quien instalaba la app y se quedaba abriendo sobres tenía la
+      // fila sin nombre y era INVISIBLE para la búsqueda de sus amigos. La
+      // lectura de arriba ya trae la columna en el mismo viaje, así que saber si
+      // falta no cuesta nada; sólo cuando falta se pregunta a Clerk, y una vez.
+      // Va dentro de su propio try: el saldo no puede fallar por un nombre.
+      if (!sinColumnaNombre && fila.username == null && !nombreIntentado.has(userId)) {
+        if (nombreIntentado.size > 5000) nombreIntentado.clear();
+        nombreIntentado.add(userId);
+        try {
+          await syncUserName();
+        } catch (error) {
+          console.error("getUserData: no se pudo sincronizar el nombre:", error);
+        }
+      }
+      return { coins: Number(fila.coins) };
     } catch (error) {
       console.error("❌ Error getUserData:", error);
       return null;
@@ -1249,11 +1318,88 @@
       : (JSON.parse(String(guardadas ?? "[]")) as string[]);
     return {
       ok: true as const,
-      cartas: await cartasPorId(ids),
+      cartas: await conEstadoFisicoDeAhora(userId, await cartasPorId(ids)),
       coins: Number(rows[0].coins ?? 0),
       precio: Number(rows[0].precio ?? 0),
       reenvio: true,
     };
+  }
+
+  /**
+   * El desgaste de un sobre que se vuelve a servir.
+   *
+   * La compra pinta cada carta con el estado de SU copia, y lo saca de la
+   * cantidad resultante que devuelve la propia sentencia (ver
+   * `conEstadoFisico`). El reenvío no tenía ese dato y devolvía las cartas
+   * limpias: el sobre que se reintentaba tras perder la respuesta —que es el
+   * mismo sobre— salía sin la carta machacada que le había tocado, y la carta
+   * aparecía marcada después en la colección.
+   *
+   * Aquí se usa la cantidad que hay AHORA. En el caso que importa, el reintento
+   * a los pocos segundos, es la misma que dejó la compra y el resultado es
+   * idéntico. Si entre medias se compró o se vendió algo de esa carta, el
+   * número de copia sale movido y se pinta el desgaste de otra copia: es el
+   * mismo desajuste que ya se acepta más arriba (ESTO RECORRE 1..CANTIDAD…), y
+   * por la misma razón: de aquí no sale ni una moneda ni una nota. El filtro
+   * que protege la economía es el de `conEstadoFisico` y se aplica igual.
+   *
+   * Si la lectura falla, el sobre se sirve limpio, como hasta ahora.
+   */
+  async function conEstadoFisicoDeAhora(
+    userId: string,
+    sobre: CartaDeSobre[],
+  ): Promise<CartaDeSobre[]> {
+    if (sobre.length === 0) return sobre;
+    try {
+      const { rows } = await sql.query(
+        `SELECT card_id, quantity
+           FROM user_collection
+          WHERE user_id = $1 AND card_id = ANY($2::text[])`,
+        [userId, Array.from(new Set(sobre.map((c) => c.id)))],
+      );
+      return conEstadoFisico(
+        userId,
+        sobre,
+        rows.map((r: { card_id: unknown; quantity: unknown }) => ({
+          id: String(r.card_id),
+          cantidad: Number(r.quantity),
+        })),
+      );
+    } catch (e) {
+      console.error("No se pudo leer el estado de un sobre ya servido:", e);
+      return sobre;
+    }
+  }
+
+  /**
+   * Devuelve un sobre YA COBRADO por su clave. SÓLO LEE: no puede comprar.
+   *
+   * POR QUÉ EXISTE, si `comprarSobreAction` con la misma clave ya devuelve el
+   * sobre servido. Porque sólo lo devuelve si el recibo sigue ahí. El aviso
+   * «Tienes un sobre sin terminar de ver» ofrece «Ver sobre» sobre una compra
+   * que el cliente tiene apuntada como cobrada; si ese recibo ya no existiera
+   * —la poda de `podarRecibosViejos`, un apunte manipulado—, reenviar la clave
+   * por la acción de compra sería una compra NUEVA que nadie ha pedido, hecha
+   * al pulsar un botón que dice «ver». Un botón que dice ver no puede cobrar.
+   *
+   * La compra en duda («no sabemos si llegó») sigue yendo por
+   * `comprarSobreAction`: ahí reintentar ES comprar si no había llegado, y es
+   * lo que el jugador pidió.
+   */
+  export async function recuperarSobreAction(clave: string) {
+    const { userId } = await auth();
+    if (!userId) return { ok: false as const, motivo: "sin-sesion" as const };
+    if (typeof clave !== "string" || !/^[A-Za-z0-9._:-]{8,64}$/.test(clave)) {
+      return { ok: false as const, motivo: "clave-invalida" as const };
+    }
+    try {
+      await ensureSchema();
+      const servido = await sobreYaServido(userId, clave);
+      return servido ?? { ok: false as const, motivo: "no-encontrado" as const };
+    } catch (e) {
+      console.error("Error recuperando un sobre ya cobrado:", e);
+      return { ok: false as const, motivo: "error" as const };
+    }
   }
 
   /**
@@ -2168,6 +2314,36 @@
     if (!userId) return [];
     if (!trainerId || typeof trainerId !== "string") return [];
 
+    /* UN BLOQUEO CIERRA EL ÁLBUM, EN LOS DOS SENTIDOS.
+     *
+     * Bloquear a alguien le sacaba de la búsqueda, cortaba la amistad y
+     * cancelaba sus ofertas, pero quien conservara el enlace /trainer/<id>
+     * —un ex amigo lo tiene— seguía abriendo el álbum entero, con cantidades
+     * y favoritas. Esta acción sólo pedía sesión y un id.
+     *
+     * Se contesta con la lista vacía, igual que a un id que no existe: no se
+     * le dice al bloqueado por qué. Los tres estados son los que
+     * services/esquemaSocial.ts documenta como bloqueo.
+     *
+     * Va en su propio try y, si la consulta falla (una base sin
+     * `friendships`), el álbum se sirve como hasta ahora: un fallo de esta
+     * comprobación no puede dejar a todo el mundo sin ver ningún álbum. */
+    if (trainerId !== userId) {
+      try {
+        const { rows: bloqueo } = await sql`
+          SELECT 1
+          FROM friendships
+          WHERE status IN ('blocked', 'blocked_both', 'blocked_declined')
+            AND ((user_id = ${userId} AND friend_id = ${trainerId})
+              OR (user_id = ${trainerId} AND friend_id = ${userId}))
+          LIMIT 1
+        `;
+        if (bloqueo.length > 0) return [];
+      } catch (error) {
+        console.error("getTrainerCollection: no se pudo comprobar el bloqueo:", error);
+      }
+    }
+
     try {
       // JOIN a `sets` para traer el nombre del set: antes se leía row.set_name,
       // que la consulta no seleccionaba, así que set.name salía siempre undefined.
@@ -2247,17 +2423,19 @@
   //
   // Y por la misma razón se ha retirado el SISTEMA DE AMIGOS que también vivía
   // aquí: `sendFriendRequest`, `getFriendsList`, `acceptFriendRequest` y
-  // `removeFriend` duplicaban a `addFriend`, `getSocialOverview`,
-  // `acceptFriend` y `removeFriendship` de app/social.ts, que son las que usa
-  // app/friends/page.tsx. Ninguna de las cuatro tenía un solo consumidor.
+  // `removeFriend` duplicaban lo que ya hacía app/social.ts, que es lo que usa
+  // app/friends/page.tsx (hoy `enviarPeticion`, `getSocialOverview`,
+  // `aceptarPeticion` y `eliminarAmigo`). Ninguna de las cuatro tenía un solo
+  // consumidor.
   //
   // No era código muerto inocuo: toda función exportada de un fichero
   // 'use server' es un endpoint POST vivo, así que eran cuatro endpoints
   // mantenidos por nadie —y ya habían divergido, porque `sendFriendRequest`
-  // comprobaba que el destinatario existiera y `addFriend` no—. Cada arreglo
-  // había que hacerlo dos veces o quedaba a medias.
+  // comprobaba que el destinatario existiera y su gemela de social no—. Cada
+  // arreglo había que hacerlo dos veces o quedaba a medias.
   //
-  // `syncUserName` se queda: la llama app/friends/page.tsx y no está duplicada.
+  // `syncUserName` se queda: la llaman app/friends/page.tsx y, una vez por
+  // usuario sin nombre, `getUserData`. No está duplicada.
 
 // --- DAILY REWARD ---
 export async function claimDailyReward() {
@@ -2266,25 +2444,33 @@ export async function claimDailyReward() {
   try {
     await ensureSchema();
 
-    const { rows } = await sql`SELECT last_daily_claim, streak FROM users WHERE id = ${userId}`;
+    // EL TIEMPO TRANSCURRIDO LO CALCULA POSTGRES, no `new Date(last)`.
+    // `last_daily_claim` es un TIMESTAMP sin zona: el driver lo convierte a
+    // Date suponiendo la zona del proceso de Node, y si no es la de la sesión
+    // de Postgres el instante sale desplazado (con Postgres en Europe/Paris y
+    // Node en UTC, a 19 h de la reclamación esto decía «lista en ~3h»). El
+    // `NOW() - last_daily_claim` de aquí usa la misma zona que el `NOW()` que
+    // la escribió y que el WHERE del UPDATE de más abajo: los tres coinciden.
+    const { rows } = await sql`
+      SELECT streak,
+             EXTRACT(EPOCH FROM (NOW() - last_daily_claim))::float8 AS segundos
+      FROM users WHERE id = ${userId}
+    `;
     if (rows.length === 0) return { error: "Usuario no existe" };
 
-    const last: Date | null = rows[0].last_daily_claim;
     const streak: number = rows[0].streak || 0;
-    const now = new Date();
+    // Horas desde la última reclamación; null si no ha reclamado nunca.
+    const hours: number | null =
+      rows[0].segundos === null || rows[0].segundos === undefined
+        ? null
+        : Number(rows[0].segundos) / 3600;
 
-    if (last) {
-      const diffMs = now.getTime() - new Date(last).getTime();
-      const hours = diffMs / (1000 * 60 * 60);
-      if (hours < 20) {
-        const remaining = Math.ceil(20 - hours);
-        return { error: `Recompensa lista en ~${remaining}h` };
-      }
+    if (hours !== null && hours < DAILY_ESPERA_H) {
+      const remaining = Math.ceil(DAILY_ESPERA_H - hours);
+      return { error: `Recompensa lista en ~${remaining}h` };
     }
 
-    const wasYesterday = last
-      ? (now.getTime() - new Date(last).getTime()) / (1000 * 60 * 60) < 48
-      : false;
+    const wasYesterday = hours !== null && hours < DAILY_PLAZO_RACHA_H;
     const newStreak = wasYesterday ? streak + 1 : 1;
     const baseReward = DAILY_BASE;
     const bonus = Math.min(newStreak * DAILY_STREAK_STEP, DAILY_STREAK_CAP);
@@ -2294,7 +2480,8 @@ export async function claimDailyReward() {
     // Comprobarla sólo en JavaScript dejaba una ventana entre el SELECT y el
     // UPDATE: con dos pestañas, ambas leían la misma fecha antigua, ambas
     // pasaban el `if` y ambas cobraban. Al ponerla en el WHERE, la segunda no
-    // afecta a ninguna fila y se rechaza.
+    // afecta a ninguna fila y se rechaza. El '20 hours' es DAILY_ESPERA_H
+    // escrito a mano: va como literal porque es parte del SQL.
     const claim = await sql`
       UPDATE users
       SET coins = coins + ${totalReward},
@@ -2327,13 +2514,35 @@ export async function getDailyStatus() {
   if (!userId) return { available: false };
   try {
     await ensureSchema();
-    const { rows } = await sql`SELECT last_daily_claim, streak FROM users WHERE id = ${userId}`;
+    // Los segundos transcurridos salen de Postgres, igual que en
+    // `claimDailyReward` y por lo mismo: convertir el TIMESTAMP sin zona a
+    // Date en Node desplazaba `nextAt` tantas horas como separen la zona del
+    // proceso de la de la sesión, y `nextAt` es una hora que la pantalla enseña.
+    const { rows } = await sql`
+      SELECT streak,
+             EXTRACT(EPOCH FROM (NOW() - last_daily_claim))::float8 AS segundos
+      FROM users WHERE id = ${userId}
+    `;
     if (rows.length === 0) return { available: true, streak: 0 };
-    const last = rows[0].last_daily_claim;
     const streak = rows[0].streak || 0;
-    if (!last) return { available: true, streak };
-    const hours = (Date.now() - new Date(last).getTime()) / (1000 * 60 * 60);
-    return { available: hours >= 20, streak, hoursLeft: Math.max(0, Math.ceil(20 - hours)) };
+    if (rows[0].segundos === null || rows[0].segundos === undefined) return { available: true, streak };
+    const segundos = Number(rows[0].segundos);
+    if (!Number.isFinite(segundos)) return { available: false };
+    const hours = segundos / 3600;
+    return {
+      available: hours >= DAILY_ESPERA_H,
+      streak,
+      hoursLeft: Math.max(0, Math.ceil(DAILY_ESPERA_H - hours)),
+      // EL INSTANTE, además de las horas redondeadas. Con sólo `hoursLeft` la
+      // hoja de la recompensa decía «en unas 7 h» y no podía dar ni la hora a
+      // la que vuelve ni cuándo se pierde la racha: una cota con una hora de
+      // holgura, puesta como plazo, haría perderla a quien se fiara. Es un
+      // dato de sólo lectura que sale de la misma cuenta que el `available` de
+      // arriba; no decide nada (eso lo hace el WHERE de claimDailyReward).
+      // «Ahora + lo que falta», con el reloj de Node sólo para el «ahora»: lo
+      // que falta es una duración y no depende de ninguna zona horaria.
+      nextAt: Math.round(Date.now() + (DAILY_ESPERA_H * 3600 - segundos) * 1000),
+    };
   } catch (e) {
     return { available: false };
   }
@@ -5209,7 +5418,7 @@ export async function comprarEnBazarAction(anuncioId: number) {
           * cambiaba el user_id al comprador y se le recalculaba la copia. Al
           * hacerlo, el hueco (vendedor, carta, copia) quedaba LIBRE — y ese
           * hueco es exactamente lo que el índice único de graded_cards existe
-          * para no soltar jamás (services/esquemaMejoras.ts:70-86 lo documenta,
+          * para no soltar jamás (services/esquemaMejoras.ts lo documenta junto a idx_graded_cards_copia,
           * y por eso el índice NO filtra por estado). Como la nota es
           * determinista a partir del índice (semilla secreto|usuario|carta|copia),
           * con el hueco libre el vendedor volvía a graduar, el bucle de

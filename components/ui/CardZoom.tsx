@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useHaptics } from "../../hooks/useHaptics";
@@ -48,6 +48,10 @@ const SNAP_SCALE = 1.06;
 /** Escala del doble toque. */
 const DOUBLE_TAP_SCALE = 2.2;
 
+// "¿Estamos en el navegador?" no cambia nunca: no hay a qué suscribirse. Es el
+// mismo recurso que components/ui/Portal.tsx, y allí está el porqué.
+const sinSuscripcion = () => () => {};
+
 /**
  * Sólo la carta, a pantalla completa. Se balancea al arrastrarla, se cierra
  * deslizando hacia abajo y —siendo el único sitio de la app donde el zoom
@@ -79,7 +83,11 @@ export default function CardZoom({
   const zoomRef = useRef<HTMLDivElement>(null);
   const tiltRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(
+    sinSuscripcion,
+    () => true,
+    () => false,
+  );
   /** true mientras la carta está ampliada: cambia gestos y rótulo. */
   const [zoomActive, setZoomActive] = useState(false);
   /**
@@ -175,8 +183,6 @@ export default function CardZoom({
   }>(null);
   const panRef = useRef<null | { x: number; y: number; offX: number; offY: number }>(null);
   const lastTapRef = useRef({ t: 0, x: 0, y: 0 });
-
-  useEffect(() => setMounted(true), []);
 
   const applyZoom = useCallback((animate = false) => {
     const el = zoomRef.current;
@@ -294,7 +300,7 @@ export default function CardZoom({
    * `perspective(1000px) rotateY() rotateX()` sobre tiltRef, el PADRE de la
    * carta—, y este visor es justo el sitio donde la carta tiene que verse
    * nítida: un `perspective` en un ancestro la manda a una capa rasterizada a
-   * escala fija y en iPhone salía borrosa (PokemonCard.tsx:140-163). Además
+   * escala fija y en iPhone salía borrosa (PokemonCard.tsx, en la nota de `settled`). Además
    * el retorno fijaba una transición de 0,6 s y un setTimeout(620) sin
    * guardar el id: dos arrastres seguidos hacían que el primer temporizador
    * borrara la transición a mitad del rebote del segundo y la carta saltaba.
@@ -479,7 +485,10 @@ export default function CardZoom({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: D.base }}
-          className="fixed inset-0 z-[140] flex flex-col items-center justify-center"
+          /* --zoom-reserva es lo que la carta tiene que dejarle libre al resto
+             de la columna: el pie con la ayuda del gesto y, EN VERTICAL, además
+             la fila del botón de cerrar (56 px). Ver la nota del botón. */
+          className="fixed inset-0 z-[140] flex flex-col items-center justify-center [--zoom-reserva:188px] landscape:[--zoom-reserva:132px]"
           style={{ paddingTop: "var(--sat)", paddingBottom: "var(--sab)" }}
           onClick={onClose}
         >
@@ -493,14 +502,33 @@ export default function CardZoom({
             aria-hidden="true"
             className="absolute inset-0 bg-black/92 backdrop-blur-xl"
           />
-          <button
-            onClick={onClose}
-            aria-label="Cerrar"
-            className="glass absolute right-4 z-10 flex h-11 w-11 items-center justify-center rounded-full"
-            style={{ top: "calc(var(--sat) + 12px)" }}
-          >
-            <IconoCerrar tam={20} className="ink" />
-          </button>
+          {/* EL BOTÓN DE CERRAR TIENE SU PROPIA FILA EN VERTICAL.
+              Iba absoluto en la esquina, flotando sobre la superficie de la
+              carta. En pantallas bajas la carta llena el ancho y sube hasta
+              ahí: a 320×568 el botón tapaba 23×13 px de la esquina superior
+              derecha —el símbolo de tipo y los PS— y a 375×667 se libraba por
+              3,7 px. Como fila de la columna, la carta se centra en lo que
+              queda DEBAJO y no pueden pisarse a ninguna altura.
+
+              Es una fila aparte y no un `padding-top` de la superficie porque
+              el zoom mide contra el rectángulo de la superficie (su centro es
+              el origen del pellizco y sus bordes, el tope del desplazamiento):
+              un relleno descentraría la carta respecto a ese rectángulo y
+              ampliar dejaría de "ir hacia" el punto que se toca.
+
+              En apaisado (y en escritorio, que siempre lo es) se queda como
+              estaba, absoluto: ahí manda el alto, la carta queda estrecha y
+              centrada, lejos de la esquina, y gastar 56 px de alto en una fila
+              la encogería sin necesidad. */}
+          <div className="relative z-10 flex w-full shrink-0 justify-end px-4 pt-3 landscape:absolute landscape:top-[var(--sat)] landscape:right-0 landscape:w-auto">
+            <button
+              onClick={onClose}
+              aria-label="Cerrar"
+              className="glass flex h-11 w-11 items-center justify-center rounded-full"
+            >
+              <IconoCerrar tam={20} className="ink" />
+            </button>
+          </div>
 
           <div
             ref={surfaceRef}
@@ -536,7 +564,7 @@ export default function CardZoom({
                           ? undefined
                           : "0 30px 60px rgba(0,0,0,0.8)",
                         maxHeight:
-                          "calc(var(--app-height) - var(--sat) - var(--sab) - 132px)",
+                          "calc(var(--app-height) - var(--sat) - var(--sab) - var(--zoom-reserva))",
                       }}
                       // `block` SÓLO en la rama con marcas: un <img> en línea
                       // arrastra el hueco del descendente bajo la línea base y
@@ -600,7 +628,11 @@ export default function CardZoom({
             </div>
           </div>
 
-          <p className="pointer-events-none relative pb-4 text-center t-meta text-white/45">
+          {/* `px-5`: sin relleno lateral la leyenda llegaba de borde a borde a
+              320 px (dos líneas pegadas a los cantos) y a 4,8 px a 390.
+              `text-balance` reparte las dos líneas en vez de dejar una palabra
+              suelta en la segunda. */}
+          <p className="pointer-events-none relative px-5 pb-4 text-center text-balance t-meta text-white/45">
             {caption ? `${caption} · ` : ""}
             {zoomActive
               ? "Arrastra para moverte · Doble toque para alejar"

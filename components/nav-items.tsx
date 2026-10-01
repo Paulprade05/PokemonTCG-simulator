@@ -4,7 +4,13 @@ export interface NavItem {
   href: string;
   label: string;
   icon: ReactNode;
-  requireAuth?: boolean;
+  /**
+   * Esta pestaña lleva la insignia de pendientes sociales (peticiones de
+   * amistad y ofertas de intercambio sin contestar). La cuenta sale de
+   * hooks/useSocialPendientes.tsx; aquí sólo se dice A QUÉ pestaña pertenece,
+   * para que las dos barras no tengan que comparar rutas a mano.
+   */
+  pendientes?: boolean;
   match: (path: string) => boolean;
 }
 
@@ -58,8 +64,8 @@ export const NAV_ITEMS: NavItem[] = [
   {
     href: "/mercado",
     label: "Mercado",
-    // Sin requireAuth a propósito: el invitado puede mirar el tablón (la propia
-    // pantalla le explica que para cobrar necesita sesión).
+    // El invitado puede mirar el tablón (la propia pantalla le explica que
+    // para cobrar necesita sesión).
     // El bazar entre jugadores es la otra mitad del mercado: uno vende a la
     // máquina y el otro a personas. Comparten pestaña a propósito.
     match: (p) => p.startsWith("/mercado") || p.startsWith("/bazar"),
@@ -68,8 +74,19 @@ export const NAV_ITEMS: NavItem[] = [
   {
     href: "/friends",
     label: "Social",
-    requireAuth: true,
-    match: (p) => p.startsWith("/friends") || p.startsWith("/trainer"),
+    /* SIN `requireAuth`, QUE YA NO EXISTE. La pestaña se pintaba sólo con
+     * sesión, dentro de un <SignedIn> que no pinta nada hasta que Clerk
+     * contesta: la barra nacía con TRES pestañas de un tercio y medio segundo
+     * después pasaba a CUATRO de un cuarto, con Mercado saltando 78 px a la
+     * izquierda y Social apareciendo bajo el dedo. Quien tocaba Mercado nada
+     * más abrir la app acababa en Social. Y sin red Clerk no llega nunca, así
+     * que la pestaña desaparecía aunque /friends sepa pintarse sin él.
+     * Ahora las cuatro están desde el primer fotograma; al invitado, /friends
+     * le enseña su progreso local y el botón de iniciar sesión. */
+    pendientes: true,
+    // /invitar es la página de una invitación de amistad: cuelga de Social
+    // igual que el álbum de un entrenador.
+    match: (p) => p.startsWith("/friends") || p.startsWith("/trainer") || p.startsWith("/invitar"),
     icon: I(<><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></>),
   },
 ];

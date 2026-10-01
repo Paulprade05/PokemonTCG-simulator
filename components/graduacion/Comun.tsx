@@ -269,10 +269,10 @@ interface SelloProps {
  *
  * SIN `transform: scale` NI `filter`, aunque este componente casi siempre está
  * al lado de una carta: el realce es un `box-shadow` y un borde. La regla del
- * repositorio (components/PokemonCard.tsx:140-163) prohíbe esas dos propiedades
- * sobre la carta y sobre cualquier ancestro suyo, y el sello se monta unas veces
- * como hermano y otras encima; mantenerlo limpio evita tener que acordarse de
- * cuál es cuál.
+ * repositorio (el comentario de `settled` en components/PokemonCard.tsx)
+ * prohíbe esas dos propiedades sobre la carta y sobre cualquier ancestro suyo,
+ * y el sello se monta unas veces como hermano y otras encima; mantenerlo limpio
+ * evita tener que acordarse de cuál es cuál.
  */
 export function SelloNota({ nota, tamano = "md", soloNumero = false }: SelloProps) {
   const tinta = tintaDeNota(nota);

@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+
+// No hay nada a lo que suscribirse: "¿estamos en el navegador?" no cambia.
+const sinSuscripcion = () => () => {};
 
 /**
  * Saca su contenido del árbol de la página y lo cuelga de <body>.
@@ -14,12 +17,26 @@ import { createPortal } from "react-dom";
  * el alto del contenido. De ahí que un modal encajara bien unas veces y otras
  * apareciera desplazado y con el tamaño equivocado.
  *
- * Devuelve null hasta montar porque document.body no existe al renderizar en el
- * servidor.
+ * Devuelve null en el servidor (y en la hidratación, que tiene que pintar lo
+ * mismo que él) porque allí document.body no existe.
+ *
+ * CON useSyncExternalStore Y NO CON UN ESTADO QUE ENCIENDE UN EFECTO. El
+ * `useState(false)` + `useEffect(() => setMounted(true))` de antes hacía dos
+ * cosas de más: un render en cascada por cada portal de la app (lo que el
+ * linter marca como set-state-in-effect), y —lo que se notaba— que una capa
+ * montada YA ABIERTA en el navegador naciera vacía y sólo apareciera un commit
+ * después, por un repintado que es del Portal y no de quien lo usa. Los efectos
+ * del dueño ya habían corrido para entonces con sus refs vacíos: una hoja así
+ * se quedaba sin gesto en el asa y sin foco. Ahora el servidor y la hidratación
+ * leen `false`, y cualquier montaje posterior en el navegador lee `true` desde
+ * el primer render, con el contenido en el mismo commit.
  */
 export default function Portal({ children }: { children: ReactNode }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  if (!mounted) return null;
+  const enNavegador = useSyncExternalStore(
+    sinSuscripcion,
+    () => true,
+    () => false,
+  );
+  if (!enNavegador) return null;
   return createPortal(children, document.body);
 }

@@ -43,6 +43,14 @@ interface AvisoInvitadoProps {
    *  defecto, pero la puerta queda abierta. */
   destino?: string;
   rotuloDestino?: string;
+  /**
+   * Otra salida en lugar del enlace: un botón que inicia sesión, un
+   * "Reintentar"… Por no tenerla, Social tuvo que copiar esta caja entera en
+   * components/social/AvisoSinSesion.tsx sólo para cambiar el botón, y la
+   * pantalla "sin conexión" iba a ser la tercera copia. Con ella, quien quiera
+   * otra acción la pasa y la caja sigue siendo una.
+   */
+  accion?: ReactNode;
 }
 
 export default function AvisoInvitado({
@@ -51,6 +59,7 @@ export default function AvisoInvitado({
   titulo = "Estás jugando como invitado",
   destino = "/",
   rotuloDestino = "Ir al inicio",
+  accion,
 }: AvisoInvitadoProps) {
   // El ámbar del borde es el mismo en las dos formas: es lo que identifica al
   // aviso de un vistazo, antes de leerlo.
@@ -74,12 +83,14 @@ export default function AvisoInvitado({
         </div>
         {/* El enlace sale del párrafo y se convierte en botón: en una pantalla
             que es un callejón sin salida, la salida tiene que verse sin leer. */}
-        <Link
-          href={destino}
-          className="btn-primary press control-44 t-cuerpo rounded-xl px-5 font-medium"
-        >
-          {rotuloDestino}
-        </Link>
+        {accion ?? (
+          <Link
+            href={destino}
+            className="btn-primary press control-44 t-cuerpo rounded-xl px-5 font-medium"
+          >
+            {rotuloDestino}
+          </Link>
+        )}
       </div>
     );
   }
@@ -89,15 +100,23 @@ export default function AvisoInvitado({
       <IconoAviso tam={20} className="mt-0.5 [color:var(--warn)]" />
       <div className="min-w-0">
         <p className="t-cuerpo font-semibold">{titulo}</p>
-        <p className="ink-soft t-cuerpo-2 mt-1">
-          {children}{" "}
+        <p className="ink-soft t-cuerpo-2 mt-1">{children}</p>
+        {/* EL ENLACE, EN SU PROPIA LÍNEA Y CON 44px DE DEDO. Iba dentro del
+            párrafo y medía 55×15px: tres palabras subrayadas en mitad de un
+            texto de 12px, que es de lo más difícil de acertar con el pulgar.
+            Fuera del párrafo puede tener el alto mínimo sin deformar el
+            interlineado; los márgenes negativos devuelven a la tira casi todo
+            lo que el alto le añade (se come el relleno inferior de la caja).
+            --ok y no `accent`: es texto, y el verde de marca sobre el papel
+            claro da 2,2:1 (ver la nota de TINTA SEMÁNTICA en globals.css). */}
+        {accion ?? (
           <Link
             href={destino}
-            className="accent font-medium underline underline-offset-2"
+            className="-mb-3 inline-flex min-h-11 items-center t-cuerpo-2 font-semibold underline underline-offset-2 [color:var(--ok)]"
           >
             {rotuloDestino}
           </Link>
-        </p>
+        )}
       </div>
     </div>
   );

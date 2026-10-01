@@ -24,6 +24,7 @@ import CabeceraDeHoja from "../ui/CabeceraDeHoja";
 import CampoBusqueda from "../ui/CampoBusqueda";
 import Segmentado from "../ui/Segmentado";
 import type { Publicable } from "./tipos";
+import { esAccionCaducada } from "../../utils/versionApp";
 
 /* ==================================================================== *
  * PUBLICAR EN EL BAZAR
@@ -42,8 +43,8 @@ import type { Publicable } from "./tipos";
  * devuelve las columnas de `cards` y ahí no hay precio en euros. Si la banda se
  * calculara aquí sólo con la rareza, saldría una banda MÁS BAJA que la de
  * verdad (el ajuste sólo suma: hasta +27 % medido en la carta más cara de sv08,
- * ver utils/constanst.ts:330-348), y el extremo inferior del deslizador caería
- * por debajo del mínimo real. O sea: la pantalla ofrecería un precio que el
+ * ver `DIVISOR_EUROS` en utils/constanst.ts), y el extremo inferior del
+ * deslizador caería por debajo del mínimo real. O sea: la pantalla ofrecería un precio que el
  * servidor rechaza. Justo lo que no puede pasar, porque toda la gracia de este
  * diseño es que las reglas se vean ANTES y no en un mensaje de error.
  *
@@ -51,7 +52,7 @@ import type { Publicable } from "./tipos";
  * `getFullCollection()`. No es la acción "de graduar": es la única que devuelve,
  * por carta, el `valor` YA CALCULADO POR EL SERVIDOR con el mismo
  * `precioDeCartaSuelta(rareza, euros)` que usará `publicarEnBazarAction` para
- * validar (app/action.ts:3120 y 3604). Con ella, la banda que se pinta y la que
+ * validar (las dos, en app/action.ts). Con ella, la banda que se pinta y la que
  * comprueba el servidor son la misma por construcción. De regalo trae una
  * proyección ligera (id, nombre, rareza, imagen, cantidades) en vez de la
  * colección entera con ataques y debilidades, y ya excluye las cartas cuyas
@@ -59,7 +60,8 @@ import type { Publicable } from "./tipos";
  *
  * Las graduadas salen de `getVitrina()`, que devuelve el valor YA multiplicado
  * por la nota — que es también el que usa el servidor para su banda cuando se
- * publica con `gradedId` (app/action.ts:3617). Si algún día alguna de las dos
+ * publica con `gradedId` (`valorDeReferenciaGraduada`, dentro de
+ * `publicarEnBazarAction`). Si algún día alguna de las dos
  * acciones deja de devolver `valor`, esta pantalla tiene que dejar de pintar la
  * banda, no adivinarla.
  *
@@ -342,7 +344,7 @@ export default function PublicarSheet({
       onPublicada();
     } catch (e) {
       console.error("Error publicando en el bazar:", e);
-      toast("No se pudo publicar. Revisa tu conexión.", "error");
+      if (!esAccionCaducada(e)) toast("No se pudo publicar. Revisa tu conexión.", "error");
     } finally {
       envioLockRef.current = false;
       setEnviando(false);
@@ -421,8 +423,9 @@ export default function PublicarSheet({
                       // Sin `press`: esa clase escala el elemento y aquí dentro
                       // hay una ilustración. Un ancestro con `transform: scale`
                       // la manda a una capa compositada y se ve borrosa en
-                      // iPhone (components/PokemonCard.tsx:140-163). El realce
-                      // es un borde, no un escalado.
+                      // iPhone (el comentario de `settled` en
+                      // components/PokemonCard.tsx). El realce es un borde, no
+                      // un escalado.
                       <button
                         key={p.clave}
                         type="button"
@@ -433,7 +436,13 @@ export default function PublicarSheet({
                         <div className="relative">
                           {p.nota !== null && (
                             <div className="absolute top-1 left-1 z-20">
-                              <NotaGraduada nota={p.nota} etiqueta={p.etiqueta} />
+                              {/* Sólo la cifra: a tres columnas la carta mide
+                                  73 px a 320 de pantalla y la chapa entera, 75. */}
+                              <NotaGraduada
+                                nota={p.nota}
+                                etiqueta={p.etiqueta}
+                                conRotulo="nunca"
+                              />
                             </div>
                           )}
                           <PokemonCard
@@ -450,8 +459,16 @@ export default function PublicarSheet({
                         <p className="ink mt-1.5 truncate t-meta font-medium">
                           {p.name}
                         </p>
-                        <p className="ink-soft tnum truncate t-micro">
-                          vale {formatNumber(p.valor)} · te sobran {p.sobrantes}
+                        {/* DOS RENGLONES Y SIN `truncate`. En uno solo, «vale 1.234
+                            · te sobran 3» pedía 113 px y la celda da 73 a 320,
+                            91 a 375 y 96 a 390: lo que se cortaba siempre era
+                            el final, o sea cuántas te sobran, que es justo el
+                            dato por el que se elige qué vender. */}
+                        <p className="ink-soft tnum t-micro">
+                          <span className="block">vale {formatNumber(p.valor)}</span>
+                          <span className="block">
+                            {p.sobrantes === 1 ? "te sobra" : "te sobran"} {p.sobrantes}
+                          </span>
                         </p>
                       </button>
                     ))}

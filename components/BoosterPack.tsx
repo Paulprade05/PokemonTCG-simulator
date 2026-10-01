@@ -234,10 +234,17 @@ const RATIO_SOBRE = "780 / 1426";
  * Es el mismo criterio que rige para la carta —ancho tope, y lo que quepa en
  * vertical— y por eso los dos objetos ocupan la misma ranura y se mueven con
  * la barra dinámica de Safari a la vez.
+ *
+ * EL INSET INFERIOR ES `max(--sab, 12px)`, IGUAL QUE EN app/page.tsx
+ * (SAB_APERTURA). La vista de apertura reserva ahora 12 px abajo en los iPhone
+ * sin indicador de inicio (SE 2/3, --sab 0), donde los botones quedaban a 3 px
+ * del borde físico; si el sobre siguiera descontando `--sab` a secas mediría
+ * esos 12 px de más y se saldría de su ranura. Con indicador (34 px) no cambia.
+ * Los ejemplos de arriba (iPhone con sab 34) siguen valiendo tal cual.
  */
 const RESERVA_VERTICAL = "172px";
 function anchoDeSobre(anchoCarta: string): string {
-  return `min(${anchoCarta}, calc((var(--app-height) - var(--sat) - var(--sab) - ${RESERVA_VERTICAL}) * 780 / 1426))`;
+  return `min(${anchoCarta}, calc((var(--app-height) - var(--sat) - max(var(--sab), 12px) - ${RESERVA_VERTICAL}) * 780 / 1426))`;
 }
 
 interface BoosterPackProps {
