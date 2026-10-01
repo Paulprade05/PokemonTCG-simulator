@@ -95,6 +95,7 @@ export function tieneEspanol(setId: string): boolean {
   return SETS_CON_ES.has(setId);
 }
 
+/** SIN USO a fecha del commit d4d558e (nadie la importa). No se borra sin el sí del dueño. */
 export function esIdioma(valor: unknown): valor is Idioma {
   return valor === "en" || valor === "es";
 }
@@ -157,7 +158,12 @@ export function cargarDiccionario(
   return promesa;
 }
 
-/** Deja listos varios diccionarios de golpe (p. ej. antes de pintar un mazo). */
+/**
+ * Deja listos varios diccionarios de golpe (p. ej. antes de pintar un mazo).
+ *
+ * SIN USO a fecha del commit d4d558e (nadie la importa). No se borra sin el sí
+ * del dueño.
+ */
 export async function precargarIdioma(
   setIds: Iterable<string>,
   idioma: Idioma,

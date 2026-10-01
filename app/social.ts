@@ -1639,12 +1639,22 @@ export async function createTradeOffer(receiverId: string, offeredIds: string[],
      * exactamente la corrupción que el resto del repositorio evita. Y no
      * contradice la excepción documentada arriba: el trueque sigue sin reservar
      * copia, una carta única sin graduar se intercambia igual que siempre.
+     *
+     * Y LO APALABRADO EN EL BAZAR, QUE ES EL MISMO DESAJUSTE OTRA VEZ. `saldo`
+     * pasó a restar también lo que el bazar tiene comprometido de cada carta
+     * —sus anuncios sueltos abiertos más la copia libre que la compra exige—
+     * y esta comprobación se quedó contando sólo las graduadas: con 2 copias y
+     * una anunciada la oferta se creaba, el amigo la veía, y al aceptarla se
+     * cancelaba con "el emisor ya no puede entregar esas cartas". Ahora es la
+     * misma cuenta, con el mismo «z.n» (sólo hay fila si la carta tiene algún
+     * anuncio abierto), y se dice al crear la oferta, con su motivo.
      */
     const offCount = countById(offeredIds);
     const { rows: saldos } = await sql.query(
       `SELECT uc.card_id,
               uc.quantity::int        AS quantity,
-              COALESCE(g.n, 0)::int   AS graduadas
+              COALESCE(g.n, 0)::int   AS graduadas,
+              COALESCE(z.n, 0)::int   AS apalabradas
          FROM user_collection uc
          LEFT JOIN (
            -- Solo las que siguen en la vitrina, igual que en acceptTradeOffer:
@@ -1655,25 +1665,44 @@ export async function createTradeOffer(receiverId: string, offeredIds: string[],
             WHERE user_id = $1 AND estado = 'activa'
             GROUP BY card_id
          ) g ON g.card_id = uc.card_id
+         LEFT JOIN (
+           -- Lo que el bazar tiene apalabrado: anuncios sueltos abiertos + 1.
+           -- Es el z de saldo en acceptTradeOffer, acotado a este usuario.
+           SELECT card_id,
+                  (count(*) FILTER (WHERE graded_id IS NULL) + 1)::int AS n
+             FROM bazar_listings
+            WHERE seller_id = $1 AND estado = 'activa'
+              AND card_id = ANY($2::text[])
+            GROUP BY card_id
+         ) z ON z.card_id = uc.card_id
         WHERE uc.user_id = $1 AND uc.card_id = ANY($2::text[])`,
       [userId, Object.keys(offCount)],
     );
-    const saldoPorCarta = new Map<string, { total: number; graduadas: number }>(
-      saldos.map((r: any) => [String(r.card_id), { total: Number(r.quantity), graduadas: Number(r.graduadas) }]),
+    const saldoPorCarta = new Map<string, { total: number; graduadas: number; apalabradas: number }>(
+      saldos.map((r: any) => [
+        String(r.card_id),
+        { total: Number(r.quantity), graduadas: Number(r.graduadas), apalabradas: Number(r.apalabradas) },
+      ]),
     );
     let bloqueadasEnVitrina = false;
+    let bloqueadasEnBazar = false;
     for (const [cid, qty] of Object.entries(offCount)) {
-      const s = saldoPorCarta.get(cid) ?? { total: 0, graduadas: 0 };
-      if (s.total - s.graduadas < qty) {
-        // No tenerlas y tenerlas graduadas son dos cosas distintas y se dicen
-        // distintas. Faltar de verdad manda: es el problema más gordo de los
-        // dos, y el que el jugador no puede resolver quitando nada de la oferta.
+      const s = saldoPorCarta.get(cid) ?? { total: 0, graduadas: 0, apalabradas: 0 };
+      if (s.total - s.graduadas - s.apalabradas < qty) {
+        // No tenerlas, tenerlas graduadas y tenerlas anunciadas son tres cosas
+        // distintas y se dicen distintas. Faltar de verdad manda: es el
+        // problema más gordo, y el que el jugador no puede resolver quitando
+        // nada de la oferta.
         if (s.total < qty) return { error: "No posees todas las cartas ofrecidas" };
-        bloqueadasEnVitrina = true;
+        if (s.total - s.graduadas < qty) bloqueadasEnVitrina = true;
+        else bloqueadasEnBazar = true;
       }
     }
     if (bloqueadasEnVitrina) {
       return { error: "Las copias graduadas no se intercambian: están en la vitrina" };
+    }
+    if (bloqueadasEnBazar) {
+      return { error: "Esa copia está anunciada en el bazar: retira el anuncio para poder intercambiarla" };
     }
 
     /* TOPE DE OFERTAS PENDIENTES HACIA EL MISMO AMIGO, y dentro del INSERT.
@@ -1941,7 +1970,23 @@ export async function acceptTradeOffer(tradeId: number) {
          -- carta única sin graduar sigue siendo intercambiable, que es la
          -- decisión documentada arriba. Lo único que se protege es la copia que
          -- tiene una fila de graded_cards apuntándola.
-         SELECT uc.user_id, uc.card_id, uc.quantity - COALESCE(g.n, 0) AS quantity
+         --
+         -- Y LO QUE EL BAZAR TIENE APALABRADO, que se descuenta igual y en el
+         -- mismo sitio. El agujero: el bazar no aparta la carta al anunciarla
+         -- (el anuncio es una fila, quantity no se mueve), así que con 2 copias
+         -- y una anunciada se podía dar la otra en un trueque. El anuncio
+         -- seguía abierto, la compra exige que al vendedor le quede una copia
+         -- libre además de la que vende, y ya no la había: todo comprador
+         -- recibía un «no disponible» y el anuncio no caducaba nunca. Mientras
+         -- la carta tenga algún anuncio abierto no se pueden dar ni las copias
+         -- de sus anuncios sueltos ni esa copia libre: «z.n» es
+         -- (anuncios sueltos + 1), y no hay fila —no se resta nada— si la carta
+         -- no tiene ningún anuncio. Para darla hay que retirar antes el anuncio.
+         -- Tampoco bloquea nada: bazar_listings no participa del FOR UPDATE.
+         -- Es la misma cuenta que hacen las ventas y la graduación en
+         -- app/action.ts (ver «copiasComprometidas»).
+         SELECT uc.user_id, uc.card_id,
+                uc.quantity - COALESCE(g.n, 0) - COALESCE(z.n, 0) AS quantity
          FROM user_collection uc
          LEFT JOIN (
            SELECT user_id, card_id, count(*)::int AS n
@@ -1959,6 +2004,16 @@ export async function acceptTradeOffer(tradeId: number) {
              AND (user_id, card_id) IN (SELECT m.user_id, m.card_id FROM mov m)
            GROUP BY user_id, card_id
          ) g ON g.user_id = uc.user_id AND g.card_id = uc.card_id
+         LEFT JOIN (
+           SELECT seller_id, card_id,
+                  (count(*) FILTER (WHERE graded_id IS NULL) + 1)::int AS n
+           FROM bazar_listings
+           WHERE estado = 'activa'
+             -- Mismo recorte que arriba, y por lo mismo: solo los pares de este
+             -- trueque, para no agrupar el escaparate entero en cada aceptacion.
+             AND (seller_id, card_id) IN (SELECT m.user_id, m.card_id FROM mov m)
+           GROUP BY seller_id, card_id
+         ) z ON z.seller_id = uc.user_id AND z.card_id = uc.card_id
          WHERE (uc.user_id, uc.card_id) IN (SELECT m.user_id, m.card_id FROM mov m)
          ORDER BY uc.user_id, uc.card_id
          FOR UPDATE OF uc
@@ -2103,7 +2158,12 @@ export async function acceptTradeOffer(tradeId: number) {
       // que queda aquí es lo que cambió DESPUÉS: venta, otro trueque o vitrina.
       return { error: "El emisor ya no puede entregar esas cartas. Oferta cancelada." };
     }
-    if (r.falta_receptor) return { error: "No tienes disponibles todas las cartas pedidas: las graduadas no cuentan" };
+    // Las dos causas por las que una copia que se tiene no se puede dar: está
+    // en la vitrina o está apalabrada en el bazar. Antes sólo nombraba la
+    // primera, y a quien tenía la copia anunciada le hablaba de graduadas.
+    if (r.falta_receptor) {
+      return { error: "No tienes disponibles todas las cartas pedidas: las graduadas y las anunciadas en el bazar no cuentan" };
+    }
     return { error: "Error al procesar el intercambio" };
   } catch (e) {
     // Aquí caen también los interbloqueos que Postgres corta: no se ha movido
@@ -2191,10 +2251,14 @@ export async function getTradableCollection(targetId: string) {
     // como tope de lo que se puede elegir, así que descontarlo en el servidor
     // —que es quien sabe qué copias están en la vitrina— evita que el cliente
     // tenga que repetir la cuenta y que ofrezca cartas que `acceptTradeOffer`
-    // va a rechazar luego. Es la misma resta que hace el CTE `saldo`.
+    // va a rechazar luego. Es la misma resta que hace el CTE `saldo`, ENTERA:
+    // las graduadas y lo que el bazar tiene apalabrado (anuncios sueltos
+    // abiertos más uno, sólo si la carta tiene algún anuncio). Mientras esto
+    // restaba sólo las graduadas, el selector ofrecía la copia anunciada y la
+    // oferta nacía muerta.
     const { rows } = await sql`
       SELECT c.id, c.name, c.rarity, c.images, c.set_id,
-             (uc.quantity - COALESCE(g.n, 0)) AS quantity
+             (uc.quantity - COALESCE(g.n, 0) - COALESCE(z.n, 0)) AS quantity
       FROM user_collection uc
       JOIN cards c ON uc.card_id = c.id
       LEFT JOIN (
@@ -2203,12 +2267,26 @@ export async function getTradableCollection(targetId: string) {
          WHERE user_id = ${targetId} AND estado = 'activa'
          GROUP BY card_id
       ) g ON g.card_id = uc.card_id
-      WHERE uc.user_id = ${targetId} AND uc.quantity - COALESCE(g.n, 0) > 0
+      LEFT JOIN (
+        SELECT card_id,
+               (count(*) FILTER (WHERE graded_id IS NULL) + 1)::int AS n
+          FROM bazar_listings
+         WHERE seller_id = ${targetId} AND estado = 'activa'
+         GROUP BY card_id
+      ) z ON z.card_id = uc.card_id
+      WHERE uc.user_id = ${targetId}
+        AND uc.quantity - COALESCE(g.n, 0) - COALESCE(z.n, 0) > 0
     `;
+    // `rangoDe` y no `RARITY_RANK[r] || 0`: la rareza llega de una API que no
+    // controlamos, y con una llamada "constructor" el índice devolvía una
+    // función heredada de Object.prototype, la resta daba NaN y el orden del
+    // selector quedaba indefinido.
+    const rangoDe = (rareza: unknown): number => {
+      const r = String(rareza ?? "");
+      return Object.prototype.hasOwnProperty.call(RARITY_RANK, r) ? RARITY_RANK[r] : 0;
+    };
     rows.sort((a: any, b: any) => {
-      const ra = RARITY_RANK[a.rarity] || 0;
-      const rb = RARITY_RANK[b.rarity] || 0;
-      return rb - ra || String(a.name).localeCompare(String(b.name));
+      return rangoDe(b.rarity) - rangoDe(a.rarity) || String(a.name).localeCompare(String(b.name));
     });
     return [...(await traducirCartasEs(
       rows.map((r: any) => ({

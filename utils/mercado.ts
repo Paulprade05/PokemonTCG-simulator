@@ -328,7 +328,7 @@ const FACTOR_LIBRE = 0.7;
  * se desvía de la prevista en ese mismo factor.
  * ------------------------------------------------------------------ */
 
-interface Banda {
+export interface Banda {
   clave: string;
   rarMin: number;
   rarMax: number;
@@ -441,6 +441,27 @@ const B_ELITE: Banda = {
   etiqueta: "de Radiante a Ilustración Rara",
   etiquetaUna: "de Radiante a Ilustración Rara",
 };
+
+/**
+ * Las seis bandas, A LA VISTA DE `npm test`.
+ *
+ * POR QUÉ SE EXPORTAN: `precioMax` de cada banda es un número escrito a mano
+ * que HOY coincide con SELL_PRICES (3, 14, 22, 35, 45 y 70), y de él cuelgan la
+ * auditoría de peor caso de este fichero y el comentario de `cumplirOferta` en
+ * app/action.ts («la carta más cara que puede entrar en un lote vale 70»). Si
+ * alguien sube 'Illustration Rare' a 90 en utils/constanst.ts, B_ELITE sigue
+ * diciendo 70, los lotes de élite pagan 90 × multiplicador y nada avisa.
+ *
+ * Con esto un invariante puede comprobar, para cada banda, que `precioMax` es
+ * el máximo de SELL_PRICES entre las rarezas cuyo RARITY_RANK cae en
+ * [rarMin, rarMax]. `precioMin` NO se deriva: es una referencia medida a
+ * propósito (B_BAJA 4, B_ELITE 65; ver sus comentarios).
+ *
+ * Sólo lectura: quien las importe no puede cambiar lo que genera el tablón.
+ */
+export const BANDAS_DE_RAREZA: readonly Readonly<Banda>[] = Object.freeze(
+  [B_MORRALLA, B_BAJA, B_RARA, B_HOLO, B_DOBLE, B_ELITE].map((b) => Object.freeze({ ...b })),
+);
 
 /* ------------------------------------------------------------------ *
  * PRIORES: DUPLICADOS por sobre estándar que produce cada filtro.
@@ -716,7 +737,11 @@ const PRECIO_RAREZA_DESCONOCIDA = (() => {
 
 /** Rango de rareza; las rarezas desconocidas caen al suelo, no al techo. */
 export function rangoDeRareza(carta: CartaMinima): number {
-  return RARITY_RANK[carta.rarity ?? ""] ?? RANGO_DESCONOCIDO;
+  // `typeof … === "number"` y no `??`, por lo mismo que `rarezaConocida`: con
+  // una rareza llamada "constructor" el índice devuelve una función heredada
+  // de Object.prototype, que no es null y se colaba como rango.
+  const rango = RARITY_RANK[carta.rarity ?? ""];
+  return typeof rango === "number" ? rango : RANGO_DESCONOCIDO;
 }
 
 /**

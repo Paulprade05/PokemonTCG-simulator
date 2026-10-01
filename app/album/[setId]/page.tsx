@@ -5,7 +5,10 @@ import { useParams } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
-import { getSetsFromDB, getFullCollection } from "../../action";
+import { getFullCollection } from "../../action";
+// El catálogo de expansiones, pedido una vez por sesión de navegador y
+// compartido entre pantallas (ver utils/catalogoCliente.ts).
+import { catalogoDeExpansiones } from "../../../utils/catalogoCliente";
 import { getCardsFromSet } from "../../../services/pokemon";
 import { getCollection } from "../../../utils/storage";
 import PokemonCard from "../../../components/PokemonCard";
@@ -205,10 +208,16 @@ export default function SetAlbumPage() {
        * nombre de la expansión llegue a la cabecera del error aunque sea otra
        * la que falle, que es lo que pasaba cuando iban en fila. Cualquiera que
        * falle sigue acabando en el error con reintento. */
+      /* LA COLECCIÓN, SÓLO LA DE ESTA EXPANSIÓN. `getFullCollection()` a secas
+       * bajaba la colección entera —cientos de cartas con ataques, legalidades
+       * y precios— para quedarse aquí abajo con las treinta de un álbum. Con el
+       * id, el servidor filtra por expansión y la forma de cada carta es la
+       * misma. El filtro por prefijo de más abajo se queda: para el invitado
+       * (su colección sale entera de localStorage) sigue haciendo falta. */
       const [rSets, rCartas, rMias] = await Promise.allSettled([
-        getSetsFromDB(),
+        catalogoDeExpansiones(),
         getCardsFromSet(setId),
-        identidad === "cuenta" ? getFullCollection() : Promise.resolve(getCollection()),
+        identidad === "cuenta" ? getFullCollection(setId) : Promise.resolve(getCollection()),
       ]);
       if (turno !== cargaRef.current) return;
       if (rSets.status === "fulfilled") {

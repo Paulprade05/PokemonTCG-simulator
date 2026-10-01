@@ -31,6 +31,19 @@ const MARGEN_SET_MS = 4_000;
 /** Margen para cerrar la oleada y responder sin que la función muera. */
 const MARGEN_OLEADA_MS = 8_000;
 
+/** Tope por petición: una respuesta que nunca llega no la detecta ningún reintento. */
+const TIMEOUT_PETICION_MS = 10_000;
+/**
+ * Reintentos por petición (o sea, tres intentos). Cortos y pocos: aquí hay unas
+ * decenas de peticiones por noche, y lo que se busca es sobrevivir a un 503
+ * suelto de TCGdex, no insistirle a un servicio caído.
+ */
+const REINTENTOS = 2;
+/** Base del respaldo exponencial: 600 ms y 1,2 s. */
+const ESPERA_BASE_MS = 600;
+/** Sólo se duerme si después queda tiempo para la petición que sigue. */
+const MARGEN_REINTENTO_MS = 1_500;
+
 /**
  * Cuánto puede encoger una traducción antes de sospechar. Una respuesta
  * degradada de TCGdex no puede empeorar una fila que ya estaba bien.
@@ -81,11 +94,76 @@ function asegurarTablas(): Promise<void> {
  * TCGdex
  * ------------------------------------------------------------------ */
 
-async function pedir(url: string): Promise<any | null> {
-  const res = await fetch(url, { headers: { accept: "application/json" } });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error("HTTP " + res.status);
-  return res.json();
+function dormir(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * COPIA DELIBERADA de `senalConTiempo` de services/ingest.ts y de
+ * services/preciosIngest.ts: cada intento lleva su propio tope y nunca se
+ * estira más allá de `limite` (un instante absoluto, Date.now()).
+ */
+function senalConTiempo(limite: number): AbortSignal {
+  const restante = limite - Date.now();
+  return AbortSignal.timeout(Math.max(1000, Math.min(TIMEOUT_PETICION_MS, restante)));
+}
+
+/**
+ * Una petición a TCGdex, CON CORTE DE TIEMPO. Devuelve `null` para 404, que es
+ * "TCGdex no conoce ese id" y no un fallo.
+ *
+ * EL AGUJERO QUE CIERRA: esto era un `fetch` pelado, sin `signal`. Las otras
+ * tres ingestas recortan cada petición al presupuesto que queda; ésta no, y el
+ * presupuesto de `sincronizarTraducciones` sólo se miraba ANTES de cada oleada.
+ * Una sola respuesta colgada —la lista de expansiones a las 07:00, o un set de
+ * la oleada— esperaba los 300 s por defecto de undici, Vercel mataba la función
+ * a los 60 s, y esa noche no había resumen en el registro NI corrían los sobres
+ * y los precios encadenados detrás (app/api/cron/sync-es/route.ts).
+ *
+ * LOS REINTENTOS SON POCOS Y CORTOS, y sólo ante lo que puede ser pasajero
+ * (fallo de red, 429 y 5xx). Antes un 503 suelto en la lista tumbaba la noche
+ * entera. Nunca se duerme más allá del presupuesto ni después del último
+ * intento: una espera que no precede a nada es tiempo tirado.
+ *
+ * UN CORTE DE TIEMPO NO SE REINTENTA. Quien ha tardado diez segundos en no
+ * contestar no va a contestar en el undécimo, y cada reintento costaría otros
+ * diez: tres intentos sobre la lista colgada se comían los 30 s de las
+ * traducciones enteros y dejaban a los sobres sin turno. Con uno, la noche mala
+ * cuesta diez segundos y lo demás corre.
+ */
+async function pedir(url: string, limite: number): Promise<any | null> {
+  for (let intento = 0; ; intento++) {
+    const espera = ESPERA_BASE_MS * Math.pow(2, intento);
+    // Se pregunta DESPUÉS de fallar, no antes de pedir: una petición que agota
+    // su corte de tiempo se ha comido justo el margen que aquí se mira.
+    const cabeReintento = () =>
+      intento < REINTENTOS && Date.now() + espera + MARGEN_REINTENTO_MS <= limite;
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: { accept: "application/json" },
+        cache: "no-store",
+        signal: senalConTiempo(limite),
+      });
+    } catch (e) {
+      // `AbortSignal.timeout` rechaza con un DOMException llamado TimeoutError.
+      // Se mira el nombre y no la clase: es lo único que comparten los motores.
+      const nombre = (e as { name?: unknown } | null)?.name;
+      const porTiempo = nombre === "TimeoutError" || nombre === "AbortError";
+      if (porTiempo || !cabeReintento()) {
+        throw new Error("TCGdex no responde: " + (e instanceof Error ? e.message : String(e)));
+      }
+      await dormir(espera);
+      continue;
+    }
+    if (res.status === 404) return null;
+    if (res.ok) return res.json();
+    if (![429, 500, 502, 503, 504].includes(res.status) || !cabeReintento()) {
+      throw new Error("HTTP " + res.status);
+    }
+    await dormir(espera);
+  }
 }
 
 /**
@@ -156,12 +234,12 @@ interface Trabajo {
   traducidas: number;
 }
 
-async function procesar(t: Trabajo, forzado: boolean): Promise<
+async function procesar(t: Trabajo, forzado: boolean, limite: number): Promise<
   | { tipo: "sin-cambios" }
   | { tipo: "rechazado"; motivo: string }
   | { tipo: "actualizado"; antes: number; ahora: number }
 > {
-  const remoto = await pedir(API_ES + "/sets/" + encodeURIComponent(t.tcgdexId));
+  const remoto = await pedir(API_ES + "/sets/" + encodeURIComponent(t.tcgdexId), limite);
   if (!remoto) {
     await marcar(t.setId, t.tcgdexId, ESTADOS_IDIOMA.NO_ENCONTRADO);
     return { tipo: "rechazado", motivo: "TCGdex no conoce " + t.tcgdexId };
@@ -353,7 +431,7 @@ export async function sincronizarTraducciones(opciones: {
 
   // La lista blanca de TCGdex: una sola petición que evita preguntar por ids
   // que no existen, y con ella la conjetura del candidato se valida gratis.
-  const listado = await pedir(API_ES + "/sets");
+  const listado = await pedir(API_ES + "/sets", limite);
   const idsDeTcgdex = new Set<string>(
     (Array.isArray(listado) ? listado : []).map((s: { id: string }) => String(s.id)),
   );
@@ -384,7 +462,7 @@ export async function sincronizarTraducciones(opciones: {
         if (Date.now() > limite - MARGEN_SET_MS) return;
         resumen.revisados.push(t.setId);
         try {
-          const r = await procesar(t, Boolean(forzado));
+          const r = await procesar(t, Boolean(forzado), limite);
           if (r.tipo === "sin-cambios") resumen.sinCambios++;
           else if (r.tipo === "rechazado") resumen.rechazados.push({ setId: t.setId, motivo: r.motivo });
           else resumen.actualizados.push({ setId: t.setId, antes: r.antes, ahora: r.ahora });

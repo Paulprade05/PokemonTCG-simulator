@@ -67,12 +67,14 @@ export interface Carta extends CartaBase {
    * Estado físico de la copia: piques en los cantos, arañazos, manchas,
    * descentrado y decoloración. Lo pinta components/DesperfectosCarta.tsx.
    *
-   * SÓLO LLEGA EN LAS COPIAS QUE DE VERDAD SE VEN MAL —aproximadamente el 5%—
-   * y su ausencia significa "se ve limpia", nunca "no se sabe". Es una decisión
-   * económica y está medida: el desgaste es coherente con la nota de
-   * graduación, así que mandarlo siempre la delataría (una copia sin ni un
-   * pique era SIEMPRE un 10, y graduar sólo ésas es beneficio garantizado). El
-   * servidor filtra qué manda; el cliente pinta lo que le llega y NO lo deduce.
+   * SÓLO LLEGA EN LAS COPIAS A LAS QUE SE LES VE ALGO —unas seis de cada diez
+   * recién abiertas; en la colección muchas menos, porque de cada carta se
+   * enseña la copia que mejor se ve— y su ausencia significa "se ve limpia",
+   * nunca "no se sabe". Es una decisión económica y está medida: el desgaste es
+   * coherente con la nota de graduación, y de una copia limpia el dato exacto
+   * (el descentrado con decimales) diría más de lo que enseña la pantalla. El
+   * servidor filtra qué manda (`seVeLimpia`, utils/graduacion.ts); el cliente
+   * pinta lo que le llega y NO lo deduce.
    */
   desperfectos?: unknown;
   /** Dónde va cada marca del desgaste. Viaja o falta junto a `desperfectos`. */
@@ -83,6 +85,27 @@ export interface Carta extends CartaBase {
   graduadas?: number;
   /** La nota más alta entre ellas: la que se enseña. */
   mejor_nota?: number | null;
+
+  /* --- Sólo cuando la carta viene de `getFullCollection` --- */
+  /**
+   * Copias con un anuncio SUELTO abierto en el bazar. Siguen contando en
+   * `quantity`, pero están apalabradas: no se venden a la tienda, no se
+   * entregan en el mercado, no se gradúan y no se dan en un trueque hasta que
+   * el anuncio se retire o se venda.
+   */
+  anunciadas?: number;
+  /**
+   * Copias de las que se puede disponer: `quantity - graduadas - anunciadas`,
+   * ya calculado por el servidor. De éstas, una se queda siempre en el álbum,
+   * así que lo vendible es `copiasLibres - 1`. Quien pinte "cuántas me sobran"
+   * NO puede restar `quantity - graduadas` por su cuenta: esa cuenta no sabe
+   * nada del bazar y ofrece copias que el servidor ya no deja vender. Las
+   * pantallas que parchean `quantity` tras cada venta (colección, detalle,
+   * tienda) no leen este campo, que se quedaría viejo al segundo toque: hacen
+   * la misma resta con `copiasLibresDe` (utils/constanst.ts), sobre los tres
+   * sumandos que manda el servidor.
+   */
+  copiasLibres?: number;
 }
 
 /**

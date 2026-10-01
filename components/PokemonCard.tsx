@@ -186,6 +186,11 @@ function PokemonCardInteractive({
   const [settled, setSettled] = useState(reveal);
 
   useEffect(() => {
+    // A PROPÓSITO: `isFlipped` y `settled` son el estado de una ANIMACIÓN que
+    // arranca cuando cambia `reveal` y que además se mueve por su cuenta
+    // (onAnimationComplete, el temporizador de abajo). No se pueden derivar en
+    // el render: el giro necesita el fotograma anterior para animarse.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsFlipped(!reveal);
     if (!reveal) {
       setSettled(false);

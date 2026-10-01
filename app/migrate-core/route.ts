@@ -24,7 +24,9 @@ import { SENTENCIAS_IDIOMA } from "@/services/idiomaEsquema";
  *   1. /migrate-core     <- este fichero: las cinco tablas base
  *   2. /migrate-schema      columnas ricas de `cards` e índices
  *   3. /migrate-social      `trade_offers` y los índices de usuario
- *   4. /seed-database       las cartas del repositorio
+ *   4. /migrate-mejoras     graduación, archivador, precios y bazar
+ *   5. /migrate-sobres      el almacén de fotos de sobre que trae el cron
+ *   6. /seed-database       las cartas del repositorio
  * Las auxiliares las crea sola la app en la primera petición (`ensureSchema`).
  *
  * ES IDEMPOTENTE Y SEGURO SOBRE UNA BASE CON DATOS: todo va con
@@ -259,7 +261,8 @@ export async function GET(request: Request) {
       ok: fallidas.length === 0,
       aplicadas,
       fallidas,
-      siguiente: "/migrate-schema, luego /migrate-social, luego /seed-database",
+      siguiente:
+        "/migrate-schema, luego /migrate-social, /migrate-mejoras, /migrate-sobres y, al final, /seed-database",
     },
     { status: fallidas.length === 0 ? 200 : 207 },
   );

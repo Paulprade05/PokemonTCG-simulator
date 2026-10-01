@@ -9,9 +9,11 @@ import {
   toggleFavorite,
   sellAllDuplicatesAction,
   sellAllDuplicatesBulkAction,
-  getSetsFromDB,
   nombresDeCartas,
 } from "../action";
+// El catálogo de expansiones, pedido una vez por sesión de navegador y
+// compartido entre pantallas (ver utils/catalogoCliente.ts).
+import { catalogoDeExpansiones } from "../../utils/catalogoCliente";
 import {
   COLLECTION_STORAGE_KEY,
   ajustarCopiasEnLocal,
@@ -23,7 +25,7 @@ import { useHaptics } from "../../hooks/useHaptics";
 import { useToast } from "../../components/ui/Toast";
 import ConfirmSheet from "../../components/ui/ConfirmSheet";
 import Sheet from "../../components/ui/Sheet";
-import { RARITY_RANK, valorDeVenta } from "../../utils/constanst";
+import { copiasLibresDe, rangoParaOrdenar, valorDeVenta } from "../../utils/constanst";
 import { cifraCorta, formatNumber } from "../../utils/format";
 import { D, EASE_OUT } from "../../utils/motion";
 import PokemonCard from "../../components/PokemonCard";
@@ -129,11 +131,24 @@ const ESPERA_ROTULOS_MS = 2500;
  * graded_cards, sólo las activas) y falta en el modo invitado, donde no hay
  * graduación: ahí el `|| 0` deja el comportamiento de siempre.
  *
+ * Y LAS ANUNCIADAS EN EL BAZAR, QUE ES EL MISMO DESAJUSTE OTRA VEZ. El servidor
+ * pasó a tratar la copia anunciada como comprometida —no se vende a la tienda
+ * mientras su anuncio siga abierto— y esta cuenta se quedó en
+ * `quantity - graduadas`: con 2 copias y una anunciada la rejilla enseñaba
+ * «Vender +0» (el importe sí era del servidor) y `sellCardAction` devolvía
+ * null; la hoja de vaciado anunciaba 6 copias y se vendían 4. `anunciadas`
+ * viaja también con la colección, y la resta es `copiasLibresDe`
+ * (utils/constanst.ts), la misma para la colección, el detalle y la tienda.
+ *
  * Fuera del componente porque es pura y la lee un `useMemo`: dentro habría que
  * declararla como dependencia o mentirle al linter de hooks.
  */
-function copiasLibres(card: { quantity: number; graduadas?: number | null }): number {
-  return Math.max(0, (Number(card.quantity) || 0) - (Number(card.graduadas) || 0));
+function copiasLibres(card: {
+  quantity: number;
+  graduadas?: number | null;
+  anunciadas?: number | null;
+}): number {
+  return copiasLibresDe(card);
 }
 
 /* ==================================================================== *
@@ -187,17 +202,20 @@ function ventaDeRepetidas(card: CartaEnColeccion): number {
 
 /**
  * La carta tal y como queda cuando se le han vendido TODAS las repetidas: una
- * copia libre más las graduadas, y por tanto nada que vender.
+ * copia libre más las graduadas y las anunciadas en el bazar, y por tanto nada
+ * que vender. Es lo que escribe el servidor (`SET quantity = 1 + graduadas +
+ * anunciadas`); con `1 + graduadas` a secas la rejilla pintaba una copia de
+ * una carta que en la base seguía teniendo dos.
  *
  * Los dos importes se ponen a 0 y no se recalculan, y eso no es volver a hacer
  * la cuenta del servidor: es la MISMA afirmación que ya hace la línea de al lado
- * al dejar `quantity` en `1 + graduadas`. Sin ellos, el botón seguiría
+ * al dejar `quantity` en lo comprometido más una. Sin ellos, el botón seguiría
  * prometiendo el importe del montón que acaba de venderse.
  */
 function sinRepetidas(card: CartaEnColeccion): CartaEnColeccion & ValoresDelServidor {
   return {
     ...card,
-    quantity: 1 + (Number(card.graduadas) || 0),
+    quantity: 1 + (Number(card.graduadas) || 0) + (Number(card.anunciadas) || 0),
     valorDeVentaAhora: 0,
     valorDeVentaRepetidas: 0,
   };
@@ -464,7 +482,7 @@ export default function CollectionPage() {
   const rarityOptions = useMemo(() => {
     const set = new Set<string>();
     cards.forEach((c) => c.rarity && set.add(c.rarity));
-    return Array.from(set).sort((a, b) => (RARITY_RANK[b] || 0) - (RARITY_RANK[a] || 0));
+    return Array.from(set).sort((a, b) => rangoParaOrdenar(b) - rangoParaOrdenar(a));
   }, [cards]);
 
   /**
@@ -501,7 +519,7 @@ export default function CollectionPage() {
         // En paralelo: son dos lecturas independientes y encadenarlas sumaba
         // sus dos esperas. La colección ya viene traducida: la capa de idioma
         // se aplica en el servidor.
-        const [sets, coleccion] = await Promise.all([getSetsFromDB(), getFullCollection()]);
+        const [sets, coleccion] = await Promise.all([catalogoDeExpansiones(), getFullCollection()]);
         if (turno !== cargaRef.current) return;
         setDbSets(sets);
         setCards(coleccion);
@@ -510,7 +528,7 @@ export default function CollectionPage() {
         const locales = getCollection() as CartaEnColeccion[];
         const delServidor = Promise.all([
           rotulosEnIdiomaLocal(locales),
-          getSetsFromDB().catch(() => null),
+          catalogoDeExpansiones().catch(() => null),
         ]);
         const aTiempo = await Promise.race([
           delServidor,
@@ -712,7 +730,7 @@ export default function CollectionPage() {
       switch (sortBy) {
         case "name_asc": return a.name.localeCompare(b.name);
         case "quantity_desc": return (b.quantity || 1) - (a.quantity || 1);
-        case "rarity_desc": return (RARITY_RANK[b.rarity] || 0) - (RARITY_RANK[a.rarity] || 0);
+        case "rarity_desc": return rangoParaOrdenar(b.rarity) - rangoParaOrdenar(a.rarity);
         default: return 0;
       }
     });
@@ -1824,6 +1842,19 @@ export default function CollectionPage() {
                         </>
                       )}
                     </button>
+                  ) : (card.anunciadas ?? 0) > 0 ? (
+                    /* LA COPIA QUE SOBRA ESTÁ ANUNCIADA EN EL BAZAR, y mientras
+                       su anuncio siga abierto no se vende a la tienda: el
+                       servidor la cuenta como comprometida. Antes aquí salía
+                       "Vender +0" y la venta fallaba sin explicar por qué. Se
+                       dice dónde está la copia, que es lo que le falta saber a
+                       quien quiera venderla aquí: tiene que retirar el anuncio. */
+                    <span
+                      className="chip ink-soft t-micro px-2 py-1 rounded-full"
+                      title={`${card.quantity} copias · ${card.anunciadas} anunciada${card.anunciadas === 1 ? "" : "s"} en el bazar. Retira el anuncio para venderla aquí.`}
+                    >
+                      En el bazar
+                    </span>
                   ) : (card.graduadas ?? 0) > 0 ? (
                     /* NI "Vender" NI "Única": las dos mentirían. Aquí hay más de
                        una copia —el contador de la esquina lo dice— pero las que
@@ -1887,6 +1918,12 @@ export default function CollectionPage() {
         description={`Se venderán ${formatNumber(duplicateInfo.units)} cartas repetidas por ${formatNumber(duplicateInfo.total)} monedas. Cada copia extra de una misma carta vale menos que la anterior. Las favoritas no se tocan.${
           cards.some((c) => (c.graduadas ?? 0) > 0)
             ? " Las copias graduadas tampoco: ésas se venden en Graduación, pestaña «Mis graduadas»."
+            : ""
+        }${
+          /* Y lo mismo con las anunciadas, y sólo a quien tenga alguna: es la
+             otra razón por la que el recuento sale más bajo que el contador. */
+          cards.some((c) => (c.anunciadas ?? 0) > 0)
+            ? " Las anunciadas en el bazar tampoco: para venderlas aquí hay que retirar el anuncio."
             : ""
         }`}
         confirmLabel={`Vender por ${formatNumber(duplicateInfo.total)}`}
@@ -1968,6 +2005,12 @@ export default function CollectionPage() {
                   </svg>
                   Vender una copia · +{ventaDeUnaCopia(actionCardLive)}
                 </button>
+              )}
+
+              {copiasLibres(actionCardLive) <= 1 && (actionCardLive.anunciadas ?? 0) > 0 && (
+                <p className="t-etiqueta ink-soft text-center px-2">
+                  La copia que te sobra está anunciada en el bazar. Retira el anuncio para venderla aquí.
+                </p>
               )}
 
               {/* Favorita sólo con sesión: al invitado la acción le fallaría

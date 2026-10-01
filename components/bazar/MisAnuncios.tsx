@@ -141,7 +141,10 @@ export default function MisAnuncios({
                     className="t-meta font-semibold"
                     style={{ color: tintaEstado(a.estado) }}
                   >
-                    {rotuloEstado(a.estado)}
+                    {/* "En venta" de un anuncio que nadie puede comprar sería
+                        mentir: la copia ya no está detrás. El escaparate no lo
+                        enseña; aquí se dice para que se retire. */}
+                    {activo && a.respaldado === false ? "Sin copia detrás" : rotuloEstado(a.estado)}
                   </span>
                   <span className="ink-soft t-meta">· {a.rarity}</span>
                   {a.nota !== null && <NotaGraduada nota={a.nota} variante="linea" />}

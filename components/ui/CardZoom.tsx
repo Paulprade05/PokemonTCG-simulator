@@ -262,6 +262,10 @@ export default function CardZoom({
     pinchRef.current = null;
     panRef.current = null;
     pointersRef.current.clear();
+    // A PROPÓSITO: este efecto devuelve el gesto a cero al cerrar o cambiar de
+    // carta —refs, el transform del DOM y este estado— y las tres cosas tienen
+    // que ir juntas. `zoomActive` no se puede derivar: lo mueven los gestos.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setZoomActive(false);
     const el = zoomRef.current;
     if (el) {

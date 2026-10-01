@@ -32,6 +32,9 @@ export interface Monton {
   q: number;
   /** De ellas, graduadas: están en la vitrina y no se venden desde aquí. */
   g: number;
+  /** De ellas, anunciadas en el bazar (anuncio suelto abierto): están
+   *  apalabradas y el servidor tampoco las vende mientras siga el anuncio. */
+  a: number;
   fav: boolean;
   rareza: string;
   /** Importe de TODAS las repetidas calculado por el servidor, mientras el
@@ -41,12 +44,14 @@ export interface Monton {
 
 export type Inventario = Map<string, Monton>;
 
-/** Una fila de `getFullCollection` o de la colección local del invitado. */
+/** Una fila de `getInventarioColeccion` (o de `getFullCollection`: los campos
+ *  se llaman igual) o de la colección local del invitado. */
 interface FilaDeColeccion {
   id?: unknown;
   rarity?: unknown;
   quantity?: unknown;
   graduadas?: unknown;
+  anunciadas?: unknown;
   is_favorite?: unknown;
   valorDeVentaRepetidas?: unknown;
 }
@@ -65,9 +70,13 @@ export function inventarioDe(filas: readonly unknown[]): Inventario {
     const q = entero(fila.quantity);
     if (q <= 0) continue;
     const v = fila.valorDeVentaRepetidas;
+    const g = Math.min(q, entero(fila.graduadas));
     inv.set(fila.id, {
       q,
-      g: Math.min(q, entero(fila.graduadas)),
+      g,
+      // Nunca más de las que quedan tras las graduadas: un dato raro no puede
+      // dejar las vendibles en negativo.
+      a: Math.min(q - g, entero(fila.anunciadas)),
       fav: fila.is_favorite === true,
       rareza: typeof fila.rarity === "string" ? fila.rarity : "",
       v: typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null,
@@ -76,8 +85,16 @@ export function inventarioDe(filas: readonly unknown[]): Inventario {
   return inv;
 }
 
-/** Repetidas que se pueden vender de un montón: todas las libres menos una. */
-const vendibles = (m: Monton): number => Math.max(0, m.q - m.g - 1);
+/**
+ * Repetidas que se pueden vender de un montón: todas las libres menos una.
+ *
+ * LIBRES SON LAS QUE NO ESTÁN NI EN LA VITRINA NI EN EL BAZAR. Aquí se restaban
+ * sólo las graduadas, y el servidor resta también las anunciadas (ver
+ * `copiasComprometidas` en app/action.ts): con 3 y 5 copias y tres anuncios, el
+ * aviso de la tienda decía "6 repetidas por 72 monedas" y el vaciado real
+ * vendía 3 por 32.
+ */
+const vendibles = (m: Monton): number => Math.max(0, m.q - m.g - m.a - 1);
 
 /** Un sobre recién acreditado: cada carta suma una copia a su montón. */
 export function sumarSobre(
@@ -90,7 +107,7 @@ export function sumarSobre(
       m.q += 1;
       m.v = null; // el importe del servidor era el del montón de antes
     } else {
-      inv.set(c.id, { q: 1, g: 0, fav: false, rareza: c.rarity ?? "", v: null });
+      inv.set(c.id, { q: 1, g: 0, a: 0, fav: false, rareza: c.rarity ?? "", v: null });
     }
   }
 }

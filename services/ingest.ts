@@ -4,6 +4,7 @@
 // cualquier otro disparador.
 
 import { sql } from "@vercel/postgres";
+import { SELL_PRICES } from "../utils/constanst";
 
 const API = "https://api.pokemontcg.io/v2";
 const PAGE_SIZE = 250;
@@ -39,6 +40,13 @@ export type ResumenSincronizacion = {
   pendientes: SetPendiente[];
   truncadoPorTiempo: boolean;
   errores: { setId: string; mensaje: string }[];
+  /**
+   * Rarezas escritas en esta pasada que el juego NO conoce (no están en
+   * SELL_PRICES), con cuántas cartas trae cada una. Ver `anotarRarezas`.
+   */
+  rarezasDesconocidas: { rareza: string; cartas: number }[];
+  /** Cartas que llegaron SIN rareza y se guardaron como 'Common'. */
+  cartasSinRareza: number;
 };
 
 function cabeceras(): HeadersInit {
@@ -91,6 +99,10 @@ export async function fetchJson(
         signal: senalConTiempo(limite),
       });
     } catch {
+      // ERA EL ÚLTIMO INTENTO: no se duerme. Antes se esperaba el respaldo
+      // entero sólo para salir del bucle y lanzar "reintentos agotados"; con
+      // `reintentos: 2` (contarCartasRemotas) eran hasta 6 s tirados por set.
+      if (i === reintentos - 1) break;
       const espera = 2000 * (i + 1);
       if (!cabeEspera(espera, limite)) throw new Error(`sin tiempo para reintentar: ${url}`);
       console.warn(`error de red, reintento en ${espera}ms`);
@@ -99,6 +111,10 @@ export async function fetchJson(
     }
     if (res.ok) return res.json();
     if ([429, 500, 502, 503, 504].includes(res.status)) {
+      // Mismo criterio: tras el último intento se lanza ya, sin dormir.
+      if (i === reintentos - 1) {
+        throw new Error(`${res.status}, reintentos agotados: ${url}`);
+      }
       const espera = Math.min(60000, 3000 * Math.pow(2, i));
       if (!cabeEspera(espera, limite)) throw new Error(`sin tiempo para reintentar: ${url}`);
       console.warn(`${res.status}, reintento en ${espera}ms (${i + 1}/${reintentos})`);
@@ -137,7 +153,8 @@ export async function contarCartasRemotas(setId: string, limite?: number): Promi
 }
 
 /**
- * Qué falta por descargar: sets sin ninguna carta y sets incompletos.
+ * Qué falta por descargar: sets sin ninguna carta, sets incompletos y sets que
+ * aún no tienen ficha en `sets` (ver el comentario de `esNuevo`, dentro).
  *
  * Dos consultas agrupadas y ya: una por set serían ~170 idas y vueltas.
  */
@@ -160,14 +177,22 @@ export async function detectarPendientes(
     // Con `total` desconocido (0 o ausente) sólo lo intentamos si no hay nada
     // guardado; si no, el set quedaría pendiente para siempre.
     const incompleto = total > 0 ? enBD < total : enBD === 0;
-    if (!incompleto && !opciones.incluirCompletos) continue;
+    /* UN SET SIN FICHA ESTÁ PENDIENTE SIEMPRE, aunque ya tenga todas sus
+     * cartas. Es la otra mitad de publicar la ficha de un set nuevo AL FINAL
+     * (ver `sincronizar`): si la pasada se cortaba —o la escritura de la ficha
+     * fallaba— justo después de la última página, las cartas quedaban
+     * completas, el set dejaba de contar como incompleto y la ficha no se
+     * escribía NUNCA: una expansión entera en la base e invisible para siempre.
+     * Pasa de verdad con las que tienen un múltiplo exacto de 250 cartas. */
+    const esNuevo = !setsEnBD.has(s.id);
+    if (!incompleto && !esNuevo && !opciones.incluirCompletos) continue;
     pendientes.push({
       id: s.id,
       nombre: s.name ?? s.id,
       total,
       enBD,
       releaseDate: s.releaseDate || null,
-      esNuevo: !setsEnBD.has(s.id),
+      esNuevo,
     });
   }
 
@@ -245,6 +270,46 @@ function valoresCarta(c: any): any[] {
   ];
 }
 
+/**
+ * Apunta qué rarezas de un lote de cartas NO conoce el juego.
+ *
+ * EL AGUJERO QUE CIERRA: `valoresCarta` guarda `c.rarity || "Common"` tal cual
+ * llega, y SELL_PRICES sólo tiene las 23 rarezas de los JSON de src/data. Las
+ * expansiones que sólo llegan por el cron (eras EX, DP, HGSS, BW, XY y SM) traen
+ * rarezas de pokemontcg.io que no están en la tabla —'Rare Holo EX', 'Rare Holo
+ * GX', 'Rare Holo LV.X', 'Rare Prime', 'LEGEND', 'Rare BREAK'...—: esas cartas
+ * cobran la tarifa de respaldo (10 monedas, menos que una Rara), casi ninguna
+ * cae en un cubo de los sobres (`categorizeCards` compara por nombre exacto o
+ * por trozos como 'V' y 'ex') y el mercado no las admite en ninguna banda. Y una
+ * carta que llega sin rareza se convierte en Common. Todo eso pasaba EN
+ * SILENCIO: el invariante «toda rareza tiene precio» de npm test sólo mira
+ * src/data, que es justo donde no ocurre.
+ *
+ * ESTO SÓLO AVISA. No cambia ni lo que se escribe ni lo que se paga: darles
+ * tarifa, rango y cubo es una decisión de economía (la toma el dueño y pide
+ * `npm run sim:economia`). Lo que hace es que deje de ser invisible: sale en el
+ * registro del cron, en su respuesta y en /db-stats.
+ *
+ * Propiedad PROPIA de SELL_PRICES y no `in`: una rareza llamada "constructor"
+ * pasaría un `in` por la cadena de prototipos.
+ */
+export function anotarRarezas(
+  cartas: any[],
+  desconocidas: Map<string, number>,
+): number {
+  let sinRareza = 0;
+  for (const c of cartas) {
+    if (!c?.rarity) {
+      sinRareza++;
+      continue;
+    }
+    const rareza = String(c.rarity);
+    if (Object.prototype.hasOwnProperty.call(SELL_PRICES, rareza)) continue;
+    desconocidas.set(rareza, (desconocidas.get(rareza) ?? 0) + 1);
+  }
+  return sinRareza;
+}
+
 /** INSERT agrupado en lotes: los $n los genera el índice del bucle, nunca los datos. */
 async function upsertLotes(
   tabla: string,
@@ -304,7 +369,10 @@ export async function sincronizar(opciones: {
     pendientes: [],
     truncadoPorTiempo: false,
     errores: [],
+    rarezasDesconocidas: [],
+    cartasSinRareza: 0,
   };
+  const rarezasFueraDeTabla = new Map<string, number>();
 
   const remotos = await listarSetsRemotos(limite);
   resumen.setsRemotos = remotos.length;
@@ -330,26 +398,61 @@ export async function sincronizar(opciones: {
     // la API. Se comprueba con una petición mínima en vez de bajarlo entero otra
     // vez; así el criterio de pendiente converge y deja de repetirse cada día.
     // Con ?setId= no se comprueba: ahí se fuerza la descarga a propósito.
-    if (!soloSetId && !trabajo.esNuevo && trabajo.enBD > 0) {
+    //
+    // Vale también para un set NUEVO que ya tiene cartas (una pasada anterior
+    // cortada): si resulta que están todas, sólo le falta la ficha, y se
+    // publica aquí sin volver a bajar ni una página.
+    if (!soloSetId && trabajo.enBD > 0) {
+      let alDia = false;
       try {
         const totalReal = await contarCartasRemotas(trabajo.id, limite);
-        if (totalReal > 0 && trabajo.enBD >= totalReal) {
-          completados.add(trabajo.id);
+        alDia = totalReal > 0 && trabajo.enBD >= totalReal;
+        if (alDia) {
           console.log(
             `sync: ${trabajo.id} ya está al día (${trabajo.enBD}/${totalReal} reales, declara ${trabajo.total})`,
           );
-          continue;
         }
       } catch (err: any) {
         console.warn(`sync: no se pudo contar ${trabajo.id}: ${String(err?.message || err)}`);
       }
+      if (alDia) {
+        if (trabajo.esNuevo) {
+          try {
+            await upsertSets([setRemoto]);
+            resumen.setsNuevos.push(trabajo.id);
+          } catch (err: any) {
+            // Sin ficha sigue pendiente (ver `detectarPendientes`): mañana se
+            // reintenta, y hoy queda dicho en el resumen.
+            const mensaje = String(err?.message || err);
+            resumen.errores.push({ setId: trabajo.id, mensaje });
+            console.warn(`sync: ${trabajo.id} completo pero sin ficha: ${mensaje}`);
+            continue;
+          }
+        }
+        completados.add(trabajo.id);
+        continue;
+      }
     }
 
     try {
-      // La ficha del set va antes que sus cartas: así nunca quedan cartas
-      // huérfanas si la ejecución se corta a mitad.
-      await upsertSets([setRemoto]);
-      if (trabajo.esNuevo) resumen.setsNuevos.push(trabajo.id);
+      /* LA FICHA DE UN SET YA VISIBLE va antes que sus cartas, como siempre.
+       * LA DE UN SET NUEVO VA DESPUÉS, cuando ya están todas sus páginas.
+       *
+       * EL AGUJERO QUE CIERRA: la ficha es lo que hace que la tienda ofrezca la
+       * expansión, y antes se escribía lo primero «para no dejar cartas
+       * huérfanas». Pero no hay clave foránea y unas cartas sin ficha no se ven
+       * en ningún sitio; lo que sí se veía era lo contrario. Si la pasada se
+       * cortaba entre la página 1 y la 2 de una expansión nueva de más de 250
+       * cartas (sv4 tiene 266, sv8 252), la tienda la vendía un día entero con
+       * las 250 de número más bajo: faltaban justo las de número alto —Hyper
+       * Rare y Special Illustration Rare— y los huecos de premio caían al
+       * respaldo.
+       *
+       * No hace falta guardar nada para reanudar: para `detectarPendientes` un
+       * set sin ficha está pendiente SIEMPRE, así que la pasada siguiente lo
+       * vuelve a ver como nuevo y lo termina (o, si ya tiene todas sus cartas,
+       * sólo le escribe la ficha: ver la comprobación de más arriba). */
+      if (!trabajo.esNuevo) await upsertSets([setRemoto]);
 
       let traidas = 0;
       // Cuántas cartas hay que juntar para darlo por terminado: manda lo que la
@@ -369,6 +472,7 @@ export async function sincronizar(opciones: {
         if (page === 1 && typeof data?.totalCount === "number") objetivo = data.totalCount;
         if (cartas.length === 0) break;
 
+        resumen.cartasSinRareza += anotarRarezas(cartas, rarezasFueraDeTabla);
         resumen.cartasInsertadas += await upsertCards(cartas);
         traidas += cartas.length;
         if (cartas.length < PAGE_SIZE) break;
@@ -381,6 +485,15 @@ export async function sincronizar(opciones: {
         trabajo.enBD = Math.max(trabajo.enBD, traidas);
         console.warn(`sync: ${trabajo.id} cortado por tiempo (${traidas}/${trabajo.total})`);
         break;
+      }
+
+      // Aquí la API ya ha servido TODAS las páginas que tiene de este set (el
+      // bucle no se cortó ni lanzó): es el momento de publicar el que es nuevo.
+      // Se publica aunque `traidas` no llegue al total declarado: ese número
+      // viene inflado a veces, y esperarlo dejaría la expansión oculta siempre.
+      if (trabajo.esNuevo) {
+        await upsertSets([setRemoto]);
+        resumen.setsNuevos.push(trabajo.id);
       }
 
       if (objetivo === 0 || traidas >= objetivo) completados.add(trabajo.id);
@@ -399,5 +512,9 @@ export async function sincronizar(opciones: {
 
   resumen.setsCompletados = Array.from(completados);
   resumen.pendientes = trabajos.filter((t) => !completados.has(t.id));
+  resumen.rarezasDesconocidas = Array.from(rarezasFueraDeTabla, ([rareza, cartas]) => ({
+    rareza,
+    cartas,
+  })).sort((a, b) => b.cartas - a.cartas);
   return resumen;
 }

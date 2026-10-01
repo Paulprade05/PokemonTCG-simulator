@@ -19,6 +19,7 @@
 
 import { NextResponse } from "next/server";
 import { sincronizarPrecios } from "@/services/preciosIngest";
+import { requireCron } from "@/app/_admin-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,35 +30,20 @@ export const maxDuration = 60;
 // Por debajo del maxDuration, dejando margen para cerrar y responder.
 const PRESUPUESTO_MS = 45_000;
 
-/**
- * Comparación en tiempo constante, calcada de sync-sets y sync-es: el tiempo de
- * respuesta no puede delatar cuántos caracteres del secreto se han acertado.
- */
-function igualEnTiempoConstante(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diferencia = 0;
-  for (let i = 0; i < a.length; i++) diferencia |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diferencia === 0;
-}
-
 export async function GET(request: Request) {
-  const secreto = process.env.CRON_SECRET;
-  // Sin secreto configurado la ruta se cierra: nunca queda abierta a Internet.
-  if (!secreto) {
-    return NextResponse.json(
-      { error: "CRON_SECRET no está configurado: sincronización deshabilitada." },
-      { status: 503 },
-    );
-  }
-
-  const autorizacion = request.headers.get("authorization") ?? "";
-  if (!igualEnTiempoConstante(autorizacion, `Bearer ${secreto}`)) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  }
+  // La puerta es la de las tres rutas de cron y vive en app/_admin-auth.ts:
+  // sin CRON_SECRET utilizable (recortado y de 16 caracteres o más) la ruta se
+  // cierra con 503, nunca queda abierta a Internet.
+  const noAutorizado = requireCron(request);
+  if (noAutorizado) return noAutorizado;
 
   // `?setId=sv08` fuerza una expansión concreta y se salta la cola. Es la vía
   // para tasar hoy una expansión que acaba de entrar, sin esperar a que el
   // goteo nocturno llegue hasta ella.
+  //
+  // Y ES TAMBIÉN LA VÍA PARA CONFIRMAR UNA SUBIDA DE VERDAD: con `?setId=` no
+  // se vigila el salto sospechoso (ver SALTO_SOSPECHOSO en
+  // services/preciosIngest.ts), porque quien dispara esta URL ha mirado el dato.
   const { searchParams } = new URL(request.url);
   const soloSetId = searchParams.get("setId");
 
@@ -71,9 +57,19 @@ export async function GET(request: Request) {
         ` sinCambios=${resumen.sinCambios}` +
         ` sinPrecio=${resumen.sinPrecio}` +
         ` sinFuente=${resumen.sinFuente}` +
+        ` sospechosos=${resumen.sospechosos}` +
         ` truncado=${resumen.truncadoPorTiempo}` +
         ` errores=${resumen.errores.length + resumen.erroresOmitidos}`,
     );
+    /* Como AVISO y con su detalle: un precio que se quintuplica de una visita a
+     * la siguiente NO se ha guardado. O TCGdex sirve un dato roto (lo normal), o
+     * la carta ha subido de verdad y hay que confirmarla con `?setId=`. */
+    if (resumen.sospechosos > 0) {
+      console.warn(
+        `[sync-precios] ${resumen.sospechosos} precios sospechosos NO guardados: ` +
+          resumen.detalleSospechosos.join(" · "),
+      );
+    }
     /* Los rechazos van como AVISO porque son lo único que pide una persona, y
      * significan lo mismo que en sync-es: el id de TCGdex de esa expansión se
      * adivinó mal y hay que ponerlo a mano en src/data/es/mapa-sets.json. Que

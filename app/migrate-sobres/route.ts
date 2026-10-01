@@ -23,7 +23,7 @@ import { SENTENCIAS_SOBRES } from "@/services/sobresEsquema";
  *
  * Y EJECUTARLA NO ES URGENTE, que es la propiedad que de verdad importa aquí.
  * Hasta que se ejecute, la aplicación se comporta EXACTAMENTE como antes: las
- * 130 expansiones con foto estática la siguen enseñando (el manifiesto viaja en
+ * 131 expansiones con foto estática la siguen enseñando (el manifiesto viaja en
  * el bundle y no pasa por Postgres) y las demás siguen con su sobre dibujado.
  * services/sobresBD.ts captura el `relation does not exist` y devuelve un mapa
  * vacío; la ruta de imagen responde 503 y el componente ni se inmuta. Es el

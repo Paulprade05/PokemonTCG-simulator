@@ -920,6 +920,10 @@ function GuestStats({ coins, coinsLoaded }: { coins: number; coinsLoaded: boolea
   const [local, setLocal] = useState<{ cards: number; unique: number } | null>(null);
   useEffect(() => {
     const col = getCollection();
+    // A PROPÓSITO: el estado sale de localStorage, que no existe en el render
+    // del servidor; leerlo aquí, una vez y tras montar, es lo que evita el
+    // desajuste de hidratación. No hay cascada: el efecto no tiene dependencias.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLocal({
       cards: col.reduce((sum: number, c: { quantity?: number }) => sum + (c.quantity || 1), 0),
       unique: col.length,

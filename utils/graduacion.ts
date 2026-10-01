@@ -70,10 +70,10 @@ function generador(semilla: number): () => number {
  * O sea: cualquiera podía abrir la consola y calcular LA NOTA DE TODAS SUS
  * COPIAS SIN GRADUAR. Y eso no es un fallo estético, es la ruina de la
  * economía: la tabla de multiplicadores está calibrada para que graduar salga
- * a perder de media (×1,35 frente al techo de ×1,40), pero eso sólo vale si el
+ * a perder de media (×1,048 frente al techo de ×1,40), pero eso sólo vale si el
  * jugador no sabe lo que le va a tocar. Sabiéndolo, gradúa SÓLO los dieces
- * —×3— y cada graduación es beneficio garantizado. Exactamente la imprenta que
- * los multiplicadores existen para cerrar.
+ * —×1,95— y cada graduación es beneficio garantizado. Exactamente la imprenta
+ * que los multiplicadores existen para cerrar.
  *
  * EL ARREGLO tiene dos mitades y hacen falta las dos:
  *   1. la semilla lleva un SECRETO que sólo está en el servidor (aquí);
@@ -155,10 +155,10 @@ export const PROBABILIDAD_NOTA: Record<number, number> = (() => {
  * proporcional (ver COSTE_FRACCION): con coste = f·V la neutralidad pasa a ser
  * EV = 1+f, que ya no depende de V, y una sola tabla vale para todo el catálogo.
  *
- * Con f = 0,40 el techo es ×1,40. Esta tabla da ×1,3500 exacto: se queda 5
- * puntos por debajo, que es la ventaja de la casa. El 10 sigue valiendo ×3
- * —el premio gordo intacto— y lo que se recorta es el 9, que era el culpable
- * real por caer el 38% de las veces.
+ * Con f = 0,40 el techo es ×1,40. La tabla de abajo da ×1,048 de media (lo
+ * imprime `npm test`): graduar es un sumidero salvo que salga el diez. Los
+ * números que mandan son los de la tabla; el porqué de que el diez y el nueve
+ * sean tan bajos está en el bloque siguiente.
  *
  * COMPROBADO EN scripts/test-invariantes.mjs: si alguien toca esta tabla y el
  * multiplicador medio se pasa del techo, el test falla.
@@ -169,62 +169,43 @@ export const MULTIPLICADOR_NOTA: Record<number, number> = {
 };
 
 /* ==================================================================== *
- * POR QUÉ EL DIEZ BAJÓ DE ×3 A ×1,8
+ * POR QUÉ EL DIEZ VALE ×1,95 Y EL NUEVE ×1,1
  * ====================================================================
  *
- * Porque se pidió que el desgaste se notara TAMBIÉN por debajo del diez —un
- * nueve con una marca, un ocho con dos, un siete con tres— y eso y el ×3 no
- * caben juntos. No es una opinión, es una cuenta:
+ * LOS NÚMEROS QUE MANDAN SON LOS DE LA TABLA DE ARRIBA:
  *
- * Si lo que se ve cambia con la nota, el jugador deja de graduar a ciegas:
- * gradúa lo que parece mejor. Entonces lo que hay que mantener por debajo del
- * techo (×1,40) no es la media de la tabla, sino la media de CADA PINTA que se
- * puede distinguir a ojo. Y la pinta más limpia arrastra a los dieces.
+ *   nota:   10     9     8     7     6     5     4     3     2     1
+ *   mult:  ×1,95  ×1,1  ×0,9  ×0,7  ×0,55 ×0,3  ×0,25 ×0,18 ×0,08  ×0
  *
- * MEDIDO, barriendo todas las tablas posibles con esos desperfectos:
+ * Aquí hubo dos bloques que contaban tablas anteriores (el diez a ×3 y luego a
+ * ×1,8; el nueve a ×1,5 y luego a ×1,35) como si fueran la de hoy. No lo son.
+ * Lo que sigue es el razonamiento que las fue bajando, que sí sigue valiendo.
  *
- *   · manteniendo ×3 en el diez, la pinta limpia sale a ×1,72 — imprime. La
- *     única forma de compensarlo es hundir el resto: el nueve tendría que caer
- *     a ×0,55, o sea que graduar DESTROZARÍA la carta el 85% de las veces
- *     (media global ×0,84). Un botón que casi siempre te quita valor no es una
- *     apuesta, es un castigo.
- *   · con el diez a ×1,8, la pinta limpia queda en ×1,343 y el resto de la
- *     tabla se puede dejar como estaba: el nueve sigue dando ×1,35 y la media
- *     global sale ×1,12. Dos notas de cuatro te suben el valor de la carta.
+ * EL DESGASTE SE VE ANTES DE PAGAR, Y ESO CAMBIA LA CUENTA. Mientras la carta
+ * llegaba sin marcas el jugador graduaba a ciegas, y bastaba con que la media
+ * de TODA la tabla no pasara del techo (×1,40). Desde que el estado físico se
+ * enseña —y se pidió que se notara también en las notas altas: un nueve con
+ * una marca, un ocho con dos— el jugador gradúa lo que parece mejor. Lo que
+ * hay que mantener por debajo del techo ya no es la media global, sino la
+ * media de CADA ASPECTO que se puede distinguir a ojo, y el aspecto más limpio
+ * arrastra a los dieces.
  *
- * O sea: se cambia un premio gordo que nadie podía elegir por un juego en el
- * que se ve lo que tienes delante y merece la pena jugar. Un diez sigue siendo
- * la mejor nota con diferencia y sigue subiendo la carta casi al doble.
+ * Con el diez a ×3 ese grupo limpio imprimía (×1,72), y compensarlo hundiendo
+ * el resto convertía graduar en un castigo. Por eso el premio gordo es ×1,95 y
+ * no ×3, y por eso el nueve —que cae el 38 % de las veces— se queda en ×1,1.
  *
- * SI ALGÚN DÍA SE QUIERE EL ×3 DE VUELTA: hay que dejar de enseñar el desgaste
- * de las notas 7 a 10 (volver UMBRAL_DESGASTE_VISIBLE a 6) y subir el nueve a
- * ×1,35. Las dos cosas van juntas o el invariante "ningún estado visible delata
- * una nota" se pone rojo, que es exactamente su trabajo.
- */
-
-/* ==================================================================== *
- * POR QUÉ EL 9 BAJÓ DE ×1,5 A ×1,35
- * ====================================================================
+ * LO QUE DA HOY, medido por `npm test`:
+ *   · la media de toda la tabla, ×1,048;
+ *   · el mejor grupo que se puede distinguir con el estado EXACTO que manda el
+ *     servidor, ×1,39 (techo ×1,40);
+ *   · graduar sólo las copias que llegan impecables tampoco gana, a ningún
+ *     valor ni con ningún descuento.
  *
- * Porque el desgaste pasó a VERSE al abrir el sobre, y eso cambia la cuenta.
- *
- * Mientras la carta llegaba sin marcas, el jugador no sabía nada y el
- * multiplicador que importaba era el medio de TODA la tabla (×1,29). Enseñando
- * el estado físico, en cambio, ya no gradúa a ciegas: gradúa lo que se ve bien.
- * Así que lo que hay que mantener por debajo del techo no es la media global,
- * es la media DEL GRUPO QUE SE VE BIEN.
- *
- * MEDIDO sobre 60.000 copias: el 95% sale sin marcas —son las notas 7 a 10— y
- * ese grupo daba ×1,4065 con el 9 a ×1,5. El techo es ×1,40, así que graduar
- * todo lo que pareciera limpio salía a cuenta por 0,0065. Poco, pero infinito:
- * cada copia repetida es otra tirada.
- *
- * Con el 9 a ×1,35 el grupo limpio baja a ×1,345 y queda con margen. El 10
- * sigue valiendo ×3, que es lo que hace que merezca la pena intentarlo.
- *
- * LO COMPRUEBA scripts/test-invariantes.mjs agrupando por lo que el jugador VE,
- * no por la nota: si alguien sube un multiplicador o hace visible una marca que
- * hoy no lo es, ese invariante se pone rojo.
+ * SI ALGÚN DÍA SE QUIERE UN DIEZ MÁS GORDO: hay que dejar de enseñar el
+ * desgaste de las notas altas (bajar UMBRAL_DESGASTE_VISIBLE) o bajar otra
+ * nota a cambio. Las dos cosas van juntas, o el invariante "ningún estado
+ * visible delata una nota" se pone rojo, que es exactamente su trabajo: agrupa
+ * por lo que el jugador VE, no por la nota.
  */
 
 /** Fracción del valor de la carta que cuesta graduarla por encima del suelo. */
@@ -472,19 +453,24 @@ export function marcasDeCopia(semilla: string, desperfectos: Desperfectos): Marc
  * machacada se ve machacada desde el primer momento, en la apertura y en la
  * colección. Lo que NO se ve es la nota, que es justo lo que se paga por saber.
  *
- * PERO NO SE PUEDE ENSEÑAR TODO, y esto es lo que cuesta entender: el desgaste
- * está construido para ser coherente con la nota, así que enseñarlo entero la
- * DELATA. Medido sobre 60.000 copias, una carta con cero piques era SIEMPRE un
- * 10; quien lo supiera graduaría sólo ésas y se llevaría el ×3 garantizado.
+ * EL UMBRAL VALE 10: SE PINTA EL DESGASTE DE TODAS LAS NOTAS. Lo que protege
+ * la economía no es esconderlo, sino dos cosas que van juntas:
+ *   · un 7, un 8 y un 9 también pueden salir sin una sola marca (TOPE_PIQUES
+ *     empieza en cero en los cuatro tramos altos), así que "impecable" no
+ *     quiere decir "diez";
+ *   · la tabla de multiplicadores está bajada para que ni el aspecto más
+ *     limpio compense graduarlo (ver "POR QUÉ EL DIEZ VALE ×1,95", arriba).
  *
- * De ahí este umbral: se pinta el desgaste de las notas 1 a 6 —el 5% de las
- * copias, las que de verdad se ven mal— y de 7 en adelante no se pinta nada.
- * Todo lo que sale limpio puede ser un 7 o un 10 y no hay forma de saberlo, que
- * es exactamente lo que hace que graduar siga siendo una apuesta.
+ * DE DÓNDE VIENE: el desgaste está construido para ser coherente con la nota,
+ * así que enseñarlo la delata en parte. En la primera versión una carta con
+ * cero piques era SIEMPRE un 10, y por eso el umbral empezó en 6 (sólo se
+ * pintaban las notas 1 a 6, el 5 % de las copias). Se pidió que el desgaste se
+ * notara también en las notas altas, y se pagó con la tabla, no escondiéndolo.
  *
- * SUBIR ESTE NÚMERO REABRE LA FUGA. Lo comprueba el invariante "ningún estado
- * visible delata una nota" de scripts/test-invariantes.mjs, que agrupa las
- * copias por lo que se ve y exige que ningún grupo compense graduarlo.
+ * CAMBIAR ESTE NÚMERO O LA TABLA SIN EL OTRO REABRE LA FUGA. Lo comprueba el
+ * invariante "ningún estado visible delata una nota" de
+ * scripts/test-invariantes.mjs, que agrupa las copias por lo que se ve y exige
+ * que ningún grupo compense graduarlo.
  */
 export const UMBRAL_DESGASTE_VISIBLE = 10;
 
@@ -492,6 +478,13 @@ export const UMBRAL_DESGASTE_VISIBLE = 10;
 export function desgasteEsVisible(nota: number): boolean {
   return nota <= UMBRAL_DESGASTE_VISIBLE;
 }
+
+/**
+ * A partir de cuánto descentrado (|x| + |y|, en %) una copia se ve torcida. Es
+ * el mismo 1,5 con el que `firmaVisible` separa "torcida" de "recta" y con el
+ * que la interfaz decide rotular "mal centrada" (components/DesperfectosCarta).
+ */
+export const DESCENTRADO_QUE_SE_NOTA = 1.5;
 
 /**
  * Lo que el jugador puede DISTINGUIR de una copia sin graduarla.
@@ -513,8 +506,54 @@ export function firmaVisible(d: Desperfectos, nota: number): string {
     "a" + tramo(d.aranazos),
     "m" + tramo(d.manchas),
     d.palidez > 0 ? "palida" : "color",
-    Math.abs(d.descentrado.x) + Math.abs(d.descentrado.y) > 1.5 ? "torcida" : "recta",
+    Math.abs(d.descentrado.x) + Math.abs(d.descentrado.y) > DESCENTRADO_QUE_SE_NOTA
+      ? "torcida"
+      : "recta",
   ].join("|");
+}
+
+/**
+ * ¿Se ve LIMPIA esta copia? O sea: ¿no hay nada que pintarle ni que nombrarle?
+ *
+ * Es el grupo "p0|a0|m0|color|recta" de `firmaVisible`, dicho con un sí o un
+ * no. Lo usa el servidor para decidir si manda el estado físico de una copia:
+ * de una copia que se ve limpia NO VIAJA NADA.
+ *
+ * POR QUÉ IMPORTA, MEDIDO sobre 200.000 copias: mandar el desgaste de una copia
+ * limpia parece inocuo —la pantalla no pinta nada con él— pero el JSON lleva el
+ * descentrado con dos decimales, y "descentrado exactamente (0, 0)" deja fuera
+ * a los sietes (que casi siempre traen algo). Ese grupo "todo a cero exacto"
+ * da ×1,3955, a tres milésimas del techo ×1,40; el grupo que de verdad se VE
+ * limpio —el que mide el invariante— da ×1,3465. Sin mandar nada, lo que sabe
+ * quien lee la respuesta es lo mismo que sabe quien mira la carta.
+ */
+export function seVeLimpia(d: Desperfectos): boolean {
+  return (
+    d.piques === 0 &&
+    d.aranazos === 0 &&
+    d.manchas === 0 &&
+    d.palidez === 0 &&
+    Math.abs(d.descentrado.x) + Math.abs(d.descentrado.y) <= DESCENTRADO_QUE_SE_NOTA
+  );
+}
+
+/**
+ * Cuánto desgaste se le VE a una copia, en un solo número: sirve para ordenar
+ * copias de "la que mejor se ve" a "la que peor". Menos es mejor; 0 es intacta.
+ *
+ * SÓLO MIRA LO QUE SE VE. No recibe la nota a propósito: quien elige qué copia
+ * enseñar con esta función no puede, ni queriendo, decir nada de las notas que
+ * el jugador no supiera ya por haber visto las cartas.
+ */
+export function desgasteALaVista(d: Desperfectos): number {
+  return (
+    d.piques +
+    d.aranazos +
+    d.manchas +
+    d.palidez * 10 +
+    Math.abs(d.descentrado.x) +
+    Math.abs(d.descentrado.y)
+  );
 }
 
 /**

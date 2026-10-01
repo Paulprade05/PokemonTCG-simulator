@@ -350,6 +350,55 @@ const PRECIO_BASE_POR_DEFECTO = 10;
 export const DIVISOR_EUROS = 1000;
 
 /**
+ * TECHO DEL AJUSTE: por caro que diga Cardmarket que es una carta, nunca
+ * valdría más de este múltiplo de su tarifa por rareza.
+ *
+ * ESTÁ DESACTIVADO (`null`), Y NO POR DESCUIDO. La fórmula del precio es de las
+ * cosas que no se cambian sin el sí del dueño, y un techo la cambia: por encima
+ * de 4.000 € una carta pasaría a pagarse a ×5 de su tarifa (una Special
+ * Illustration Rare con 12.000 € guardados, de 1.950 a 750 monedas), y con ello
+ * su venta, su banda del bazar, su coste de graduar y el calibrado de los
+ * sobres de su expansión. Con `null`, `ajustePorPrecioReal` hace EXACTAMENTE la
+ * cuenta de siempre, para cualquier euro.
+ *
+ * PARA ACTIVARLO, cuando se decida: poner aquí un 5. No hay que tocar nada más
+ * —el techo se aplica dentro de `ajustePorPrecioReal`, y el invariante de
+ * scripts/test-invariantes.mjs comprueba el modo que esté puesto— y pasar
+ * `npm test` y `npm run sim:economia`.
+ *
+ * MIENTRAS TANTO la cerradura que SÍ está puesta es la de la ingesta, que no
+ * toca la fórmula: un euro ya guardado no se multiplica de una pasada a otra
+ * (ver `volcar` en services/preciosIngest.ts). Lo que queda sin cubrir es la
+ * PRIMERA vez que se guarda un precio, que no tiene con qué compararse.
+ *
+ * EL AGUJERO QUE CERRARÍA: la fórmula no tiene cota. El único tope del camino es
+ * el de la ingesta (100.000 €, services/preciosIngest.ts), y ése existe para no
+ * desbordar la columna NUMERIC(10,2), no para proteger la economía: con él, el
+ * peor caso era ×101. Un `avg30` atípico —una venta mal catalogada en una carta
+ * de poco volumen, o un valor servido en céntimos— pasa las guardias antimapeo,
+ * que comprueban que la carta sea la misma y no que el número sea razonable. Con
+ * 12.000 € una Special Illustration Rare (tarifa 150) se vendía por 1.950
+ * monedas la copia repetida, y el bazar dejaba publicarla a vez y media de eso.
+ *
+ * POR QUÉ ×5: con el divisor en 1000 el techo se toca a los 4.000 €, y por
+ * debajo de esa cifra el resultado no cambia ni una moneda. La carta más cara
+ * medida en sv08 vale 271 € (×1,27), así que para el catálogo moderno el techo
+ * no se nota. Existen cartas antiguas que de verdad pasan de 4.000 €: se quedan
+ * en ×5 a propósito. El juego no necesita reproducir esa cola; necesita que un
+ * dato roto no pueda fabricarla.
+ *
+ * VA AQUÍ DENTRO Y NO EN QUIEN LLAMA por el mismo motivo que el ajuste entero:
+ * el calibrado del sobre (utils/packLogic.ts), la venta, el bazar y la
+ * graduación tienen que ver EL MISMO número para la misma carta. La otra
+ * cerradura está en la ingesta, que no deja que un euro guardado se multiplique
+ * de golpe (ver `volcar` en services/preciosIngest.ts).
+ *
+ * Invariante, con el techo activado:
+ * precioDeCartaSuelta(r, cualquier euro) <= TECHO × SELL_PRICES[r].
+ */
+export const TECHO_AJUSTE_PRECIO_REAL = null as number | null;
+
+/**
  * Aplica el ajuste por precio real. Sin precio (lo normal: la mayoría de las
  * cartas nunca han pasado por el cron de precios) devuelve la tarifa tal cual,
  * que es exactamente el comportamiento de siempre.
@@ -357,7 +406,12 @@ export const DIVISOR_EUROS = 1000;
 export function ajustePorPrecioReal(base: number, euros?: number | null): number {
   const e = Number(euros);
   if (!Number.isFinite(e) || e <= 0) return base;
-  return base + base * (e / DIVISOR_EUROS);
+  // La cuenta de siempre: base + base × euros/divisor. Sólo si hay techo puesto
+  // (hoy no: ver TECHO_AJUSTE_PRECIO_REAL) el sumando va acotado, y por debajo
+  // del techo no cambia ni un decimal del resultado.
+  const factor = e / DIVISOR_EUROS;
+  const techo = TECHO_AJUSTE_PRECIO_REAL;
+  return base + base * (techo === null ? factor : Math.min(factor, techo - 1));
 }
 
 /**
@@ -378,7 +432,15 @@ export function precioDeCartaSuelta(
   rareza: string | null | undefined,
   euros?: number | null,
 ): number {
-  const base = SELL_PRICES[rareza ?? ""] ?? PRECIO_BASE_POR_DEFECTO;
+  /* PROPIEDAD PROPIA, no `SELL_PRICES[r] ?? 10`: SELL_PRICES es un objeto
+   * literal y la rareza llega de una API que no controlamos. Con una rareza
+   * llamada "constructor" o "toString" el índice devolvía una FUNCIÓN heredada
+   * de Object.prototype, el `??` no saltaba (no es null) y el precio salía NaN.
+   * Para toda rareza real el resultado es idéntico. */
+  const r = rareza ?? "";
+  const base = Object.prototype.hasOwnProperty.call(SELL_PRICES, r)
+    ? SELL_PRICES[r]
+    : PRECIO_BASE_POR_DEFECTO;
   return Math.max(1, Math.round(ajustePorPrecioReal(base, euros)));
 }
 
@@ -428,6 +490,49 @@ export function valorDeVenta(
   for (let i = desde; i <= tope; i++) total += precioDeCopia(base, i);
 
   return total;
+}
+
+/**
+ * COPIAS DE LAS QUE SE PUEDE DISPONER: las que se tienen, menos las graduadas
+ * (están en la vitrina) y menos las anunciadas en el bazar (están apalabradas).
+ * De éstas, una se queda siempre en el álbum: lo vendible es este número − 1.
+ *
+ * PARA QUÉ EXISTE: el servidor cuenta así en todas las rutas que gastan copias
+ * (ver `copiasComprometidas` en app/action.ts), y cada pantalla hacía su propia
+ * resta —`quantity - graduadas`— sin saber nada del bazar. Con 2 copias y una
+ * anunciada la colección enseñaba "Vender +0", el detalle "Vender 1 repetida ·
+ * +0" y la hoja de vaciado prometía copias que el servidor no vendía.
+ *
+ * LAS TRES CIFRAS LAS MANDA EL SERVIDOR (`getFullCollection`,
+ * `getInventarioColeccion`); aquí sólo se restan. Y se restan aquí, en vez de
+ * leer el `copiasLibres` que viaja ya hecho, por una razón concreta: las
+ * pantallas parchean `quantity` tras cada venta sin volver a pedir la
+ * colección, y un número precalculado se quedaría viejo en el segundo toque.
+ * Es la MISMA cuenta que hace el servidor, con sus mismos sumandos.
+ *
+ * Al invitado le faltan `graduadas` y `anunciadas` (no hay ni graduación ni
+ * bazar sin cuenta): valen 0 y queda `quantity`, que es su verdad.
+ */
+export function copiasLibresDe(carta: {
+  quantity?: unknown;
+  graduadas?: unknown;
+  anunciadas?: unknown;
+}): number {
+  const entero = (v: unknown) => Math.max(0, Math.floor(Number(v) || 0));
+  return Math.max(0, entero(carta.quantity) - entero(carta.graduadas) - entero(carta.anunciadas));
+}
+
+/**
+ * Rango de una rareza PARA ORDENAR: 0 si el juego no la conoce.
+ *
+ * `RARITY_RANK[r] || 0` a secas no vale: la rareza llega de una API que no
+ * controlamos, y con una llamada "constructor" o "toString" el índice devuelve
+ * una función heredada de Object.prototype. La resta de dos de ésas es NaN, y
+ * un comparador que devuelve NaN deja el orden indefinido.
+ */
+export function rangoParaOrdenar(rareza: unknown): number {
+  const r = String(rareza ?? "");
+  return Object.prototype.hasOwnProperty.call(RARITY_RANK, r) ? RARITY_RANK[r] : 0;
 }
 
 // --- PRECIOS DE SOBRES ---

@@ -5,7 +5,8 @@
      llevan el hash en el nombre)
    - imágenes de cartas: caché primero, sin revalidar, con tope de entradas
    Nunca toca peticiones que no sean GET (las server actions de Next son POST),
-   ni las RSC, ni /api.
+   ni las RSC, ni /api — con UNA excepción escrita abajo: /api/arte-sobre/, que
+   no son datos sino fotos públicas de sobre (ver el oyente de `fetch`).
 
    REGLA DE ORO DE ESTE FICHERO: cualquier rama nueva tiene que acabar en "ir a
    la red" si algo lanza. Un service worker roto deja la app instalada sin
@@ -15,7 +16,7 @@
 // Súbelo en cada cambio de este fichero: el byte distinto es lo que hace que
 // el navegador instale el service worker nuevo y dispare el aviso de versión
 // nueva de ServiceWorkerRegister en las PWA instaladas.
-const VERSION = "v10"; // v10: plazo en las navegaciones, cachés que sobreviven a la versión
+const VERSION = "v11"; // v11: las fotos de sobre del cron (/api/arte-sobre/) se guardan con las de cartas
 
 // SÓLO EL ARMAZÓN LLEVA LA VERSIÓN. Antes la llevaban las cuatro cachés y
 // `activate` borraba todo lo que no terminara en ella: subir VERSION por un
@@ -681,6 +682,24 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (url.origin !== self.location.origin) return;
+
+  /* LA ÚNICA RUTA DE /api QUE SE GUARDA: las fotos de sobre que trae el cron.
+     No son datos de nadie: son imágenes públicas, sin sesión, que la propia
+     ruta sirve con un año de caché en el CDN (app/api/arte-sobre). Vivían
+     fuera del service worker sólo por empezar por /api, así que la tienda las
+     volvía a pedir en cada visita y, sin cobertura, las expansiones cuya foto
+     trae el cron se quedaban con el sobre dibujado aunque ya se hubiera visto.
+     Van a la caché de imágenes, con su mismo tope. `cacheFirst` sólo guarda
+     respuestas 200: el 404 de "no hay foto" y el 503 de "ahora no se puede
+     saber" no se quedan. Y el catch final es la regla de oro. */
+  if (url.pathname.startsWith("/api/arte-sobre/")) {
+    event.respondWith(
+      cacheFirst(request, IMAGE_CACHE, { trim: MAX_IMAGE_ENTRIES }).catch(() =>
+        fetch(request),
+      ),
+    );
+    return;
+  }
 
   // Nunca cachear autenticación ni datos dinámicos.
   if (url.pathname.startsWith("/api") || url.pathname.includes("clerk")) return;

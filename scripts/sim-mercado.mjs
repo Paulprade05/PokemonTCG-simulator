@@ -21,6 +21,14 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { transform, loadBindings } from "next/dist/build/swc/index.js";
 
+/* UNA SIMULACIÓN NO ESCRIBE EN EL REPOSITORIO NI SALE A LA RED. `loadBindings`
+ * de Next 16 llama a `patchIncorrectLockfile(process.cwd())`: si a
+ * package-lock.json le faltan las entradas opcionales `@next/swc-*` (un lockfile
+ * generado con --omit=optional o en otra plataforma), pide los metadatos a
+ * registry.npmjs.org y REESCRIBE el lockfile. Esta variable es el interruptor
+ * que el propio Next mira antes de hacerlo, y la lee al llamar, no al importar:
+ * basta con ponerla aquí. `??=` para no pisar lo que traiga el entorno. */
+process.env.NEXT_IGNORE_INCORRECT_LOCKFILE ??= "1";
 await loadBindings();
 const raiz = process.cwd();
 
@@ -51,7 +59,7 @@ const constantes = await cargarModulo("utils/constanst.ts");
 const packLogic = await cargarModulo("utils/packLogic.ts");
 const mercado = await cargarModulo("utils/mercado.ts");
 
-const { SELL_PRICES, PACK_PRICES, STARTING_COINS, DAILY_BASE, AVAILABLE_SETS } = constantes;
+const { PACK_PRICES, STARTING_COINS, DAILY_BASE, AVAILABLE_SETS } = constantes;
 const {
   generarOfertas,
   cumpleFiltro,
@@ -69,7 +77,11 @@ const {
   VARIANTES,
 } = mercado;
 
-const precio = (c) => SELL_PRICES[c.rarity] ?? 10;
+// `precioDeCartaSuelta` y no `SELL_PRICES[c.rarity] ?? 10`: es la función que
+// usa el juego, con su mismo respaldo, y mira propiedad PROPIA. Con una rareza
+// llamada "constructor" el índice devolvía una función heredada, el `??` no
+// saltaba y la simulación sumaba NaN. Para toda rareza real da lo mismo.
+const precio = (c) => constantes.precioDeCartaSuelta(c.rarity);
 const DATA = join(raiz, "src", "data");
 const titulo = (t) => console.log("\n" + "=".repeat(78) + "\n " + t + "\n" + "=".repeat(78));
 const mediana = (a) => { const b = [...a].sort((x, y) => x - y); return b[Math.floor(b.length / 2)] ?? 0; };
@@ -99,14 +111,31 @@ const admiteOfertaAtada = (cartas) => {
   }
   return false;
 };
-const SETS = readdirSync(DATA)
-  .filter((f) => f.endsWith(".json") && f !== "all-sets.json")
-  .map((f) => f.replace(/\.json$/, ""))
-  .filter((id) => admiteOfertaAtada(JSON.parse(readFileSync(join(DATA, id + ".json"), "utf8"))))
+/* QUÉ ES UNA EXPANSIÓN: un .json de src/data que trae una LISTA DE CARTAS no
+ * vacía. No basta con "cualquier .json que no sea all-sets.json": en esa carpeta
+ * viven también los manifiestos de las fotos de sobre (sobres.json y
+ * sobres-bulbapedia.json), que son OBJETOS, y pasarle uno a `admiteOfertaAtada`
+ * reventaba el script al arrancar con "cartas is not iterable" — o sea que
+ * `npm run sim:mercado` llevaba sin medir nada desde que se añadieron. Se lee
+ * cada fichero UNA vez y de ahí salen las dos cosas, la lista y las cartas, para
+ * que no puedan discrepar. Mismo criterio que scripts/sim-economia.mjs y que el
+ * `Array.isArray(crudo) ? crudo : crudo.data` de scripts/test-invariantes.mjs. */
+const CARTAS_DE_FICHERO = new Map();
+for (const f of readdirSync(DATA)) {
+  if (!f.endsWith(".json") || f === "all-sets.json") continue;
+  let crudo;
+  try {
+    crudo = JSON.parse(readFileSync(join(DATA, f), "utf8"));
+  } catch {
+    continue; // fichero ilegible: no es una expansión que se pueda medir
+  }
+  const lista = Array.isArray(crudo) ? crudo : crudo?.data;
+  if (Array.isArray(lista) && lista.length > 0) CARTAS_DE_FICHERO.set(f.replace(/\.json$/, ""), lista);
+}
+const SETS = [...CARTAS_DE_FICHERO.keys()]
+  .filter((id) => admiteOfertaAtada(CARTAS_DE_FICHERO.get(id)))
   .sort((a, b) => a.localeCompare(b));
-const CARTAS = new Map(
-  SETS.map((s) => [s, JSON.parse(readFileSync(join(DATA, s + ".json"), "utf8"))]),
-);
+const CARTAS = new Map(SETS.map((s) => [s, CARTAS_DE_FICHERO.get(s)]));
 
 /* ================================================================== *
  * 0. INVENTARIOS DE REFERENCIA

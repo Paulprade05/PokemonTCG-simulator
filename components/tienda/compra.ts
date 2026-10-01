@@ -120,10 +120,25 @@ export function recuperarConClave(intento: CompraPendiente): Promise<RespuestaDe
   return enviarConReintento(() => recuperarSobreAction(intento.clave), false);
 }
 
-/** Por qué el servidor no ha vendido el sobre, dicho para el jugador. */
-export const textoDeRechazo = (motivo?: string): string =>
+/**
+ * Por qué el servidor no ha vendido el sobre, dicho para el jugador.
+ *
+ * `detalle` afina el motivo cuando el servidor lo manda. Hoy sólo hay uno:
+ * "set-incompleto", una expansión que el cron todavía está descargando y que
+ * por eso no vende ningún sobre. Sin él se decía "ese sobre no está a la venta
+ * en esta expansión", que suena a que hay otro sobre que sí.
+ *
+ * "demasiadas-peticiones" es el tope de frecuencia del servidor: caía en el
+ * genérico "no se pudo completar la compra", que no dice ni que no se ha
+ * cobrado ni que basta con esperar.
+ */
+export const textoDeRechazo = (motivo?: string, detalle?: string): string =>
   motivo === "sin-saldo"
     ? "No tienes suficientes monedas"
+    : motivo === "sobre-no-disponible" && detalle === "set-incompleto"
+      ? "Esta expansión todavía se está descargando y sus sobres aún no están a la venta. No se ha cobrado nada."
+    : motivo === "demasiadas-peticiones"
+      ? "Demasiadas compras seguidas. Espera unos segundos: no se ha cobrado nada."
     : motivo === "sobre-no-disponible"
       ? "Ese sobre no está a la venta en esta expansión"
       : motivo === "sin-sesion"

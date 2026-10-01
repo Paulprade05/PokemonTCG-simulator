@@ -92,9 +92,9 @@ const ERRORES_COMPRA: Record<string, string> = {
    * lavado de monedas entre dos cuentas de la misma persona pasa por la compra,
    * no por la venta. */
   novato: "Abre unos cuantos sobres más antes de comprar en el bazar.",
-  /* El servidor no distingue los dos casos a propósito: la compra entera es una
-   * sola sentencia y, si no sale, no puede decir cuál de las dos condiciones
-   * falló sin volver a consultar. Se dicen las dos, que es lo honesto. */
+  /* EL RESPALDO, por si la respuesta llegara sin `motivo`. Lo normal es que lo
+   * traiga: la misma sentencia de la compra devuelve por qué no se vendió, y el
+   * mensaje bueno sale de MOTIVOS_NO_DISPONIBLE, aquí debajo. */
   "no-disponible":
     "No se pudo comprar: o se la ha llevado otro antes, o no te llega el saldo.",
   "no-existe": "Ese anuncio ya no está a la venta.",
@@ -102,6 +102,24 @@ const ERRORES_COMPRA: Record<string, string> = {
   peticion: "Esa compra no es válida.",
   servidor: "No se pudo completar la compra. No se ha movido nada.",
 };
+
+/**
+ * Por qué una compra contestó "no-disponible", dicho como es.
+ *
+ * Antes eran dos causas en una frase ("o se la ha llevado otro, o no te llega
+ * el saldo"), y había una tercera que no era ninguna de las dos: el anuncio no
+ * tenía nada detrás (el vendedor gastó la copia por otra vía). El servidor
+ * manda ahora `motivo` sacado de las mismas filas que decidieron.
+ */
+const MOTIVOS_NO_DISPONIBLE: Record<string, string> = {
+  vendido: "Ese anuncio ya no está a la venta: se ha vendido o lo han retirado.",
+  "sin-respaldo":
+    "El vendedor ya no tiene esa carta. El anuncio se ha retirado y no se te ha cobrado nada.",
+  "sin-saldo": "No te llega el saldo para esa carta. No se ha movido nada.",
+};
+
+/** El tope de frecuencia del servidor (services/limite.ts): no ha pasado nada. */
+const DEMASIADAS_SEGUIDAS = "Demasiadas operaciones seguidas. Espera unos segundos: no se ha movido nada.";
 
 const ERRORES_RETIRAR: Record<string, string> = {
   "no-existe": "Ese anuncio ya no estaba en venta.",
@@ -275,10 +293,15 @@ export default function BazarPage() {
         /* Con "novato" el servidor manda además cuántos sobres faltan, y decir
          * el número es la diferencia entre una norma y un muro: "te faltan 7"
          * se entiende y se puede cumplir hoy mismo. */
+        const motivo = "motivo" in res && typeof res.motivo === "string" ? res.motivo : "";
         const mensaje =
           res.error === "novato" && "faltan" in res && typeof res.faltan === "number"
             ? `Te faltan ${res.faltan} ${res.faltan === 1 ? "sobre" : "sobres"} por abrir para poder comprar en el bazar.`
-            : (ERRORES_COMPRA[res.error] ?? "No se pudo comprar.");
+            : "limitado" in res && res.limitado
+              ? DEMASIADAS_SEGUIDAS
+              : res.error === "no-disponible" && MOTIVOS_NO_DISPONIBLE[motivo]
+                ? MOTIVOS_NO_DISPONIBLE[motivo]
+                : (ERRORES_COMPRA[res.error] ?? "No se pudo comprar.");
         toast(mensaje, "error");
         /* El servidor manda: si dice que faltan N para comprar, los botones del
          * escaparate pasan a decirlo aunque `getProfileStats` hubiera contado

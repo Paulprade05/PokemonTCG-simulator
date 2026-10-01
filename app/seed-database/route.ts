@@ -18,7 +18,7 @@ import { upsertCards, upsertSets } from '@/services/ingest';
  * entraba en la sentencia.
  *
  * Eso no era cosmético: en un despliegue montado siguiendo el README (donde
- * /seed-database es el paso 5) `supertype` y `subtypes` quedaban NULL en TODAS
+ * /seed-database es el último paso) `supertype` y `subtypes` quedaban NULL en TODAS
  * las expansiones, y los requisitos del mercado por supertipo, etapa y
  * evolución (utils/mercado.ts, categorías "supertipo", "etapa" y "evolucion")
  * no casaban con ninguna carta: ofertas imposibles de cumplir para cualquier

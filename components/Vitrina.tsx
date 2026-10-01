@@ -6,10 +6,12 @@ import Link from "next/link";
 import {
   getArchivador,
   getFullCollection,
-  getSetsFromDB,
   ponerEnRanura,
   quitarDeRanura,
 } from "../app/action";
+// El catálogo de expansiones, pedido una vez por sesión de navegador y
+// compartido entre pantallas (ver utils/catalogoCliente.ts).
+import { catalogoDeExpansiones } from "../utils/catalogoCliente";
 import { getCollection } from "../utils/storage";
 import {
   guardarArchivadorLocal,
@@ -18,7 +20,7 @@ import {
   quitarDeRanuraLocal,
   type FundaLocal,
 } from "../utils/archivadorLocal";
-import { RARITY_RANK } from "../utils/constanst";
+import { rangoParaOrdenar } from "../utils/constanst";
 import { formatNumber } from "../utils/format";
 import { leerAjustes, suscribirseAjustes, type Ajustes } from "../utils/settings";
 import { useIdentidad } from "../hooks/useIdentidad";
@@ -159,8 +161,8 @@ function ordenarComoElServidor(cartas: CartaEnColeccion[]): CartaEnColeccion[] {
     const favA = a.is_favorite ? 1 : 0;
     const favB = b.is_favorite ? 1 : 0;
     if (favA !== favB) return favB - favA;
-    const rangoA = RARITY_RANK[a.rarity] || 0;
-    const rangoB = RARITY_RANK[b.rarity] || 0;
+    const rangoA = rangoParaOrdenar(a.rarity);
+    const rangoB = rangoParaOrdenar(b.rarity);
     if (rangoA !== rangoB) return rangoB - rangoA;
     return a.name.localeCompare(b.name);
   });
@@ -342,7 +344,7 @@ export default function Vitrina({
     setErrorCarga(false);
     try {
       if (isSignedIn) {
-        const expansiones = await getSetsFromDB();
+        const expansiones = await catalogoDeExpansiones();
         setSets(expansiones);
 
         // En paralelo: son dos lecturas independientes y encadenarlas duplica
@@ -368,7 +370,7 @@ export default function Vitrina({
          * el archivador y la colección enteros en localStorage. Aquí sólo
          * alimentan el filtro del selector, así que se piden aparte y, si no
          * llegan, el selector se queda con "Todas" y nada más. */
-        getSetsFromDB()
+        catalogoDeExpansiones()
           .then(setSets)
           .catch(() => {
             /* sin red: el selector funciona sin el filtro por expansión */

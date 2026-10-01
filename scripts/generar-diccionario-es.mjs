@@ -219,9 +219,20 @@ async function main() {
    * `leerCartasLocales`).
    */
   for (const f of ficheros) {
-    if (!SETS[f]) {
-      console.warn("AVISO  " + f + ": fichero sin equivalencia en TCGdex, lo salto.");
+    if (SETS[f]) continue;
+    /* NO TODO .json DE src/data ES UNA EXPANSIÓN. Ahí viven también los
+     * manifiestos de las fotos de sobre (sobres.json, sobres-bulbapedia.json),
+     * que son objetos sin cartas, y este aviso los anunciaba en cada pasada
+     * como expansiones sin traducir. Un aviso que sale siempre deja de leerse,
+     * y éste es el que dice que falta una expansión de verdad en la tabla. */
+    let crudo = null;
+    try {
+      crudo = JSON.parse(await fs.readFile(path.join(DIR_DATOS, f + ".json"), "utf8"));
+    } catch {
+      // Ilegible: que salga el aviso, que algo raro hay.
     }
+    if (crudo !== null && !Array.isArray(crudo) && !Array.isArray(crudo?.data)) continue;
+    console.warn("AVISO  " + f + ": fichero sin equivalencia en TCGdex, lo salto.");
   }
   if (soloSet && !SETS[soloSet]) {
     console.error("ERROR  " + soloSet + ": no está en la tabla SETS.");

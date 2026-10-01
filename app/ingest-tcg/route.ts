@@ -1,3 +1,24 @@
+// app/ingest-tcg/route.ts
+//
+// OJO: ESTA RUTA ES UNA SEGUNDA INGESTA, SEPARADA DE services/ingest.ts, y lo
+// que se corrige allí NO llega aquí. Riesgo conocido, pendiente de que el dueño
+// decida (sustituir el cuerpo por una llamada a `sincronizar` es quitar las
+// copias locales de `fetchJson`, `upsertSet` y `upsertCard`, y aquí no se quita
+// nada sin su sí). Lo que hoy hace distinto, para quien la dispare a mano:
+//
+//  - Escribe la ficha de TODOS los sets remotos antes que ninguna carta (sin
+//    `?setId=`). La tienda ofrece una expansión en cuanto tiene ficha, así que
+//    una ejecución cortada deja expansiones a la venta sin cartas o a medias.
+//    services/ingest.ts publica la ficha de un set nuevo AL FINAL.
+//  - No tiene presupuesto de tiempo ni corte por petición: `fetchJson` puede
+//    esperar hasta 60 s entre reintentos y una respuesta colgada no se corta.
+//    En el plan Hobby la función muere a los 60 s sin responder.
+//  - Escribe carta a carta (hasta 250 idas y vueltas por página) y no avisa de
+//    las rarezas que el juego no conoce.
+//
+// Mientras tanto, para traer o completar expansiones es preferible
+// /api/cron/sync-sets (con `?setId=` para forzar una), que usa aquel motor.
+
 import { sql } from "@vercel/postgres";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "../_admin-auth";
@@ -149,7 +170,6 @@ export async function GET(request: Request) {
       let fetched = 0;
       console.log(`Ingest set ${s.id} (${s.total} cards expected)`);
       try {
-        // eslint-disable-next-line no-constant-condition
         while (true) {
           const url = `${API}/cards?q=set.id:${encodeURIComponent(s.id)}&page=${page}&pageSize=${PAGE_SIZE}&orderBy=number`;
           const data = await fetchJson(url);

@@ -21,6 +21,22 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { transform, loadBindings } from "next/dist/build/swc/index.js";
 
+/* UN TEST NO ESCRIBE EN EL REPOSITORIO NI SALE A LA RED. `loadBindings` de
+ * Next 16 llama a `patchIncorrectLockfile(process.cwd())`: si a
+ * package-lock.json le faltan las entradas opcionales `@next/swc-*` (un lockfile
+ * generado con --omit=optional, o en otra plataforma), pide los metadatos a
+ * registry.npmjs.org y REESCRIBE el lockfile. Hoy no se dispara porque el
+ * lockfile las trae, pero un `npm test` que modifica ficheros commiteados es
+ * justo lo que no puede pasar en CI. Ésta es la variable que el propio Next
+ * mira antes de hacerlo, y la lee al llamar, no al importar: basta con ponerla
+ * aquí. `??=` para no pisar lo que traiga el entorno.
+ *
+ * DE QUÉ DEPENDE ESTE FICHERO, que package.json no lo dice: de
+ * `next/dist/build/swc`, que es una ruta INTERNA de Next sin garantía entre
+ * versiones. Si al subir Next cambia la ruta o la firma de `transform` /
+ * `loadBindings`, esto revienta en la línea del import, antes de comprobar un
+ * solo invariante: hay que pasar `npm test` justo después de cada subida. */
+process.env.NEXT_IGNORE_INCORRECT_LOCKFILE ??= "1";
 await loadBindings();
 const raiz = process.cwd();
 
@@ -82,9 +98,129 @@ const {
 const { generarOfertas, OFERTAS_ACTIVAS, COPIAS_RESERVADAS } = mercado;
 
 /* ------------------------------------------------------------------ */
+/* EL CÓDIGO DE app/action.ts, EJECUTADO DESDE AQUÍ                    */
+/* ------------------------------------------------------------------ */
+/*
+ * EL AGUJERO QUE CIERRA. El cargador de arriba sólo abre módulos sin
+ * dependencias (utils/ y algún services/), así que todo lo que vive en
+ * app/action.ts —que arrastra Clerk, Postgres y Next— se había ido REPLICANDO a
+ * mano dentro de este fichero: `atable` (copia de `admiteOfertaAtada`), el 40 de
+ * MAX_CARTAS_ENTREGA, el validador del lote… Una réplica vigila a la réplica: si
+ * alguien cambiaba el filtro en el servidor a `r <= 10`, `npm test` seguía verde
+ * midiendo el filtro viejo, y el comentario de aquí prometía lo contrario.
+ *
+ * QUÉ HACE: saca del fichero las declaraciones que se le piden, POR NOMBRE, y
+ * las ejecuta tal cual están escritas. No hay copia: lo que corre aquí es el
+ * texto del servidor. Dos decisiones que no son evidentes:
+ *
+ *   · Se corta sobre el JavaScript que da swc al transpilar el fichero entero,
+ *     no sobre el TypeScript. Sin tipos, "la primera llave después de los
+ *     paréntesis" ES el cuerpo de la función; en TypeScript puede ser un tipo de
+ *     retorno (`): { a: number } | null {`) y habría que entender tipos.
+ *   · Los módulos que el fichero importa se enchufan por la variable con la que
+ *     swc los nombra (`_mercado`, `_constanst`…). Si es uno de los que este
+ *     fichero ya ha cargado, entra EL DE VERDAD; si no, hay que pasar un doble,
+ *     y usar uno que no se ha pasado lanza un error con nombre y apellidos en
+ *     vez de un `undefined` tres líneas más abajo.
+ *
+ * LO QUE NO SABE HACER, para que nadie pierda una tarde: no entiende
+ * expresiones regulares literales con llaves o comillas sueltas dentro (ninguna
+ * de las funciones que se sacan hoy trae una). Si un día la trae, el corte sale
+ * mal y `new Function` lo dice con un SyntaxError: no falla en silencio.
+ *
+ * ESTO NO SUSTITUYE A SACAR ESE CÓDIGO A utils/ (entregaValida y sus ayudantes
+ * son puros y deberían vivir en un módulo importable desde los dos sitios). Es
+ * la amarra corta mientras eso no se haga: no toca app/action.ts.
+ */
+function finDeCadena(codigo, i) {
+  const comilla = codigo[i];
+  i++;
+  while (i < codigo.length) {
+    const c = codigo[i];
+    if (c === "\\") { i += 2; continue; }
+    if (comilla === "`" && c === "$" && codigo[i + 1] === "{") { i = finDeBloque(codigo, i + 1); continue; }
+    if (c === comilla) return i + 1;
+    i++;
+  }
+  return i;
+}
+/** `i` apunta a un (, [ o {. Devuelve el índice siguiente al que lo cierra. */
+function finDeBloque(codigo, i) {
+  let prof = 0;
+  while (i < codigo.length) {
+    const c = codigo[i];
+    const d = codigo[i + 1];
+    if (c === "/" && d === "/") { while (i < codigo.length && codigo[i] !== "\n") i++; continue; }
+    if (c === "/" && d === "*") { i = codigo.indexOf("*/", i + 2); if (i < 0) return codigo.length; i += 2; continue; }
+    if (c === '"' || c === "'" || c === "`") { i = finDeCadena(codigo, i); continue; }
+    if (c === "(" || c === "[" || c === "{") prof++;
+    else if (c === ")" || c === "]" || c === "}") { prof--; if (prof === 0) return i + 1; }
+    i++;
+  }
+  return i;
+}
+/** El texto de UNA declaración (`function f(…) {…}`, `const X = …;` o `let X = …;`) de un fichero ya
+ *  transpilado. El `let` hace falta para sacar estado de módulo (el `schemaReady` de `ensureSchema`)
+ *  junto a la función que lo usa. */
+function declaracionJs(js, nombre) {
+  const re = new RegExp("(?:async\\s+)?function\\s+" + nombre + "\\s*\\(|\\b(?:const|let)\\s+" + nombre + "\\s*=", "g");
+  const todas = [...js.matchAll(re)];
+  // Ni cero ni dos: con dos no se sabría cuál corre, y elegir una a ciegas es
+  // volver a vigilar algo que no es lo que se ejecuta.
+  if (todas.length !== 1) throw new Error(`"${nombre}" aparece declarado ${todas.length} veces`);
+  const m = todas[0];
+  if (/^(?:const|let)\b/.test(m[0])) {
+    let i = m.index + m[0].length;
+    while (i < js.length && js[i] !== ";") {
+      const c = js[i];
+      if (c === '"' || c === "'" || c === "`") i = finDeCadena(js, i);
+      else if (c === "(" || c === "[" || c === "{") i = finDeBloque(js, i);
+      else i++;
+    }
+    return js.slice(m.index, i + 1);
+  }
+  const trasParametros = finDeBloque(js, m.index + m[0].length - 1);
+  return js.slice(m.index, finDeBloque(js, js.indexOf("{", trasParametros)));
+}
+const jsTranspilado = new Map();
+/**
+ * Ejecuta las declaraciones `nombres` de `rel` y las devuelve en un objeto.
+ * `dobles` va por el NOMBRE CORTO del módulo importado ("localData" para
+ * "../services/localData"). Lanza si algo no se encuentra: quien llama decide
+ * si eso es un FALLO o una medición que hoy no se puede hacer.
+ */
+async function trozosDelServidor(rel, nombres, dobles = {}) {
+  if (!jsTranspilado.has(rel)) {
+    const { code } = await transform(readFileSync(join(raiz, rel), "utf8"), {
+      jsc: { parser: { syntax: "typescript", tsx: rel.endsWith(".tsx") }, target: "es2022" },
+      module: { type: "commonjs" },
+    });
+    jsTranspilado.set(rel, code);
+  }
+  const js = jsTranspilado.get(rel);
+  const cuerpo = nombres.map((n) => declaracionJs(js, n)).join("\n");
+  const modulos = {};
+  for (const m of js.matchAll(/\bconst (_\w+) = [^;\n]*?require\("([^"]+)"\)/g)) {
+    const [, variable, spec] = m;
+    if (!new RegExp("\\b" + variable + "\\b").test(cuerpo)) continue;
+    const real = spec.startsWith(".") ? cache.get(resolve(dirname(join(raiz, rel)), spec + ".ts")) : undefined;
+    modulos[variable] =
+      dobles[spec.split("/").pop()] ??
+      real ??
+      new Proxy({}, {
+        get: (_, p) => { throw new Error(`el código de ${rel} usa ${spec}.${String(p)} y aquí no hay ni módulo ni doble`); },
+      });
+  }
+  const fuente =
+    `"use strict";\nconst { ${Object.keys(modulos).join(", ")} } = __modulos;\n${cuerpo}\nreturn { ${nombres.join(", ")} };`;
+  return new Function("__modulos", fuente)(modulos);
+}
+
+/* ------------------------------------------------------------------ */
 
 let fallos = 0;
 let pasados = 0;
+let avisos = 0;
 
 const seccion = (t) => console.log("\n== " + t + " ==");
 const ok = (t) => {
@@ -96,28 +232,95 @@ const mal = (t, detalle) => {
   console.log("  FALLO " + t + (detalle ? "\n          " + detalle : ""));
 };
 const comprueba = (cond, t, detalle) => (cond ? ok(t) : mal(t, detalle));
+/* UN HALLAZGO ABIERTO QUE EL TEST MIDE PERO TODAVÍA NO PUEDE EXIGIR.
+ *
+ * Para cuando un invariante se sabe roto HOY y el arreglo vive en un fichero
+ * que no es de quien escribe el test. Las dos salidas honradas eran malas: no
+ * escribirlo (y el hallazgo se olvida) o escribirlo con `comprueba` (y `npm
+ * test` se queda rojo por algo que nadie puede arreglar desde aquí, que es como
+ * se aprende a ignorarlo). Esto imprime AVISO, con la cifra medida, y NO cuenta
+ * como fallo ni como invariante.
+ *
+ * NO ES UN SITIO DONDE APARCAR FALLOS. El día que la condición se cumple, la
+ * línea sale como `ok` y avisa de que ya toca: cambiar `pendiente(` por
+ * `comprueba(` para que vuelva a ser una puerta. Un `pendiente` que lleva
+ * tiempo saliendo `ok` es un invariante sin cerrojo. */
+const pendiente = (cond, t, detalle) => {
+  if (cond) return ok(t + " [ya se cumple: cambiar `pendiente` por `comprueba` en scripts/test-invariantes.mjs]");
+  avisos++;
+  console.log("  AVISO " + t + (detalle ? "\n          " + detalle : ""));
+};
 
 /* ------------------------------------------------------------------ */
 /* CARTAS REALES                                                       */
 /* ------------------------------------------------------------------ */
 
+/* QUÉ ES UNA EXPANSIÓN, que antes era "cualquier .json de src/data que no sea
+ * all-sets.json". En esa carpeta viven también los manifiestos de las fotos de
+ * sobre (sobres.json y sobres-bulbapedia.json), que son objetos sin cartas, y
+ * entraban como DOS EXPANSIONES VACÍAS: la salida decía "40 expansiones" donde
+ * hay 38, pasaban todos los invariantes sin tener una sola carta, y uno de
+ * ellos —"el filtro deja fuera las que no tienen pirámide"— se cumplía SIEMPRE
+ * gracias a ellas, filtrase lo que filtrase (38 admitidas < 40).
+ *
+ * Una expansión es lo que la aplicación ofrece: un id de all-sets.json CON un
+ * fichero que trae una lista de cartas no vacía (services/localData.ts cruza
+ * exactamente esas dos cosas). Lo demás se apunta aparte y se comprueba más
+ * abajo que sea lo que se espera, para que un fichero nuevo no vuelva a colarse
+ * en ninguno de los dos montones sin que nadie lo decida. */
 const DATA = join(raiz, "src", "data");
-const setIds = readdirSync(DATA)
-  .filter((f) => f.endsWith(".json") && f !== "all-sets.json")
-  .map((f) => f.replace(/\.json$/, ""));
+const EN_ALL_SETS = new Set(
+  JSON.parse(readFileSync(join(DATA, "all-sets.json"), "utf8")).map((s) => s.id),
+);
+/** Las cartas tal cual están en el fichero: lo que lee `loadLocalCards`. */
+const CRUDAS = new Map();
+const NO_SON_EXPANSION = []; // [fichero, motivo]
+for (const f of readdirSync(DATA).sort()) {
+  if (!f.endsWith(".json") || f === "all-sets.json") continue;
+  const id = f.replace(/\.json$/, "");
+  const crudo = JSON.parse(readFileSync(join(DATA, f), "utf8"));
+  const lista = Array.isArray(crudo) ? crudo : crudo?.data;
+  if (!Array.isArray(lista) || lista.length === 0) NO_SON_EXPANSION.push([f, "no trae lista de cartas"]);
+  else if (!EN_ALL_SETS.has(id)) NO_SON_EXPANSION.push([f, "trae cartas pero su id no está en all-sets.json"]);
+  else CRUDAS.set(id, lista);
+}
+const setIds = [...CRUDAS.keys()];
 
 const CARTAS = new Map();
 for (const id of setIds) {
-  const crudo = JSON.parse(readFileSync(join(DATA, id + ".json"), "utf8"));
-  const lista = Array.isArray(crudo) ? crudo : crudo.data || [];
   CARTAS.set(
     id,
-    lista.map((c) => ({
+    CRUDAS.get(id).map((c) => ({
       id: c.id,
       name: c.name,
       rarity: c.rarity || "Common",
       images: c.images ?? { small: "", large: "" },
     })),
+  );
+}
+
+/* ------------------------------------------------------------------ */
+seccion("Catálogo: qué cuenta como expansión");
+/* ------------------------------------------------------------------ */
+{
+  /* Los únicos .json de src/data que NO son una expansión, por nombre. Si
+   * aparece otro, esto se pone rojo a propósito: hay que decidir qué es y
+   * mirar que nadie lo esté tratando como expansión (el mismo filtro "todo .json
+   * menos all-sets.json" está copiado en services/localData.ts, en
+   * scripts/generar-diccionario-es.mjs y en scripts/probar-idioma.mjs). */
+  const MANIFIESTOS = ["sobres-bulbapedia.json", "sobres.json"];
+  const sorpresas = NO_SON_EXPANSION.filter(([f]) => !MANIFIESTOS.includes(f));
+  const faltan = MANIFIESTOS.filter((m) => !NO_SON_EXPANSION.some(([f]) => f === m));
+  comprueba(
+    CARTAS.size > 0 && sorpresas.length === 0 && faltan.length === 0,
+    `src/data trae ${CARTAS.size} expansiones con cartas y ${NO_SON_EXPANSION.length} ficheros que no lo son (${NO_SON_EXPANSION.map(([f]) => f).join(", ")})`,
+    [
+      ...sorpresas.map(([f, motivo]) => `src/data/${f}: ${motivo}`),
+      ...faltan.map((f) => `src/data/${f} ya no está, o ha pasado a contar como expansión (¿ahora es una lista?)`),
+    ].join("\n          ") +
+      "\n          QUÉ TOCAR: si es un manifiesto nuevo, añádelo a MANIFIESTOS aquí. Si es una" +
+      " expansión, le falta su entrada en all-sets.json o su lista de cartas: tal cual" +
+      " está, la aplicación no la ofrece y este test tampoco la mira.",
   );
 }
 
@@ -341,6 +544,57 @@ seccion("Tablas de rareza");
 seccion("Mercado");
 /* ------------------------------------------------------------------ */
 
+/* EL MERCADO DEL SERVIDOR, EL DE VERDAD. Todo lo que esta sección y la del
+ * reparto necesitan de app/action.ts sale del fichero y se ejecuta tal cual
+ * (ver `trozosDelServidor`, arriba). Lo único de mentira es de dónde lee las
+ * cartas `admiteOfertaAtada`: en vez de services/localData.ts (que tira de fs
+ * asíncrono y de caché propia) lee las mismas listas que este test ya ha
+ * cargado, con la misma normalización de rareza que hace `loadLocalCards`
+ * (`rarity || "Common"`) y devolviendo [] si el fichero no existe, como él. */
+const CATALOGO_DEL_DOBLE = new Map(CRUDAS);
+let servidor = null;
+{
+  const DECLARACIONES = [
+    "MAX_CARTAS_ENTREGA", "CATEGORIAS_DE_CONJUNTO", "listaSegura", "mismoNombre", "enMinusculas",
+    "sirveParaRequisito", "utilidadEnOtros", "opcionesDeConjunto", "emparejaHuecos",
+    "entregaValida", "admiteOfertaAtada",
+  ];
+  /* `combinaciones` YA NO ES OBLIGATORIA. Era con lo que `entregaValida`
+   * resolvía el arcoíris (con un tope que era un fallo: ver más abajo), y
+   * app/action.ts la conserva sin usar sólo porque estaba en esta lista. Se
+   * saca SI SIGUE ESTANDO: así borrarla allí no pone esto en rojo, y si alguien
+   * vuelve a llamarla, el fallo sale en el invariante del arcoíris con su
+   * explicación y no como un ReferenceError que deja el test sin veredicto. */
+  const OPCIONALES = ["combinaciones"];
+  const saca = (nombres) =>
+    trozosDelServidor("app/action.ts", nombres, {
+      localData: {
+        loadLocalCards: async (id) =>
+          (CATALOGO_DEL_DOBLE.get(id) ?? []).map((c) => ({ ...c, rarity: c.rarity || "Common" })),
+      },
+    });
+  let motivo = "";
+  try {
+    try {
+      servidor = await saca([...DECLARACIONES, ...OPCIONALES]);
+    } catch (e) {
+      if (!OPCIONALES.some((n) => String(e?.message).startsWith(`"${n}" aparece declarado 0 veces`))) throw e;
+      servidor = await saca(DECLARACIONES);
+    }
+  } catch (e) {
+    motivo = e.message;
+  }
+  comprueba(
+    servidor !== null && Number.isInteger(servidor.MAX_CARTAS_ENTREGA) && servidor.MAX_CARTAS_ENTREGA > 0,
+    `los invariantes del mercado ejecutan el código de app/action.ts, no una copia (${DECLARACIONES.length} declaraciones sacadas del fichero)`,
+    motivo +
+      "\n          QUÉ TOCAR: alguna de estas declaraciones ya no está en app/action.ts con ese" +
+      " nombre (" + DECLARACIONES.join(", ") + "). Si se han mudado a un módulo de utils/," +
+      " mejor: cárgalo con `cargarModulo` y quita de aquí la extracción. Lo que NO vale es" +
+      " volver a copiar la función dentro del test: una copia vigila a la copia.",
+  );
+}
+
 {
   // El tablón es PURO: la misma semilla tiene que dar exactamente las mismas
   // ofertas, o lo que se pinta y lo que se cobra dejarían de coincidir.
@@ -353,11 +607,18 @@ seccion("Mercado");
     if (a.length !== OFERTAS_ACTIVAS) malos.push(`ciclo ${ciclo} generó ${a.length} ofertas`);
     for (const o of a) {
       const cartas = o.requisitos.reduce((s, r) => s + r.cantidad, 0);
-      // El servidor rechaza entregas de más de 40 cartas (MAX_CARTAS_ENTREGA).
-      if (cartas > 40) malos.push(`oferta ${o.id} pide ${cartas} cartas: no se puede cobrar`);
+      // `cumplirOferta` rechaza con "peticion" toda entrega de más cartas que
+      // MAX_CARTAS_ENTREGA. El tope es el del servidor, leído de su fichero: aquí
+      // había un 40 escrito a mano que no se habría enterado de un cambio.
+      const tope = servidor?.MAX_CARTAS_ENTREGA ?? 0;
+      if (cartas > tope) malos.push(`oferta ${o.id} pide ${cartas} cartas y el servidor admite ${tope}: no se puede cobrar`);
     }
   }
-  comprueba(malos.length === 0, "el tablón es determinista y toda oferta es cobrable", malos.slice(0, 5).join("\n          "));
+  comprueba(
+    malos.length === 0,
+    `el tablón es determinista y toda oferta es cobrable (ninguna pasa de las ${servidor?.MAX_CARTAS_ENTREGA ?? "?"} cartas que admite el servidor)`,
+    malos.slice(0, 5).join("\n          "),
+  );
 }
 
 {
@@ -388,29 +649,18 @@ comprueba(
  * tipo de fallo que no rompe nada, no sale en ningún log y sólo lo ve el jugador
  * que se queda mirando una barra clavada en 0.
  *
- * Se replica el filtro de `admiteOfertaAtada` (app/action.ts) y se comprueba que
- * con él NO queda ni una oferta imposible. Si alguien cambia el filtro, las
- * bandas de utils/mercado.ts o la lista de expansiones, aquí salta. */
+ * El filtro que se usa es `admiteOfertaAtada` de app/action.ts, EJECUTADO, no
+ * copiado: antes había aquí una réplica (`atable`) y este comentario prometía
+ * que "si alguien cambia el filtro, aquí salta", lo que para el filtro era
+ * falso —se podía cambiar en el servidor y esto seguía verde midiendo el
+ * viejo—. Ahora sí: si cambia el filtro, las bandas de utils/mercado.ts o la
+ * lista de expansiones, aquí salta. */
 {
-  const banda = (r) => RARITY_RANK[r ?? ""] ?? 1;
-  const atable = (cartas) => {
-    let morralla = false;
-    let raras = false;
-    for (const c of cartas) {
-      const k = banda(c.rarity);
-      if (k >= 1 && k <= 5) morralla = true;
-      else if (k >= 10 && k <= 20) raras = true;
-      if (morralla && raras) return true;
-    }
-    return false;
-  };
-
   // El catálogo COMPLETO de cada set, no sólo id/rareza: cumpleFiltro mira
   // tipos, etapa, ilustrador y línea evolutiva.
   const completo = new Map();
   for (const id of setIds) {
-    const crudo = JSON.parse(readFileSync(join(DATA, id + ".json"), "utf8"));
-    const lista = Array.isArray(crudo) ? crudo : crudo.data || [];
+    const lista = CRUDAS.get(id);
     completo.set(
       id,
       lista.map((c) => ({
@@ -422,9 +672,10 @@ comprueba(
     );
   }
 
-  const admitidos = setIds
-    .filter((id) => atable(completo.get(id)))
-    .sort((a, b) => a.localeCompare(b));
+  const admitidos = [];
+  for (const id of setIds.slice().sort((a, b) => a.localeCompare(b))) {
+    if (servidor && (await servidor.admiteOfertaAtada(id))) admitidos.push(id);
+  }
 
   const { cumpleFiltro, setDeCarta } = mercado;
   const imposibles = new Map();
@@ -448,10 +699,87 @@ comprueba(
     `ninguna oferta atada es imposible de cumplir (${ofertas} ofertas, ${admitidos.length} expansiones)`,
     [...imposibles].map(([s, n]) => `${s}: ${n} ofertas`).join(", "),
   );
+  /* QUÉ DEJA FUERA EL FILTRO, CON NOMBRES. Aquí había `admitidos.length <
+   * setIds.length`, que se cumplía SIEMPRE: bastaba con que el filtro dejase
+   * fuera una (y las dos expansiones vacías que se colaban en la lista ya lo
+   * garantizaban). Un filtro que lo admitiera todo menos una pasaba igual.
+   *
+   * Lo esperado se calcula con OTRA regla, escrita por nombres de rareza y no
+   * por rangos: una expansión se puede atar si imprime alguna Común o
+   * Infrecuente Y alguna Rara o Rara Holo. Es la frase del comentario de
+   * `admiteOfertaAtada` dicha de otra manera, a propósito: dos implementaciones
+   * de la misma regla sólo coinciden mientras las dos sigan siendo esa regla. */
+  const esperadas = setIds
+    .filter((id) => {
+      const rarezas = new Set(CRUDAS.get(id).map((c) => c.rarity || "Common"));
+      return (
+        (rarezas.has("Common") || rarezas.has("Uncommon")) &&
+        (rarezas.has("Rare") || rarezas.has("Rare Holo"))
+      );
+    })
+    .sort((a, b) => a.localeCompare(b));
+  const fuera = setIds.filter((id) => !admitidos.includes(id)).sort((a, b) => a.localeCompare(b));
+  const deMas = admitidos.filter((id) => !esperadas.includes(id));
+  const deMenos = esperadas.filter((id) => !admitidos.includes(id));
   comprueba(
-    admitidos.length < setIds.length,
-    `el filtro de expansiones atables deja fuera las que no tienen pirámide (${setIds.length - admitidos.length} de ${setIds.length})`,
+    admitidos.length > 0 && fuera.length > 0 && deMas.length === 0 && deMenos.length === 0,
+    `el filtro del servidor ata ${admitidos.length} expansiones y deja fuera exactamente las ${fuera.length} sin pirámide (${fuera.join(", ")})`,
+    (deMas.length ? `admite sin pirámide: ${deMas.join(", ")}. ` : "") +
+      (deMenos.length ? `deja fuera teniendo pirámide: ${deMenos.join(", ")}. ` : "") +
+      (admitidos.length === 0 ? "no admite ninguna. " : "") +
+      (fuera.length === 0 ? "no deja fuera ninguna, y hay subsets sin comunes ni raras. " : "") +
+      "QUÉ TOCAR: `admiteOfertaAtada` (app/action.ts) tiene que exigir las DOS bandas" +
+      " que `montarOferta` sabe atar: morralla (rango 1-5) y raras (rango 10-20).",
   );
+
+  /* Y LA COPIA QUE QUEDA, AMARRADA. scripts/sim-mercado.mjs no puede ejecutar
+   * app/action.ts más de lo que podía este fichero, así que lleva su propia
+   * copia del filtro, con un comentario que dice que "lo vigila
+   * scripts/test-invariantes.mjs". No lo vigilaba nadie. Se saca su función del
+   * fichero y se enfrenta a la del servidor: con las expansiones reales y con
+   * todas las parejas de rarezas, que es donde se vería una banda movida. */
+  {
+    const malos = [];
+    let casos = 0;
+    let suya = null;
+    try {
+      const fuente = readFileSync(join(raiz, "scripts", "sim-mercado.mjs"), "utf8");
+      suya = new Function("RANGO", declaracionJs(fuente, "admiteOfertaAtada") + "\nreturn admiteOfertaAtada;")(RARITY_RANK);
+    } catch (e) {
+      malos.push("no se ha podido sacar `admiteOfertaAtada` de scripts/sim-mercado.mjs: " + e.message);
+    }
+    if (suya && servidor) {
+      const NOMBRES = [...Object.keys(RARITY_RANK), "Rareza Que No Existe"];
+      const listas = [[], ...NOMBRES.map((a) => [{ rarity: a }])];
+      for (const a of NOMBRES) for (const b of NOMBRES) listas.push([{ rarity: a }, { rarity: b }]);
+      const pruebas = [
+        ...setIds.map((id) => [id, CRUDAS.get(id)]),
+        ...listas.map((l, i) => ["__sintetica_" + i, l]),
+      ];
+      try {
+        for (const [id, lista] of pruebas) {
+          casos++;
+          CATALOGO_DEL_DOBLE.set(id, lista);
+          const delServidor = await servidor.admiteOfertaAtada(id);
+          if (suya(lista) !== delServidor) {
+            malos.push(`${id} [${lista.slice(0, 2).map((c) => c.rarity).join(" + ")}${lista.length > 2 ? "…" : ""}]: el servidor dice ${delServidor} y la simulación ${suya(lista)}`);
+          }
+        }
+      } catch (e) {
+        // La copia de la simulación usa algo que aquí no se le ha dado (hoy sólo
+        // necesita RANGO): que salga como fallo con su motivo, no como excepción.
+        malos.push("la copia de scripts/sim-mercado.mjs no se puede ejecutar aquí: " + e.message);
+      }
+    }
+    comprueba(
+      malos.length === 0 && casos > 500,
+      `scripts/sim-mercado.mjs mide el mismo tablón que el servidor: su copia del filtro coincide en ${casos} listas (las ${setIds.length} expansiones y todas las parejas de rarezas)`,
+      malos.slice(0, 5).join("\n          ") +
+        "\n          QUÉ TOCAR: el `admiteOfertaAtada` de scripts/sim-mercado.mjs tiene que ser" +
+        " el de app/action.ts. Si se separan, `npm run sim:mercado` calibra un tablón que" +
+        " no es el que ve el jugador.",
+    );
+  }
 }
 
 
@@ -549,11 +877,55 @@ comprueba(
   }
 
   /* ----------------------------------------------------------------
+   * LO QUE DIRÍA EL SERVIDOR DE ESTE LOTE
+   * ----------------------------------------------------------------
+   * `cumplirOferta` (app/action.ts) no se fía del reparto de la pantalla: lee
+   * las cartas de la base, las despliega —una entrada por copia entregada,
+   * agrupadas por id— y se las pasa a `entregaValida`. Si dice que no, el
+   * jugador ve "requisitos" con el botón en verde.
+   *
+   * Aquí se llama a ESE `entregaValida`, sacado del fichero, con el lote
+   * desplegado igual. EL ORDEN DE LAS FILAS LO DECIDE POSTGRES (la consulta no
+   * lleva ORDER BY), así que se prueban tres: el del lote, por id ascendente y
+   * por id descendente. Un validador exacto da lo mismo en los tres; el del
+   * servidor tiene topes de búsqueda y puede no darlo (ver el caso del arcoíris,
+   * al final de la sección).
+   *
+   * Devuelve null si el servidor lo cobra, o el texto de por qué no.
+   */
+  const ORDENES_DE_FILAS = {
+    "el del lote": (ids) => ids,
+    "por id ascendente": (ids) => [...ids].sort(),
+    "por id descendente": (ids) => [...ids].sort().reverse(),
+  };
+  function rechazoDelServidor(of, cartas, idsDelLote, ordenes = ORDENES_DE_FILAS) {
+    if (!servidor) return "no se ha podido cargar `entregaValida` de app/action.ts";
+    const porId = new Map(cartas.map((c) => [c.id, c]));
+    const copias = new Map();
+    for (const id of idsDelLote) copias.set(id, (copias.get(id) ?? 0) + 1);
+    for (const [nombre, ordena] of Object.entries(ordenes)) {
+      const entregadas = ordena([...copias.keys()]).flatMap((id) =>
+        Array.from({ length: copias.get(id) }, () => porId.get(id)));
+      if (!servidor.entregaValida(entregadas, of.requisitos)) {
+        return `el servidor rechazaría este lote (filas en orden: ${nombre})`;
+      }
+    }
+    return null;
+  }
+
+  /* ----------------------------------------------------------------
    * EL VALIDADOR DEL LOTE
    * ----------------------------------------------------------------
    * Lo que un reparto no puede hacer NUNCA, pase lo que pase con la oferta, la
    * colección o lo que el jugador haya clavado. Devuelve la lista de pegas para
    * que el invariante pueda decir cuál ha saltado y en qué caso.
+   *
+   * SON DOS VARAS, Y HACEN FALTA LAS DOS. Las reglas escritas aquí abajo son
+   * una lectura INDEPENDIENTE de qué es un lote válido; la última es el
+   * `entregaValida` del servidor, ejecutado. Sólo con la primera, este fichero
+   * vigilaba una idea del servidor y no al servidor (que tiene topes de búsqueda
+   * que la idea no tiene). Sólo con la segunda, un defecto compartido entre la
+   * pantalla y el servidor pasaría por bueno.
    */
   function pegasDelLote(of, cartas, reparto) {
     const pegas = [];
@@ -588,6 +960,9 @@ comprueba(
       if (reparto.ids.length !== pedidas) {
         pegas.push(`oferta completa con ${reparto.ids.length} cartas cuando pide ${pedidas}`);
       }
+      // Y lo que de verdad decide si se cobra: el validador del servidor.
+      const rechazo = rechazoDelServidor(of, cartas, reparto.ids);
+      if (rechazo) pegas.push(rechazo);
     }
 
     reparto.partes.forEach((p, i) => {
@@ -678,8 +1053,8 @@ comprueba(
 
   /* El reparto SIN las dos defensas, para tener contra qué medir: los requisitos
    * en el orden en que vienen y las candidatas ordenadas sólo por precio. Es una
-   * réplica deliberada —como la de `admiteOfertaAtada` más arriba— y está aquí
-   * por una razón: un caso de prueba que el algoritmo ingenuo TAMBIÉN resuelve
+   * réplica deliberada —no copia nada del servidor: es el algoritmo MALO— y está
+   * aquí por una razón: un caso de prueba que el algoritmo ingenuo TAMBIÉN resuelve
    * no vigila nada, y esa comprobación no se puede hacer sin él. */
   function repartoIngenuo(of, cartas, conUtilidad = false) {
     const libres = new Map(cartas.map((c) => [c.id, copiasEntregables(c.cantidad)]));
@@ -1449,6 +1824,120 @@ comprueba(
       `cadena: ${rEvo.partes[0].elegidas.map((c) => c.name).join(" -> ")}`,
     );
   }
+
+  /* ================================================================
+   * G. LO QUE LA PANTALLA DA POR COMPLETO, EL SERVIDOR LO COBRA
+   * ================================================================
+   *
+   * Es el invariante que faltaba para que todo lo de arriba signifique algo:
+   * `repartir` (la pantalla) y `entregaValida` (el servidor) son dos programas
+   * distintos que tienen que estar de acuerdo, y hasta ahora sólo se probaba el
+   * primero contra una idea del segundo. La batería sintética ya pasa por el
+   * validador del servidor dentro de `pegasDelLote`; esto es lo mismo con lo que
+   * el jugador tiene delante de verdad: EL TABLÓN REAL (las ofertas que genera
+   * utils/mercado.ts para las expansiones que admite el servidor) y EL CATÁLOGO
+   * REAL (todas las cartas de src/data, tres copias de cada una, que es el álbum
+   * de quien lo tiene todo).
+   */
+  {
+    const { precioDeVenta } = mercado;
+    const album = [];
+    for (const id of setIds) {
+      for (const c of CRUDAS.get(id)) {
+        const base = {
+          id: c.id, name: c.name, rarity: c.rarity || "Common", supertype: c.supertype,
+          subtypes: c.subtypes ?? [], types: c.types ?? [], evolvesFrom: c.evolvesFrom,
+          hp: c.hp, artist: c.artist,
+          nationalPokedexNumbers: c.nationalPokedexNumbers ?? [], set: { id },
+        };
+        album.push({ ...base, cantidad: 3, precio: precioDeVenta(base) });
+      }
+    }
+    const atables = [];
+    for (const id of setIds.slice().sort((a, b) => a.localeCompare(b))) {
+      if (servidor && (await servidor.admiteOfertaAtada(id))) atables.push(id);
+    }
+    const malos = [];
+    let completas = 0;
+    let ofertas = 0;
+    for (let ciclo = 0; ciclo < 40; ciclo++) {
+      for (const of of generarOfertas(ciclo, atables, OFERTAS_ACTIVAS)) {
+        ofertas++;
+        const r = repartir(of, album);
+        if (!r.completa) continue;
+        completas++;
+        const rechazo = rechazoDelServidor(of, album, r.ids);
+        if (rechazo) malos.push(`ciclo ${ciclo}, ${of.id}: ${rechazo} — ${of.requisitos.map((q) => q.descripcion).join(" + ")}`);
+      }
+    }
+    comprueba(
+      malos.length === 0 && completas > 200,
+      `con el tablón y el catálogo reales, todo lote que la pantalla da por completo lo cobra el servidor (${completas} lotes completos de ${ofertas} ofertas, ${album.length} cartas, 3 órdenes de filas)`,
+      (malos.slice(0, 4).join("\n          ") || `sólo ${completas} lotes completos: la batería ya no ejercita nada`) +
+        "\n          QUÉ TOCAR: `repartir` (utils/repartoMercado.ts) y `entregaValida`" +
+        " (app/action.ts) tienen que aceptar los mismos lotes. Si el que ha cambiado es el" +
+        " servidor, mira sus topes de búsqueda; si es la pantalla, `sirve` y los tres" +
+        " requisitos de conjunto.",
+    );
+  }
+
+  /* EL FALSO NEGATIVO QUE HUBO: EL ARCOÍRIS CON MUCHOS TIPOS EN EL LOTE.
+   *
+   * `entregaValida` resolvía el arcoíris probando COMBINACIONES DE TIPOS, y
+   * probaba como mucho 200 (`combinaciones(tipos, r.cantidad, 200)`). Los tipos
+   * salían de TODAS las cartas del lote que valen para el arcoíris, no sólo de
+   * las que el jugador puso en él, y se enumeraban en el orden en que llegan las
+   * filas. Con 10 tipos y un arcoíris de 5 hay C(10,5) = 252 combinaciones: las
+   * 52 últimas no se probaban nunca. Si la única buena caía ahí, el servidor
+   * contestaba "requisitos" a un lote correcto, la pantalla lo seguía pintando
+   * completo, y reintentar no servía porque Postgres devuelve las filas igual.
+   *
+   * El caso es el mínimo: cinco cartas de `base1` de cinco tipos (el arcoíris)
+   * y cinco de `xy1` de otros cinco (el requisito de expansión). Sólo hay un
+   * reparto posible y es evidente. Que el servidor lo acepte o no depende de
+   * qué cartas vengan primero.
+   *
+   * NO ES UN CASO DE LABORATORIO: medido con el tablón y el catálogo reales
+   * (10 tipos en las 38 expansiones), montando a mano lotes válidos para las
+   * ofertas "arcoíris + otro requisito" de 300 ciclos, el servidor rechazó 16
+   * de 2.724 en 6 ofertas distintas. El reparto automático no cae porque escoge
+   * siempre lo más barato; el jugador que clava cartas a mano, sí.
+   *
+   * YA ES UNA PUERTA. Mientras el arreglo estuvo pendiente esto era un
+   * `pendiente` (AVISO). app/action.ts resuelve ahora el arcoíris DENTRO del
+   * emparejamiento —los tipos los elige el propio emparejamiento, sin lista
+   * cortada ni tope—, así que el mismo lote tiene que cobrarse lleguen las
+   * filas como lleguen. Si vuelve un tope o una enumeración que dependa del
+   * orden, esto falla.
+   */
+  {
+    const DIEZ_TIPOS = ["Grass", "Fire", "Water", "Lightning", "Psychic", "Fighting", "Darkness", "Metal", "Dragon", "Colorless"];
+    const cartas = DIEZ_TIPOS.map((t, i) =>
+      carta((i < 5 ? "base1" : "xy1") + "-" + (i + 1), { types: [t], cantidad: 2, precio: 1 }));
+    const of = oferta("arco-tope", [req("arcoiris", 5), req("set", 5, { valor: "xy1" })]);
+    const r = repartir(of, cartas);
+    const delArco = r.partes[0].elegidas;
+    // La premisa: la pantalla lo da por completo y, contado a lo bruto, lo está.
+    comprueba(
+      r.completa && r.ids.length === 10 && coloresAMano(delArco) === 5 &&
+        r.partes[1].elegidas.every((c) => setDeCarta(c) === "xy1"),
+      "un arcoíris de 5 más 5 cartas de otra expansión, con 10 tipos en el lote, se ve completo en la pantalla",
+      `marcador ${marcador(r)}, colores del arcoíris ${coloresAMano(delArco)}`,
+    );
+    const veredictos = Object.entries(ORDENES_DE_FILAS).map(([nombre, ordena]) =>
+      [nombre, rechazoDelServidor(of, cartas, r.ids, { [nombre]: ordena }) === null]);
+    const rechazan = veredictos.filter(([, cobra]) => !cobra).map(([nombre]) => nombre);
+    comprueba(
+      r.completa && rechazan.length === 0,
+      "el servidor cobra un arcoíris de 5 con 10 tipos en el lote, lleguen las filas en el orden que lleguen",
+      `el mismo lote válido se ${veredictos.map(([n, c]) => (c ? "COBRA" : "RECHAZA") + " con las filas " + n).join(", se ")}.` +
+        " Así fallaba cuando `entregaValida` probaba como mucho 200 combinaciones de tipos: dejaba" +
+        " sin probar 52 de las C(10,5) = 252, y cuál se quedaba fuera dependía del orden que" +
+        " devolviera Postgres (medido entonces: 16 lotes válidos rechazados de 2.724)." +
+        " QUÉ TOCAR: `entregaValida` en app/action.ts — el arcoíris se resuelve dentro del" +
+        " emparejamiento, un hueco por TIPO, sin enumerar combinaciones con tope.",
+    );
+  }
 }
 
 
@@ -1675,10 +2164,29 @@ comprueba(
    * lleva ×3 garantizado — +400 monedas por copia en una Hyper Rare, repetible
    * hasta vaciar el montón. La tabla entera dejaba de significar nada.
    *
-   * Por eso el desgaste sólo se pinta para las notas de UMBRAL_DESGASTE_VISIBLE
-   * hacia abajo: todo lo que sale limpio (el 95%) es un 7, un 8, un 9 o un 10 y
-   * no hay forma de distinguirlos. Este invariante comprueba justo eso, y lo
-   * hace agrupando por LO QUE SE VE y no por la nota.
+   * CÓMO ESTÁ HOY, que no es como estaba cuando se escribió lo de arriba: el
+   * primer arreglo fue pintar sólo las notas bajas (umbral 6) y dejar todo lo
+   * demás "limpio". Después se pidió que el desgaste se notara también en las
+   * altas y UMBRAL_DESGASTE_VISIBLE subió a 10: hoy el servidor manda el estado
+   * de TODAS las copias, y lo que impide el negocio ya no es que no se vea nada
+   * sino que la tabla se rebajó (el 10 a ×1,95, el 9 a ×1,1) hasta que ni el
+   * mejor grupo distinguible pasa del techo.
+   *
+   * POR ESO SE MIDE DOS VECES, y la segunda es la que manda:
+   *
+   *   1. POR TRAMOS (`firmaVisible`): lo que se distingue de un vistazo. Es la
+   *      medida original y se conserva porque es la que entiende quien toca la
+   *      pantalla.
+   *   2. POR LO QUE VIAJA DE VERDAD: el objeto `desperfectos` EXACTO que
+   *      `conEstadoFisico` mete en la respuesta, con su número de piques y su
+   *      descentrado con dos decimales. Quien abre las herramientas del
+   *      navegador no ve tramos, ve eso. Y ahí el grupo bueno es otro: "cero
+   *      piques y descentrado (0, 0)" deja fuera a los sietes —que salen
+   *      descentrados— y vale más que el grupo "limpio" por tramos.
+   *
+   * Medir sólo la primera era medir menos información de la que se manda: un
+   * retoque de la tabla (el 10 a ×2,0) dejaba el test en verde con el grupo
+   * exacto ya por encima del techo.
    *
    * SI ALGÚN DÍA SE QUIERE ENSEÑAR MÁS DETALLE, esto se pondrá rojo y dirá qué
    * grupo delata la nota. El arreglo entonces no es tapar el invariante: es
@@ -1687,7 +2195,7 @@ comprueba(
   {
     const {
       MULTIPLICADOR_NOTA, COSTE_FRACCION, UMBRAL_DESGASTE_VISIBLE,
-      notaDeCopia, desperfectosDeCopia, semillaDeCopia, firmaVisible,
+      notaDeCopia, desperfectosDeCopia, semillaDeCopia, firmaVisible, desgasteEsVisible,
     } = graduacion;
 
     const TECHO = 1 + COSTE_FRACCION;
@@ -1726,23 +2234,206 @@ comprueba(
         " el multiplicador medio de la tabla deja de proteger nada.",
     );
 
+    /* LA MISMA PREGUNTA CON LO QUE VIAJA DE VERDAD.
+     *
+     * La clave del grupo es el JSON del objeto `desperfectos` tal y como sale del
+     * servidor (o "nada" si esa nota no se manda). No hay partición más fina que
+     * ésa: cualquier estrategia que mire el estado de UNA copia es una unión de
+     * estos grupos, así que si ninguno pasa del techo, ninguna estrategia lo
+     * pasa.
+     *
+     * CUÁLES SE MIRAN. Un grupo sólo puede pasar del techo si contiene alguna
+     * nota cuyo multiplicador lo pase (hoy, sólo el 10): la media no puede ser
+     * mayor que el máximo. Los demás se saltan sin estadística ninguna. Y los
+     * que sí la contienen tienen que ser GRANDES: un estado que casi nadie
+     * comparte y en el que aparece un diez es justo una marca que delata, por
+     * mucho que con cuatro copias la media no diga nada. Antes se saltaban los
+     * grupos de menos de 50 copias "por ruido", sin mirar qué llevaban dentro.
+     *
+     * 200.000 copias y no 40.000: el margen real es de seis milésimas (×1,394
+     * frente a ×1,40) y con 40.000 el error de muestreo es de más de tres. */
+    const N_EXACTO = 200000;
+    const exactos = new Map();
+    for (let i = 0; i < N_EXACTO; i++) {
+      const s = semillaDeCopia("u", "c", i, SECRETO);
+      const nota = notaDeCopia(s);
+      const clave = desgasteEsVisible(nota) ? JSON.stringify(desperfectosDeCopia(s, nota)) : "nada";
+      let g = exactos.get(clave);
+      if (!g) exactos.set(clave, (g = { copias: 0, suma: 0, notas: new Map() }));
+      g.copias++;
+      g.suma += MULTIPLICADOR_NOTA[nota];
+      g.notas.set(nota, (g.notas.get(nota) ?? 0) + 1);
+    }
+    const delatanExacto = [];
+    let conPremio = 0;
+    let mejor = null;
+    for (const [clave, g] of exactos) {
+      if (![...g.notas.keys()].some((n) => MULTIPLICADOR_NOTA[n] > TECHO)) continue;
+      conPremio++;
+      const ev = g.suma / g.copias;
+      if (!mejor || ev > mejor.ev) mejor = { clave, ev, ...g };
+      const cuales = [...g.notas.keys()].sort((a, b) => a - b).join(",");
+      if (g.copias < 50) {
+        delatanExacto.push(`${clave} sólo lo comparten ${g.copias} copias y entre ellas hay notas {${cuales}}: es una marca`);
+      } else if (ev > TECHO) {
+        delatanExacto.push(`${clave} (${g.copias} copias, notas {${cuales}}) da x${ev.toFixed(4)}`);
+      }
+    }
+    comprueba(
+      delatanExacto.length === 0 && conPremio > 0,
+      `ni con el estado EXACTO que manda el servidor: el mejor grupo distinguible da x${mejor?.ev.toFixed(4)} con el techo en x${TECHO.toFixed(2)} (${exactos.size} estados en ${N_EXACTO} copias; por tramos se ven ${grupos.size})`,
+      (delatanExacto.slice(0, 3).join(" · ") || "ningún grupo contiene una nota por encima del techo: la muestra no ejercita nada") +
+        ". Esto es lo que lee quien abre las herramientas del navegador: el número de" +
+        " piques y el descentrado con decimales, no los tramos de `firmaVisible`. O se" +
+        " baja el multiplicador de ese grupo, o el servidor deja de mandar el dato exacto.",
+    );
+
+    /* Y CON EL DINERO DELANTE, no sólo con la media. El punto 4 de arriba mide
+     * a quien gradúa a ciegas (MULTIPLICADOR_MEDIO), y nadie gradúa a ciegas
+     * desde que el estado se ve: se gradúa lo que llega impecable. Se repite la
+     * fuerza bruta con el reparto de notas de ESE grupo y con `valorGraduado` y
+     * `costeDeGraduar` de verdad, redondeos incluidos, que es donde una media
+     * pegada al techo puede dejar una moneda suelta. */
+    if (mejor) {
+      let peorNeto = -Infinity;
+      let peorCaso = "";
+      for (const cuantas of [1, 5, 10, 25, 100]) {
+        for (let v = 1; v <= 20000; v += v < 400 ? 1 : 37) {
+          let esperado = 0;
+          for (const [nota, copias] of mejor.notas) esperado += (copias / mejor.copias) * valorGraduado(v, nota);
+          const neto = esperado - v - costeDeGraduar(v, cuantas);
+          if (neto > peorNeto) { peorNeto = neto; peorCaso = `una carta de ${v} monedas graduando ${cuantas} a la vez`; }
+        }
+      }
+      comprueba(
+        peorNeto <= 0,
+        `graduar SÓLO las copias que llegan impecables tampoco da beneficio, a ningún valor ni con ningún descuento (lo más cerca: ${peorNeto.toFixed(2)} monedas, ${peorCaso})`,
+        `sale a cuenta: +${peorNeto.toFixed(2)} monedas de media en ${peorCaso}. Es repetible con cada copia repetida.`,
+      );
+    }
+
     /* Y la otra mitad del trato: lo que se ve tiene que ser SUFICIENTE para que
-     * una carta destrozada se note. Si el umbral se bajara a cero, el
-     * invariante de arriba pasaría siempre —no se ve nada, no se delata nada—
-     * pero la función que pidió el dueño del juego habría desaparecido. */
-    let seVenLasMalas = 0;
+     * una carta destrozada se note. Si el umbral se bajara a cero, los
+     * invariantes de arriba pasarían siempre —no se ve nada, no se delata nada—
+     * pero la función que pidió el dueño del juego habría desaparecido.
+     *
+     * Antes esto contaba "cuántas de las que se pintan no salen limpias" y exigía
+     * que fuesen más de cero. Con el umbral en 10 se pintan todas, así que
+     * contaba 4.000 de 4.000 y no podía fallar. Lo que se exige ahora es lo que
+     * se prometió: TODA copia con nota de 6 para abajo viaja, y con una pinta
+     * que ninguna copia impecable tiene. */
+    const impecable = { piques: 0, aranazos: 0, manchas: 0, descentrado: { x: 0, y: 0 }, palidez: 0 };
+    const pintaImpecable = firmaVisible(impecable, 10);
+    let malas = 0;
+    const pasanPorBuenas = [];
     for (let i = 0; i < 4000; i++) {
       const s = semillaDeCopia("u", "d", i, SECRETO);
       const nota = notaDeCopia(s);
-      if (nota > UMBRAL_DESGASTE_VISIBLE) continue;
-      const f = firmaVisible(desperfectosDeCopia(s, nota), nota);
-      if (f !== "limpia") seVenLasMalas++;
+      if (nota > 6) continue;
+      malas++;
+      const d = desperfectosDeCopia(s, nota);
+      if (!desgasteEsVisible(nota)) pasanPorBuenas.push(`una copia de nota ${nota} no viaja (umbral ${UMBRAL_DESGASTE_VISIBLE})`);
+      else if (firmaVisible(d, nota) === pintaImpecable) pasanPorBuenas.push(`una copia de nota ${nota} se ve como una impecable`);
     }
     comprueba(
-      seVenLasMalas > 0,
-      `las cartas en mal estado se ven marcadas al abrir el sobre (${seVenLasMalas} de la muestra)`,
-      "no se distingue ninguna: el desgaste visible se ha quedado en nada",
+      malas > 100 && pasanPorBuenas.length === 0,
+      `toda carta en mal estado (nota de 6 o menos) se ve marcada al abrir el sobre (${malas} de 4000 en la muestra)`,
+      [...new Set(pasanPorBuenas)].slice(0, 4).join(" · ") ||
+        `sólo ${malas} copias malas en la muestra: no se está comprobando nada`,
     );
+
+    /* EL ORÁCULO DE LA MINIATURA: LO QUE DELATA COMPARAR DOS COPIAS.
+     *
+     * Todo lo de arriba mira UNA copia. Pero la colección enseña, de cada carta,
+     * el estado de la copia de MEJOR NOTA (`estadoDeLaMejorCopia`, app/action.ts),
+     * y el jugador ya vio el estado de cada copia al abrir los sobres. Saber cuál
+     * de las dos se enseña es saber cuál tiene más nota, sin pagar:
+     *
+     *   · PASO 1. Copia 1 impecable (8, 9 o 10), copia 2 con un pique (7, 8 o 9),
+     *     y la miniatura enseña la impecable: la 1 no es peor que la 2, lo que
+     *     descarta parte de sus ochos y nueves. Graduarla —el servidor gradúa
+     *     siempre la libre de índice más bajo— sale por encima del techo.
+     *   · PASO 2. Con la copia 1 YA graduada (su nota es pública para el
+     *     jugador), si era un 9 con un pique y la miniatura enseña la 2,
+     *     impecable, la 2 es un 10 SEGURO.
+     *
+     * Aquí se ejecuta el `estadoDeLaMejorCopia` del servidor, sacado del fichero,
+     * sobre parejas de copias, y se agrupa por lo que el jugador sabe: la clase
+     * visible de cada copia y CUÁL de las dos enseña la miniatura. Se exige
+     * significación (4 sigmas) porque aquí los grupos sí son pequeños.
+     *
+     * VA COMO `pendiente` porque el arreglo es de app/action.ts: elegir la
+     * miniatura por el desgaste que YA SE VIO (menos piques, arañazos y manchas;
+     * desempate por índice) en vez de por la nota. Así "cuál se enseña" es una
+     * función de lo que el jugador ya sabía y no añade nada. */
+    {
+      let estadoDeLaMejorCopia = null;
+      let motivo = "";
+      try {
+        ({ estadoDeLaMejorCopia } = await trozosDelServidor("app/action.ts", ["COPIAS_QUE_SE_MIRAN", "estadoDeLaMejorCopia"]));
+      } catch (e) {
+        motivo = e.message;
+      }
+      const clase = (d) =>
+        `${d.piques} piques, ${d.aranazos} arañazos, ${d.manchas} manchas, ${d.descentrado.x === 0 && d.descentrado.y === 0 ? "centrada" : "torcida"}${d.palidez > 0 ? ", pálida" : ""}`;
+      const PAREJAS = 120000;
+      const paso1 = new Map(); // lo visible                     -> multiplicador de la copia 1
+      const paso2 = new Map(); // lo visible + la nota de la 1   -> multiplicador de la copia 2
+      const apunta = (mapa, clave, m) => {
+        let g = mapa.get(clave);
+        if (!g) mapa.set(clave, (g = { n: 0, s: 0, s2: 0 }));
+        g.n++; g.s += m; g.s2 += m * m;
+      };
+      let medido = false;
+      if (estadoDeLaMejorCopia) {
+        try {
+          for (let i = 0; i < PAREJAS; i++) {
+            const idCarta = "pareja-" + i;
+            const s1 = semillaDeCopia("u", idCarta, 1, SECRETO);
+            const s2 = semillaDeCopia("u", idCarta, 2, SECRETO);
+            const n1 = notaDeCopia(s1);
+            const n2 = notaDeCopia(s2);
+            const d1 = desperfectosDeCopia(s1, n1);
+            const d2 = desperfectosDeCopia(s2, n2);
+            const mini = estadoDeLaMejorCopia("u", idCarta, 2, SECRETO);
+            const pinta = mini ? JSON.stringify(mini.desperfectos) : "nada";
+            const cual =
+              (JSON.stringify(d1) === pinta ? "la 1" : "") + (JSON.stringify(d2) === pinta ? "la 2" : "") || "ninguna";
+            const visible = `copia 1 [${clase(d1)}], copia 2 [${clase(d2)}], la miniatura enseña ${cual === "la 1la 2" ? "una que podría ser cualquiera" : cual}`;
+            apunta(paso1, visible, MULTIPLICADOR_NOTA[n1]);
+            apunta(paso2, `copia 1 graduada con un ${n1}; ${visible}`, MULTIPLICADOR_NOTA[n2]);
+          }
+          medido = true;
+        } catch (e) {
+          motivo = e.message;
+        }
+      }
+      const delatores = [];
+      for (const [nombre, mapa] of [["graduar la copia 1", paso1], ["graduar la copia 2", paso2]]) {
+        for (const [clave, g] of mapa) {
+          if (g.n < 50) continue;
+          const ev = g.s / g.n;
+          const error = Math.sqrt(Math.max(0, g.s2 / g.n - ev * ev) / g.n);
+          if (ev - 4 * error > TECHO) delatores.push({ ev, texto: `${nombre} da x${ev.toFixed(3)} (${g.n} parejas) con ${clave}` });
+        }
+      }
+      delatores.sort((a, b) => b.ev - a.ev);
+      // Fue un `pendiente` (AVISO) mientras la miniatura se elegía por nota.
+      // Desde que se elige por desgaste visible es una puerta.
+      comprueba(
+        medido && delatores.length === 0,
+        "saber qué copia enseña la miniatura de la colección no dice nada de las notas",
+        medido
+          ? `${delatores.length} situaciones por encima del techo x${TECHO.toFixed(2)} en ${PAREJAS} parejas de copias. Las peores:\n          · ` +
+            delatores.slice(0, 3).map((d) => d.texto).join("\n          · ") +
+            "\n          QUÉ TOCAR: `estadoDeLaMejorCopia` en app/action.ts. Si la miniatura se elige" +
+            " por NOTA, cuál se enseña es una comparación entre notas que el jugador no ha" +
+            " pagado. Tiene que elegirse por el desgaste visible."
+          : "no se ha podido medir: " + motivo + ". `estadoDeLaMejorCopia` ya no está en" +
+            " app/action.ts con ese nombre o ha cambiado de argumentos (userId, cardId," +
+            " cantidad, secreto): hay que rehacer esta medición sobre lo que haya ahora.",
+      );
+    }
   }
 
 
@@ -1767,10 +2458,20 @@ comprueba(
    * El arreglo: la curva se calcula sobre el montón ENTERO (las graduadas
    * siguen siendo copias en propiedad) y lo que se acota es CUÁNTAS se venden.
    *
-   * Lo que se comprueba aquí es la CONCLUSIÓN, no la implementación: se recorre
-   * cada estrategia posible de "graduar G copias y vender el resto" y se exige
-   * que ninguna gane a vender por la vía normal. Si alguien vuelve a pasarle a
-   * valorDeVenta un montón recortado, esto se pone rojo.
+   * SON DOS INVARIANTES PORQUE SON DOS COSAS, y antes había uno solo que decía
+   * vigilar las dos:
+   *
+   *   1. LA FÓRMULA. Se recorre cada estrategia de "graduar G copias y vender el
+   *      resto" con la cuenta BUENA (curva sobre el montón entero) y se exige que
+   *      ninguna gane a vender por la vía normal. Esto protege la curva, el
+   *      coste y la tabla de notas. NO mira ninguna ruta de venta: recalcula la
+   *      fórmula aquí. Su mensaje culpaba a "alguna ruta de venta" de un fallo
+   *      que no podía ver: si una ruta volvía a recortar el montón, esto seguía
+   *      en verde. Ahora se mide también con el fallo histórico puesto a
+   *      propósito, para que conste que la cuenta distingue una cosa de otra.
+   *   2. LAS RUTAS. Que el código de app/action.ts siga llamando a valorDeVenta
+   *      con el montón ENTERO se mira en el propio fichero, llamada a llamada
+   *      (el invariante de justo debajo).
    */
   {
     const RAREZAS = [
@@ -1779,6 +2480,10 @@ comprueba(
     ];
     let peor = -Infinity;
     let peorCaso = "";
+    // Lo mismo con el fallo histórico: las libres cobradas como si fueran el
+    // montón entero (`valorDeVenta(rareza, libres, …)`), que reinicia la curva.
+    let peorConElFallo = -Infinity;
+    let casoConElFallo = "";
     for (const rareza of RAREZAS) {
       for (const N of [2, 3, 5, 10, 20, 50, 100, 300]) {
         // Estrategia honesta: vender todas las repetidas de una tacada.
@@ -1801,6 +2506,11 @@ comprueba(
             peor = ventaja;
             peorCaso = `${rareza} con ${N} copias, graduando ${g}`;
           }
+          const conElFallo = valorDeVenta(rareza, libres, libres - 1) + porGraduadas - coste - normal;
+          if (conElFallo > peorConElFallo) {
+            peorConElFallo = conElFallo;
+            casoConElFallo = `${rareza} con ${N} copias, graduando ${g}`;
+          }
         }
       }
     }
@@ -1808,8 +2518,90 @@ comprueba(
       peor <= 0,
       `graduar parte del montón nunca gana a venderlo (peor caso ${peor.toFixed(1)} monedas)`,
       `sale a cuenta graduar: +${peor.toFixed(1)} monedas en ${peorCaso}.` +
-        " Casi seguro que alguna ruta de venta ha vuelto a pasarle a valorDeVenta" +
-        " las copias LIBRES en vez del montón entero, y eso reinicia la curva.",
+        " Esta cuenta se hace con la curva sobre el montón ENTERO, así que lo que ha" +
+        " cambiado es la curva de repetidas (utils/constanst.ts), el coste de graduar o" +
+        " la tabla de notas (utils/graduacion.ts) — no una ruta de venta, que aquí no" +
+        " se ejecuta ninguna.",
+    );
+    comprueba(
+      peorConElFallo > 0,
+      `y la cuenta distingue el fallo histórico: cobrando las libres como si fueran el montón entero, graduar ganaría ${peorConElFallo.toFixed(0)} monedas (${casoConElFallo})`,
+      "con el montón recortado tampoco sale ventaja, así que el invariante de arriba ya no" +
+        " separa la cuenta buena de la mala: o la curva de repetidas se ha quedado plana" +
+        " o el coste de graduar lo tapa todo. Hay que rehacer este caso.",
+    );
+  }
+
+  /* LAS RUTAS DE VENTA, MIRADAS EN SU FICHERO.
+   *
+   * El fallo de arriba no estaba en una fórmula: estaba en QUÉ se le pasaba. La
+   * primera versión de las rutas le daba a `valorDeVenta` las copias libres
+   * como segundo argumento (`cantidad - graduadas`, `vendibles`), y el segundo
+   * argumento es el montón sobre el que se aplica la curva.
+   *
+   * Aquí se leen TODAS las llamadas a `valorDeVenta` de app/action.ts —sobre el
+   * JavaScript transpilado, donde una llamada es siempre
+   * `(0, _constanst.valorDeVenta)(…)`— y se exige que el segundo argumento no
+   * sea una resta ni una de las variables que en ese fichero significan "copias
+   * que no están graduadas". Es una vigilancia por NOMBRES, y por eso modesta:
+   * no demuestra que el argumento sea el montón entero, caza la forma exacta en
+   * la que el fallo entró y volvería a entrar.
+   */
+  {
+    const SOSPECHOSO = /graduad|\blibres?\b|vendibles?|duplicates?|sellable|repetidas/i;
+    /** Los argumentos de primer nivel de la llamada cuyo paréntesis abre en `abre`. */
+    const argumentosDe = (js, abre) => {
+      const fin = finDeBloque(js, abre) - 1;
+      const args = [];
+      let desde = abre + 1;
+      let i = desde;
+      while (i < fin) {
+        const c = js[i];
+        if (c === '"' || c === "'" || c === "`") i = finDeCadena(js, i);
+        else if (c === "(" || c === "[" || c === "{") i = finDeBloque(js, i);
+        else if (c === ",") { args.push(js.slice(desde, i).trim()); desde = ++i; }
+        else i++;
+      }
+      args.push(js.slice(desde, fin).trim());
+      return args;
+    };
+    const montonesDe = (js) => {
+      const salida = [];
+      const marca = "_constanst.valorDeVenta)(";
+      for (let i = js.indexOf(marca); i >= 0; i = js.indexOf(marca, i + 1)) {
+        salida.push(argumentosDe(js, i + marca.length - 1)[1] ?? "(falta)");
+      }
+      return salida;
+    };
+    const malos = [];
+    let montones = [];
+    try {
+      // Mismo fichero transpilado que usa `trozosDelServidor`: no se lee dos veces.
+      await trozosDelServidor("app/action.ts", ["MAX_CARTAS_ENTREGA"]);
+      montones = montonesDe(jsTranspilado.get("app/action.ts"));
+    } catch (e) {
+      malos.push("no se ha podido leer app/action.ts: " + e.message);
+    }
+    for (const m of montones) {
+      if (SOSPECHOSO.test(m) || m.includes("-")) {
+        malos.push(`valorDeVenta(…, ${m}, …): el montón no puede salir de una resta ni de las copias libres`);
+      }
+    }
+    // Y que el escáner no esté ciego: la forma exacta del fallo tiene que saltar.
+    const delFallo = montonesDe("const p = (0, _constanst.valorDeVenta)(info[0].rarity, cantidad - graduadas, 1, eur);");
+    const cazaElFallo = delFallo.length === 1 && SOSPECHOSO.test(delFallo[0]);
+    comprueba(
+      malos.length === 0 && montones.length >= 5 && cazaElFallo,
+      `las ${montones.length} llamadas a valorDeVenta de app/action.ts aplican la curva sobre el montón entero (${[...new Set(montones)].join(", ")})`,
+      (malos.slice(0, 4).join("\n          ") ||
+        (cazaElFallo
+          ? `sólo se han encontrado ${montones.length} llamadas: el escáner se ha quedado ciego`
+          : "el escáner ya no reconoce la forma del fallo histórico")) +
+        "\n          QUÉ TOCAR: el segundo argumento de `valorDeVenta` es CUÁNTAS COPIAS SE" +
+        " TIENEN (graduadas incluidas: siguen ocupando su sitio en la curva). Lo que se" +
+        " acota a las libres es el TERCERO, cuántas se venden. Pasar las libres como" +
+        " montón reinicia la curva: medido en su día, +785 monedas con 300 copias de una" +
+        " Hyper Rare.",
     );
   }
 
@@ -2032,6 +2824,95 @@ comprueba(
       eraDeSerie("") === eraDeSerie("Una Serie Que No Existe"),
     "una expansión sin serie conocida usa el reparto de siempre",
   );
+
+  /* ------------------------------------------------------------------ *
+   * CON PRECIOS REALES, EL SOBRE SIGUE ANUNCIANDO LO QUE REPARTE
+   * ------------------------------------------------------------------
+   *
+   * LO QUE NINGÚN INVARIANTE MIRABA: `precioEur`. El servidor pega a cada carta
+   * su precio de Cardmarket y packLogic lo mete en el valor del sobre, que es
+   * lo que decide CUÁNTAS cartas trae (`calibrar` retira huecos de relleno
+   * hasta que el sobre no vale más de lo que cuesta). Todos los invariantes de
+   * arriba trabajan con las cartas del repositorio, que no traen euros: medían
+   * el sobre del invitado, no el de quien tiene cuenta. El estándar de Escarlata
+   * y Púrpura tiene 0,33 monedas de margen sobre 50, así que basta con que las
+   * cartas caras de una expansión valgan de verdad lo que valen para que el
+   * sobre pierda una carta.
+   *
+   * Los precios son SINTÉTICOS (aquí no hay base de datos): se le pone el mismo
+   * precio a todas las cartas de los dos escalones más altos de cada expansión,
+   * con cuatro valores que van de "una expansión cara" (110 €) al tope de la
+   * ingesta (100.000 €). Y se comprueban tres cosas:
+   *
+   *   · que la ficha que monta el servidor (`fichaDeSobre`, sacada de
+   *     app/action.ts y ejecutada) anuncia las cartas que el generador reparte
+   *     con ESOS MISMOS precios;
+   *   · que ni así un sobre a la venta vale más de lo que cuesta;
+   *   · y que el caso prueba algo: que con euros el número de cartas CAMBIA
+   *     respecto al que calcularía un navegador sin ellos. Ésa es la razón por
+   *     la que el número que pinta la tienda tiene que venir del servidor.
+   */
+  {
+    let fichaDeSobre = null;
+    let motivo = "";
+    try {
+      ({ fichaDeSobre } = await trozosDelServidor("app/action.ts", ["NUEVA_GARANTIZADA", "fichaDeSobre"]));
+    } catch (e) {
+      motivo = e.message;
+    }
+    const SOBRES = {
+      STANDARD: { abre: (c, era) => openStandardPack(c, era), admite: admiteSobreEstandar, valor: valorEsperadoEstandar },
+      PREMIUM: { abre: (c, era) => openPremiumPack(c, era), admite: admiteSobrePremium, valor: valorEsperadoPremium },
+      GOLDEN: { abre: (c) => openGoldenPack(c, []) },
+      SPECIAL: { abre: (c) => openGoldenPack(c, []) },
+    };
+    const malos = [];
+    let casos = 0;
+    let cambian = 0;
+    let ejemplo = "";
+    if (fichaDeSobre) {
+      for (const euros of [110, 800, 5000, 100000]) {
+        for (const [setId, cartas] of CARTAS) {
+          const era = eraDeSerie(serieDe.get(setId));
+          const escalones = [...new Set(cartas.map((c) => RARITY_RANK[c.rarity] ?? 1))].sort((a, b) => b - a);
+          const caras = new Set(escalones.slice(0, 2));
+          const conEuros = cartas.map((c) =>
+            caras.has(RARITY_RANK[c.rarity] ?? 1) ? { ...c, precioEur: euros } : c);
+          for (const [tipo, s] of Object.entries(SOBRES)) {
+            casos++;
+            const anunciado = fichaDeSobre(tipo, conEuros, era, true).cartas;
+            const repartido = s.abre(conEuros, era).length;
+            if (anunciado !== repartido) {
+              malos.push(`${setId} ${tipo} con ${euros} €: el servidor anuncia ${anunciado} y reparte ${repartido}`);
+            }
+            if (s.admite?.(conEuros, era) && s.valor(conEuros, era) > PACK_PRICES[tipo] + 1e-9) {
+              malos.push(`${setId} ${tipo} con ${euros} €: vale ${s.valor(conEuros, era).toFixed(2)} y cuesta ${PACK_PRICES[tipo]}`);
+            }
+            const sinEuros = cartasDelSobre(cartas, tipo, era);
+            if (anunciado !== sinEuros) {
+              cambian++;
+              if (!ejemplo) ejemplo = `${setId} ${tipo}: ${sinEuros} sin precios, ${anunciado} con sus cartas caras a ${euros} €`;
+            }
+          }
+        }
+      }
+    }
+    comprueba(
+      fichaDeSobre !== null && malos.length === 0 && cambian > 0,
+      `con precios reales el servidor anuncia las cartas que reparte y ningún sobre pasa de su precio (${casos} sobres con euros sintéticos; en ${cambian} el número de cartas no es el que saldría sin ellos — ${ejemplo})`,
+      (motivo ? "no se ha podido cargar `fichaDeSobre` de app/action.ts: " + motivo + "\n          " : "") +
+        (malos.slice(0, 5).join("\n          ") ||
+          (fichaDeSobre
+            ? "con euros no cambia el número de cartas de NINGÚN sobre: o el ajuste por precio" +
+              " real ya no entra en el calibrado (utils/packLogic.ts, `valorMedio`) o se ha" +
+              " quedado en nada. Si es a propósito, este invariante hay que rehacerlo."
+            : "")) +
+        "\n          QUÉ TOCAR: la ficha del sobre y el generador tienen que calibrar con las" +
+        " MISMAS cartas, euros incluidos (`composicionDelSobre` y `openStandardPack` /" +
+        " `openPremiumPack` reciben el mismo catálogo). Y la tienda pinta el número del" +
+        " servidor, no el que calcula con su catálogo sin precios.",
+    );
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -2432,6 +3313,13 @@ comprueba(
  * `notaDeCopia`— y enseña que un hueco de copia reciclado devuelve la MISMA
  * nota, que es la propiedad económica entera. Los estáticos son el suelo.
  */
+/* EL ESCÁNER DE SQL, A LA VISTA DE LAS SECCIONES DE MÁS ABAJO. Sus funciones
+ * viven dentro del bloque que sigue, que es donde se explican y donde está su
+ * autoprueba; al cerrarse el bloque se dejan aquí. La sección del final del
+ * fichero (bazar sin zombis, orden de la compra, parámetros en comentarios)
+ * necesita EL MISMO escáner: con otro escrito aparte, la autoprueba de éste no
+ * diría nada del que de verdad mira esas sentencias. */
+const ESCANER_SQL = {};
 {
   seccion("Servidor: las tres fugas de monedas no se pueden reabrir");
 
@@ -2484,7 +3372,11 @@ comprueba(
   const ABRE_REGEXP = /[([{,;:=!&|?+\-*%^~<>]$/;
   const PALABRA_REGEXP = /\b(return|typeof|case|in|of|delete|void|instanceof|yield|await|do|else)$/;
 
-  function plantillasDe(codigo) {
+  /* Cada plantilla con DÓNDE empieza y si va ETIQUETADA con `sql`. Hace falta
+   * distinguirlas porque no son lo mismo: en sql`…` cada ${…} es un PARÁMETRO
+   * ($1, $2…) que Postgres tiene que encontrar en la sentencia, y en la
+   * plantilla que se pasa a sql.query(`…`, […]) es texto pegado. */
+  function plantillasConSitio(codigo) {
     const salida = [];
     const n = codigo.length;
     let i = 0;
@@ -2540,7 +3432,11 @@ comprueba(
           if (llaves === 0 && x === "`") break;
           i++;
         }
-        salida.push(codigo.slice(desde, i));
+        salida.push({
+          texto: codigo.slice(desde, i),
+          desde,
+          etiquetada: /(?:^|[^\w$.])sql$/.test(codigo.slice(Math.max(0, desde - 5), desde - 1)),
+        });
         i++;
         previo = "`";
         continue;
@@ -2550,6 +3446,7 @@ comprueba(
     }
     return salida;
   }
+  const plantillasDe = (codigo) => plantillasConSitio(codigo).map((p) => p.texto);
 
   /* Las interpolaciones se sustituyen por "?": lo que hay dentro es JavaScript
    * y puede traer comas y paréntesis que descuadrarían el recuento del SET. */
@@ -2607,8 +3504,10 @@ comprueba(
   /* Los DESTINOS de una cláusula SET: se parte por las comas de primer nivel y
    * de cada trozo se toma lo que hay ANTES del igual. Así "nota = (SELECT …
    * WHERE user_id = $1)" no cuenta como tocar user_id, y la forma de lista
-   * "(user_id, copia) = (…)" sí. */
-  function destinosSet(clausula) {
+   * "(user_id, copia) = (…)" sí. `partesSet` devuelve además el VALOR (lo de
+   * después del igual): la sección del bazar necesita saber no sólo que una
+   * sentencia toca `quantity`, sino a qué la deja. */
+  function partesSet(clausula) {
     const trozos = [];
     let prof = 0;
     let ini = 0;
@@ -2629,10 +3528,10 @@ comprueba(
         if (c === "(") p++;
         else if (c === ")") p--;
         else if (c === "=" && p === 0 && t[i + 1] !== "=" && !"!<>".includes(t[i - 1] ?? "")) {
-          return t.slice(0, i).trim();
+          return { destino: t.slice(0, i).trim(), valor: t.slice(i + 1).trim() };
         }
       }
-      return t.trim();
+      return { destino: t.trim(), valor: "" };
     });
   }
 
@@ -2642,14 +3541,26 @@ comprueba(
   function asignacionesDe(sql) {
     const salida = [];
     let m;
+    /* Además de la tabla y los destinos: la `forma` ("update" o "upsert"), las
+     * `partes` (destino y valor de cada asignación) y el `resto` (lo que sigue
+     * a la cláusula SET: FROM, WHERE, RETURNING). Los tres de más los usa la
+     * sección del bazar; quien sólo miraba tabla y destinos no nota nada. */
+    const apunta = (forma) => {
+      const desde = m.index + m[0].length;
+      const clausula = clausulaSet(sql, desde);
+      const partes = partesSet(clausula);
+      salida.push({
+        tabla: m[1].toLowerCase(),
+        destinos: partes.map((p) => p.destino),
+        forma,
+        partes,
+        resto: sql.slice(desde + clausula.length),
+      });
+    };
     const reUpdate = /\bUPDATE\s+(?:ONLY\s+)?([A-Za-z_][\w$]*)\s+(?:(?:AS\s+)?(?!SET\b)[A-Za-z_][\w$]*\s+)?SET\b/gi;
-    while ((m = reUpdate.exec(sql))) {
-      salida.push({ tabla: m[1].toLowerCase(), destinos: destinosSet(clausulaSet(sql, m.index + m[0].length)) });
-    }
+    while ((m = reUpdate.exec(sql))) apunta("update");
     const reUpsert = /\bINSERT\s+INTO\s+([A-Za-z_][\w$]*)\b(?:(?!\bINSERT\s+INTO\b)[\s\S])*?\bDO\s+UPDATE\s+SET\b/gi;
-    while ((m = reUpsert.exec(sql))) {
-      salida.push({ tabla: m[1].toLowerCase(), destinos: destinosSet(clausulaSet(sql, m.index + m[0].length)) });
-    }
+    while ((m = reUpsert.exec(sql))) apunta("upsert");
     return salida;
   }
 
@@ -2956,8 +3867,8 @@ comprueba(
    * Lo único replicado aquí es el REPARTO DE ÍNDICES —"el índice libre más bajo
    * que quepa en las copias que tienes"—, que en producción es un bucle dentro
    * de graduarCartasAction y no se puede importar (app/action.ts arrastra Next
-   * y Clerk). Es una réplica deliberada, como la de `admiteOfertaAtada` o la de
-   * `repartoIngenuo` más arriba; lo que impide que se quede vieja mintiendo es
+   * y Clerk). Es una réplica deliberada, como la de `repartoIngenuo` más
+   * arriba; lo que impide que se quede vieja mintiendo es
    * el invariante estático de la FUGA 1, que vigila la otra mitad: que la fila
    * vendida siga ocupando su hueco en la base.
    */
@@ -3058,6 +3969,12 @@ comprueba(
         " el que importa.",
     );
   }
+
+  // Lo que usan las secciones de más abajo (ver la declaración de ESCANER_SQL).
+  Object.assign(ESCANER_SQL, {
+    SENTENCIAS, FICHEROS, rotulo, plantillasConSitio, sinInterpolaciones, normalizaSql,
+    asignacionesDe, ctesDe,
+  });
 }
 
 /* ==================================================================== *
@@ -3507,7 +4424,7 @@ comprueba(
   /* LAS DOS EXPRESIONES DEL SERVIDOR, REPLICADAS. Son las de
    * `valorDeVenderGraduada` y `valorDeReferenciaGraduada` (app/action.ts), que
    * no se pueden importar desde aquí. Es una réplica deliberada, como la de
-   * `admiteOfertaAtada` o la de `repartoIngenuo`, y NO se queda vieja en
+   * `repartoIngenuo`, y NO se queda vieja en
    * silencio: el invariante de más abajo saca la expresión del fichero y la
    * compara carácter a carácter con éstas. */
   const valorDeVenderGraduada = (rareza, copiasQueTengo, nota, euros) =>
@@ -6142,6 +7059,8 @@ comprueba(
       { nombre: "un chunk de /_next/static/", url: ORIGEN_SW + "/_next/static/chunks/app-1a2b3c.js", destino: "script" },
       { nombre: "un icono propio", url: ORIGEN_SW + "/icons/icon-192.png", destino: "image" },
       { nombre: "la imagen de una carta", url: "https://images.pokemontcg.io/sv8/1.png", destino: "image" },
+      // La única ruta de /api que se guarda: fotos públicas de sobre, no datos.
+      { nombre: "la foto de un sobre que trae el cron", url: ORIGEN_SW + "/api/arte-sobre/sv8/1", destino: "image" },
       { nombre: "el script de Clerk", url: "https://clerk.tcg.ejemplo.test/npm/@clerk/clerk-js@5/dist/clerk.browser.js", destino: "script" },
     ];
 
@@ -6202,6 +7121,9 @@ comprueba(
           { nombre: "una llamada a /api", url: ORIGEN_SW + "/api/version", modo: "cors" },
           { nombre: "una navegación a /api (la vuelta de un pago o de un inicio de sesión)", url: ORIGEN_SW + "/api/retorno?estado=ok", modo: "navigate", destino: "document" },
           { nombre: "una imagen servida por /api", url: ORIGEN_SW + "/api/og/carta.png", destino: "image" },
+          // La excepción es /api/arte-sobre/ y nada más: ni la ruta sin barra
+          // final ni una vecina que empiece igual.
+          { nombre: "una ruta de /api que se parece a la de las fotos de sobre", url: ORIGEN_SW + "/api/arte-sobres/sv8/1", destino: "image" },
           { nombre: "una petición RSC (cabecera)", url: ORIGEN_SW + "/collection", modo: "cors", cabeceras: { RSC: "1" } },
           { nombre: "una petición RSC (parámetro _rsc)", url: ORIGEN_SW + "/collection?_rsc=1a2b3", modo: "cors" },
           { nombre: "una llamada a la ruta propia de Clerk", url: ORIGEN_SW + "/__clerk/v1/client", modo: "cors" },
@@ -6299,11 +7221,1666 @@ comprueba(
   }
 }
 
+/* ==================================================================== *
+ * LO QUE CERRÓ LA TANDA DE LOTES (acciones, servicios, scripts, CI)
+ * ====================================================================
+ *
+ * POR QUÉ OTRA SECCIÓN. Cada cosa de aquí se arregló en un sitio y se rompe en
+ * otro: el anuncio zombi se cerró en OCHO sentencias distintas y basta con que
+ * la novena —la próxima ruta que gaste copias— no sepa la regla; el orden de la
+ * compra del bazar es una palabra dentro de un EXISTS; el arranque sin DDL se
+ * deshace con quitar una llamada; y el botón "Vender repetidas" estuvo muerto
+ * por una cita dentro de un comentario. Ninguno de esos fallos rompe el
+ * typecheck ni los invariantes de arriba.
+ *
+ * EL CRITERIO ES EL DEL FICHERO: lo que se puede EJECUTAR, se ejecuta —
+ * `ensureSchema`, `volcar`, `eraDeSerie` y las funciones de precio corren aquí
+ * tal como están escritas, contra dobles de la base—; lo que es SQL se mira con
+ * el escáner de la sección del servidor (el mismo, no otro), siguiendo de qué
+ * CTE cuelga cada escritura. Las partes estáticas llevan su autoprueba, porque
+ * una regla que no caza nada también sale en verde.
+ *
+ * LO QUE ESTO NO ES: una prueba contra PostgreSQL. Que las ocho sentencias
+ * HACEN lo que dicen se midió con una base real al escribirlas (carreras
+ * incluidas); aquí se ata que ninguna pierda la condición que lo hace verdad.
+ */
+{
+  const { SENTENCIAS, FICHEROS, rotulo, plantillasConSitio, asignacionesDe, ctesDe, normalizaSql } = ESCANER_SQL;
+
+  /* Lo de dentro ejecuta código del juego: si una función lanza donde antes
+   * devolvía un valor, eso ES el fallo, y tiene que salir como FALLO con su
+   * nombre en vez de tumbar el test entero sin veredicto. */
+  const vigila = async (que, trabajo, queTocar) => {
+    try {
+      await trabajo();
+    } catch (e) {
+      mal(que, "no ha podido terminar: " + String(e?.stack ?? e).split("\n")[0] + "\n          QUÉ TOCAR: " + queTocar);
+    }
+  };
+
+  /* ------------------------------------------------------------------ *
+   * BAZAR · UNA COPIA ANUNCIADA ESTÁ COMPROMETIDA EN TODAS LAS RUTAS
+   * ------------------------------------------------------------------
+   *
+   * EL AGUJERO QUE CIERRA (anuncios zombi). El bazar no aparta la carta al
+   * publicarla: el anuncio es una fila y `quantity` no se mueve. La copia
+   * anunciada sólo se contaba AL PUBLICAR; vender, vaciar repetidas, entregar
+   * en el mercado, graduar o intercambiar la ignoraban. Con 2 copias y una
+   * anunciada, "vender repetidas" cobraba la anunciada: el anuncio seguía
+   * abierto, toda compra contestaba que no, no caducaba nunca y ocupaba uno de
+   * los 20 huecos del vendedor.
+   *
+   * LA REGLA, que es la que sostienen hoy las ocho sentencias:
+   *
+   *     quantity que queda  >=  graduadas + anunciadas sueltas + 1
+   *
+   * Y NO SE VIGILA POR NOMBRE DE FUNCIÓN, sino por lo que hace la sentencia:
+   * TODA sentencia del repositorio que baje `user_collection.quantity` tiene
+   * que justificar la copia que se lleva de una de estas tres maneras, y la
+   * ruta nueva que no lo haga sale aquí con su fichero y su CTE:
+   *
+   *   CUENTA   su propio WHERE lleva el recuento de anuncios sueltos abiertos
+   *            (bazar_listings, estado = 'activa', graded_id IS NULL); y si
+   *            deja `quantity` en un valor ABSOLUTO ("SET quantity = 1 + …"),
+   *            ese valor también lo lleva.                    [las 4 ventas, el mercado]
+   *   PUERTA   cuelga por EXISTS de un CTE que tiene bloqueada la fila de la
+   *            colección (FOR UPDATE) y le resta ese recuento.        [el trueque]
+   *   CIERRA   la copia que se lleva ES la del anuncio, y cuelga del CTE que
+   *            lo cierra; o es una graduada que se da de baja y cuyo anuncio
+   *            se retira en la misma sentencia.   [comprar en el bazar, vender graduada]
+   *
+   * Y DOS REGLAS MÁS, que son la misma vista desde los otros dos sitios donde
+   * una copia sale del montón de sueltas sin que baje `quantity`:
+   *
+   *   · PARIDAD: en esas sentencias, donde se restan las graduadas se restan
+   *     las anunciadas. Es lo que caza que alguien quite la resta de la PUERTA
+   *     y deje la del guard (el mercado pagaría el encargo sin llevarse la
+   *     carta), o al revés.
+   *   · GRADUAR Y PUBLICAR: el alta de una graduada cuelga de un CTE que resta
+   *     lo apalabrado en el bazar, y el alta de un anuncio cuenta sueltos y
+   *     graduadas sobre la fila YA BLOQUEADA, con el tope de anuncios dentro.
+   *
+   * POR QUÉ ASÍ Y NO CON UNA LISTA DE FUNCIONES: la lista habría que
+   * mantenerla, y el fallo que se quiere cazar es justo la ruta que nadie
+   * apuntó en ella.
+   */
+  seccion("Bazar: una copia anunciada está comprometida en todas las rutas");
+
+  const PALABRA_SQL =
+    /^(?:ON|WHERE|LEFT|RIGHT|INNER|FULL|CROSS|NATURAL|JOIN|GROUP|ORDER|LIMIT|OFFSET|HAVING|WINDOW|FOR|RETURNING|UNION|EXCEPT|INTERSECT|SET|USING|AND|OR|AS)$/i;
+
+  /* Qué relaciones lee un texto, y con qué alias: entiende "FROM a x, b y",
+   * "JOIN c z" y la subconsulta en línea "JOIN ( … ) z". Hace falta la lista
+   * con comas porque así se escriben la mitad de los CTE de la compra
+   * ("FROM bloqueo b, anuncio a"): buscando sólo FROM/JOIN, `anuncio` no
+   * contaría como leído y la cadena de dependencias se cortaría sin avisar. */
+  function relacionesDe(texto) {
+    const salida = [];
+    const re = /\b(FROM|JOIN)\s+/gi;
+    let m;
+    while ((m = re.exec(texto))) {
+      let i = m.index + m[0].length;
+      for (;;) {
+        let nombre = null;
+        let grupo = null;
+        if (texto[i] === "(") {
+          let prof = 0;
+          let j = i;
+          while (j < texto.length) {
+            if (texto[j] === "(") prof++;
+            else if (texto[j] === ")" && --prof === 0) break;
+            j++;
+          }
+          grupo = texto.slice(i + 1, j);
+          i = j + 1;
+        } else {
+          const id = /^[A-Za-z_][\w$]*/.exec(texto.slice(i));
+          if (!id) break;
+          nombre = id[0].toLowerCase();
+          i += id[0].length;
+        }
+        let alias = null;
+        const al = /^\s+(?:AS\s+)?([A-Za-z_][\w$]*)/i.exec(texto.slice(i));
+        if (al && !PALABRA_SQL.test(al[1])) {
+          alias = al[1];
+          i += al[0].length;
+        }
+        salida.push({ nombre, grupo, alias });
+        const coma = /^\s*,\s*/.exec(texto.slice(i));
+        if (!coma || m[1].toUpperCase() === "JOIN") break;
+        i += coma[0].length;
+      }
+    }
+    return salida;
+  }
+
+  /* Los paréntesis MÁS INTERIORES que leen `tabla` (o el texto entero, con
+   * `desde` 0, si la lee a primer nivel). Es lo que permite preguntar por las
+   * condiciones de ESA lectura y no por las de cualquier otra de la sentencia:
+   * "estado = 'activa'" aparece también en el recuento de graduadas de al lado. */
+  function lecturasDe(texto, tabla) {
+    const salida = [];
+    const re = new RegExp("\\bFROM\\s+" + tabla + "\\b", "gi");
+    let m;
+    while ((m = re.exec(texto))) {
+      let prof = 0;
+      let i = m.index;
+      while (i >= 0) {
+        if (texto[i] === ")") prof++;
+        else if (texto[i] === "(") {
+          if (prof === 0) break;
+          prof--;
+        }
+        i--;
+      }
+      prof = 0;
+      let j = m.index;
+      while (j < texto.length) {
+        if (texto[j] === "(") prof++;
+        else if (texto[j] === ")") {
+          if (prof === 0) break;
+          prof--;
+        }
+        j++;
+      }
+      salida.push({ desde: i + 1, texto: texto.slice(i + 1, j) });
+    }
+    return salida;
+  }
+
+  /** Del resto de un UPDATE (lo que sigue al SET), su WHERE de primer nivel hasta el RETURNING. */
+  function tramoWhere(resto) {
+    let prof = 0;
+    let desde = -1;
+    for (let i = 0; i < resto.length; i++) {
+      const c = resto[i];
+      if (c === "(") prof++;
+      else if (c === ")") prof--;
+      else if (prof === 0 && /[A-Za-z]/.test(c) && !/[\w$]/.test(resto[i - 1] ?? " ")) {
+        const cola = resto.slice(i);
+        if (desde < 0 && /^WHERE\b/i.test(cola)) desde = i;
+        else if (desde >= 0 && /^RETURNING\b/i.test(cola)) return resto.slice(desde, i);
+      }
+    }
+    return desde < 0 ? "" : resto.slice(desde);
+  }
+
+  const cuentaFilas = (t) => /\bcount\s*\(/i.test(t);
+  const ACTIVA = /\bestado\s*=\s*'activa'/i;
+  // El recuento que vale es el de anuncios SUELTOS y ABIERTOS: la copia de un
+  // anuncio de graduada ya va contada con las graduadas.
+  const esRecuentoDeAnuncios = (t) =>
+    cuentaFilas(t) && /\bFROM\s+bazar_listings\b/i.test(t) && ACTIVA.test(t) && /\bgraded_id\s+IS\s+NULL\b/i.test(t);
+  const esRecuentoDeGraduadas = (t) => cuentaFilas(t) && /\bFROM\s+graded_cards\b/i.test(t) && ACTIVA.test(t);
+  const escribe = (cuerpo) => /^\s*(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM)\b/i.test(cuerpo);
+  const cambiaEstado = (cuerpo, tabla) =>
+    asignacionesDe(cuerpo).some(
+      (a) => a.forma === "update" && a.tabla === tabla && a.destinos.some((d) => /^estado$/i.test(d)),
+    );
+
+  /** Todo lo que hace falta saber de UNA sentencia para aplicarle la regla. */
+  function analizaCopias(sql) {
+    const { lista, principal } = ctesDe(sql);
+    const unidades = [...lista].map(([nombre, cuerpo]) => ({ nombre, cuerpo }));
+    unidades.push({ nombre: "", cuerpo: principal });
+
+    // Los CTE que SON un recuento (lo definen; no lo usan contra `quantity`).
+    const define = (cuerpo, tabla, esRecuento) =>
+      lecturasDe(cuerpo, tabla).some((g) => g.desde === 0 && esRecuento(g.texto));
+    const queDefinen = (tabla, esRecuento) =>
+      new Set([...lista].filter(([, c]) => define(c, tabla, esRecuento)).map(([n]) => n));
+    const TABLAS = {
+      anuncios: { tabla: "bazar_listings", es: esRecuentoDeAnuncios, ctes: queDefinen("bazar_listings", esRecuentoDeAnuncios) },
+      graduadas: { tabla: "graded_cards", es: esRecuentoDeGraduadas, ctes: queDefinen("graded_cards", esRecuentoDeGraduadas) },
+    };
+
+    /* ¿El trozo T de la unidad USA el recuento? Tres formas, que son las tres
+     * que hay escritas: la subconsulta escalar "( SELECT count(*) FROM … )",
+     * la columna de un recuento unido con alias ("COALESCE(z.n, 0)") y la
+     * lectura escalar de un CTE de recuento ("(SELECT n FROM comprometidas)").
+     * Tener el JOIN y no usar su columna NO es usarlo: es justo cómo se queda
+     * la sentencia cuando alguien quita la resta "simplificando". */
+    const usa = (unidad, T, cual) => {
+      const { tabla, es, ctes } = TABLAS[cual];
+      const rel = relacionesDe(unidad);
+      const alias = [];
+      for (const g of lecturasDe(unidad, tabla)) {
+        if (g.desde === 0 || !es(g.texto)) continue;
+        const comoTabla = rel.find((r) => r.grupo === g.texto);
+        if (comoTabla) {
+          if (comoTabla.alias) alias.push(comoTabla.alias);
+        } else if (T.includes("(" + g.texto + ")")) {
+          return true;
+        }
+      }
+      for (const r of rel) if (r.nombre && ctes.has(r.nombre)) alias.push(r.alias ?? r.nombre);
+      for (const n of ctes) {
+        if (new RegExp("\\(\\s*SELECT\\b[^()]*\\bFROM\\s+" + n + "\\s*\\)", "i").test(T)) return true;
+      }
+      return alias.some((a) =>
+        new RegExp("\\b" + a + "\\.(?!card_id\\b|seller_id\\b|user_id\\b)[A-Za-z_]\\w*", "i").test(T));
+    };
+
+    const dependencias = (nombres) => {
+      const visto = new Set();
+      const pila = [...nombres];
+      while (pila.length > 0) {
+        const n = pila.pop();
+        if (visto.has(n) || !lista.has(n)) continue;
+        visto.add(n);
+        for (const r of relacionesDe(lista.get(n))) if (r.nombre) pila.push(r.nombre);
+      }
+      return visto;
+    };
+    const leidas = (texto) => relacionesDe(texto).map((r) => r.nombre).filter(Boolean);
+
+    // 1) Las escrituras que BAJAN quantity. El upsert que suma lo que llega
+    //    ("quantity + EXCLUDED.quantity") es la única forma que no cuenta.
+    const consumos = [];
+    for (const u of unidades) {
+      for (const a of asignacionesDe(u.cuerpo)) {
+        if (a.tabla !== "user_collection") continue;
+        const parte = a.partes.find((p) => /\bquantity\b/i.test(p.destino));
+        if (!parte) continue;
+        if (a.forma === "upsert" && /^(?:user_collection\.)?quantity\s*\+\s*EXCLUDED\.quantity$/i.test(parte.valor)) continue;
+        const tramo = tramoWhere(a.resto);
+        const absoluta = !/\bquantity\b/i.test(parte.valor);
+        const cuelgaDe = dependencias(leidas(tramo));
+        let via = null;
+        let pega = "";
+        if (a.forma === "upsert") {
+          pega = "es un ON CONFLICT DO UPDATE que no se limita a sumar lo que llega";
+        } else if (usa(u.cuerpo, tramo, "anuncios") && (!absoluta || usa(u.cuerpo, parte.valor, "anuncios"))) {
+          via = "cuenta";
+        } else {
+          for (const n of cuelgaDe) {
+            const cuerpo = lista.get(n);
+            if (cambiaEstado(cuerpo, "bazar_listings")) via = "cierra";
+            else if (
+              cambiaEstado(cuerpo, "graded_cards") &&
+              unidades.some((x) => cambiaEstado(x.cuerpo, "bazar_listings") && leidas(x.cuerpo).includes(n))
+            ) via = "cierra";
+            if (via) break;
+          }
+          if (!via) {
+            for (const n of cuelgaDe) {
+              const cuerpo = lista.get(n);
+              if (/\bFROM\s+user_collection\b/i.test(cuerpo) && /\bFOR\s+UPDATE\b/i.test(cuerpo) && usa(cuerpo, cuerpo, "anuncios")) {
+                via = "puerta";
+                break;
+              }
+            }
+          }
+          if (!via) {
+            pega = absoluta && usa(u.cuerpo, tramo, "anuncios")
+              ? "deja quantity en un valor absoluto que no incluye las copias anunciadas"
+              : "ni cuenta los anuncios sueltos abiertos en su WHERE, ni cuelga de un CTE que los reste con la fila bloqueada, ni cierra el anuncio";
+          }
+        }
+        consumos.push({ unidad: u.nombre, valor: parte.valor, via, pega });
+      }
+    }
+    const borra = /\bDELETE\s+FROM\s+(?:ONLY\s+)?user_collection\b/i.test(sql);
+
+    // 2) Las altas de graduada: o cuelgan de quien resta lo del bazar, o son el
+    //    traspaso de una graduada que se da de baja en la misma sentencia.
+    const graduaciones = [];
+    for (const u of unidades) {
+      if (!/\bINSERT\s+INTO\s+graded_cards\b/i.test(u.cuerpo)) continue;
+      const deps = dependencias(leidas(u.cuerpo));
+      const traspaso = [...deps].some((n) => cambiaEstado(lista.get(n), "graded_cards"));
+      const resta = [...deps].some((n) => !TABLAS.anuncios.ctes.has(n) && usa(lista.get(n), lista.get(n), "anuncios"));
+      graduaciones.push({ unidad: u.nombre, via: traspaso ? "traspaso" : resta ? "cuenta" : null });
+    }
+
+    // 3) Las altas de anuncio.
+    const publicaciones = [];
+    for (const u of unidades) {
+      if (!/\bINSERT\s+INTO\s+bazar_listings\b/i.test(u.cuerpo)) continue;
+      const pegas = [];
+      if (!usa(u.cuerpo, u.cuerpo, "anuncios")) pegas.push("no cuenta los anuncios sueltos que la carta ya tiene abiertos");
+      if (!usa(u.cuerpo, u.cuerpo, "graduadas")) pegas.push("no descuenta las copias graduadas");
+      const candados = leidas(u.cuerpo).filter(
+        (n) => lista.has(n) && /\bFROM\s+user_collection\b/i.test(lista.get(n)) && /\bFOR\s+UPDATE\b/i.test(lista.get(n)),
+      );
+      if (candados.length === 0) pegas.push("no lee la cantidad de un CTE que bloquee la fila de la colección (FOR UPDATE)");
+      // El tope: un recuento de TODOS los anuncios abiertos del vendedor (sin
+      // el filtro de sueltos) comparado con un parámetro, dentro del INSERT.
+      const tope = lecturasDe(u.cuerpo, "bazar_listings").some(
+        (g) =>
+          g.desde > 0 && cuentaFilas(g.texto) && ACTIVA.test(g.texto) && !/\bgraded_id\b/i.test(g.texto) &&
+          /^\)\s*<\s*(?:\?|\$\d+)/.test(u.cuerpo.slice(g.desde + g.texto.length)),
+      );
+      if (!tope) pegas.push("no lleva dentro el tope de anuncios abiertos (un count de los 'activa' del vendedor < parámetro)");
+      publicaciones.push({ unidad: u.nombre, pegas });
+    }
+
+    // 4) Paridad, sólo donde la copia se justifica CONTANDO (en la compra y en
+    //    la venta de una graduada la copia que se va es la del anuncio, y ahí
+    //    restar sólo las graduadas es lo correcto).
+    const paridad = [];
+    const cuentan =
+      (consumos.length > 0 && consumos.every((c) => c.via === "cuenta" || c.via === "puerta")) ||
+      graduaciones.some((g) => g.via === "cuenta") ||
+      publicaciones.length > 0;
+    if (cuentan) {
+      for (const u of unidades) {
+        if (TABLAS.graduadas.ctes.has(u.nombre)) continue;
+        if (usa(u.cuerpo, u.cuerpo, "graduadas") && !usa(u.cuerpo, u.cuerpo, "anuncios")) paridad.push(u.nombre || "sentencia principal");
+      }
+    }
+
+    // 5) Para las LECTURAS (ver el `pendiente` de más abajo): qué unidades
+    //    restan de la colección las graduadas y no lo apalabrado, y si la
+    //    sentencia va de UN anuncio (entonces su copia es la anunciada y restar
+    //    sólo las graduadas es lo correcto: getBazar, "mis ventas", la compra).
+    const soloGraduadas = unidades
+      .filter((u) =>
+        !TABLAS.graduadas.ctes.has(u.nombre) && /\buser_collection\b/i.test(u.cuerpo) &&
+        usa(u.cuerpo, u.cuerpo, "graduadas") && !usa(u.cuerpo, u.cuerpo, "anuncios"))
+      .map((u) => u.nombre);
+    const deUnAnuncio = unidades.some((u) => lecturasDe(u.cuerpo, "bazar_listings").some((g) => g.desde === 0));
+    return { consumos, borra, graduaciones, publicaciones, paridad, soloGraduadas, deUnAnuncio };
+  }
+
+  const sitio = (unidad) => (unidad ? `CTE «${unidad}»` : "sentencia principal");
+
+  /* AUTOPRUEBA. Las formas de mentira son las que tuvo el fallo de verdad (la
+   * venta que sólo contaba graduadas) y las que dejaría un arreglo deshecho a
+   * medias; las limpias son las ocho de hoy en miniatura. Sin esto, una regla
+   * que diera por buena cualquier sentencia que NOMBRE bazar_listings saldría
+   * en verde para siempre.
+   *
+   * NO SON SQL DE ADORNO: las diez se ejecutaron contra PostgreSQL real al
+   * escribirlas, con un vendedor de 2 ó 3 copias y un anuncio abierto. Cada
+   * zombi deja de verdad el anuncio 'activa' con menos copias de las que
+   * necesita (la de la puerta sin candado, sólo con una venta confirmándose a
+   * la vez) y ninguna limpia lo deja. Si se toca una, se vuelve a ejecutar. */
+  {
+    const ZOMBIS = [
+      ["la venta de antes: sólo cuenta graduadas",
+        `WITH venta AS (
+           UPDATE user_collection SET quantity = quantity - 1
+           WHERE user_id = $1 AND card_id = $2 AND quantity > 1
+             AND quantity - 1 >= (SELECT count(*) FROM graded_cards
+                                   WHERE user_id = $1 AND card_id = $2 AND estado = 'activa') + 1
+           RETURNING 1)
+         UPDATE users SET coins = coins + $3 WHERE id = $1 AND EXISTS (SELECT 1 FROM venta)`],
+      ["cuenta los anuncios en el WHERE pero deja quantity en un absoluto que los ignora",
+        `UPDATE user_collection SET quantity = 1 + (SELECT count(*) FROM graded_cards
+             WHERE user_id = $1 AND card_id = $2 AND estado = 'activa')
+          WHERE user_id = $1 AND card_id = $2
+            AND quantity > 1 + (SELECT count(*) FROM bazar_listings
+                                 WHERE seller_id = $1 AND card_id = $2 AND estado = 'activa' AND graded_id IS NULL)`],
+      ["une el recuento pero no usa su columna",
+        `WITH anunciadas AS (
+           SELECT card_id, count(*)::int AS n FROM bazar_listings
+            WHERE seller_id = $1 AND estado = 'activa' AND graded_id IS NULL GROUP BY card_id),
+         consumo AS (
+           UPDATE user_collection uc SET quantity = uc.quantity - e.cantidad
+           FROM entregas e LEFT JOIN anunciadas z ON z.card_id = e.card_id
+           WHERE uc.user_id = $1 AND uc.card_id = e.card_id AND uc.quantity >= e.cantidad + 1
+           RETURNING 1)
+         SELECT count(*) FROM consumo`],
+      ["cuenta los anuncios de graduadas, que son justo los que no hay que contar",
+        `UPDATE user_collection SET quantity = quantity - 1
+          WHERE user_id = $1 AND card_id = $2
+            AND quantity - 1 >= (SELECT count(*) FROM bazar_listings
+                                  WHERE seller_id = $1 AND card_id = $2
+                                    AND estado = 'activa' AND graded_id IS NOT NULL) + 1`],
+      // Idéntica a la del trueque de más abajo salvo por el candado: sola hace
+      // lo correcto, y con una venta de la misma carta confirmándose a la vez
+      // decide con la cantidad de ANTES (ejecutado contra PostgreSQL real).
+      ["cuelga de una puerta que resta los anuncios SIN bloquear la fila",
+        `WITH saldo AS (
+           SELECT uc.card_id, uc.quantity - COALESCE(z.n, 0) AS quantity
+           FROM user_collection uc
+           LEFT JOIN (SELECT card_id, (count(*) FILTER (WHERE graded_id IS NULL) + 1)::int AS n
+                        FROM bazar_listings WHERE estado = 'activa' GROUP BY card_id) z ON z.card_id = uc.card_id
+           WHERE uc.user_id = $1),
+         via AS (SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM saldo WHERE quantity < 1)),
+         resta AS (
+           UPDATE user_collection uc SET quantity = uc.quantity - 1
+           WHERE uc.user_id = $1 AND uc.card_id = $2 AND EXISTS (SELECT 1 FROM via) RETURNING 1)
+         SELECT count(*) FROM resta`],
+      ["baja copias por la puerta de atrás, en un ON CONFLICT",
+        `INSERT INTO user_collection (user_id, card_id, quantity) VALUES ($1, $2, 0)
+         ON CONFLICT (user_id, card_id) DO UPDATE SET quantity = user_collection.quantity - 1`],
+    ];
+    const LIMPIAS = [
+      ["la venta de hoy",
+        `WITH venta AS (
+           UPDATE user_collection SET quantity = quantity - 1
+           WHERE user_id = $1 AND card_id = $2 AND quantity > 1
+             AND quantity - 1 >= (SELECT count(*) FROM graded_cards
+                                   WHERE user_id = $1 AND card_id = $2 AND estado = 'activa')
+               + (SELECT count(*) FROM bazar_listings
+                   WHERE seller_id = $1 AND card_id = $2 AND estado = 'activa' AND graded_id IS NULL) + 1
+           RETURNING 1)
+         UPDATE users SET coins = coins + $3 WHERE id = $1 AND EXISTS (SELECT 1 FROM venta)`],
+      ["la compra: la copia es la del anuncio que se cierra",
+        `WITH anuncio AS (SELECT id, seller_id, card_id FROM bazar_listings WHERE id = $1 AND estado = 'activa' FOR UPDATE),
+         cobro AS (UPDATE users SET coins = coins - $3
+                    WHERE id = $2 AND coins >= $3 AND EXISTS (SELECT 1 FROM anuncio) RETURNING coins),
+         cierre AS (UPDATE bazar_listings SET estado = 'vendida' WHERE id = $1 AND EXISTS (SELECT 1 FROM cobro) RETURNING 1),
+         quita AS (
+           UPDATE user_collection uc SET quantity = uc.quantity - 1 FROM anuncio a
+           WHERE uc.user_id = a.seller_id AND uc.card_id = a.card_id AND uc.quantity > 1
+             AND EXISTS (SELECT 1 FROM cierre) RETURNING 1)
+         SELECT count(*) FROM quita`],
+      ["el trueque: cuelga de un saldo bloqueado que resta lo apalabrado",
+        `WITH saldo AS MATERIALIZED (
+           SELECT uc.card_id, uc.quantity - COALESCE(z.n, 0) AS quantity
+           FROM user_collection uc
+           LEFT JOIN (SELECT card_id, (count(*) FILTER (WHERE graded_id IS NULL) + 1)::int AS n
+                        FROM bazar_listings WHERE estado = 'activa' GROUP BY card_id) z ON z.card_id = uc.card_id
+           WHERE uc.user_id = $1 ORDER BY uc.card_id FOR UPDATE OF uc),
+         via AS (SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM saldo WHERE quantity < 1)),
+         resta AS (
+           UPDATE user_collection uc SET quantity = uc.quantity - 1
+           WHERE uc.user_id = $1 AND uc.card_id = $2 AND EXISTS (SELECT 1 FROM via) RETURNING 1)
+         SELECT count(*) FROM resta`],
+      ["un sobre: sumar copias no gasta ninguna",
+        `INSERT INTO user_collection (user_id, card_id, quantity) VALUES ($1, $2, 1)
+         ON CONFLICT (user_id, card_id) DO UPDATE SET quantity = user_collection.quantity + EXCLUDED.quantity`],
+    ];
+    const malas = (texto) => {
+      const r = analizaCopias(normalizaSql(texto));
+      return r.consumos.filter((c) => !c.via).length + r.paridad.length;
+    };
+    const ciegas = ZOMBIS.filter(([, s]) => malas(s) === 0).map(([n]) => n);
+    const falsas = LIMPIAS.filter(([, s]) => malas(s) > 0).map(([n]) => n);
+    comprueba(
+      ciegas.length === 0 && falsas.length === 0,
+      `la regla de las copias anunciadas caza las ${ZOMBIS.length} formas del anuncio zombi y deja pasar las ${LIMPIAS.length} sentencias limpias`,
+      [
+        ciegas.length > 0 ? "no caza: " + ciegas.join(" · ") : "",
+        falsas.length > 0 ? "da por zombi: " + falsas.join(" · ") : "",
+      ].filter(Boolean).join("\n          ") +
+        "\n          La regla se ha quedado ciega (o demasiado estricta): hay que arreglar `analizaCopias`" +
+        " ANTES de fiarse de los invariantes de abajo.",
+    );
+  }
+
+  const ANALISIS = SENTENCIAS.map((s) => ({ ...s, ...analizaCopias(s.sql) }));
+  const CONSUMOS = ANALISIS.flatMap((s) => s.consumos.map((c) => ({ ...c, fichero: s.fichero })));
+  {
+    /* Que haya leído las ocho de verdad. Las vías se cuentan para que un
+     * cambio de forma (una ruta que pasa de CONTAR a colgar de una puerta) se
+     * vea aquí y no pase por un detalle. */
+    const porVia = (v) => CONSUMOS.filter((c) => c.via === v).length;
+    const ficheros = new Set(CONSUMOS.map((c) => c.fichero));
+    comprueba(
+      CONSUMOS.length >= 8 && ficheros.has("app/action.ts") && ficheros.has("app/social.ts") && porVia("cierra") >= 2,
+      `el escáner ve las sentencias que gastan copias (${CONSUMOS.length}: ${porVia("cuenta")} cuentan los anuncios, ${porVia("puerta")} cuelgan de una puerta que los resta, ${porVia("cierra")} cierran el anuncio)`,
+      `ve ${CONSUMOS.length} en ${[...ficheros].join(", ") || "ningún fichero"}. Tendría que ver al menos las ocho de hoy:` +
+        " cuatro ventas, el mercado, la venta de una graduada y la compra del bazar en app/action.ts, y el trueque en" +
+        " app/social.ts. O el escáner no las lee —y el invariante siguiente estaría en verde sin mirar nada—, o se ha" +
+        " quitado una ruta a propósito: entonces, y sólo entonces, se baja aquí el número.",
+    );
+
+    const zombis = CONSUMOS.filter((c) => !c.via);
+    const borran = ANALISIS.filter((s) => s.borra);
+    comprueba(
+      zombis.length === 0 && borran.length === 0,
+      "toda sentencia que baja user_collection.quantity cuenta los anuncios sueltos abiertos, cuelga de quien los resta o cierra el anuncio",
+      [
+        ...zombis.map((c) => `${c.fichero}, ${sitio(c.unidad)}: SET quantity = ${c.valor.slice(0, 70)} — ${c.pega}`),
+        ...borran.map((s) => `${s.fichero}: borra filas de user_collection (${s.sql.slice(0, 70)}…)`),
+      ].join("\n          ") +
+        "\n          Así nace un anuncio zombi: la copia se va, el anuncio sigue 'activa', toda compra" +
+        " contesta que no y ocupa para siempre uno de los 20 huecos del vendedor. QUÉ TOCAR: esa" +
+        " sentencia. Lo normal es añadir a su WHERE, junto al recuento de graduadas," +
+        " «+ (SELECT count(*) FROM bazar_listings WHERE seller_id = … AND card_id = … AND estado = 'activa'" +
+        " AND graded_id IS NULL)», como en sellCardAction (app/action.ts, bloque de `copiasComprometidas`)." +
+        " Una fila de user_collection no se borra: se queda a cero.",
+    );
+
+    const sinParidad = ANALISIS.flatMap((s) => s.paridad.map((u) => `${s.fichero}, ${u === "sentencia principal" ? u : "CTE «" + u + "»"}`));
+    comprueba(
+      sinParidad.length === 0,
+      "y en esas sentencias, donde se restan las copias graduadas se restan también las anunciadas",
+      sinParidad.join("\n          ") +
+        "\n          Las dos cuentas van siempre juntas: una copia graduada está en la vitrina y una" +
+        " anunciada está apalabrada, y ninguna de las dos se puede gastar. Si la PUERTA resta una y el" +
+        " guard la otra, la sentencia paga sin llevarse la carta o se la lleva sin poder. QUÉ TOCAR: ese" +
+        " CTE — «- COALESCE(g.n, 0) - COALESCE(z.n, 0)», con z unido al recuento de bazar_listings.",
+    );
+  }
+
+  {
+    const altas = ANALISIS.flatMap((s) => s.graduaciones.map((g) => ({ ...g, fichero: s.fichero })));
+    const sueltas = altas.filter((g) => !g.via);
+    comprueba(
+      altas.some((g) => g.via === "cuenta") && sueltas.length === 0,
+      `graduar no saca del montón la copia anunciada: el alta de una graduada cuelga de un CTE que resta lo apalabrado en el bazar (${altas.length} altas; ${altas.filter((g) => g.via === "traspaso").length} es el traspaso de la compra)`,
+      (sueltas.map((g) => `${g.fichero}, ${sitio(g.unidad)}: da de alta graduadas sin restar los anuncios`).join("\n          ") ||
+        "no se ha encontrado el alta de graduarCartasAction (INSERT INTO graded_cards colgando de quien resta el bazar)") +
+        "\n          Graduar no baja quantity, pero SÍ saca la copia del montón de sueltas: con 2 copias y una" +
+        " anunciada, graduar las dos dejaba el anuncio abierto y sin compra posible. QUÉ TOCAR: el CTE" +
+        " 'posibles' de graduarCartasAction corta por «b.quantity - graduadas - enBazar», y 'enBazar' es" +
+        " (anuncios sueltos abiertos + 1) de bazar_listings.",
+    );
+
+    const anuncios = ANALISIS.flatMap((s) => s.publicaciones.map((p) => ({ ...p, fichero: s.fichero })));
+    const malos = anuncios.filter((p) => p.pegas.length > 0);
+    comprueba(
+      anuncios.length >= 1 && malos.length === 0,
+      "publicar cuenta sueltos y graduadas sobre la fila de la colección ya bloqueada, y el tope de anuncios va dentro del INSERT",
+      (malos.map((p) => `${p.fichero}, ${sitio(p.unidad)}: ${p.pegas.join("; ")}`).join("\n          ") ||
+        "no se ha encontrado ningún INSERT INTO bazar_listings: publicarEnBazarAction se ha quitado o el escáner no lo lee") +
+        "\n          QUÉ TOCAR: el INSERT de publicarEnBazarAction (app/action.ts). Sin el FOR UPDATE, una venta" +
+        " de esa carta que se confirme a la vez no se ve y el anuncio nace sin copia; sin el recuento, la" +
+        " misma copia se anuncia dos veces; y con el tope leído en otra sentencia, veinte publicaciones" +
+        " en paralelo pasan todas la lectura.",
+    );
+  }
+
+  {
+    /* Y LO QUE SE OFRECE ANTES DE GASTAR. Las sentencias de arriba son las que
+     * DECIDEN; éstas son las lecturas que le dicen a una pantalla, o a una
+     * comprobación previa, cuántas copias se pueden dar. Si restan las
+     * graduadas y no lo apalabrado, ofrecen una copia que la sentencia que
+     * decide va a negar: no se pierde nada, pero es otra vez "la pantalla
+     * promete lo que el servidor no cumple".
+     *
+     * FUE UN `pendiente` MIENTRAS NO SE CUMPLÍA: la comprobación de
+     * `createTradeOffer` y la lista de `getTradableCollection` (app/social.ts)
+     * contaban sólo las graduadas, mientras que el `saldo` de
+     * `acceptTradeOffer` ya restaba los anuncios. La oferta se creaba, el amigo
+     * la veía, y al aceptarla se cancelaba con «el emisor ya no puede entregar
+     * esas cartas». Las dos restan ya el mismo «z.n», así que es una puerta. */
+    const lecturas = ANALISIS.filter(
+      (s) => s.consumos.length === 0 && s.graduaciones.length === 0 && s.publicaciones.length === 0 &&
+        !s.deUnAnuncio && s.soloGraduadas.length > 0,
+    );
+    comprueba(
+      lecturas.length === 0,
+      "las lecturas que dicen cuántas copias se pueden dar restan lo apalabrado en el bazar igual que las graduadas",
+      `(${[...new Set(lecturas.map((s) => s.fichero))].join(", ")}): ${lecturas.length} lectura(s) restan de la colección las copias graduadas y NO las anunciadas:\n          · ` +
+        lecturas.map((s) => `${s.fichero}: ${s.sql.slice(0, 96)}…`).join("\n          · ") +
+        "\n          Son la comprobación de `createTradeOffer` y la lista de `getTradableCollection`: el trueque" +
+        " deja montar y enviar una oferta con la copia anunciada, y `acceptTradeOffer` la cancela al" +
+        " aceptarla. QUÉ TOCAR: restar en las dos el mismo «z.n» que el CTE `saldo` de `acceptTradeOffer`" +
+        " (anuncios sueltos abiertos + 1, sólo si la carta tiene algún anuncio).",
+    );
+  }
+
+  /* ------------------------------------------------------------------ *
+   * BAZAR · EN LA COMPRA, TODO CUELGA DEL COBRO
+   * ------------------------------------------------------------------
+   *
+   * EL AGUJERO QUE CIERRA. En Postgres TODOS los CTE que escriben se ejecutan,
+   * los lea alguien o no. La compra cerraba el anuncio colgando sólo de la
+   * puerta `via`, y el cobro —que relee el saldo sobre la fila que bloquea, y
+   * por eso puede no tocar fila aunque la puerta haya dicho que sí— iba
+   * después. Con dos compras a la vez del mismo comprador, el anuncio quedaba
+   * 'vendida' a su nombre SIN pago ni carta, y ya no se podía volver a comprar:
+   * medido, 11 anuncios así en 12 rondas de 8 compras simultáneas.
+   *
+   * El arreglo es de ORDEN y cabe en una palabra: el cierre dice
+   * EXISTS (SELECT 1 FROM cobro) en vez de FROM via. Por eso lo que se ata es
+   * la cadena entera, siguiéndola: quién es el cobro, que relea el saldo con el
+   * mismo parámetro que resta, que no cuelgue de ninguna otra escritura, y que
+   * todas las demás escrituras —el cierre lo primero— cuelguen de él.
+   */
+  seccion("Bazar: en la compra, todo cuelga del cobro");
+  {
+    const vende = (cuerpo) =>
+      asignacionesDe(cuerpo).some(
+        (a) => a.forma === "update" && a.tabla === "bazar_listings" &&
+          a.partes.some((p) => /^estado$/i.test(p.destino) && /'vendida'/.test(p.valor)),
+      );
+    const compras = SENTENCIAS.filter((s) => {
+      const { lista, principal } = ctesDe(s.sql);
+      return [...lista.values(), principal].some(vende);
+    });
+    let pega = compras.length === 0
+      ? "no se ha encontrado ninguna sentencia que marque un anuncio como 'vendida': comprarEnBazarAction se ha quitado o el escáner no la lee"
+      : "";
+    let cadena = "";
+    // Hoy es una sola (comprarEnBazarAction). Si un día hay otra forma de
+    // comprar, tiene que cumplir lo mismo: se miran todas.
+    for (const compra of compras) {
+      if (pega) break;
+      const { lista, principal } = ctesDe(compra.sql);
+      const leidas = (t) => relacionesDe(t).map((r) => r.nombre).filter(Boolean);
+      const cuelgaDe = (nombre) => {
+        const visto = new Set();
+        const pila = leidas(nombre === "" ? principal : lista.get(nombre));
+        while (pila.length > 0) {
+          const n = pila.pop();
+          if (visto.has(n) || !lista.has(n)) continue;
+          visto.add(n);
+          pila.push(...leidas(lista.get(n)));
+        }
+        return visto;
+      };
+      const monedas = (cuerpo) =>
+        asignacionesDe(cuerpo)
+          .filter((a) => a.forma === "update" && a.tabla === "users")
+          .flatMap((a) => a.partes.filter((p) => /^coins$/i.test(p.destino)).map((p) => ({ valor: p.valor, tramo: tramoWhere(a.resto) })));
+      const escritoras = [...lista].filter(([, c]) => escribe(c)).map(([n]) => n);
+      const cobros = escritoras.filter((n) => monedas(lista.get(n)).some((m) => /-\s*\$\d+/.test(m.valor)));
+      const cierres = escritoras.filter((n) => vende(lista.get(n)));
+      const abonos = escritoras.filter((n) => monedas(lista.get(n)).some((m) => /\+\s*\$\d+/.test(m.valor)));
+      if (cobros.length !== 1 || cierres.length !== 1 || abonos.length !== 1) {
+        pega = `la compra tiene que tener UN cobro al comprador, UN cierre del anuncio y UN abono al vendedor, cada uno en su CTE, y hay ${cobros.length}, ${cierres.length} y ${abonos.length}`;
+      } else {
+        const [cobro] = cobros;
+        const [cierre] = cierres;
+        const [abono] = abonos;
+        const m = monedas(lista.get(cobro))[0];
+        const parametro = /-\s*(\$\d+)/.exec(m.valor)[1];
+        const relee = new RegExp("\\bcoins\\b[^()]*\\)?\\s*>=\\s*" + parametro.replace("$", "\\$") + "\\b").test(m.tramo);
+        const antes = [...cuelgaDe(cobro)].filter((n) => escritoras.includes(n));
+        const directo = leidas(tramoWhere(asignacionesDe(lista.get(cierre))[0].resto)).includes(cobro);
+        const sueltas = [...escritoras, ...(escribe(principal) ? [""] : [])]
+          .filter((n) => n !== cobro && !cuelgaDe(n).has(cobro));
+        if (!relee) {
+          pega = `el cobro («${cobro}») resta ${parametro} sin releer el saldo en su propio WHERE (coins >= ${parametro}): la puerta lo leyó sin candado y puede estar mirando un saldo que ya se gastó`;
+        } else if (antes.length > 0) {
+          pega = `el cobro («${cobro}») cuelga de otra escritura («${antes.join("», «")}»): si él no toca fila, ésa ya está hecha`;
+        } else if (!directo) {
+          pega = `el cierre del anuncio («${cierre}») no cuelga del cobro: le falta EXISTS (SELECT 1 FROM ${cobro}) en su WHERE`;
+        } else if (!cuelgaDe(abono).has(cierre)) {
+          pega = `el abono al vendedor («${abono}») no cuelga del cierre del anuncio («${cierre}»)`;
+        } else if (sueltas.length > 0) {
+          pega = `hay escrituras que no cuelgan del cobro: ${sueltas.map((n) => n || "la sentencia principal").join(", ")}`;
+        } else {
+          // El orden en que cada escritura cuelga de la anterior, para leerlo.
+          cadena = [...escritoras].sort((a, b) => cuelgaDe(a).size - cuelgaDe(b).size).join(" → ");
+        }
+      }
+      if (pega) pega = `${compra.fichero} («${compra.sql.slice(0, 70)}…»): ${pega}`;
+    }
+    comprueba(
+      pega === "",
+      `en la compra del bazar el cierre del anuncio cuelga del cobro, y todo lo que escribe cuelga de él (${cadena || "—"})`,
+      pega +
+        ".\n          En Postgres todos los CTE que escriben se ejecutan aunque nadie los lea: si el cierre va" +
+        " por delante del cobro y el cobro no toca fila (el comprador se gastó el dinero en otra pestaña)," +
+        " el anuncio queda 'vendida' sin pago ni carta y no se puede volver a comprar." +
+        " QUÉ TOCAR: comprarEnBazarAction (app/action.ts). El orden es cobro → cierre → abono → quita →" +
+        " pon → traspaso → entrega, cada uno con EXISTS (SELECT 1 FROM <el anterior>), y el cobro repite" +
+        " «COALESCE(coins, 0) >= precio» en su WHERE.",
+    );
+  }
+
+  /* ------------------------------------------------------------------ *
+   * SQL · NINGÚN PARÁMETRO SE QUEDA DENTRO DE UN COMENTARIO
+   * ------------------------------------------------------------------
+   *
+   * EL FALLO QUE HUBO. En una plantilla sql`…` cada ${…} se convierte en un
+   * parámetro ($1, $2…) y viaja aparte. Si la interpolación cae DENTRO de un
+   * comentario SQL, Postgres no la ve en el texto, se encuentra con un
+   * parámetro que nadie usa y rechaza la sentencia ENTERA con 42P18. Pasó en
+   * `sellAllDuplicatesAction`: un comentario citaba la condición con su
+   * "dólar-llave" y el botón "Vender repetidas" contestó «Error en servidor»
+   * desde que se escribió. El typecheck no lo ve y ningún invariante ejecutaba
+   * esa sentencia.
+   *
+   * Sólo las ETIQUETADAS: en la plantilla que se pasa a sql.query(`…`, […])
+   * una interpolación es texto pegado y dentro de un comentario no hace nada.
+   */
+  seccion("SQL: ningún parámetro se queda dentro de un comentario");
+  {
+    /** Las interpolaciones de una plantilla que caen dentro de un comentario SQL. */
+    function enComentario(texto) {
+      const salida = [];
+      let i = 0;
+      let estado = ""; // "" | "linea" | "bloque" | "cadena"
+      while (i < texto.length) {
+        const c = texto[i];
+        const d = texto[i + 1];
+        if (c === "$" && d === "{") {
+          let prof = 1;
+          let j = i + 2;
+          while (j < texto.length && prof > 0) {
+            if (texto[j] === "{") prof++;
+            else if (texto[j] === "}") prof--;
+            j++;
+          }
+          if (estado === "linea" || estado === "bloque") salida.push(texto.slice(i, j));
+          i = j;
+          continue;
+        }
+        if (estado === "linea") { if (c === "\n") estado = ""; }
+        else if (estado === "bloque") { if (c === "*" && d === "/") { estado = ""; i++; } }
+        else if (estado === "cadena") { if (c === "'") estado = ""; }
+        else if (c === "-" && d === "-") { estado = "linea"; i++; }
+        else if (c === "/" && d === "*") { estado = "bloque"; i++; }
+        else if (c === "'") estado = "cadena";
+        i++;
+      }
+      return salida;
+    }
+    const CASOS = [
+      ["SELECT 1 -- la condición ${a} = ${b}\n WHERE x = ${c}", 2],
+      ["/* citando ${a} */ SELECT ${b}", 1],
+      ["SELECT ${a} /* varias\n líneas ${b}\n */ FROM t -- y ${c}", 2],
+      ["SELECT '--', ${a} FROM t WHERE y = ${b} -- sin nada", 0],
+      ["UPDATE t SET a = ${a} WHERE id = ${fila[`${clave}`]}", 0],
+    ];
+    const fallan = CASOS.filter(([t, n]) => enComentario(t).length !== n);
+
+    let vistas = 0;
+    const perdidos = [];
+    for (const f of FICHEROS) {
+      const codigo = readFileSync(f, "utf8");
+      for (const p of plantillasConSitio(codigo)) {
+        if (!p.etiquetada) continue;
+        vistas++;
+        const dentro = enComentario(p.texto);
+        if (dentro.length > 0) {
+          perdidos.push(`${rotulo(f)}:${codigo.slice(0, p.desde).split("\n").length}: ${dentro.join(", ")}`);
+        }
+      }
+    }
+    comprueba(
+      fallan.length === 0 && vistas >= 60 && perdidos.length === 0,
+      `ninguna plantilla sql\`…\` lleva una interpolación dentro de un comentario SQL (${vistas} plantillas etiquetadas)`,
+      (fallan.length > 0
+        ? `el lector de comentarios falla en ${fallan.length} de sus ${CASOS.length} casos de control: hay que arreglarlo antes de fiarse de él`
+        : perdidos.length > 0
+          ? perdidos.join("\n          ")
+          : `sólo se han visto ${vistas} plantillas sql\`…\`: el escáner se ha quedado ciego`) +
+        "\n          Dentro de sql`…` un ${…} ES un parámetro aunque esté en un comentario: Postgres no lo" +
+        " encuentra en el texto y rechaza la sentencia entera con 42P18 («could not determine data type" +
+        " of parameter»). Así estuvo muerto el botón «Vender repetidas». QUÉ TOCAR: ese comentario —" +
+        " describe la condición con palabras, o saca el comentario fuera de la plantilla.",
+    );
+  }
+
+  /* ------------------------------------------------------------------ *
+   * PANTALLAS · LAS COPIAS QUE SE PUEDEN VENDER SE CUENTAN COMO EN EL SERVIDOR
+   * ------------------------------------------------------------------
+   *
+   * EL FALLO QUE CIERRA. El servidor pasó a tratar la copia anunciada en el
+   * bazar como comprometida y tres pantallas siguieron restando sólo las
+   * graduadas (`quantity - graduadas`): con 2 copias y una anunciada la
+   * colección enseñaba «Vender +0» y la venta devolvía null, el detalle decía
+   * «Vender 1 repetida · +0», y la tienda anunciaba 6 repetidas por 72 monedas
+   * cuando el vaciado vendía 3 por 32. Medido contra PostgreSQL real.
+   *
+   * La resta vive ahora en un sitio (`copiasLibresDe`, utils/constanst.ts) y
+   * las pantallas la usan sobre los tres números que manda el servidor.
+   */
+  seccion("Pantallas: las copias que se pueden vender se cuentan como en el servidor");
+  {
+    const { copiasLibresDe } = constantes;
+    const pegas = [];
+    if (typeof copiasLibresDe !== "function") {
+      pegas.push("utils/constanst.ts ya no exporta `copiasLibresDe`");
+    } else {
+      // La cuenta del servidor (getFullCollection): copias − graduadas − anunciadas, nunca negativa.
+      for (let q = 0; q <= 8; q++) for (let g = 0; g <= 4; g++) for (let a = 0; a <= 4; a++) {
+        const esperado = Math.max(0, q - g - a);
+        if (copiasLibresDe({ quantity: q, graduadas: g, anunciadas: a }) !== esperado) {
+          pegas.push(`copiasLibresDe(${q} copias, ${g} graduadas, ${a} anunciadas) da ${copiasLibresDe({ quantity: q, graduadas: g, anunciadas: a })} y el servidor cuenta ${esperado}`);
+        }
+      }
+      // Al invitado le faltan los dos campos: se queda con sus copias.
+      if (copiasLibresDe({ quantity: 3 }) !== 3 || copiasLibresDe({}) !== 0 || copiasLibresDe({ quantity: "x", graduadas: null }) !== 0) {
+        pegas.push("copiasLibresDe no aguanta una carta sin `graduadas` ni `anunciadas` (la del invitado) o con datos raros");
+      }
+    }
+    // Sin quitar comentarios: lo que se busca es código (una resta con sus paréntesis), y la prosa de los
+    // comentarios de esas pantallas no tiene esa forma.
+    const lee = (rel) => readFileSync(join(raiz, rel), "utf8");
+    // La resta de antes, la que no sabía nada del bazar: quantity − graduadas a secas.
+    const RESTA_VIEJA = /quantity\)\s*\|\|\s*0\)\s*-\s*\(Number\([^)]*graduadas\)\s*\|\|\s*0\)\s*\)\s*[;:)]/;
+    for (const rel of ["app/collection/page.tsx", "components/CardDetailModal.tsx"]) {
+      const codigo = lee(rel);
+      if (!/\bcopiasLibresDe\s*\(/.test(codigo)) pegas.push(`${rel} ya no cuenta las copias libres con \`copiasLibresDe\``);
+      if (RESTA_VIEJA.test(codigo)) pegas.push(`${rel} vuelve a restar \`quantity - graduadas\` por su cuenta, sin las anunciadas en el bazar`);
+    }
+    const tienda = lee("components/tienda/repetidas.ts");
+    const vendibles = /const\s+vendibles\s*=\s*\(m:\s*Monton\)[^;]*;/.exec(tienda)?.[0] ?? "";
+    if (!/m\.q\s*-\s*m\.g\s*-\s*m\.a\s*-\s*1/.test(vendibles)) {
+      pegas.push("components/tienda/repetidas.ts: `vendibles` ya no resta las anunciadas (m.q - m.g - m.a - 1)");
+    }
+    if (!/\ba:\s*Math\.min\(/.test(tienda) || !/fila\.anunciadas/.test(tienda)) {
+      pegas.push("components/tienda/repetidas.ts: `inventarioDe` ya no lee `anunciadas` de la fila del servidor");
+    }
+    comprueba(
+      pegas.length === 0,
+      "la colección, el detalle y la tienda cuentan las copias que se pueden vender como el servidor: copias − graduadas − anunciadas en el bazar (225 combinaciones)",
+      pegas.slice(0, 6).join("\n          ") +
+        "\n          Una copia con anuncio abierto está comprometida: el servidor no la vende, y la pantalla que" +
+        " reste sólo las graduadas ofrece un botón que falla al pulsarlo. QUÉ TOCAR: esa pantalla — que" +
+        " use `copiasLibresDe(carta)` (utils/constanst.ts); en la tienda, `vendibles` de" +
+        " components/tienda/repetidas.ts.",
+    );
+  }
+
+  /* ------------------------------------------------------------------ *
+   * DINERO · LA PUERTA MIRA LA FILA BLOQUEADA, EL DESCUENTO NO REPITE EL GUARD
+   * ------------------------------------------------------------------
+   *
+   * EL AGUJERO QUE CIERRA, medido contra PostgreSQL real en tres sentencias de
+   * dinero (la compra del bazar, el encargo del mercado y la venta de una
+   * graduada). La decisión se tomaba sobre la fila que devuelve el FOR UPDATE
+   * —la versión CONFIRMADA más nueva— y, después de mover el dinero, el UPDATE
+   * que descuenta la copia REPETÍA el guard de cantidad. Pero un UPDATE busca
+   * sus filas en la INSTANTÁNEA de la sentencia: si la versión vieja no cumple
+   * el guard, Postgres ni la considera. Cuando la cantidad SUBE entre la
+   * instantánea y el candado, la puerta pasa y el descuento no toca fila:
+   *
+   *   · compra:   comprador 1000 → 930 monedas y 0 copias; vendedor +59;
+   *   · mercado:  103 monedas cobradas y 2 cartas entregadas de 3;
+   *   · graduada: fila 'vendida' y 0 monedas.
+   *
+   * EL ARREGLO TIENE DOS MITADES y se atan las dos:
+   *   1. el UPDATE de user_collection que cuelga de una escritura anterior NO
+   *      lleva guard de cantidad propio (ya decidió la puerta, sobre la fila
+   *      que esta misma sentencia tiene bloqueada);
+   *   2. la sentencia CUADRA: una división por un CASE que vale 0 si lo cobrado
+   *      y lo entregado no coinciden. Si no cuadra, Postgres aborta la
+   *      sentencia entera y no se mueve nada.
+   *
+   * Y DOS DE ORDEN, que eran abrazos seguros y no carreras:
+   *   3. en la compra, los CTE que bloquean varias filas (colección y users)
+   *      se leen ENTEROS con un count(*): un EXISTS para en la primera fila y
+   *      deja la otra sin bloquear;
+   *   4. vender una graduada a la tienda bloquea su anuncio ANTES que la
+   *      colección, que es el orden de la compra.
+   *
+   * No sustituye a ejecutarlo contra Postgres (eso se hizo, y está en el
+   * informe de la corrección): es el cerrojo para que no se deshaga sin querer.
+   */
+  seccion("Dinero: la puerta decide sobre la fila bloqueada y la sentencia cuadra");
+  {
+    const COMPARA_CANTIDAD = /\bquantity\s*(?:>=|<=|<>|!=|>|<|=)/i;
+    const CUADRE = /\/\s*\(\s*CASE\s+WHEN\b[\s\S]*?\bcount\s*\(\s*\*\s*\)[\s\S]*?\bTHEN\s+1\s+ELSE\s+0\s+END\s*\)/i;
+    const cuelgaDeEscritura = (tramo, lista) =>
+      [...tramo.matchAll(/\bEXISTS\s*\(\s*SELECT\s+1\s+FROM\s+([A-Za-z_][\w$]*)\s*\)/gi)]
+        .map((m) => m[1].toLowerCase())
+        .filter((n) => lista.has(n) && escribe(lista.get(n)));
+
+    // Autoprueba: el fallo REAL y su arreglo, para que un lector roto no pase en verde.
+    const ROTA = `WITH bloqueo AS MATERIALIZED (SELECT uc.quantity FROM user_collection uc WHERE uc.user_id = $1 FOR UPDATE OF uc),
+      via AS (SELECT 1 WHERE EXISTS (SELECT 1 FROM bloqueo WHERE quantity > 1)),
+      baja AS (UPDATE graded_cards SET estado = 'vendida' WHERE id = $2 AND EXISTS (SELECT 1 FROM via) RETURNING 1),
+      consumo AS (UPDATE user_collection SET quantity = quantity - 1 WHERE user_id = $1 AND quantity > 1 AND EXISTS (SELECT 1 FROM baja) RETURNING 1)
+      UPDATE users SET coins = coins + $3 WHERE id = $1 AND EXISTS (SELECT 1 FROM consumo) RETURNING coins`;
+    const SANA = ROTA.replace("AND quantity > 1 AND EXISTS (SELECT 1 FROM baja)", "AND EXISTS (SELECT 1 FROM baja)")
+      .replace("AND EXISTS (SELECT 1 FROM consumo)", "AND (SELECT count(*) FROM consumo) / (CASE WHEN (SELECT count(*) FROM baja) = (SELECT count(*) FROM consumo) THEN 1 ELSE 0 END) > 0");
+
+    /** Los UPDATE de user_collection que cuelgan de otra escritura, con lo que les pasa. */
+    const descuentosDe = (sql) => {
+      const { lista, principal } = ctesDe(sql);
+      const salida = [];
+      for (const [unidad, cuerpo] of [...lista, ["", principal]]) {
+        for (const a of asignacionesDe(cuerpo)) {
+          if (a.forma !== "update" || a.tabla !== "user_collection") continue;
+          if (!a.destinos.some((d) => /\bquantity$/i.test(d))) continue;
+          const tramo = tramoWhere(a.resto);
+          const de = cuelgaDeEscritura(tramo, lista);
+          if (de.length === 0) continue;
+          salida.push({ unidad, de, repiteGuard: COMPARA_CANTIDAD.test(tramo), cuadra: CUADRE.test(sql) });
+        }
+      }
+      return salida;
+    };
+    const autoprueba =
+      descuentosDe(ROTA).length === 1 && descuentosDe(ROTA)[0].repiteGuard && !descuentosDe(ROTA)[0].cuadra &&
+      descuentosDe(SANA).length === 1 && !descuentosDe(SANA)[0].repiteGuard && descuentosDe(SANA)[0].cuadra;
+
+    const descuentos = SENTENCIAS.flatMap((s) => descuentosDe(s.sql).map((d) => ({ ...d, fichero: s.fichero, sql: s.sql })));
+    const conGuard = descuentos.filter((d) => d.repiteGuard);
+    const sinCuadre = descuentos.filter((d) => !d.cuadra);
+    comprueba(
+      autoprueba && descuentos.length >= 3 && conGuard.length === 0,
+      `el descuento de la copia que cuelga de una escritura de dinero no repite el guard de cantidad (${descuentos.length} sentencias: ${descuentos.map((d) => "«" + d.unidad + "» tras «" + d.de.join("», «") + "»").join("; ")})`,
+      (!autoprueba
+        ? "el lector no distingue la sentencia rota de la arreglada en su autoprueba: hay que arreglarlo antes de fiarse de él"
+        : descuentos.length < 3
+          ? `sólo se ven ${descuentos.length} descuentos colgados de otra escritura y hoy son tres (compra del bazar, encargo del mercado y venta de una graduada): o se ha quitado uno a propósito, o el escáner se ha quedado ciego`
+          : conGuard.map((d) => `${d.fichero}, CTE «${d.unidad}»: compara quantity en su WHERE después de que «${d.de.join("», «")}» ya haya movido el dinero («${d.sql.slice(0, 60)}…»)`).join("\n          ")) +
+        "\n          Un UPDATE busca sus filas en la instantánea de la sentencia: si la versión vieja de la fila" +
+        " no cumple el guard, no la toca, aunque la puerta haya decidido que sí sobre la versión bloqueada." +
+        " El dinero ya está movido y la carta no sale. QUÉ TOCAR: ese CTE — fuera la comparación de" +
+        " quantity; la decisión es de la puerta (respaldo / suficiente / via), sobre el FOR UPDATE.",
+    );
+    comprueba(
+      autoprueba && descuentos.length >= 3 && sinCuadre.length === 0,
+      "y esas sentencias cuadran lo cobrado con lo entregado: si no coincide, división por cero y no se mueve nada",
+      sinCuadre.map((d) => `${d.fichero}, la sentencia del CTE «${d.unidad}» («${d.sql.slice(0, 60)}…») no lleva cuadre`).join("\n          ") +
+        "\n          En Postgres todos los CTE que escriben se ejecutan, y uno que no toque fila no deshace a los" +
+        " anteriores. QUÉ TOCAR: el SELECT (o el UPDATE) final de esa sentencia — «1 / (CASE WHEN" +
+        " (SELECT count(*) FROM <cobro>) = (SELECT count(*) FROM <descuento>) THEN 1 ELSE 0 END)», en UNA" +
+        " sola expresión (un AND no garantiza el orden de evaluación).",
+    );
+
+    /* 3 · EN LA COMPRA, LOS CANDADOS DE VARIAS FILAS SE LEEN ENTEROS. */
+    const vendeAnuncio = (cuerpo) =>
+      asignacionesDe(cuerpo).some(
+        (a) => a.forma === "update" && a.tabla === "bazar_listings" &&
+          a.partes.some((p) => /^estado$/i.test(p.destino) && /'vendida'/.test(p.valor)),
+      );
+    const compras = SENTENCIAS.filter((s) => {
+      const { lista, principal } = ctesDe(s.sql);
+      return [...lista.values(), principal].some(vendeAnuncio);
+    });
+    const pegasCandados = [];
+    let candadosVistos = 0;
+    for (const compra of compras) {
+      const { lista } = ctesDe(compra.sql);
+      for (const [nombre, cuerpo] of lista) {
+        if (!/\bFOR\s+UPDATE\b/i.test(cuerpo)) continue;
+        // Sólo los que pueden devolver más de una fila: los que eligen por IN (…).
+        if (!/\bIN\s*\(/i.test(cuerpo)) continue;
+        candadosVistos++;
+        const entero = new RegExp("\\bcount\\s*\\(\\s*\\*\\s*\\)\\s+FROM\\s+" + nombre + "\\b", "i").test(compra.sql);
+        const ordenado = /\bORDER\s+BY\b/i.test(cuerpo);
+        if (!entero) pegasCandados.push(`el CTE «${nombre}» bloquea varias filas y nadie lo lee entero: falta un «(SELECT count(*) FROM ${nombre}) >= 0» antes del cobro`);
+        if (!ordenado) pegasCandados.push(`el CTE «${nombre}» bloquea varias filas sin ORDER BY: dos compras cruzadas las piden en orden distinto`);
+      }
+    }
+    comprueba(
+      compras.length >= 1 && candadosVistos >= 2 && pegasCandados.length === 0,
+      `en la compra del bazar los candados de varias filas van ordenados y se leen enteros antes de cobrar (${candadosVistos}: la colección de los dos y sus dos filas de users)`,
+      (compras.length === 0
+        ? "no se ha encontrado la compra del bazar"
+        : candadosVistos < 2
+          ? `sólo se ven ${candadosVistos} CTE con FOR UPDATE sobre varias filas y hoy son dos («bloqueo» y «cuentas»)`
+          : pegasCandados.join("\n          ")) +
+        "\n          Un CTE con FOR UPDATE sólo bloquea las filas que alguien llega a LEER, y un EXISTS para en la" +
+        " primera. La fila que se queda sin bloquear se toma después, al escribir, en el orden contrario" +
+        " al de las ventas: abrazo seguro con una venta del comprador. QUÉ TOCAR: comprarEnBazarAction" +
+        " (app/action.ts), los CTE «bloqueo» y «cuentas».",
+    );
+
+    /* 4 · VENDER UNA GRADUADA BLOQUEA EL ANUNCIO ANTES QUE LA COLECCIÓN. */
+    const ventasDeGraduada = SENTENCIAS.filter((s) => {
+      const { lista, principal } = ctesDe(s.sql);
+      const cuerpos = [...lista.values(), principal];
+      return (
+        cuerpos.some((c) => asignacionesDe(c).some((a) => a.forma === "update" && a.tabla === "graded_cards" && a.partes.some((p) => /^estado$/i.test(p.destino) && /'vendida'/.test(p.valor)))) &&
+        cuerpos.some((c) => asignacionesDe(c).some((a) => a.forma === "update" && a.tabla === "bazar_listings" && a.partes.some((p) => /^estado$/i.test(p.destino) && /'retirada'/.test(p.valor)))) &&
+        cuerpos.some((c) => asignacionesDe(c).some((a) => a.forma === "update" && a.tabla === "user_collection"))
+      );
+    });
+    let pegaOrden = ventasDeGraduada.length === 0
+      ? "no se ha encontrado la sentencia de venderGraduadaAction (baja de la graduada, retirada de su anuncio y descuento de la copia)"
+      : "";
+    for (const v of ventasDeGraduada) {
+      if (pegaOrden) break;
+      const nombres = [...ctesDe(v.sql).lista.keys()];
+      const cuerpoDe = (n) => ctesDe(v.sql).lista.get(n);
+      const candadoAnuncio = nombres.find((n) => /\bFROM\s+bazar_listings\b/i.test(cuerpoDe(n)) && /\bFOR\s+UPDATE\b/i.test(cuerpoDe(n)));
+      const candadoColeccion = nombres.find((n) => /\bFROM\s+user_collection\b/i.test(cuerpoDe(n)) && /\bFOR\s+UPDATE\b/i.test(cuerpoDe(n)));
+      if (!candadoColeccion) pegaOrden = "no bloquea la fila de la colección con FOR UPDATE";
+      else if (!candadoAnuncio) pegaOrden = "no bloquea el anuncio de la graduada antes de tocar la colección";
+      else if (nombres.indexOf(candadoAnuncio) > nombres.indexOf(candadoColeccion)) pegaOrden = `el candado del anuncio («${candadoAnuncio}») va detrás del de la colección («${candadoColeccion}»)`;
+      else if (!new RegExp("\\bcount\\s*\\(\\s*\\*\\s*\\)\\s+FROM\\s+" + candadoAnuncio + "\\b", "i").test(cuerpoDe(candadoColeccion))) {
+        pegaOrden = `el CTE «${candadoColeccion}» no fuerza que «${candadoAnuncio}» se ejecute antes: le falta «(SELECT count(*) FROM ${candadoAnuncio}) >= 0» en su WHERE`;
+      }
+    }
+    comprueba(
+      pegaOrden === "",
+      "vender una graduada a la tienda bloquea su anuncio antes que la colección, en el mismo orden que la compra del bazar",
+      pegaOrden +
+        ".\n          La compra toma el anuncio y después la colección; si esta sentencia los toma al revés, vender a" +
+        " la tienda una graduada que alguien está comprando en ese instante es un interbloqueo seguro (era" +
+        " la pareja más repetida con carga mezclada). QUÉ TOCAR: venderGraduadaAction (app/action.ts) — un" +
+        " CTE MATERIALIZED que haga SELECT … FROM bazar_listings … FOR UPDATE, y el CTE «bloqueo» con un" +
+        " count(*) de él en su WHERE.",
+    );
+  }
+
+  /* ------------------------------------------------------------------ *
+   * ESQUEMA · ensureSchema PREGUNTA ANTES DE LANZAR DDL
+   * ------------------------------------------------------------------
+   *
+   * EL AGUJERO QUE CIERRA. `ALTER TABLE users ADD COLUMN IF NOT EXISTS` toma
+   * un candado ACCESS EXCLUSIVE sobre `users` AUNQUE LA COLUMNA YA EXISTA. Eran
+   * cuatro en cada arranque en frío, y Vercel levanta instancias justo en los
+   * picos: con una sentencia larga sobre `users` en curso, el ALTER se quedaba
+   * en la cola de candados y todas las lecturas de saldo que llegaban después
+   * esperaban detrás de él. Ahora se pregunta al catálogo (una lectura, sin
+   * candados sobre las tablas del juego) y sólo se lanza lo que falta.
+   *
+   * SE EJECUTA EL `ensureSchema` DE VERDAD, sacado de app/action.ts con su
+   * `schemaReady` y su `sentenciasQueFaltan`, contra un doble de la base que
+   * hace de catálogo y apunta cada sentencia de DDL que recibe. El arreglo se
+   * deshace con una línea —recorrer `sentencias` en vez de lo que devuelve
+   * `sentenciasQueFaltan`— y eso no lo ve ni el typecheck ni nadie: el juego
+   * funciona igual hasta el siguiente pico.
+   */
+  seccion("Esquema: ensureSchema pregunta antes de lanzar DDL");
+  await vigila(
+    "ensureSchema no lanza DDL sobre lo que ya existe",
+    async () => {
+      const esquema = await cargarModulo("services/esquemaMejoras.ts");
+      /* `existe(relacion, columna)` es el catálogo de mentira; null es un
+       * catálogo que no se deja leer. Cada montaje es una instancia nueva: su
+       * propio `schemaReady` a null, como un arranque en frío. */
+      const instancia = async (existe) => {
+        const ddl = [];
+        let lecturas = 0;
+        const sql = {
+          query: async (texto, params) => {
+            const t = String(texto).replace(/\s+/g, " ").trim();
+            if (/^SELECT\b/i.test(t) && /\bto_regclass\b/i.test(t)) {
+              lecturas++;
+              if (existe === null) throw new Error("catálogo ilegible (simulado)");
+              const [indices, relaciones, columnas] = params;
+              if (![indices, relaciones, columnas].every(Array.isArray) || indices.length !== relaciones.length) {
+                throw new Error("la consulta al catálogo ya no recibe (índices, relaciones, columnas)");
+              }
+              return { rows: indices.filter((_, k) => !existe(relaciones[k], columnas[k])).map((i) => ({ i })) };
+            }
+            ddl.push(t);
+            return { rows: [], rowCount: 0 };
+          },
+        };
+        const { ensureSchema } = await trozosDelServidor(
+          "app/action.ts", ["schemaReady", "sentenciasQueFaltan", "ensureSchema"], { postgres: { sql } },
+        );
+        return { ensureSchema, ddl, lecturas: () => lecturas };
+      };
+      const alterUsers = (lista) => lista.filter((s) => /^ALTER\s+TABLE\s+users\b/i.test(s));
+
+      // 1) La base de todos los arranques menos el primero: ya está todo.
+      const montada = await instancia(() => true);
+      await montada.ensureSchema();
+      await montada.ensureSchema();
+
+      // 2) Sin catálogo: lo de siempre, todo el DDL. De aquí sale la lista entera.
+      const callado = console.error;
+      let todas;
+      try {
+        console.error = () => {};
+        const ciega = await instancia(null);
+        await ciega.ensureSchema();
+        todas = ciega.ddl;
+      } finally {
+        console.error = callado;
+      }
+
+      // 3) A una base montada le falta UNA columna de users.
+      const columnasDeUsers = alterUsers(todas).map((s) => esquema.objetoDeSentencia(s)?.columna ?? null);
+      const laQueFalta = columnasDeUsers[columnasDeUsers.length - 1];
+      const coja = await instancia((rel, col) => !(rel === "users" && col === laQueFalta));
+      await coja.ensureSchema();
+
+      // 4) Base recién creada: no existe nada. Tiene que salir todo, y en orden
+      //    (una tabla va delante de sus índices y de sus ALTER).
+      const vacia = await instancia(() => false);
+      await vacia.ensureSchema();
+
+      const pegas = [];
+      if (todas.length < 10) pegas.push(`sin catálogo sólo se lanzan ${todas.length} sentencias: la lista de ensureSchema no se está leyendo`);
+      if (alterUsers(todas).length === 0) pegas.push("ensureSchema ya no lleva ningún ALTER TABLE users: este invariante mide algo que ya no existe y hay que rehacerlo");
+      if (montada.ddl.length > 0) {
+        pegas.push(
+          `con todo ya creado lanza ${montada.ddl.length} sentencia(s) de DDL (${alterUsers(montada.ddl).length} son ALTER TABLE users): ` +
+            montada.ddl.slice(0, 3).map((s) => s.slice(0, 60)).join(" · "),
+        );
+      }
+      if (montada.lecturas() !== 1) pegas.push(`con todo ya creado consulta el catálogo ${montada.lecturas()} veces en dos llamadas: tiene que ser una, memoizada por instancia`);
+      const sinLeer = todas.filter((s) => esquema.objetoDeSentencia(s) === null);
+      if (sinLeer.length > 0) pegas.push(`objetoDeSentencia no sabe leer ${sinLeer.length} sentencia(s), que por eso se lanzan SIEMPRE: ${sinLeer.map((s) => s.slice(0, 50)).join(" · ")}`);
+      if (coja.ddl.length !== 1 || !new RegExp("^ALTER TABLE users ADD COLUMN IF NOT EXISTS " + laQueFalta + "\\b", "i").test(coja.ddl[0] ?? "")) {
+        pegas.push(`faltando sólo users.${laQueFalta} lanza ${coja.ddl.length} sentencia(s) en vez de ese único ALTER: ${coja.ddl.slice(0, 3).map((s) => s.slice(0, 60)).join(" · ")}`);
+      }
+      if (JSON.stringify(vacia.ddl) !== JSON.stringify(todas)) pegas.push(`en una base vacía lanza ${vacia.ddl.length} de las ${todas.length} sentencias, o en otro orden`);
+
+      // Y no hay otro sitio vivo que lance un ALTER TABLE users: sólo la lista
+      // de ensureSchema y las rutas de migración, que se ejecutan a mano.
+      const fuera = SENTENCIAS.filter(
+        (s) => /^ALTER\s+TABLE\s+users\b/i.test(s.sql) && !/^app\/migrate-[\w-]+\/route\.ts$/.test(s.fichero),
+      );
+      const enOtroFichero = fuera.filter((s) => s.fichero !== "app/action.ts");
+      if (enOtroFichero.length > 0) pegas.push(`hay ALTER TABLE users fuera de las rutas de migración: ${enOtroFichero.map((s) => s.fichero).join(", ")}`);
+      const enAction = fuera.length - enOtroFichero.length;
+      if (enAction !== alterUsers(todas).length) pegas.push(`app/action.ts tiene ${enAction} ALTER TABLE users y por ensureSchema pasan ${alterUsers(todas).length}: hay alguno que se lanza por otro camino, sin preguntar`);
+
+      comprueba(
+        pegas.length === 0,
+        `ensureSchema no lanza DDL sobre lo que ya existe: 0 sentencias y una lectura del catálogo con todo creado (de ${todas.length}, ${alterUsers(todas).length} ALTER TABLE users), y sólo lo que falta si falta algo`,
+        pegas.join("\n          ") +
+          "\n          Un ALTER TABLE users ADD COLUMN IF NOT EXISTS toma ACCESS EXCLUSIVE aunque la columna" +
+          " exista: en un arranque en frío durante un pico se pone a la cola de candados y todas las" +
+          " lecturas de saldo esperan detrás. QUÉ TOCAR: `ensureSchema` (app/action.ts) recorre" +
+          " `await sentenciasQueFaltan(sentencias)`, no `sentencias`; y toda sentencia de esa lista tiene" +
+          " que ser de una forma que `objetoDeSentencia` (services/esquemaMejoras.ts) sepa leer.",
+      );
+    },
+    "`schemaReady`, `sentenciasQueFaltan` y `ensureSchema` tienen que seguir en app/action.ts con esos nombres, y" +
+      " `objetoDeSentencia` en services/esquemaMejoras.ts (que no puede importar nada).",
+  );
+
+  /* ------------------------------------------------------------------ *
+   * TABLAS · UNA CLAVE QUE LLEGA DE FUERA NO LEE LA CADENA DE PROTOTIPOS
+   * ------------------------------------------------------------------
+   *
+   * EL AGUJERO QUE CIERRA. ERA_POR_SERIE, SELL_PRICES y RARITY_RANK son
+   * objetos literales, y la serie y la rareza llegan de una API que no
+   * controlamos. `TABLA[clave] ?? respaldo` con una clave "constructor" o
+   * "__proto__" no da undefined: sube por la cadena de prototipos y devuelve
+   * una FUNCIÓN (o Object.prototype), el `??` no salta porque no es null, y de
+   * ahí salía una era que no es una era y un precio NaN. No hace falta que
+   * exista esa carta para que importe: lo que se afirma es que la pregunta se
+   * hace bien (propiedad PROPIA, o `typeof … === "number"`).
+   *
+   * La sección de anuncio contra realidad ya vigila las tres funciones del
+   * mercado (`rarezaConocida`, `precioDeVenta`, `cumpleFiltro`). Aquí van las
+   * que se arreglaron en esta tanda, con TODOS los nombres que hereda un
+   * objeto —no una lista escrita a mano— y con el sobre entero, para que una
+   * búsqueda nueva dentro de packLogic tampoco pueda colarse.
+   */
+  seccion("Tablas: una clave que llega de fuera no lee la cadena de prototipos");
+  await vigila(
+    "una serie o una rareza con nombre de método de Object se trata como desconocida",
+    async () => {
+      const HEREDADAS = Object.getOwnPropertyNames(Object.prototype);
+      const CLAVES = [...new Set(HEREDADAS.flatMap((k) => [k, k.toLowerCase(), " " + k + " "]))];
+      const RAREZA_NUEVA = "Rareza Que No Existe";
+      const { mueveLaAguja } = await trozosDelServidor("services/preciosIngest.ts", ["CORTE_TARIFA", "mueveLaAguja"]);
+      const { rangoDeRareza } = mercado;
+      const eraNueva = eraDeSerie("Una Serie Que No Existe");
+      const pegas = [];
+      const dice = (v) =>
+        typeof v === "function" ? "una función"
+        : typeof v === "object" && v !== null ? "un objeto"
+        : typeof v === "string" ? JSON.stringify(v)
+        : String(v);
+      const igual = (que, clave, sale, debe) => {
+        if (!Object.is(sale, debe)) pegas.push(`${que}(${JSON.stringify(clave)}) da ${dice(sale)} y lo desconocido da ${dice(debe)}`);
+      };
+      for (const k of CLAVES) {
+        igual("eraDeSerie", k, eraDeSerie(k), eraNueva);
+        igual("precioDeCartaSuelta", k, precioDeCartaSuelta(k), precioDeCartaSuelta(RAREZA_NUEVA));
+        igual("precioDeCartaSuelta con 100 € en", k, precioDeCartaSuelta(k, 100), precioDeCartaSuelta(RAREZA_NUEVA, 100));
+        igual("valorDeVenta de 5 copias de", k, valorDeVenta(k, 5), valorDeVenta(RAREZA_NUEVA, 5));
+        igual("rangoDeRareza", k, rangoDeRareza({ id: "z-1", rarity: k }), rangoDeRareza({ id: "z-1", rarity: RAREZA_NUEVA }));
+        igual("mueveLaAguja", k, mueveLaAguja(k), mueveLaAguja(RAREZA_NUEVA));
+        igual("rangoParaOrdenar", k, constantes.rangoParaOrdenar?.(k), constantes.rangoParaOrdenar?.(RAREZA_NUEVA));
+      }
+      if (constantes.rangoParaOrdenar?.(RAREZA_NUEVA) !== 0 || constantes.rangoParaOrdenar?.("Hyper Rare") !== 100) {
+        pegas.push("rangoParaOrdenar (utils/constanst.ts) ya no da 0 a lo desconocido y su rango a lo conocido");
+      }
+
+      /* Y `admiteOfertaAtada` DEL SERVIDOR, EJECUTADA: una expansión cuya
+       * morralla lleva una rareza heredada tiene que contar igual que con una
+       * rareza desconocida (las dos son morralla, rango 1). Con el índice a
+       * secas, "constructor" devolvía una función: ni morralla ni rara, y la
+       * expansión dejaba de admitir ofertas atadas. */
+      if (servidor?.admiteOfertaAtada) {
+        const expansion = (rareza) => [
+          ...Array.from({ length: 6 }, (_, i) => ({ id: "zz-" + i, name: "m" + i, rarity: rareza })),
+          { id: "zz-r", name: "r", rarity: "Rare" },
+        ];
+        CATALOGO_DEL_DOBLE.set("zz-heredada", expansion("constructor"));
+        CATALOGO_DEL_DOBLE.set("zz-nueva", expansion(RAREZA_NUEVA));
+        const [conHeredada, conNueva] = [await servidor.admiteOfertaAtada("zz-heredada"), await servidor.admiteOfertaAtada("zz-nueva")];
+        CATALOGO_DEL_DOBLE.delete("zz-heredada");
+        CATALOGO_DEL_DOBLE.delete("zz-nueva");
+        if (conNueva !== true) pegas.push("admiteOfertaAtada: el caso de control (rareza desconocida = morralla) ya no da true");
+        if (conHeredada !== conNueva) pegas.push(`admiteOfertaAtada con rareza "constructor" da ${conHeredada} y con una rareza desconocida ${conNueva} (app/action.ts)`);
+      } else {
+        pegas.push("no se ha podido sacar `admiteOfertaAtada` de app/action.ts para ejecutarla");
+      }
+      // El control: lo desconocido da una era, un precio entero y SÍ mueve la
+      // aguja (el filtro SQL de la cola de precios deja pasar lo que no conoce).
+      if (typeof eraNueva !== "string" || !Number.isInteger(precioDeCartaSuelta(RAREZA_NUEVA)) || mueveLaAguja(RAREZA_NUEVA) !== true) {
+        pegas.push("lo desconocido ya no da una era, un precio entero y un «sí» en mueveLaAguja: el caso de control no sirve");
+      }
+
+      // Y el sobre entero: la misma expansión con UNA carta de rareza heredada
+      // o de rareza desconocida tiene que anunciar y valer exactamente lo mismo.
+      const [setId, cartas] = [...CARTAS].find(([, c]) => admiteSobreEstandar(c) && admiteSobrePremium(c)) ?? [];
+      let sobres = 0;
+      if (!cartas) {
+        pegas.push("no hay ninguna expansión con sobre estándar y premium para el caso del sobre");
+      } else {
+        const con = (rareza) => cartas.map((c, i) => (i === 0 ? { ...c, rarity: rareza } : c));
+        const foto = (lista) =>
+          JSON.stringify([
+            composicionDelSobre(lista, "STANDARD"), composicionDelSobre(lista, "PREMIUM"),
+            valorEsperadoEstandar(lista), valorEsperadoPremium(lista),
+          ]);
+        const control = foto(con(RAREZA_NUEVA));
+        for (const k of HEREDADAS) {
+          sobres++;
+          if (foto(con(k)) !== control) pegas.push(`con una carta de rareza ${JSON.stringify(k)}, el sobre de ${setId} no anuncia o no vale lo mismo que con una rareza desconocida`);
+        }
+      }
+
+      comprueba(
+        pegas.length === 0,
+        `una serie o una rareza con nombre de método de Object se trata como desconocida (${CLAVES.length} claves en eraDeSerie, precioDeCartaSuelta, valorDeVenta, rangoDeRareza y mueveLaAguja; ${sobres} sobres)`,
+        pegas.slice(0, 8).join("\n          ") +
+          "\n          QUÉ TOCAR: esa función busca en un objeto literal con una clave que viene de la API." +
+          " `TABLA[clave] ?? respaldo` no vale: con \"constructor\" devuelve una función heredada y el `??`" +
+          " no salta. Tiene que preguntar por propiedad PROPIA" +
+          " (`Object.prototype.hasOwnProperty.call(TABLA, clave)`) o por `typeof TABLA[clave] === \"number\"`.",
+      );
+    },
+    "`eraDeSerie` (utils/packLogic.ts), `precioDeCartaSuelta` y `valorDeVenta` (utils/constanst.ts), `rangoDeRareza`" +
+      " (utils/mercado.ts) y `mueveLaAguja` con su `CORTE_TARIFA` (services/preciosIngest.ts).",
+  );
+
+  /* ------------------------------------------------------------------ *
+   * PRECIO REAL · UN DATO ROTO DE CARDMARKET NO FABRICA MONEDAS
+   * ------------------------------------------------------------------
+   *
+   * EL AGUJERO QUE CIERRA. El ajuste por precio real no tenía cota: el único
+   * tope del camino era el de la ingesta (100.000 €), que existe para no
+   * desbordar la columna. Un `avg30` atípico —una venta mal catalogada, un
+   * valor servido en céntimos— entraba tal cual: con 12.000 € una Special
+   * Illustration Rare se vendía por 1.950 monedas la copia repetida, y el bazar
+   * dejaba publicarla a vez y media de eso.
+   *
+   * DOS CERRADURAS, y se atan las dos. LA PRIMERA ESTÁ DESACTIVADA
+   * (TECHO_AJUSTE_PRECIO_REAL = null): un techo cambia la fórmula del precio
+   * por encima de 4.000 €, y la fórmula no se toca sin el sí del dueño. Aquí se
+   * comprueba EL MODO QUE ESTÉ PUESTO: sin techo, que el precio es exactamente
+   * el de siempre para cualquier euro; con techo, que acota y que por debajo no
+   * cambia nada. Así activar el techo es cambiar un número, no reescribir esto.
+   *   1. el TECHO del ajuste (utils/constanst.ts): por caro que sea el dato,
+   *      una carta no vale más de TECHO × su tarifa. Va dentro de
+   *      `precioDeCartaSuelta`, así que lo ven igual la venta, el sobre, el
+   *      bazar y la graduación.
+   *   2. el SALTO SOSPECHOSO de la ingesta (services/preciosIngest.ts): un
+   *      precio ya guardado no se multiplica de una pasada a otra; conserva el
+   *      anterior y queda marcado. Ésta vive en un CASE dentro del UPSERT, así
+   *      que se ejecuta el `volcar` de verdad contra un doble de la base y se
+   *      evalúa LA CONDICIÓN QUE ÉL ESCRIBE, con sus parámetros.
+   *
+   * Los números no se tocan aquí: se leen de donde están.
+   */
+  seccion("Precio real: un dato roto de Cardmarket no fabrica monedas");
+  {
+    const { TECHO_AJUSTE_PRECIO_REAL: TECHO, DIVISOR_EUROS } = constantes;
+    const pegas = [];
+    const sinTecho = TECHO === null;
+    const techoValido = Number.isFinite(TECHO) && TECHO >= 1 && Number.isFinite(DIVISOR_EUROS) && DIVISOR_EUROS > 0;
+    if (sinTecho) {
+      /* SIN TECHO: el precio tiene que ser EL DE SIEMPRE, moneda a moneda,
+       * también con euros disparatados. Es lo que garantiza que dejar el techo
+       * preparado pero apagado no ha cambiado ni un precio. */
+      if (!(Number.isFinite(DIVISOR_EUROS) && DIVISOR_EUROS > 0)) pegas.push(`DIVISOR_EUROS (${DIVISOR_EUROS}) ya no es un número válido`);
+      for (const r of [...Object.keys(SELL_PRICES), "Rareza Que No Existe", null]) {
+        const base = precioDeCartaSuelta(r);
+        let anterior = base;
+        for (const e of [0.01, 0.5, 9.99, 50, 271, 999, 3999.99, 4000, 4000.01, 12000, 100000]) {
+          const p = precioDeCartaSuelta(r, e);
+          const esperado = Math.max(1, Math.round(base + base * (e / DIVISOR_EUROS)));
+          if (p !== esperado) pegas.push(`${r} con ${e} €: ${p} monedas y la fórmula de siempre da ${esperado}`);
+          if (p < anterior) pegas.push(`${r}: el precio baja al subir los euros (${e} €)`);
+          anterior = p;
+        }
+        for (const e of [undefined, null, 0, -5, NaN, Infinity, "abc"]) {
+          if (precioDeCartaSuelta(r, e) !== base) pegas.push(`${r} con un precio que no es un precio (${String(e)}) deja de valer su tarifa`);
+        }
+      }
+    } else if (!techoValido) {
+      pegas.push(`TECHO_AJUSTE_PRECIO_REAL (${TECHO}) o DIVISOR_EUROS (${DIVISOR_EUROS}) ya no son números válidos: el ajuste se ha quedado sin cota`);
+    } else {
+      // A partir de este euro el ajuste ya no sube.
+      const EUROS_DEL_TECHO = (TECHO - 1) * DIVISOR_EUROS;
+      const ABSURDOS = [EUROS_DEL_TECHO + 0.01, 12000, 100000, 1e9, Number.MAX_SAFE_INTEGER];
+      const NORMALES = [0.01, 0.5, 9.99, 50, 271, 999, EUROS_DEL_TECHO - 0.01].filter((e) => e > 0 && e < EUROS_DEL_TECHO);
+      const SIN_PRECIO = [undefined, null, 0, -5, NaN, Infinity, "abc"];
+      for (const r of [...Object.keys(SELL_PRICES), "Rareza Que No Existe", null]) {
+        const base = precioDeCartaSuelta(r);
+        const enElTecho = precioDeCartaSuelta(r, EUROS_DEL_TECHO);
+        if (!(enElTecho <= Math.round(TECHO * base))) pegas.push(`${r}: en el techo vale ${enElTecho}, más de ${TECHO} × ${base}`);
+        for (const e of ABSURDOS) {
+          const p = precioDeCartaSuelta(r, e);
+          if (p !== enElTecho) pegas.push(`${r} con ${e} €: ${p} monedas, y el techo es ${enElTecho}`);
+          for (const [copias, vende] of [[2, 1], [9, 8], [300, 299]]) {
+            if (valorDeVenta(r, copias, vende, e) !== valorDeVenta(r, copias, vende, EUROS_DEL_TECHO)) {
+              pegas.push(`${r} con ${e} €: vender ${vende} de ${copias} copias da más que en el techo`);
+            }
+          }
+        }
+        // Por debajo del techo, la cuenta de siempre: ni una moneda de diferencia.
+        let anterior = base;
+        for (const e of NORMALES) {
+          const p = precioDeCartaSuelta(r, e);
+          const esperado = Math.max(1, Math.round(base + base * (e / DIVISOR_EUROS)));
+          if (p !== esperado) pegas.push(`${r} con ${e} €: ${p} monedas y la fórmula de siempre da ${esperado}`);
+          if (p < anterior) pegas.push(`${r}: el precio baja al subir los euros (${e} €)`);
+          anterior = p;
+        }
+        for (const e of SIN_PRECIO) {
+          if (precioDeCartaSuelta(r, e) !== base) pegas.push(`${r} con un precio que no es un precio (${String(e)}) deja de valer su tarifa`);
+        }
+      }
+      /* El techo es ×5 y está escrito aquí A PROPÓSITO: es la decisión que se
+       * tomó (a ×5 se llega a los 4.000 €, y la carta más cara medida en una
+       * expansión moderna vale 271 €). Subirlo es volver a abrir la cola, así
+       * que tiene que ser a sabiendas: se cambia aquí y allí a la vez, y se
+       * pasa `npm run sim:economia`. */
+      if (TECHO > 5) pegas.push(`TECHO_AJUSTE_PRECIO_REAL es ${TECHO}: la decisión tomada es ×5`);
+    }
+    const SIR = "Special Illustration Rare";
+    comprueba(
+      pegas.length === 0,
+      sinTecho
+        ? `el techo del ajuste por precio real está DESACTIVADO (pendiente de que el dueño lo decida) y el precio es exactamente el de siempre, tarifa + tarifa × euros/${DIVISOR_EUROS}, para cualquier euro (una ${SIR} a 12.000 € vale ${precioDeCartaSuelta(SIR, 12000)})`
+        : `por caro que diga Cardmarket que es una carta, no vale más de ×${TECHO} su tarifa (una ${SIR} a 12.000 € se queda en ${precioDeCartaSuelta(SIR, 12000)}, no en ${Math.round(SELL_PRICES[SIR] * (1 + 12000 / DIVISOR_EUROS))}), y por debajo del techo el precio es el de siempre`,
+      pegas.slice(0, 8).join("\n          ") +
+        "\n          QUÉ TOCAR: `ajustePorPrecioReal` (utils/constanst.ts). Con TECHO_AJUSTE_PRECIO_REAL = null" +
+        " es la cuenta de siempre, base + base × euros / DIVISOR_EUROS, sin más. Con un techo, el sumando va acotado:" +
+        " base + base × min(euros / DIVISOR_EUROS, TECHO_AJUSTE_PRECIO_REAL − 1). El techo va DENTRO de" +
+        " `precioDeCartaSuelta` y no en quien llama, para que el sobre, la venta, el bazar y la" +
+        " graduación vean el mismo número.",
+    );
+  }
+  await vigila(
+    "la ingesta no deja que un precio ya guardado se multiplique de una pasada a otra",
+    async () => {
+      const previos = new Map(); // card_id -> euro que ya había en la tabla
+      const enviadas = [];
+      const numero = (t) => Number(t.slice(1));
+      /* Lector de la condición que escribe `volcar`: una conjunción de
+       * comparaciones sueltas. Con NULL de por medio una comparación SQL no es
+       * cierta, y se respeta. Un término que no sepa leer LANZA: es mejor un
+       * FALLO que pide rehacer el lector que dar por buena una condición que
+       * no se ha entendido. */
+      const cumple = (condicion, params, viejo, nuevo) =>
+        condicion.split(/\s+AND\s+/i).every((termino) => {
+          const t = termino.trim();
+          let m;
+          if ((m = /^(\$\d+)::boolean$/i.exec(t))) return params[numero(m[1])] === true;
+          if (/^card_prices\.eur IS NOT NULL$/i.test(t)) return viejo !== null && viejo !== undefined;
+          if (/^EXCLUDED\.eur IS NOT NULL$/i.test(t)) return nuevo !== null && nuevo !== undefined;
+          if (/^card_prices\.eur > 0$/i.test(t)) return viejo != null && viejo > 0;
+          if ((m = /^EXCLUDED\.eur > (\$\d+)::numeric$/i.exec(t))) return nuevo != null && nuevo > params[numero(m[1])];
+          if ((m = /^EXCLUDED\.eur > card_prices\.eur \* (\$\d+)::numeric$/i.exec(t))) {
+            return nuevo != null && viejo != null && nuevo > viejo * params[numero(m[1])];
+          }
+          throw new Error("la condición del salto tiene un término que este lector no entiende: «" + t + "»");
+        });
+      const sql = {
+        query: async (texto, params) => {
+          const t = String(texto).replace(/\s+/g, " ").trim();
+          const eur = /SET eur = CASE WHEN (.+?) THEN card_prices\.eur ELSE EXCLUDED\.eur END/i.exec(t);
+          const estado = /estado = CASE WHEN (.+?) THEN (\$\d+) ELSE EXCLUDED\.estado END/i.exec(t);
+          const fecha = /cambiado_en = CASE WHEN (.+?) THEN card_prices\.cambiado_en\b/i.exec(t);
+          enviadas.push({ t, params, eur: eur?.[1] ?? null, estado: estado?.[1] ?? null, fecha: fecha?.[1] ?? null });
+          if (!eur || !estado) return { rows: [] };
+          // Los parámetros de sql.query van de $1 en adelante: se guardan con
+          // un hueco delante para leerlos por su número.
+          const p = [undefined, ...params];
+          const filas = [];
+          for (let k = 0; k + 2 < params.length - 4; k += 3) {
+            const [id, nuevo, estadoNuevo] = params.slice(k, k + 3);
+            const sospechoso = previos.has(id) && cumple(eur[1], p, previos.get(id), nuevo);
+            filas.push({ card_id: id, estado: sospechoso ? p[numero(estado[2])] : estadoNuevo });
+          }
+          return { rows: filas };
+        },
+      };
+      const { volcar, SALTO_SOSPECHOSO: SALTO, SUELO_SOSPECHA_EUR: SUELO, ESTADO_SOSPECHOSO } = await trozosDelServidor(
+        "services/preciosIngest.ts",
+        ["FILAS_POR_SENTENCIA", "SALTO_SOSPECHOSO", "SUELO_SOSPECHA_EUR", "ESTADO_SOSPECHOSO", "volcar"],
+        { postgres: { sql } },
+      );
+      // [carta, euro guardado (undefined = no hay fila), euro nuevo, ¿sospechoso?]
+      const VIEJO = SUELO * 3; // un precio guardado holgadamente por encima del suelo
+      const CASOS = [
+        ["el del hallazgo: 150 € pasan a 12.000 €", 150, 12000, true],
+        ["justo el salto permitido", VIEJO, VIEJO * SALTO, false],
+        ["un céntimo por encima del salto", VIEJO, VIEJO * SALTO + 0.01, true],
+        ["una subida normal", VIEJO, VIEJO * 1.2, false],
+        ["una bajada", VIEJO, VIEJO / 10, false],
+        ["se multiplica pero no pasa del suelo", SUELO / (SALTO * 2), SUELO, false],
+        ["se multiplica y pasa del suelo por un céntimo", SUELO / (SALTO * 2), SUELO + 0.01, true],
+        ["la primera vez que se guarda (no hay con qué comparar)", undefined, 12000, false],
+        ["había fila pero sin precio", null, 12000, false],
+        ["había un cero", 0, 12000, false],
+        ["el nuevo llega sin precio", VIEJO, null, false],
+      ].map(([nombre, viejo, nuevo, sospechoso], i) => ({ id: "t-" + (i + 1), nombre, viejo, nuevo, sospechoso }));
+      for (const c of CASOS) if (c.viejo !== undefined) previos.set(c.id, c.viejo);
+      const filas = CASOS.map((c) => ({ cardId: c.id, eur: c.nuevo, estado: "ok" }));
+
+      const vigilando = await volcar(filas, true);
+      const forzado = await volcar(filas, false);
+
+      const pegas = [];
+      const primera = enviadas[0];
+      if (!primera || !primera.eur) {
+        pegas.push("el UPSERT de card_prices ya no guarda el euro con «CASE WHEN <salto sospechoso> THEN card_prices.eur ELSE EXCLUDED.eur END»: el precio nuevo pisa al anterior sin compararlo");
+      } else {
+        if (primera.estado !== primera.eur || primera.fecha !== primera.eur) pegas.push("el euro, el estado y la fecha de cambio ya no se deciden con la MISMA condición");
+        const esperados = CASOS.filter((c) => c.sospechoso).map((c) => c.id).sort();
+        if (JSON.stringify([...vigilando].sort()) !== JSON.stringify(esperados)) {
+          const raros = CASOS.filter((c) => vigilando.includes(c.id) !== c.sospechoso);
+          pegas.push(
+            raros.map((c) => `${c.nombre} (${c.viejo} → ${c.nuevo} €): ${c.sospechoso ? "se acepta y debería quedar en sospecha" : "queda en sospecha y debería aceptarse"}`).join("\n          "),
+          );
+        }
+        if (forzado.length > 0) pegas.push(`forzando la expansión a mano (sin vigilar) siguen quedando ${forzado.length} en sospecha: no habría forma de confirmar una subida real`);
+        if (ESTADO_SOSPECHOSO !== "sospechoso") pegas.push(`el estado de la carta retenida es "${ESTADO_SOSPECHOSO}" y /db-stats cuenta las de estado 'sospechoso'`);
+      }
+      comprueba(
+        pegas.length === 0,
+        `la ingesta no deja que un precio ya guardado se multiplique por más de ${SALTO} y pase de ${SUELO} €: conserva el anterior y lo marca (${CASOS.length} casos sobre el UPSERT que escribe \`volcar\`), y a mano sí se puede confirmar`,
+        pegas.join("\n          ") +
+          "\n          QUÉ TOCAR: `volcar` (services/preciosIngest.ts). La condición `sospechoso` va DENTRO" +
+          " del ON CONFLICT … DO UPDATE —quien arbitra es la fila que hay en la tabla al pisarla— y decide" +
+          " a la vez el euro, el estado y la fecha. Sin ella, un avg30 roto entra tal cual y a los diez" +
+          " minutos cada copia repetida de esa carta se vende por varias veces su precio.",
+      );
+    },
+    "`volcar`, `SALTO_SOSPECHOSO`, `SUELO_SOSPECHA_EUR`, `ESTADO_SOSPECHOSO` y `FILAS_POR_SENTENCIA` tienen que seguir" +
+      " en services/preciosIngest.ts con esos nombres; `volcar(filas, vigilarSalto)` recibe filas { cardId, eur, estado }." +
+      " Y si la condición del salto ha cambiado de forma A PROPÓSITO, hay que enseñársela al lector `cumple` de este" +
+      " invariante: no entenderla es un fallo, no un permiso.",
+  );
+  {
+    /* Y LA BANDA DEL MERCADO NO SE SEPARA DE LA TARIFA. `precioMax` de cada
+     * banda es un número escrito a mano del que cuelga la auditoría de peor
+     * caso del tablón («la carta más cara de un lote vale 70»). Hoy coincide
+     * con SELL_PRICES; si alguien sube una tarifa y no la banda, los lotes
+     * pagan sobre el precio nuevo y nada avisa. Por eso se exportaron. */
+    const { BANDAS_DE_RAREZA } = mercado;
+    const pegas = [];
+    if (!Array.isArray(BANDAS_DE_RAREZA) || BANDAS_DE_RAREZA.length === 0) {
+      pegas.push("utils/mercado.ts ya no exporta BANDAS_DE_RAREZA");
+    } else {
+      for (const b of BANDAS_DE_RAREZA) {
+        const dentro = Object.keys(RARITY_RANK).filter((r) => RARITY_RANK[r] >= b.rarMin && RARITY_RANK[r] <= b.rarMax);
+        const maximo = Math.max(...dentro.map((r) => precioDeCartaSuelta(r)));
+        if (dentro.length === 0) pegas.push(`la banda "${b.clave}" [${b.rarMin}-${b.rarMax}] no contiene ninguna rareza`);
+        else if (b.precioMax !== maximo) pegas.push(`banda "${b.clave}" [${b.rarMin}-${b.rarMax}]: precioMax dice ${b.precioMax} y la rareza más cara de ese rango se paga a ${maximo}`);
+      }
+    }
+    comprueba(
+      pegas.length === 0,
+      `el precioMax de cada banda del mercado es el de la rareza más cara de su rango (${(BANDAS_DE_RAREZA ?? []).map((b) => b.precioMax).join(", ")})`,
+      pegas.join("\n          ") +
+        "\n          QUÉ TOCAR: la banda correspondiente (B_MORRALLA … B_ELITE) en utils/mercado.ts, y" +
+        " repasar con ella la auditoría de peor caso de ese fichero y el tope que cita `cumplirOferta`.",
+    );
+  }
+
+  /* ------------------------------------------------------------------ *
+   * CI · EL TYPECHECK Y LOS INVARIANTES SON UNA PUERTA
+   * ------------------------------------------------------------------
+   *
+   * EL AGUJERO QUE CIERRA. Vercel sólo ejecuta `next build`: un push a main se
+   * desplegaba sin typecheck y sin `npm test`, que es lo único que avisa de que
+   * un precio o la tabla de notas han vuelto a abrir una fuga. El flujo de
+   * GitHub Actions lo arregla, y se desarregla sin que nada se ponga rojo: un
+   * `continue-on-error`, un `|| true`, un filtro de rutas, o un `"test"` de
+   * package.json que deja de llamar a este fichero.
+   *
+   * Se lee el YAML como texto, sin dependencias: lo justo para saber qué
+   * dispara el flujo y qué ejecuta cada paso de cada trabajo, siguiendo los
+   * `npm run …` hasta el guion de package.json. Que GitHub o Vercel ESPEREN a
+   * este flujo es un ajuste de panel y no se puede comprobar desde aquí.
+   */
+  seccion("CI: el typecheck y los invariantes son una puerta");
+  await vigila(
+    "el CI ejecuta el typecheck y los invariantes, y un fallo lo pone en rojo",
+    async () => {
+      const RUTA = join(".github", "workflows", "ci.yml");
+      const yaml = readFileSync(join(raiz, RUTA), "utf8");
+      const guiones = JSON.parse(readFileSync(join(raiz, "package.json"), "utf8")).scripts ?? {};
+
+      // Sin comentarios: ci.yml explica en ellos lo que NO hace, y un grep los cazaría.
+      const lineas = yaml.split(/\r?\n/).map((l) => (/^\s*#/.test(l) ? "" : l.replace(/\s+#.*$/, "")).replace(/\s+$/, ""));
+      const sangria = (l) => l.length - l.trimStart().length;
+      /** Las líneas hijas de la línea `i` (más sangradas que ella). */
+      const hijas = (i) => {
+        const salida = [];
+        for (let j = i + 1; j < lineas.length; j++) {
+          if (lineas[j] === "") continue;
+          if (sangria(lineas[j]) <= sangria(lineas[i])) break;
+          salida.push(j);
+        }
+        return salida;
+      };
+      /** De un grupo de líneas, las del primer nivel. */
+      const primerNivel = (grupo) => {
+        if (grupo.length === 0) return [];
+        const nivel = Math.min(...grupo.map((j) => sangria(lineas[j])));
+        return grupo.filter((j) => sangria(lineas[j]) === nivel);
+      };
+      const clave = (l) => /^\s*(?:-\s+)?["']?([\w.-]+)["']?\s*:\s*(.*)$/.exec(l);
+      const raizDe = (nombre) => lineas.findIndex((l) => sangria(l) === 0 && clave(l)?.[1] === nombre);
+
+      // Qué lo dispara.
+      const iOn = raizDe("on");
+      const disparos = new Map();
+      if (iOn >= 0) {
+        const enLinea = clave(lineas[iOn])[2];
+        for (const n of enLinea.replace(/[[\]]/g, " ").split(/[\s,]+/).filter(Boolean)) disparos.set(n, []);
+        for (const j of primerNivel(hijas(iOn))) {
+          const k = clave(lineas[j]);
+          if (k) disparos.set(k[1], hijas(j).map((x) => lineas[x].trim()));
+        }
+      }
+
+      // Qué ejecuta cada trabajo.
+      const trabajos = [];
+      const iJobs = raizDe("jobs");
+      for (const j of iJobs < 0 ? [] : primerNivel(hijas(iJobs))) {
+        const trabajo = { nombre: clave(lineas[j])?.[1] ?? "?", suelto: "", pasos: [] };
+        for (const p of primerNivel(hijas(j))) {
+          const k = clave(lineas[p]);
+          if (!k) continue;
+          if (k[1] === "continue-on-error" && !/^false$/i.test(k[2])) trabajo.suelto = "continue-on-error";
+          if (k[1] === "if") trabajo.suelto = "if";
+          if (k[1] !== "steps") continue;
+          for (const s of primerNivel(hijas(p))) {
+            const paso = { run: "", suelto: "" };
+            const propias = [s, ...hijas(s)];
+            for (const x of propias) {
+              const kk = clave(lineas[x]);
+              if (!kk || (x !== s && sangria(lineas[x]) !== sangria(lineas[s]) + 2)) continue;
+              if (kk[1] === "continue-on-error" && !/^false$/i.test(kk[2])) paso.suelto = "continue-on-error";
+              if (kk[1] === "if") paso.suelto = "if";
+              if (kk[1] === "run") {
+                paso.run = /^[|>][+-]?$/.test(kk[2]) ? hijas(x).map((y) => lineas[y].trim()).join("\n") : kk[2];
+              }
+            }
+            if (paso.run) trabajo.pasos.push(paso);
+          }
+        }
+        trabajos.push(trabajo);
+      }
+
+      const ES = {
+        typecheck: /\btsc\b[^\n;&|]*--noEmit\b/,
+        invariantes: /\bnode\s+(?:\.\/)?scripts\/test-invariantes\.mjs\b/,
+      };
+      /* ¿Esta orden ejecuta `que`? null si no. Si sí, "" cuando su fallo llega
+       * hasta el código de salida, o el motivo por el que se pierde. Sigue los
+       * `npm run x` / `npm test` hasta el guion de package.json (y los que ése
+       * llame). Lo que va DETRÁS de la orden que importa tiene que ser `&&`, un
+       * salto de línea o nada: con `||`, `;` o una tubería, el código de salida
+       * que cuenta es el de otro. */
+      const llega = (orden, que, visto = new Set()) => {
+        let fin = -1;
+        let pega = "";
+        const directo = ES[que].exec(orden);
+        if (directo) fin = directo.index + directo[0].length;
+        else {
+          for (const m of orden.matchAll(/\bnpm\s+(?:run(?:-script)?\s+([\w:.-]+)|(test|t)\b)/g)) {
+            const nombre = m[1] ?? "test";
+            if (visto.has(nombre) || typeof guiones[nombre] !== "string") continue;
+            const dentro = llega(guiones[nombre], que, new Set([...visto, nombre]));
+            if (dentro === null) continue;
+            fin = m.index + m[0].length;
+            pega = dentro && `el guion «${nombre}» de package.json: ${dentro}`;
+            break;
+          }
+        }
+        if (fin < 0) return null;
+        if (pega) return pega;
+        const sigue = /&&|\|\||[;|\n]/.exec(orden.slice(fin));
+        if (sigue !== null && sigue[0] !== "&&" && sigue[0] !== "\n") return `va seguida de «${sigue[0]}» y su código de salida se pierde`;
+        if (/\bset\s+\+e\b/.test(orden)) return "el paso lleva `set +e`";
+        return "";
+      };
+      const quienHace = (que) => {
+        const hallazgos = [];
+        for (const t of trabajos) {
+          for (const p of t.pasos) {
+            const propia = llega(p.run, que);
+            if (propia === null) continue;
+            const pega =
+              t.suelto ? `el trabajo «${t.nombre}» lleva ${t.suelto}`
+              : p.suelto ? `el paso lleva ${p.suelto}`
+              : propia;
+            hallazgos.push({ trabajo: t.nombre, pega });
+          }
+        }
+        return hallazgos;
+      };
+
+      const pegas = [];
+      for (const d of ["push", "pull_request"]) {
+        if (!disparos.has(d)) {
+          pegas.push(`el flujo no se dispara con ${d}`);
+          continue;
+        }
+        const filtros = disparos.get(d).join(" ");
+        if (/\b(?:paths|paths-ignore|branches-ignore|tags)\s*:/.test(filtros)) pegas.push(`el disparo ${d} lleva un filtro (${filtros.slice(0, 60)}): habría commits que llegan a producción sin pasar por aquí`);
+        else if (/\bbranches\s*:/.test(filtros) && !/\bmain\b|\*/.test(filtros)) pegas.push(`el disparo ${d} no incluye la rama main`);
+      }
+      const puerta = {};
+      for (const que of ["typecheck", "invariantes"]) {
+        const h = quienHace(que);
+        const buenos = h.filter((x) => x.pega === "");
+        puerta[que] = buenos[0]?.trabajo ?? null;
+        if (h.length === 0) pegas.push(`ningún paso ejecuta ${que === "typecheck" ? "el typecheck (tsc --noEmit)" : "los invariantes (node scripts/test-invariantes.mjs, que es `npm test`)"}`);
+        else if (buenos.length === 0) pegas.push(`${que}: se ejecuta pero no es una puerta — ${h.map((x) => x.pega).join("; ")}`);
+      }
+
+      comprueba(
+        pegas.length === 0,
+        `el CI ejecuta el typecheck y los invariantes en cada push y pull request, y un fallo lo pone en rojo (trabajo «${puerta.invariantes ?? "—"}», ${trabajos.length} trabajos)`,
+        pegas.join("\n          ") +
+          "\n          QUÉ TOCAR: " + RUTA.replace(/\\/g, "/") + " y los guiones `typecheck` y `test` de package.json." +
+          " El trabajo «comprobar» tiene que ejecutar `npm run typecheck` y `npm test` en pasos sin" +
+          " `continue-on-error`, sin `if:` y sin `|| true`, y el flujo dispararse con push y pull_request" +
+          " sin filtros de ruta. El lint puede seguir siendo aviso; esto no.",
+      );
+    },
+    ".github/workflows/ci.yml y package.json tienen que existir y poder leerse.",
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* VEREDICTO                                                           */
 /* ------------------------------------------------------------------ */
 
 console.log("\n== VEREDICTO ==");
+// Los avisos no deciden el código de salida, pero tampoco se esconden: van
+// contados aquí, que es la única línea que lee quien sólo mira el final.
+if (avisos > 0) {
+  console.log(`  ${avisos} AVISO(S): hallazgos abiertos que se miden pero todavía no se exigen (están arriba, en las líneas "AVISO").`);
+}
 if (fallos > 0) {
   console.log(`  ${fallos} INVARIANTE(S) ROTA(S) de ${pasados + fallos}.`);
   process.exitCode = 1;

@@ -16,7 +16,7 @@
 // DEGRADA A SILENCIO, SIEMPRE. Si las tablas no existen todavía (la migración
 // /migrate-sobres se ejecuta a mano), si Postgres no responde o si la consulta
 // tarda, esto devuelve un mapa vacío y la aplicación se comporta EXACTAMENTE
-// como antes de que existiera: manifiesto estático para las 130 que lo tienen y
+// como antes de que existiera: manifiesto estático para las 131 que lo tienen y
 // sobre dibujado para el resto. Es el mismo criterio de los otros dos módulos y
 // por el mismo motivo — una función nueva no puede tumbar la tienda.
 //
@@ -42,7 +42,12 @@ const TTL_MS = 5 * 60 * 1000;
 /** Tras un fallo se reintenta pronto, pero no en cada petición. */
 const TTL_FALLO_MS = 60 * 1000;
 
-let cache: { mapa: Map<string, number>; expira: number } | null = null;
+/**
+ * `fiable` distingue "la base dice que no hay fotos" de "no se pudo preguntar".
+ * Las dos dan un mapa vacío, y a la tienda le da igual; a quien sirve los bytes
+ * no (ver `variantesDeSobreFiables`).
+ */
+let cache: { mapa: Map<string, number>; expira: number; fiable: boolean } | null = null;
 
 /**
  * Cuántas variantes tiene cada expansión en el almacén, indexado por el id
@@ -74,8 +79,28 @@ let cache: { mapa: Map<string, number>; expira: number } | null = null;
  * Nunca lanza.
  */
 export async function variantesDeSobre(): Promise<ReadonlyMap<string, number>> {
+  return (await variantesDeSobreFiables()).mapa;
+}
+
+/**
+ * Lo mismo, diciendo además si el recuento es de fiar.
+ *
+ * LA USA app/api/arte-sobre PARA NO LLEVAR A POSTGRES CADA URL INVENTADA: con
+ * el recuento en memoria, una petición por una expansión que no tiene fotos (o
+ * por una variante que no existe) se contesta 404 sin tocar la base. Pero sólo
+ * puede hacerlo cuando el mapa salió de una lectura BUENA: tras un fallo el
+ * mapa también está vacío, y contestar 404 con eso convertiría una avería
+ * pasajera en "esta expansión no tiene foto", que el CDN guarda cinco minutos.
+ * Con `fiable: false` aquella ruta responde 503 sin guardar en caché.
+ *
+ * Nunca lanza.
+ */
+export async function variantesDeSobreFiables(): Promise<{
+  mapa: ReadonlyMap<string, number>;
+  fiable: boolean;
+}> {
   const ahora = Date.now();
-  if (cache && cache.expira > ahora) return cache.mapa;
+  if (cache && cache.expira > ahora) return cache;
 
   const mapa = new Map<string, number>();
   try {
@@ -97,7 +122,7 @@ export async function variantesDeSobre(): Promise<ReadonlyMap<string, number>> {
         mapa.set(String(r.set_id), filas);
       }
     }
-    cache = { mapa, expira: ahora + TTL_MS };
+    cache = { mapa, expira: ahora + TTL_MS, fiable: true };
   } catch (e: unknown) {
     // Silencio con nota: lo normal es que la migración no se haya ejecutado
     // todavía, y eso no es una avería.
@@ -105,9 +130,9 @@ export async function variantesDeSobre(): Promise<ReadonlyMap<string, number>> {
       "sobresBD: no se pudo leer set_pack_art, se sigue sin fotos nuevas:",
       e instanceof Error ? e.message : String(e),
     );
-    cache = { mapa, expira: ahora + TTL_FALLO_MS };
+    cache = { mapa, expira: ahora + TTL_FALLO_MS, fiable: false };
   }
-  return mapa;
+  return cache;
 }
 
 /**

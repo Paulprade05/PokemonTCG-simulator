@@ -1,5 +1,15 @@
 // services/pokemonApi.ts
-'use server'
+//
+// SIN USO: a fecha del commit d4d558e no lo importa ningún fichero del
+// repositorio (la app dejó de llamar a la API en ejecución en a407851 y lee de
+// Postgres). Se conserva porque aquí no se borra nada sin el sí del dueño.
+//
+// Y SIN 'use server' A PROPÓSITO. Llevaba la directiva, y con ella cada función
+// exportada es un endpoint POST público en cuanto un componente de cliente la
+// importa. `searchCards(q)` reenvía cualquier consulta a pokemontcg.io con la
+// X-Api-Key del servidor: un buscador montado deprisa habría publicado un
+// endpoint anónimo que gasta la cuota de la clave con lo que le manden. Sin la
+// directiva, esto sólo se puede llamar desde código de servidor.
 
 const BASE = "https://api.pokemontcg.io/v2";
 

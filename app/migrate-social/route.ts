@@ -93,7 +93,7 @@ export async function GET(request: Request) {
       ...SENTENCIAS_CODIGOS_AMIGO,
     ];
     for (const s of stmts) {
-      // @ts-ignore dynamic ddl
+      // DDL dinámico: por eso `sql.query` y no la plantilla etiquetada.
       await sql.query(s);
     }
 

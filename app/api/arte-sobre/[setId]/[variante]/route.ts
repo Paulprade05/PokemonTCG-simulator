@@ -6,7 +6,7 @@
 // POR QUÉ ESTA RUTA EXISTE Y POR QUÉ NO CUELGA DE /sobres/
 // ====================================================================
 //
-// Las 130 fotos que ya había son ficheros de `public/sobres`, servidos por el
+// Las fotos de las 131 expansiones que ya la tenían son ficheros de `public/sobres`, servidos por el
 // CDN de Vercel sin que ningún código nuestro se entere. Las que trae el cron
 // nocturno no pueden serlo: en Vercel `public/` es de sólo lectura en ejecución
 // y se hornea en el build, así que un cron no puede escribir un fichero ahí.
@@ -61,6 +61,7 @@
 import { sql } from "@vercel/postgres";
 import { NextResponse } from "next/server";
 import { MIMES_SOBRE } from "@/services/sobresEsquema";
+import { variantesDeSobreFiables } from "@/services/sobresBD";
 
 export const runtime = "nodejs";
 
@@ -106,6 +107,48 @@ export async function GET(
   // ninguna razón para preguntarle a la base de datos por algo que no puede
   // existir.
   if (!ID_SANO.test(setId) || !VARIANTE_SANA.test(variante)) return noHayFoto();
+
+  /* Y ANTES DE TOCAR POSTGRES SE MIRA SI ESA FOTO PUEDE EXISTIR.
+   *
+   * EL AGUJERO QUE CIERRA: el `s-maxage` de los 404 (arriba) hace que el CDN
+   * absorba las REPETICIONES de una URL, pero la caché del CDN es por URL. Cada
+   * combinación nueva que pasara las dos expresiones regulares —y son hasta 24
+   * caracteres de id por 99 variantes— llegaba a la base: un bucle pidiendo
+   * /api/arte-sobre/x1/1, /x2/1, /x3/1... eran tantas consultas al pool de Neon
+   * como peticiones, en una ruta pública y sin sesión.
+   *
+   * El servidor YA sabe cuántas variantes tiene cada expansión: es el recuento
+   * que services/sobresBD.ts guarda cinco minutos para la tienda. Con él, lo
+   * único que llega a Postgres son URLs de fotos que existen, que son un
+   * puñado y además se quedan un año en el CDN tras la primera lectura.
+   *
+   * A LA TIENDA NO LE CAMBIA NADA: decide qué fotos pedir con ESE MISMO
+   * recuento, así que no pide ninguna que aquí se conteste 404 por él. La
+   * excepción es una foto recién bajada por el cron, si la petición cae en una
+   * instancia que aún tiene el recuento viejo: ese 404 dura en el CDN cinco
+   * minutos más, y mientras tanto se ve el sobre dibujado, como hasta ayer.
+   *
+   * Lo que sí deja de servirse es una expansión con variantes SALTEADAS (la 1
+   * y la 3 sin la 2): el recuento la da por cero a propósito, porque el
+   * componente no sabría pedirla, así que nadie la estaba pidiendo.
+   *
+   * Y SI EL RECUENTO NO SE PUDO LEER (Postgres caído, o la tabla sin crear
+   * porque /migrate-sobres se ejecuta a mano), 503 SIN PREGUNTAR OTRA VEZ. Es
+   * el mismo 503 que ya daba el catch de abajo, por el mismo motivo —un 404
+   * aquí sería indistinguible de "esta expansión no tiene foto"—, pero sin la
+   * consulta: services/sobresBD.ts recuerda el fallo un minuto, así que con la
+   * base caída o la tabla sin crear llega UNA consulta por minuto y por
+   * instancia, no una por petición. El fallo ya lo deja escrito aquel módulo en
+   * el registro; repetirlo aquí por cada URL sería el mismo ruido que se evita.
+   */
+  const recuento = await variantesDeSobreFiables();
+  if (!recuento.fiable) {
+    return new NextResponse(null, {
+      status: 503,
+      headers: { "Cache-Control": "no-store" },
+    });
+  }
+  if (Number(variante) > (recuento.mapa.get(setId) ?? 0)) return noHayFoto();
 
   try {
     const { rows } = await sql.query(

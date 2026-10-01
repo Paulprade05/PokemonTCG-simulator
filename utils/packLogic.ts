@@ -184,7 +184,16 @@ const ERA_POR_SERIE: Record<string, Era> = {
 export const eraDeSerie = (serie?: string | null): Era => {
   const s = (serie ?? '').trim().toLowerCase();
   if (!s) return ERA_POR_DEFECTO;
-  return ERA_POR_SERIE[s] ?? ERA_POR_DEFECTO;
+  /* PROPIEDAD PROPIA, no `ERA_POR_SERIE[s] ?? …`. ERA_POR_SERIE es un objeto
+   * literal y la serie llega de una API que no controlamos: con una serie
+   * llamada "constructor", "toString" o "__proto__" el índice subía por la
+   * cadena de prototipos y devolvía una FUNCIÓN (o Object.prototype) en vez de
+   * una era, y el `??` no saltaba porque no es null. Hoy quien la recibe la usa
+   * de índice en otras dos tablas y cae en el reparto por defecto de rebote,
+   * pero es casualidad, no diseño: aquí se garantiza que sale una Era. */
+  return Object.prototype.hasOwnProperty.call(ERA_POR_SERIE, s)
+    ? ERA_POR_SERIE[s]
+    : ERA_POR_DEFECTO;
 };
 
 /* Los tres repartos del hueco de premio del sobre ESTÁNDAR.
@@ -304,7 +313,13 @@ const premioEstandar = (era: Era = ERA_POR_DEFECTO): readonly RamaDePremio[] =>
 const premioPremium = (era: Era = ERA_POR_DEFECTO): readonly RamaDePremio[] =>
   PREMIO_PREMIUM_POR_ERA[era] ?? PREMIO_PREMIUM_POR_ERA[ERA_POR_DEFECTO];
 
-/** Se exportan para que la tienda pueda ANUNCIAR las probabilidades reales. */
+/**
+ * Se exportan para que la tienda pueda ANUNCIAR las probabilidades reales.
+ *
+ * SIN USO a fecha del commit d4d558e: la tienda anuncia con
+ * `composicionDelSobre`, que ya trae las ramas con su respaldo aplicado. No se
+ * borra sin el sí del dueño.
+ */
 export const ramasDelPremio = (
   tipo: 'STANDARD' | 'PREMIUM',
   era: Era = ERA_POR_DEFECTO,
@@ -524,6 +539,69 @@ export const admiteSobreEstandar = (allCards: Card[], era?: Era): boolean =>
 /** Lo mismo para el sobre premium. */
 export const admiteSobrePremium = (allCards: Card[], era?: Era): boolean =>
   calibrarPremium(categorizeCards(allCards), allCards, era).cabe;
+
+/* ==================================================================== *
+ * ¿ES UNA COLECCIÓN ESPECIAL? LA REGLA, ESCRITA UNA SOLA VEZ
+ * ====================================================================
+ *
+ * EL PROBLEMA QUE CIERRA: "esta expansión sólo vende Promo Pack" se decide en
+ * dos sitios con el mismo código copiado a mano —`isSpecialSet` y
+ * `composicionEspecial` en app/page.tsx, `sobresPermitidos` y su
+ * `composicionEspecial` en app/action.ts—, y ya se separaron una vez: con un
+ * `total` nulo el cliente decía "normal" (`typeof null`) y el servidor
+ * "especial" (`Number(null)` es 0), así que la tienda pintaba tres sobres y
+ * los tres fallaban al pulsarlos. El día que alguien baje el umbral de 69 en
+ * un lado, vuelve a pasar.
+ *
+ * Aquí está la regla entera como función PURA, para que los dos lados la
+ * importen. Vive en este fichero porque ya lo cargan la tienda, el servidor y
+ * `npm test`, y no trae ninguna importación nueva.
+ *
+ * ES, CARÁCTER POR CARÁCTER, LO QUE HOY HACEN LOS DOS LADOS. No cambia qué
+ * expansiones son especiales: sólo deja de estar escrito dos veces.
+ */
+
+/** Por debajo de este `total` declarado, una expansión no es de sobre estándar. */
+export const TOTAL_MINIMO_DE_SOBRE = 69;
+
+/**
+ * Colección "sin morralla", medida sobre sus cartas: menos de 8 comunes, o
+ * menos de un 20% de comunes e infrecuentes. Sin cartas no se sabe: false.
+ */
+export const composicionEspecial = (cartas: readonly { rarity: string }[]): boolean => {
+  if (!cartas || cartas.length === 0) return false;
+  const comunes = cartas.filter((c) => c.rarity === 'Common').length;
+  const relleno = cartas.filter(
+    (c) => c.rarity === 'Common' || c.rarity === 'Uncommon',
+  ).length;
+  return comunes < 8 || relleno / cartas.length < 0.2;
+};
+
+/**
+ * ¿Sólo se vende el Promo Pack en esta expansión?
+ *
+ * @param ficha  `name` es el nombre INGLÉS (el de la tabla `sets`, o `nameEn`
+ *   en el cliente: "Galería de Entrenadores" no contiene "gallery"), `series`
+ *   la serie tal cual y `total` el total DECLARADO, no el recuento de cartas.
+ *   `total` se pasa por `Number()`: null, undefined y "" son 0 y no cuentan,
+ *   que es exactamente el `> 0 &&` que cierra el desacuerdo de arriba.
+ * @param cartas las de la expansión; vacío mientras cargan (no la marca).
+ */
+export const esColeccionEspecial = (
+  ficha: { name?: string | null; series?: string | null; total?: unknown },
+  cartas: readonly { rarity: string }[],
+): boolean => {
+  const nombre = String(ficha.name ?? '').toLowerCase();
+  const total = Number(ficha.total);
+  return (
+    nombre.includes('promos') ||
+    nombre.includes('gallery') ||
+    ficha.series === 'POP' ||
+    ficha.series === 'Other' ||
+    (total > 0 && total < TOTAL_MINIMO_DE_SOBRE) ||
+    composicionEspecial(cartas)
+  );
+};
 
 /* ==================================================================== *
  * QUÉ REPARTE DE VERDAD EL SOBRE DE ESTA EXPANSIÓN

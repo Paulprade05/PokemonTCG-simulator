@@ -90,9 +90,12 @@ const PRESUPUESTO_MINIMO_MS = 9_000;
 
 /** Tope por petición: una respuesta que nunca llega no la detecta ningún reintento. */
 const TIMEOUT_PETICION_MS = 10_000;
-/** Reintentos por carta. Cortos a propósito: aquí hay miles de peticiones. */
+/** Intentos por carta. Cortos a propósito: aquí hay miles de peticiones. */
 const REINTENTOS = 3;
-/** Base del respaldo exponencial: 600 ms, 1,2 s. Peor caso 1,8 s por carta. */
+/**
+ * Base del respaldo exponencial: 600 ms, 1,2 s. Peor caso 1,8 s por carta, y
+ * ahora es verdad: tras el ÚLTIMO intento ya no se duerme (ver `pedirJson`).
+ */
 const ESPERA_BASE_MS = 600;
 /** Sólo se duerme si después queda tiempo para la petición que sigue. */
 const MARGEN_REINTENTO_MS = 1_500;
@@ -111,6 +114,48 @@ const FILAS_POR_SENTENCIA = 200;
  * viaja con él. No existe una carta de 100.000 €; lo que pase de ahí es basura.
  */
 const TOPE_EUR = 100_000;
+
+/**
+ * EL SALTO SOSPECHOSO: un precio que YA estaba guardado no puede multiplicarse
+ * por más de esto de una pasada a la siguiente.
+ *
+ * EL AGUJERO QUE CIERRA: TOPE_EUR protege la columna, no la economía, y las
+ * guardias antimapeo comprueban que la carta sea la misma, no que el número sea
+ * razonable. Nada comparaba el euro nuevo con el que ya había: el UPSERT lo
+ * pisaba. Un `avg30` atípico —una venta mal catalogada en una carta de poco
+ * volumen, o un valor servido en céntimos— entraba tal cual y, diez minutos
+ * después (lo que dura la caché de services/preciosBD.ts), cada copia repetida
+ * de esa carta se vendía por varias veces su precio.
+ *
+ * POR QUÉ ×5 Y NO MENOS: lo que se guarda es `avg30`, una media de treinta
+ * días, y la cola vuelve a cada carta cada cuatro o cinco noches. Que una media
+ * mensual se quintuplique entre dos visitas no es una subida, es un dato roto.
+ *
+ * POR QUÉ EL SUELO DE 50 €: por debajo, el ajuste entero mueve el precio menos
+ * de un 5% (utils/constanst.ts) y una carta de 2 € que pasa a 12 € no es una
+ * fuga, es ruido. Sin el suelo, cada oscilación de las cartas baratas llenaría
+ * el registro de sospechas que nadie tiene que mirar.
+ *
+ * QUÉ PASA CON LA CARTA: conserva el euro que tenía y queda en estado
+ * 'sospechoso'. Si la subida era de verdad, se confirma a mano con
+ * /api/cron/sync-precios?setId=<expansión>, que es la vía en la que una persona
+ * ha mirado el dato y por eso NO vigila el salto. No hay otra salida automática
+ * a propósito: la tabla no tiene dónde guardar el valor candidato, y aceptar
+ * "a la segunda" sólo retrasaría la misma fuga una vuelta de la cola.
+ *
+ * LO QUE ÉSTA NO VE: la PRIMERA vez que se guarda un precio no hay con qué
+ * compararlo. Para ese caso está PROPUESTO, y desactivado hasta que el dueño
+ * lo decida porque cambia la fórmula del precio, un techo del ajuste en
+ * utils/constanst.ts (TECHO_AJUSTE_PRECIO_REAL).
+ */
+const SALTO_SOSPECHOSO = 5;
+const SUELO_SOSPECHA_EUR = 50;
+/**
+ * `card_prices.estado` es TEXT sin CHECK, así que este valor no pide migración.
+ * Sale de ESTADOS_PRECIO (services/esquemaMejoras.ts), que es donde están
+ * todos los estados de esa columna.
+ */
+const ESTADO_SOSPECHOSO = ESTADOS_PRECIO.sospechoso;
 
 /**
  * Tope de errores que se guardan con su texto. Un fallo de red al principio de
@@ -138,6 +183,15 @@ export interface ResumenPrecios {
   sinPrecio: number;
   /** Cartas marcadas sin fuente (expansión sin id de TCGdex o rechazada). */
   sinFuente: number;
+  /**
+   * Cartas cuyo precio nuevo NO se guardó porque multiplicaba por más de
+   * SALTO_SOSPECHOSO el que ya tenían. Conservan el anterior y quedan en estado
+   * 'sospechoso'. Es accionable: o TCGdex sirve un dato roto, o la carta ha
+   * subido de verdad y hay que confirmarla con `?setId=`.
+   */
+  sospechosos: number;
+  /** Las primeras, con el euro rechazado y el que se conserva. */
+  detalleSospechosos: string[];
   truncadoPorTiempo: boolean;
   errores: string[];
   /** Errores que ocurrieron pero no se guardaron por el tope de MAX_ERRORES. */
@@ -257,6 +311,10 @@ async function pedirJson<T>(url: string, limite: number): Promise<T | null> {
         signal: senalConTiempo(limite),
       });
     } catch {
+      // ERA EL ÚLTIMO INTENTO: no se duerme. Antes se esperaba el respaldo
+      // entero (2,4 s en el tercero) sólo para salir del bucle y lanzar: tiempo
+      // del presupuesto tirado justo en la noche mala, que es cuando falta.
+      if (intento === REINTENTOS - 1) break;
       const espera = ESPERA_BASE_MS * Math.pow(2, intento);
       if (Date.now() + espera + MARGEN_REINTENTO_MS > limite) {
         throw new Error("sin tiempo para reintentar: " + url);
@@ -267,6 +325,10 @@ async function pedirJson<T>(url: string, limite: number): Promise<T | null> {
     if (res.status === 404) return null;
     if (res.ok) return res.json();
     if ([429, 500, 502, 503, 504].includes(res.status)) {
+      // Mismo criterio que arriba: tras el último intento se lanza sin dormir.
+      if (intento === REINTENTOS - 1) {
+        throw new Error(`HTTP ${res.status}, reintentos agotados: ${url}`);
+      }
       const espera = ESPERA_BASE_MS * Math.pow(2, intento);
       if (Date.now() + espera + MARGEN_REINTENTO_MS > limite) {
         throw new Error(`HTTP ${res.status} sin tiempo para reintentar: ${url}`);
@@ -378,9 +440,12 @@ function normalizarNombre(valor: string): string {
 function mueveLaAguja(rareza: string | null | undefined): boolean {
   const r = (rareza ?? "").trim();
   if (!r) return false;
-  const tarifa = SELL_PRICES[r];
-  if (tarifa === undefined) return true;
-  return tarifa >= CORTE_TARIFA;
+  // Propiedad PROPIA: con una rareza llamada "constructor", `SELL_PRICES[r]`
+  // devuelve una función heredada, que ni es undefined ni es >= 35, y este
+  // predicado diría "no" donde el filtro SQL de `construirCola` dice "sí" —
+  // justo la separación que el párrafo de arriba prohíbe.
+  if (!Object.prototype.hasOwnProperty.call(SELL_PRICES, r)) return true;
+  return SELL_PRICES[r] >= CORTE_TARIFA;
 }
 
 /* ------------------------------------------------------------------ *
@@ -420,9 +485,20 @@ interface FilaPrecio {
  * la misma fila dos veces en la misma sentencia (la trampa que documenta
  * `unicosPorId` en ingest.ts). Hoy no puede pasar —se recorren ids distintos—,
  * pero el día que pase se llevaría por delante el lote entero, no la fila.
+ *
+ * EL SALTO SOSPECHOSO SE DECIDE AQUÍ, DENTRO DE LA SENTENCIA, y no comparando
+ * en JavaScript contra el euro leído al abrir la expansión: entre aquella
+ * lectura y esta escritura pasan segundos y puede haber escrito otra ejecución
+ * (el cron encadenado y un disparo a mano a la vez). Quien arbitra es la fila
+ * que hay en la tabla en el momento de pisarla. Ver SALTO_SOSPECHOSO.
+ *
+ * @param vigilarSalto false sólo cuando una persona fuerza la expansión con
+ *   `?setId=`: es la vía para confirmar una subida de verdad.
+ * @returns los ids que NO se actualizaron por sospechosos (conservan su euro).
  */
-async function volcar(filas: FilaPrecio[]): Promise<void> {
-  if (!filas.length) return;
+async function volcar(filas: FilaPrecio[], vigilarSalto: boolean): Promise<string[]> {
+  const sospechosos: string[] = [];
+  if (!filas.length) return sospechosos;
   const unicas = new Map<string, FilaPrecio>();
   for (const f of filas) unicas.set(f.cardId, f);
   const lista = [...unicas.values()];
@@ -442,20 +518,38 @@ async function volcar(filas: FilaPrecio[]): Promise<void> {
         ` CASE WHEN $${base + 2}::numeric IS NULL THEN NULL ELSE NOW() END)`
       );
     });
-    await sql.query(
+    // Cuatro parámetros más, detrás de los de las filas: van parametrizados y
+    // no pegados al texto para que la sentencia sea la misma en todos los lotes.
+    const p = lote.length * 3;
+    params.push(vigilarSalto, SUELO_SOSPECHA_EUR, SALTO_SOSPECHOSO, ESTADO_SOSPECHOSO);
+    // En un DO UPDATE, `card_prices.eur` es el valor de ANTES en todas las
+    // expresiones del SET, también en las que van después de asignar `eur`.
+    const sospechoso =
+      `$${p + 1}::boolean` +
+      ` AND card_prices.eur IS NOT NULL AND card_prices.eur > 0` +
+      ` AND EXCLUDED.eur IS NOT NULL` +
+      ` AND EXCLUDED.eur > $${p + 2}::numeric` +
+      ` AND EXCLUDED.eur > card_prices.eur * $${p + 3}::numeric`;
+    const { rows } = await sql.query(
       `INSERT INTO card_prices (card_id, eur, estado, revisado_en, cambiado_en)
        VALUES ${tuplas.join(", ")}
        ON CONFLICT (card_id) DO UPDATE
-         SET eur = EXCLUDED.eur,
+         SET eur = CASE WHEN ${sospechoso} THEN card_prices.eur ELSE EXCLUDED.eur END,
              fuente = 'tcgdex',
-             estado = EXCLUDED.estado,
+             estado = CASE WHEN ${sospechoso} THEN $${p + 4} ELSE EXCLUDED.estado END,
              revisado_en = NOW(),
              cambiado_en = CASE
+               WHEN ${sospechoso} THEN card_prices.cambiado_en
                WHEN card_prices.eur IS DISTINCT FROM EXCLUDED.eur THEN NOW()
-               ELSE card_prices.cambiado_en END`,
+               ELSE card_prices.cambiado_en END
+       RETURNING card_id, estado`,
       params,
     );
+    for (const fila of rows) {
+      if (fila.estado === ESTADO_SOSPECHOSO) sospechosos.push(String(fila.card_id));
+    }
   }
+  return sospechosos;
 }
 
 /**
@@ -603,6 +697,8 @@ interface ResultadoSet {
   sinCambios: number;
   sinPrecio: number;
   sinFuente: number;
+  sospechosos: number;
+  detalleSospechosos: string[];
   truncado: boolean;
 }
 
@@ -610,10 +706,12 @@ async function procesarSet(
   trabajo: TrabajoSet,
   limite: number,
   anotarError: (mensaje: string) => void,
+  vigilarSalto: boolean,
 ): Promise<ResultadoSet> {
   const r: ResultadoSet = {
     revisados: 0, actualizados: 0, sinCambios: 0,
-    sinPrecio: 0, sinFuente: 0, truncado: false,
+    sinPrecio: 0, sinFuente: 0, sospechosos: 0, detalleSospechosos: [],
+    truncado: false,
   };
 
   // Las cartas locales ENTERAS, no sólo las caras: las guardias se calculan
@@ -780,7 +878,20 @@ async function procesarSet(
   let porMarcar: { cardId: string; estado: string }[] = [];
 
   const descargar = async () => {
-    await volcar(porEscribir);
+    const rechazados = await volcar(porEscribir, vigilarSalto);
+    if (rechazados.length) {
+      // Se contaron como "actualizados" al leerlos (el euro era distinto), pero
+      // la sentencia no los ha tocado: se descuentan para que el resumen no
+      // diga que cambió un precio que sigue como estaba.
+      const nuevos = new Map(porEscribir.map((f) => [f.cardId, f.eur]));
+      r.actualizados -= rechazados.length;
+      r.sospechosos += rechazados.length;
+      for (const id of rechazados) {
+        r.detalleSospechosos.push(
+          `${id}: ${nuevos.get(id)} € donde había ${eurAnterior.get(id) ?? "?"} €`,
+        );
+      }
+    }
     porEscribir = [];
     // Agrupadas por estado: `marcarSinPrecio` escribe un estado por sentencia.
     for (const estado of new Set(porMarcar.map((m) => m.estado))) {
@@ -886,6 +997,8 @@ export async function sincronizarPrecios(opciones: {
     sinCambios: 0,
     sinPrecio: 0,
     sinFuente: 0,
+    sospechosos: 0,
+    detalleSospechosos: [],
     truncadoPorTiempo: false,
     errores: [],
     erroresOmitidos: 0,
@@ -928,12 +1041,17 @@ export async function sincronizarPrecios(opciones: {
     }
     resumen.setsRevisados.push(trabajo.setId);
     try {
-      const r = await procesarSet(trabajo, limite, anotarError);
+      // Con `?setId=` NO se vigila el salto: ver SALTO_SOSPECHOSO.
+      const r = await procesarSet(trabajo, limite, anotarError, !forzado);
       resumen.revisados += r.revisados;
       resumen.actualizados += r.actualizados;
       resumen.sinCambios += r.sinCambios;
       resumen.sinPrecio += r.sinPrecio;
       resumen.sinFuente += r.sinFuente;
+      resumen.sospechosos += r.sospechosos;
+      for (const d of r.detalleSospechosos) {
+        if (resumen.detalleSospechosos.length < MAX_ERRORES) resumen.detalleSospechosos.push(d);
+      }
       if (r.truncado) resumen.truncadoPorTiempo = true;
       if (r.rechazo) resumen.setsRechazados.push({ setId: trabajo.setId, motivo: r.rechazo });
     } catch (e) {

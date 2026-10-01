@@ -6,14 +6,16 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
   getUserData,
-  getSetsFromDB,
-  getFullCollection,
+  getInventarioColeccion,
   claimSetCompletionBonuses,
   sellPackDuplicates,
   getWishlistIds,
   getComposicionDeSobres,
 } from "./action";
 import { getCardsFromSet } from "../services/pokemon";
+// El catálogo de expansiones, pedido una vez por sesión de navegador y
+// compartido entre pantallas (ver utils/catalogoCliente.ts).
+import { catalogoDeExpansiones } from "../utils/catalogoCliente";
 // La ilustración real del sobre, para precargarla en cuanto se elige la
 // expansión (ver el efecto de más abajo).
 import { ilustracionDeSobre, normalizarId } from "../utils/sobreArte";
@@ -22,6 +24,11 @@ import {
   openPremiumPack,
   openGoldenPack,
   composicionDelSobre,
+  // La regla de "colección especial", que es LA MISMA función que usa el
+  // servidor en `sobresPermitidos` (app/action.ts). Se importan con otro
+  // nombre porque `composicionEspecial` es aquí el nombre del valor memorizado.
+  composicionEspecial as medirComposicionEspecial,
+  esColeccionEspecial,
   eraDeSerie,
   RELLENO_PREMIUM,
 } from "../utils/packLogic";
@@ -1044,7 +1051,7 @@ export default function Home() {
    * expansión anterior sobre el nombre de la nueva.
    */
   const [anuncioServidor, setAnuncioServidor] = useState<
-    { setId: string; sobres: SobresAnunciados } | null
+    { setId: string; sobres: SobresAnunciados; incompleto: boolean } | null
   >(null);
   /**
    * Una llamada por expansión y ya nunca más: la respuesta no depende de nada
@@ -1053,14 +1060,16 @@ export default function Home() {
    * respuestas CON sesión, que son las únicas que se piden: por eso basta el id
    * como clave y no hace falta meter la sesión dentro.
    */
-  const anunciosRef = useRef(new Map<string, SobresAnunciados>());
+  const anunciosRef = useRef(
+    new Map<string, { sobres: SobresAnunciados; incompleto: boolean }>(),
+  );
 
   useEffect(() => {
     // Al invitado le reparte su propio navegador: no hay nada que preguntar.
     if (!isSignedIn || !selectedSet) return;
     const memorizado = anunciosRef.current.get(selectedSet);
     if (memorizado) {
-      setAnuncioServidor({ setId: selectedSet, sobres: memorizado });
+      setAnuncioServidor({ setId: selectedSet, ...memorizado });
       return;
     }
     /* `vigente` cierra la carrera de siempre: cambiar de expansión mientras esto
@@ -1076,8 +1085,13 @@ export default function Home() {
           console.warn("No se pudo pedir la composición del sobre:", res.motivo);
           return;
         }
-        anunciosRef.current.set(res.setId, res.sobres);
-        if (vigente) setAnuncioServidor({ setId: res.setId, sobres: res.sobres });
+        /* `incompleto`: la expansión se está descargando todavía y no vende
+         * ningún sobre. No se memoriza: es justo la respuesta que SÍ cambia
+         * mientras se navega (el cron termina la descarga), y recordarla
+         * dejaría la expansión cerrada hasta recargar. */
+        const anuncio = { sobres: res.sobres, incompleto: res.incompleto === true };
+        if (!anuncio.incompleto) anunciosRef.current.set(res.setId, anuncio);
+        if (vigente) setAnuncioServidor({ setId: res.setId, ...anuncio });
       })
       .catch((err) => console.error("Error pidiendo la composición del sobre:", err));
     return () => {
@@ -1094,6 +1108,15 @@ export default function Home() {
     isSignedIn && anuncioServidor && anuncioServidor.setId === selectedSet
       ? anuncioServidor.sobres
       : null;
+  /**
+   * La expansión en pantalla aún se está descargando y el servidor no vende
+   * ningún sobre de ella (`catalogoIncompleto`, en app/action.ts). Sin esto la
+   * tienda pintaba el sobre Leyenda igualmente y la compra contestaba "ese
+   * sobre no está a la venta en esta expansión". Sólo con sesión: al invitado
+   * le reparte su navegador con el catálogo que ha cargado.
+   */
+  const expansionAMedias =
+    !!isSignedIn && !!anuncioServidor && anuncioServidor.setId === selectedSet && anuncioServidor.incompleto;
 
   const composiciones = useMemo(() => {
     if (!allCards || allCards.length === 0) return null;
@@ -1195,14 +1218,10 @@ export default function Home() {
    * "gallery"), así que además se mira la COMPOSICIÓN real en cuanto cargan las
    * cartas: sin comunes suficientes, no es un set de sobre estándar.
    */
-  const composicionEspecial = useMemo(() => {
-    if (!allCards || allCards.length === 0) return false;
-    const comunes = allCards.filter((c) => c.rarity === "Common").length;
-    const relleno = allCards.filter(
-      (c) => c.rarity === "Common" || c.rarity === "Uncommon",
-    ).length;
-    return comunes < 8 || relleno / allCards.length < 0.2;
-  }, [allCards]);
+  const composicionEspecial = useMemo(
+    () => medirComposicionEspecial(allCards ?? []),
+    [allCards],
+  );
 
   // OJO AL NOMBRE: con la app en español `name` trae el nombre traducido, y
   // "Promos Escarlata y Púrpura" no contiene "promos" ni "Galería de
@@ -1210,25 +1229,30 @@ export default function Home() {
   // la capa de idioma justo para esto: qué sobres se venden en una expansión no
   // puede depender del idioma en que se mire. El servidor hace la misma
   // comprobación sobre la tabla `sets`, que nunca se traduce.
-  const nombreEnIngles = String(currentSetObj?.nameEn ?? currentSetObj?.name ?? "").toLowerCase();
-  const isSpecialSet = currentSetObj
-    ? nombreEnIngles.includes("promos") ||
-      nombreEnIngles.includes("gallery") ||
-      currentSetObj.series === "POP" ||
-      currentSetObj.series === "Other" ||
-      // El total DECLARADO, no el conteo real: un set a medio sembrar tiene
-      // pocas cartas en `cards` y con `cardsCount` aquí se marcaría de especial
-      // por error, dejando la expansión sin sobres normales.
-      //
-      // `> 0 &&` es EXACTAMENTE la condición que aplica el servidor en
-      // `sobresPermitidos`. Tiene que ser la misma cadena de comparaciones o
-      // esta pantalla pinta botones que el servidor rechaza al pulsarlos: con un
-      // `total` nulo, aquí salía false (typeof null es "object") y allí true
-      // (Number(null) es 0), así que la tienda ofrecía tres sobres y los tres
-      // fallaban.
-      (Number(currentSetObj.total) > 0 && Number(currentSetObj.total) < 69) ||
-      composicionEspecial
-    : false;
+  //
+  // LA REGLA YA NO ESTÁ ESCRITA AQUÍ: es `esColeccionEspecial`
+  // (utils/packLogic.ts), la misma función que llama el servidor en
+  // `sobresPermitidos`. Mientras fueron dos copias se separaron una vez —con un
+  // `total` nulo aquí salía false (typeof null es "object") y allí true
+  // (Number(null) es 0), y la tienda ofrecía tres sobres que fallaban los
+  // tres—. Lo que cambia de un lado a otro son sólo los datos: aquí el nombre
+  // inglés de la capa de idioma, el total DECLARADO (no el conteo real: un set
+  // a medio sembrar se marcaría de especial por error) y las cartas que ha
+  // cargado esta pantalla.
+  const isSpecialSet = useMemo(
+    () =>
+      currentSetObj
+        ? esColeccionEspecial(
+            {
+              name: currentSetObj.nameEn ?? currentSetObj.name,
+              series: currentSetObj.series,
+              total: currentSetObj.total,
+            },
+            allCards ?? [],
+          )
+        : false,
+    [currentSetObj, allCards],
+  );
 
   /* LA PORTADA ARRANCA CON ALGO QUE MIRAR. El porqué largo está en el bloque
      de `leerSeriesAbiertas`, arriba del componente.
@@ -1266,10 +1290,15 @@ export default function Home() {
     setSetsCargando(true);
     (async () => {
       try {
-        const sets = await getSetsFromDB();
-        if (!Array.isArray(sets) || sets.length === 0) {
+        /* EL CATÁLOGO COMPARTIDO (utils/catalogoCliente.ts): volver a la
+         * tienda desde la colección o un álbum ya no repite la petición.
+         * Y SE ORDENA UNA COPIA: la lista es la misma para todas las
+         * pantallas, y ordenarla en sitio se la reordenaría a las demás. */
+        const delCatalogo = await catalogoDeExpansiones();
+        if (!Array.isArray(delCatalogo) || delCatalogo.length === 0) {
           throw new Error("La lista de expansiones ha llegado vacía");
         }
+        const sets = [...delCatalogo];
         // Sort by release date desc when available
         sets.sort((a: any, b: any) => {
           const da = a.releaseDate ? new Date(a.releaseDate).getTime() : 0;
@@ -1377,10 +1406,18 @@ export default function Home() {
         if (identidad === "cuenta") {
           const data = await getUserData();
           if (data) setCoins(data.coins);
-          const myCards = await getFullCollection();
-          setUserCollectionIds(myCards.map((c: any) => c.id));
-          // La misma respuesta trae cantidades, graduadas y favoritas: con eso
-          // la tienda puede decir cuánto dan las repetidas antes de venderlas.
+          /* EL INVENTARIO LIGERO, NO LA COLECCIÓN ENTERA. De cada carta la
+           * tienda usa el id, la rareza, las cantidades y el importe de sus
+           * repetidas; `getFullCollection` mandaba además ataques, legalidades,
+           * precios y el estado físico de la mejor copia, unos 800 bytes por
+           * carta para pintar una insignia de "Nueva" y un botón.
+           * `getInventarioColeccion` trae esos mismos campos, con los mismos
+           * nombres y calculados por la misma función. */
+          const myCards = await getInventarioColeccion();
+          setUserCollectionIds(myCards.map((c) => c.id));
+          // La misma respuesta trae cantidades, graduadas, anunciadas y
+          // favoritas: con eso la tienda puede decir cuánto dan las repetidas
+          // antes de venderlas.
           inventarioRef.current = inventarioDe(myCards);
           setVersionInventario((v) => v + 1);
           setColeccionLista(true);
@@ -1687,12 +1724,18 @@ export default function Home() {
    * contesta. Una respuesta PERDIDA no pasa por aquí —ahí no se sabe si cobró,
    * y antes se decía igualmente que no—: va a `compraEnDuda`.
    */
-  const abortarSobre = (motivo?: string) => {
+  const abortarSobre = (motivo?: string, detalle?: string) => {
     sobrePendienteRef.current = null;
     cartasRef.current = [];
     resetPackState();
-    toast(textoDeRechazo(motivo), "error");
+    toast(textoDeRechazo(motivo, detalle), "error");
     haptic("warning");
+  };
+
+  /** El `detalle` de un rechazo de compra, si el servidor lo ha mandado. */
+  const detalleDe = (res: object): string | undefined => {
+    const d = (res as { detalle?: unknown }).detalle;
+    return typeof d === "string" ? d : undefined;
   };
 
   /** Recuerda la expansión y el sobre que se acaban de pedir. */
@@ -1763,7 +1806,7 @@ export default function Home() {
         }
         if (!res.ok) {
           cerrarIntento(intento.clave);
-          if (enPantalla) abortarSobre(res.motivo);
+          if (enPantalla) abortarSobre(res.motivo, detalleDe(res));
           return false;
         }
         // Saldo autoritativo: ya lleva el cobro aplicado en el servidor. Se
@@ -2100,7 +2143,7 @@ export default function Home() {
       cerrarIntento(pendiente.clave);
       setCompraPendiente(null);
       if (!res.ok) {
-        toast(textoDeRechazo(res.motivo), "error");
+        toast(textoDeRechazo(res.motivo, detalleDe(res)), "error");
         return;
       }
       setCoins(res.coins);
@@ -2215,7 +2258,7 @@ export default function Home() {
         }
         if (!res.ok) {
           cerrarIntento(intento.clave);
-          toast(textoDeRechazo(res.motivo), "error");
+          toast(textoDeRechazo(res.motivo, detalleDe(res)), "error");
           return;
         }
         combined = hidratarCartas(res.cartas);
@@ -2868,6 +2911,10 @@ export default function Home() {
         if (inventarioRef.current) restarVenta(inventarioRef.current, ids);
         setVersionInventario((v) => v + 1);
         play("moneda");
+      } else if ("limitado" in res && res.limitado) {
+        // El tope de frecuencia del servidor (services/limite.ts): no se ha
+        // vendido nada, y decir "no había repetidas" sería mentir.
+        toast("Demasiadas ventas seguidas. Espera unos segundos y vuelve a intentarlo.", "error");
       } else {
         toast("No había repetidas que vender", "error");
       }
@@ -3403,6 +3450,18 @@ export default function Home() {
               >
                 Reintentar
               </button>
+            </div>
+          ) : expansionAMedias && !loading ? (
+            /* LA EXPANSIÓN SE ESTÁ DESCARGANDO TODAVÍA. El servidor no vende
+               ningún sobre de un catálogo a medias (le faltan justo los números
+               altos, que son las mejores cartas), así que no se pinta ninguno:
+               antes salía el Leyenda y fallaba al pulsarlo. Se dice qué pasa y
+               que se arregla solo. */
+            <div className="surface rounded-3xl w-full max-w-sm p-6 flex flex-col items-center gap-2 text-center">
+              <p className="t-cuerpo font-semibold">Esta expansión todavía se está descargando</p>
+              <p className="t-cuerpo-2 ink-soft">
+                Sus sobres saldrán a la venta en cuanto estén todas sus cartas. Suele ser cuestión de un día.
+              </p>
             </div>
           ) : (
           /* En móvil, carrusel horizontal con anclaje: los tres sobres caben

@@ -10,6 +10,12 @@
  *   node scripts/preparar-sobres.mjs
  *   node scripts/preparar-sobres.mjs --origen "C:/ruta/a/ImagenesSobres"
  *
+ * NECESITA `sharp`, QUE NO ESTÁ EN package.json. Hoy llega sólo como
+ * dependencia OPCIONAL de Next (next -> sharp): con `npm install
+ * --omit=optional`, o en una plataforma para la que sharp no traiga binario,
+ * este script (y scripts/bajar-sobres-bulbapedia.mjs) no arranca. Declararlo
+ * en devDependencies exige instalar, y eso lo decide el dueño del repositorio.
+ *
  * ============================================================================
  * POR QUÉ ESTO ES UN PASO MANUAL Y NO UN CRON
  * ============================================================================

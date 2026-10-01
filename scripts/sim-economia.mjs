@@ -22,6 +22,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { transform, loadBindings } from "next/dist/build/swc/index.js";
 
+// Que `loadBindings` no reescriba package-lock.json ni llame al registro de npm
+// (lo hace si al lockfile le faltan los `@next/swc-*`; ver scripts/sim-mercado.mjs).
+process.env.NEXT_IGNORE_INCORRECT_LOCKFILE ??= "1";
 await loadBindings();
 const raiz = process.cwd();
 
@@ -343,13 +346,21 @@ for (const f of filas2) {
     if (f.exacto === undefined) continue;
     const desvio = Math.abs(f.exacto - f.ahora);
     if (desvio > peor) { peor = desvio; peorSet = f.setId + " " + f.sobre; }
-    // 3σ y no 2σ: se comparan ~90 filas por corrida, así que a 2σ un desvío
-    // legítimo salta solo por sorteo varias veces al día. El medio punto extra
-    // cubre el sesgo conocido del cálculo cerrado en premium (los pools de
-    // 'doubleRare' de Espada y Escudo mezclan precios y el hueco intermedio ya
-    // ha sacado una carta de ahí, así que la media uniforme se queda ~0,25
-    // corta; medido con 400.000 sobres).
-    if (desvio > 1.5 * f.margen + 0.5) {
+    // 4σ (`margen` ya es 2σ). Por qué 4 y no 2 ni 3: aquí se comparan unas 75
+    // filas por corrida. A 2σ saltan tres o cuatro por puro sorteo; a 3σ, una
+    // corrida de cada cinco trae un fallo que no existe; a 4σ, una de cada
+    // doscientas. Un contraste que falla por azar se acaba ignorando.
+    //
+    // AQUÍ HABÍA `1.5 * margen + 0.5`, y el medio punto se justificaba con un
+    // "sesgo conocido" del cálculo cerrado en el premium (~0,25 monedas). ESE
+    // SESGO NO EXISTE: medido con 200.000 sobres por expansión y sobre con el
+    // packLogic real, de 62 filas quedan 3 fuera de 2σ (por azar se esperan
+    // 2,8) y ninguna fuera de 3σ. No puede haberlo: dentro de cada pool las
+    // extracciones son intercambiables, así que evitar repetidas no mueve la
+    // media. El medio punto sólo aflojaba el contraste —lo dejaba en 5,5σ para
+    // el estándar— y hacía pasar por conocido un desvío que, de aparecer, sería
+    // un fallo de verdad.
+    if (desvio > 2 * f.margen) {
       fallo(`el cálculo cerrado y el Montecarlo no cuadran en ${f.setId} ${f.sobre}: ` +
             `${f.exacto.toFixed(2)} vs ${f.ahora.toFixed(2)} (margen ${f.margen.toFixed(2)})`);
     }

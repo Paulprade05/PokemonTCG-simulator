@@ -13,6 +13,14 @@
  * poder ejecutar el fichero DE VERDAD, sin copiar su lógica en la prueba.
  *
  * Uso:  node scripts/probar-idioma.mjs
+ *
+ * DE QUÉ DEPENDE, que no se ve en los imports: más abajo se importa
+ * services/idioma.ts TAL CUAL, sin transpilar. Eso sólo funciona en un Node que
+ * quite los tipos él solo (22.18 o posterior; el CI usa la 24: ver
+ * .github/workflows/ci.yml). En uno anterior falla con ERR_UNKNOWN_FILE_EXTENSION ".ts",
+ * que no parece lo que es. Y no puede importar nada con sintaxis que Node no
+ * sepa borrar (enum, namespace, propiedades de parámetro): si services/idioma.ts
+ * la usa algún día, esta prueba deja de arrancar aunque `next build` compile.
  */
 
 import { register } from "node:module";

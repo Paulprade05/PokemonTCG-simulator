@@ -229,7 +229,7 @@ export default function Graduacion() {
    * —`semillaDeCopia(idUsuario, cardId, copia)`— y derivar de ella los
    * desperfectos. Eso era justo el agujero: con esa semilla y `notaDeCopia`,
    * que viaja en este mismo paquete, cualquiera podía calcular la nota de sus
-   * copias SIN GRADUAR y mandar sólo los dieces, que valen el triple.
+   * copias SIN GRADUAR y mandar sólo los dieces, que valen casi el doble.
    *
    * Ahora la semilla lleva un secreto de servidor y nunca sale de él: lo que
    * llega son la nota y los desperfectos ya calculados. Si vuelves a necesitar
@@ -447,7 +447,14 @@ export default function Graduacion() {
       const res = await graduarCartasAction(peticiones);
       if (!res.ok) {
         haptic("warning");
-        toast(ERRORES_GRADUAR[res.error] ?? "No se pudo graduar. Nada ha cambiado.", "error");
+        toast(
+          // El tope de frecuencia del servidor llega como "servidor" más
+          // `limitado`: no es que el graduador no responda, es "espera un poco".
+          "limitado" in res && res.limitado
+            ? "Demasiados envíos seguidos. Espera unos segundos: no se ha cobrado nada."
+            : (ERRORES_GRADUAR[res.error] ?? "No se pudo graduar. Nada ha cambiado."),
+          "error",
+        );
         // Cualquier desajuste con el servidor (copias vendidas en otra pestaña,
         // saldo distinto del que creíamos) se arregla releyendo el estado real.
         if (res.error !== "peticion") cargar(false);

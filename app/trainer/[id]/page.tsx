@@ -5,9 +5,12 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import { useUser } from "@clerk/nextjs";
-import { getTrainerCollection, getSetsFromDB } from "../../action";
+import { getTrainerCollection } from "../../action";
+// El catálogo de expansiones, pedido una vez por sesión de navegador y
+// compartido entre pantallas (ver utils/catalogoCliente.ts).
+import { catalogoDeExpansiones } from "../../../utils/catalogoCliente";
 import { aceptarPeticion, enviarPeticion, getFichaEntrenador } from "../../social";
-import { RARITY_RANK, SELL_PRICES } from "../../../utils/constanst";
+import { rangoParaOrdenar } from "../../../utils/constanst";
 import { formatNumber } from "../../../utils/format";
 import { progresoPorExpansion } from "../../../utils/progresoPorExpansion";
 import type { FichaEntrenador, MotivoSinFicha } from "../../../utils/tiposSocial";
@@ -70,7 +73,7 @@ export default function TrainerProfilePage() {
   const rarityOptions = useMemo(() => {
     const set = new Set<string>();
     cards.forEach((c) => c.rarity && set.add(c.rarity));
-    return Array.from(set).sort((a, b) => (RARITY_RANK[b] || 0) - (RARITY_RANK[a] || 0));
+    return Array.from(set).sort((a, b) => rangoParaOrdenar(b) - rangoParaOrdenar(a));
   }, [cards]);
 
   // Todo dentro del mismo try/finally: si falla el transporte de cualquiera de
@@ -81,7 +84,7 @@ export default function TrainerProfilePage() {
     setLoading(true);
     setLoadError(false);
     try {
-      const sets = await getSetsFromDB();
+      const sets = await catalogoDeExpansiones();
       setDbSets(sets);
       const trainerCards = await getTrainerCollection(trainerId);
       setCards(trainerCards);
@@ -177,14 +180,13 @@ export default function TrainerProfilePage() {
       switch (sortBy) {
         case "name_asc": return a.name.localeCompare(b.name);
         case "quantity_desc": return (b.quantity || 1) - (a.quantity || 1);
-        case "rarity_desc": return (RARITY_RANK[b.rarity] || 0) - (RARITY_RANK[a.rarity] || 0);
+        case "rarity_desc": return rangoParaOrdenar(b.rarity) - rangoParaOrdenar(a.rarity);
         default: return 0;
       }
     });
     return result;
   }, [cards, searchTerm, filterSet, filterRarity, sortBy]);
 
-  const getPrice = (rarity: string) => SELL_PRICES[rarity] || 10;
 
   /* AÑADIR DESDE EL PROPIO ÁLBUM. Un solo botón para los dos casos: si no hay
    * nada entre los dos envía la petición, y si él ya me lo había pedido la

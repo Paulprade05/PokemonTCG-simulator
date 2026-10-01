@@ -38,7 +38,7 @@ export async function GET(request: Request) {
     ];
 
     for (const stmt of [...cardAlters, ...setAlters, ...idx]) {
-      // @ts-ignore - dynamic SQL via tagged template requires unsafe; use sql.query
+      // DDL dinámico: por eso `sql.query` y no la plantilla etiquetada.
       await sql.query(stmt);
     }
 

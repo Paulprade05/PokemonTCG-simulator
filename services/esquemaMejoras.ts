@@ -198,11 +198,14 @@ export const SENTENCIAS_PRECIOS: readonly string[] = [
  * la cuenta porque las monedas no se mueven entre usuarios por ninguna vía y
  * el trueque es carta por carta. Un bazar con precio libre rompe justo eso.
  *
- * LAS TRES DEFENSAS, y ninguna se puede quitar sola:
+ * LAS DEFENSAS QUE SE VEN EN ESTA TABLA, y ninguna se puede quitar sola (la
+ * lista completa son cuatro, con sus números medidos, y está en utils/bazar.ts:
+ * banda de precio, comisión, antigüedad mínima para vender y para comprar, y
+ * tope de anuncios):
  *   1. `precio` está ACOTADO por el servidor a una banda alrededor del valor
- *      real de la carta (ver LIMITES_BAZAR en services/bazar.ts). Vender un
- *      Common por 10.000 es imposible: no es que se rechace la compra, es que
- *      la publicación no se llega a crear.
+ *      real de la carta (ver `bandaDePrecio` y `precioValido` en
+ *      utils/bazar.ts). Vender un Common por 10.000 es imposible: no es que se
+ *      rechace la compra, es que la publicación no se llega a crear.
  *   2. COMISIÓN sobre la venta: el vendedor cobra menos de lo que paga el
  *      comprador, así que cada pase entre cuentas DESTRUYE monedas. El ciclo
  *      de lavado pierde valor en cada vuelta en vez de ser gratis.
@@ -261,12 +264,20 @@ export const ESTADOS_PRECIO = {
   sinFuente: "sin_fuente",
   /** TCGdex devolvió 404 para ese id. */
   noEncontrada: "404",
+  /**
+   * El precio nuevo multiplicaba de golpe el que ya había y NO se ha guardado:
+   * la carta conserva su euro anterior. Lo escribe `volcar`
+   * (services/preciosIngest.ts, ver SALTO_SOSPECHOSO) y lo cuenta /db-stats.
+   * La columna es TEXT sin CHECK: no pide migración.
+   */
+  sospechoso: "sospechoso",
 } as const;
 
 /**
- * Las tres tablas juntas, para /migrate-mejoras.
+ * Las cuatro tablas juntas (graduación, archivador, precios y bazar), para
+ * /migrate-mejoras.
  *
- * EL REPARTO ENTRE LOS TRES ARRAYS NO ES COSMÉTICO, es el criterio que el
+ * EL REPARTO ENTRE LOS ARRAYS NO ES COSMÉTICO, es el criterio que el
  * repositorio ya sigue (services/idiomaIngest.ts lo documenta en su `asegurarTablas`): una tabla
  * que sólo usa un cron se asegura en el módulo del cron, y una tabla que usa la
  * aplicación se asegura en `ensureSchema`. Por eso:
@@ -276,7 +287,7 @@ export const ESTADOS_PRECIO = {
  *   SENTENCIAS_PRECIOS                        ->  el propio cron de precios,
  *       porque nadie más escribe ahí y `ensureSchema` se espera antes de CADA
  *       compra de sobre: no se le carga trabajo que no le toca.
- *   las tres                                  ->  /migrate-mejoras, que es la
+ *   las cuatro                                ->  /migrate-mejoras, que es la
  *       vía explícita para dejar el esquema listo de una vez.
  */
 export const SENTENCIAS_MEJORAS: readonly string[] = [
@@ -285,3 +296,107 @@ export const SENTENCIAS_MEJORAS: readonly string[] = [
   ...SENTENCIAS_PRECIOS,
   ...SENTENCIAS_BAZAR,
 ];
+
+/* ==================================================================== *
+ * GUARDAS DE DINERO EN LA PROPIA BASE
+ * ====================================================================
+ *
+ * QUÉ PROTEGEN: hoy los invariantes de dinero —ningún saldo negativo, ninguna
+ * cantidad negativa, ninguna comisión mayor que el precio— los sostiene cada
+ * sentencia con sus guardas (`AND coins >= $3`, `AND quantity = ${have}`...).
+ * La base no sabe nada de ellos: si un cambio futuro quita una de esas
+ * condiciones por error, Postgres acepta el negativo en silencio. Con un CHECK,
+ * la sentencia que dejaría el saldo o la cantidad bajo cero falla ENTERA —y
+ * como en este repositorio cada movimiento es una sola sentencia, eso significa
+ * que no se mueve nada—, en vez de abonar monedas por una carta que no existe.
+ *
+ * NO SE PONEN SOLAS, y eso es deliberado:
+ *   - no van en `ensureSchema`: un ALTER TABLE sobre `users` es justo lo que
+ *     ese sitio dejó de lanzar;
+ *   - no van en SENTENCIAS_MEJORAS: `ADD CONSTRAINT` no tiene IF NOT EXISTS y
+ *     puede fallar sobre datos que ya la incumplen, y decidir qué se hace con
+ *     esas filas es cosa de una persona.
+ * Las pone /migrate-mejoras?guardas=1, que mira antes si ya están y si hay
+ * filas que las violan (ver `ponerGuardas` en app/migrate-mejoras/route.ts).
+ *
+ * NO HAY CLAVES FORÁNEAS, ni aquí ni en ningún sitio del esquema, y tampoco es
+ * un olvido: `user_collection` conserva filas a cero, `graded_cards` conserva
+ * las vendidas y el catálogo se resiembra; una FK convertiría cada una de esas
+ * decisiones en un error de integridad.
+ *
+ * Sólo nombres y condiciones CONSTANTES: la ruta los interpola en el texto de
+ * la sentencia (un CHECK no admite parámetros), así que aquí no puede entrar
+ * nunca nada que venga de una petición.
+ */
+export interface GuardaDeDinero {
+  tabla: string;
+  /** Nombre de la restricción: es por lo que se sabe si ya está puesta. */
+  nombre: string;
+  /** La condición del CHECK, que toda fila tiene que cumplir. */
+  condicion: string;
+}
+
+export const GUARDAS_DE_DINERO: readonly GuardaDeDinero[] = [
+  // `coins` admite NULL a propósito (app/migrate-core lo documenta): un NULL es
+  // "todavía sin saldo inicial", no un negativo.
+  { tabla: "users", nombre: "users_coins_no_negativas", condicion: "coins IS NULL OR coins >= 0" },
+  // Una fila a cero es legítima (app/social.ts no las barre); una negativa no.
+  {
+    tabla: "user_collection",
+    nombre: "user_collection_quantity_no_negativa",
+    condicion: "quantity >= 0",
+  },
+  // La comisión se destruye y sale del precio: ni negativa ni mayor que él.
+  {
+    tabla: "bazar_listings",
+    nombre: "bazar_comision_dentro_del_precio",
+    condicion: "comision >= 0 AND comision <= precio",
+  },
+];
+
+/**
+ * Qué objeto del esquema asegura una sentencia `... IF NOT EXISTS ...`.
+ *
+ * PARA QUÉ: `ensureSchema` (app/action.ts) ejecutaba todas estas sentencias en
+ * cada arranque en frío, existiera ya el objeto o no. Parece gratis y no lo es:
+ * un `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` toma ACCESS EXCLUSIVE sobre la
+ * tabla aunque la columna exista, y un `CREATE INDEX IF NOT EXISTS` toma SHARE
+ * antes de descubrir que el índice ya está. Con esto, quien asegura el esquema
+ * puede preguntar antes al catálogo —que no bloquea nada— y lanzar sólo lo que
+ * falte.
+ *
+ * SE DEDUCE DE LA PROPIA SENTENCIA, y no de una lista de nombres mantenida a
+ * mano junto a los arrays de arriba, para que no puedan separarse: quien añada
+ * una tabla, un índice o una columna a una SENTENCIAS_* no tiene que acordarse
+ * de apuntarlo en otro sitio.
+ *
+ *   CREATE TABLE IF NOT EXISTS t (...)               -> { relacion: "t", columna: null }
+ *   CREATE [UNIQUE] INDEX IF NOT EXISTS i ON t (...) -> { relacion: "i", columna: null }
+ *   ALTER TABLE t ADD COLUMN IF NOT EXISTS c ...     -> { relacion: "t", columna: "c" }
+ *
+ * Los índices viven en el mismo espacio de nombres que las tablas (pg_class),
+ * así que "¿existe?" se pregunta igual para los dos: `to_regclass(nombre)`.
+ *
+ * DEVUELVE null PARA LO QUE NO SABE LEER, y eso significa "ejecútala siempre",
+ * que es lo que se hacía antes con todas: una forma nueva de sentencia degrada
+ * a comportamiento antiguo, nunca a "se da por hecha".
+ *
+ * Sólo nombres sin comillas ni esquema, que es como está escrito TODO el
+ * esquema del repositorio. Cualquier otra cosa devuelve null.
+ */
+export function objetoDeSentencia(
+  sentencia: string,
+): { relacion: string; columna: string | null } | null {
+  const s = String(sentencia).replace(/\s+/g, " ").trim();
+  const nombre = "([a-z_][a-z0-9_]*)";
+  let m = new RegExp("^CREATE TABLE IF NOT EXISTS " + nombre + "(?: |\\(|$)", "i").exec(s);
+  if (m) return { relacion: m[1].toLowerCase(), columna: null };
+  m = new RegExp("^CREATE (?:UNIQUE )?INDEX IF NOT EXISTS " + nombre + " ON ", "i").exec(s);
+  if (m) return { relacion: m[1].toLowerCase(), columna: null };
+  m = new RegExp(
+    "^ALTER TABLE " + nombre + " ADD COLUMN IF NOT EXISTS " + nombre + "(?: |$)",
+    "i",
+  ).exec(s);
+  if (m) return { relacion: m[1].toLowerCase(), columna: m[2].toLowerCase() };
+  return null;
+}

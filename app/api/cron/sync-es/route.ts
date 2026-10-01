@@ -9,10 +9,11 @@
 // `cards`, o sea de lo que aquél haya ingerido.
 
 import { NextResponse } from "next/server";
-import { sincronizarTraducciones } from "@/services/idiomaIngest";
+import { sincronizarTraducciones, type ResumenIdioma } from "@/services/idiomaIngest";
 import { sincronizarPrecios, type ResumenPrecios } from "@/services/preciosIngest";
 import { sincronizarSobres, type ResumenSobres } from "@/services/sobresIngest";
 import { ESTADOS_SOBRE } from "@/services/sobresEsquema";
+import { requireCron } from "@/app/_admin-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -117,31 +118,17 @@ const PRESUPUESTO_SOBRES_MS = 10_000;
  */
 const MINIMO_SOBRES_MS = 7_000;
 
-/**
- * Comparación en tiempo constante, calcada de sync-sets: el tiempo de respuesta
- * no puede delatar cuántos caracteres del secreto se han acertado.
- */
-function igualEnTiempoConstante(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diferencia = 0;
-  for (let i = 0; i < a.length; i++) diferencia |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diferencia === 0;
+/** ¿Terminó este tramo con un resumen de verdad (ni `error` ni `omitido`)? */
+function tramoCompletado(tramo: object | null): boolean {
+  return tramo !== null && !("error" in tramo) && !("omitido" in tramo);
 }
 
 export async function GET(request: Request) {
-  const secreto = process.env.CRON_SECRET;
-  // Sin secreto configurado la ruta se cierra: nunca queda abierta a Internet.
-  if (!secreto) {
-    return NextResponse.json(
-      { error: "CRON_SECRET no está configurado: sincronización deshabilitada." },
-      { status: 503 },
-    );
-  }
-
-  const autorizacion = request.headers.get("authorization") ?? "";
-  if (!igualEnTiempoConstante(autorizacion, `Bearer ${secreto}`)) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  }
+  // La puerta es la de las tres rutas de cron y vive en app/_admin-auth.ts:
+  // sin CRON_SECRET utilizable (recortado y de 16 caracteres o más) la ruta se
+  // cierra con 503, nunca queda abierta a Internet.
+  const noAutorizado = requireCron(request);
+  if (noAutorizado) return noAutorizado;
 
   // `?setId=me6` fuerza una expansión concreta, saltándose la cola y la huella.
   // Es la vía para corregir a mano una que se quedó mal sin esperar a mañana.
@@ -153,10 +140,36 @@ export async function GET(request: Request) {
   const arranque = Date.now();
 
   try {
-    const resumen = await sincronizarTraducciones({
-      presupuestoMs: PRESUPUESTO_TRADUCCIONES_MS,
-      soloSetId,
-    });
+    /* LAS TRADUCCIONES TAMPOCO PUEDEN TUMBAR ESTA RUTA.
+     *
+     * Los dos tramos encadenados llevaban cada uno su try/catch «para no
+     * tumbar la ruta», pero el primero no: cualquier excepción de aquí —un 503
+     * de TCGdex en /v2/es/sets, la tabla que no se deja crear, un SELECT—
+     * saltaba al catch de fuera y la ruta respondía 500 SIN EJECUTAR los otros
+     * dos, que dependen de otra fuente (Bulbapedia) o de otro endpoint
+     * (/v2/en) y habrían funcionado. Si TCGdex en español fallaba varios días
+     * seguidos, los precios y las fotos se congelaban con él.
+     *
+     * Ahora el fallo se apunta (en `errores`, que ya se saca por el registro, y
+     * en `traducciones.error` de la respuesta) y se sigue con lo demás. */
+    let resumen: ResumenIdioma;
+    let errorTraducciones: string | null = null;
+    try {
+      resumen = await sincronizarTraducciones({
+        presupuestoMs: PRESUPUESTO_TRADUCCIONES_MS,
+        soloSetId,
+      });
+    } catch (e: unknown) {
+      errorTraducciones = e instanceof Error ? e.message : String(e);
+      resumen = {
+        revisados: [],
+        actualizados: [],
+        rechazados: [],
+        sinCambios: 0,
+        truncadoPorTiempo: false,
+        errores: [`las traducciones han fallado: ${errorTraducciones}`],
+      };
+    }
 
     console.log(
       `[sync-es] revisados=${resumen.revisados.length}` +
@@ -275,9 +288,20 @@ export async function GET(request: Request) {
             ` sinCambios=${p.sinCambios}` +
             ` sinPrecio=${p.sinPrecio}` +
             ` sinFuente=${p.sinFuente}` +
+            ` sospechosos=${p.sospechosos}` +
             ` truncado=${p.truncadoPorTiempo}` +
             ` errores=${p.errores.length + p.erroresOmitidos}`,
         );
+        /* Como AVISO y con su detalle: un precio que se quintuplica de una
+         * visita a la siguiente NO se ha guardado (SALTO_SOSPECHOSO, en
+         * services/preciosIngest.ts). Si la subida es de verdad, se confirma
+         * con /api/cron/sync-precios?setId=<expansión>. */
+        if (p.sospechosos > 0) {
+          console.warn(
+            `[sync-precios] ${p.sospechosos} precios sospechosos NO guardados: ` +
+              p.detalleSospechosos.join(" · "),
+          );
+        }
         if (p.setsRechazados.length > 0) {
           const lista = p.setsRechazados.map((s) => `${s.setId}: ${s.motivo}`).join(" · ");
           console.warn(`[sync-precios] rechazados: ${lista}`);
@@ -292,7 +316,21 @@ export async function GET(request: Request) {
       }
     }
 
-    return NextResponse.json({ ...resumen, sobres, precios });
+    /* 200 SI ALGO DE LA NOCHE HA SERVIDO. Un fallo de las traducciones ya no es
+     * un 500 por sí solo —el detalle va en `traducciones.error`—, pero si
+     * además ningún tramo encadenado ha llegado a terminar, la noche entera ha
+     * fallado y decir 200 escondería la avería en el panel de crons. */
+    const nocheEnBlanco =
+      errorTraducciones !== null && !tramoCompletado(sobres) && !tramoCompletado(precios);
+    return NextResponse.json(
+      {
+        ...resumen,
+        ...(errorTraducciones !== null ? { traducciones: { error: errorTraducciones } } : {}),
+        sobres,
+        precios,
+      },
+      { status: nocheEnBlanco ? 500 : 200 },
+    );
   } catch (e: unknown) {
     console.error("[sync-es] error:", e);
     return NextResponse.json(

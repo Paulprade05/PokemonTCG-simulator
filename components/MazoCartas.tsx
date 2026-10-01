@@ -239,11 +239,12 @@ type EstadoCopia = { desperfectos: Desperfectos; marcas: MarcasDeCarta };
  *
  * AQUÍ NO SE DERIVA NADA: ni de la semilla, ni de la rareza, ni de la nota. El
  * desgaste está construido para ser coherente con la nota de graduación, así
- * que enseñarlo entero la DELATA — medido sobre 60.000 copias, una carta sin un
- * solo pique era SIEMPRE un 10, y quien lo supiera graduaría sólo ésas y se
- * llevaría el ×3 garantizado, convirtiendo la graduación en beneficio seguro.
- * Por eso el filtro vive en el servidor (app/action.ts, conEstadoFisico: de
- * nota 7 en adelante no viaja nada) y el cliente se limita a pintar lo que le
+ * que lo que se enseña y lo que paga cada nota están calibrados JUNTOS: quien
+ * pudiera calcular aquí el estado exacto de una copia —o su nota— graduaría
+ * sólo las que compensan, y la graduación pasaría de sumidero a beneficio
+ * seguro. Por eso el filtro vive en el servidor (app/action.ts,
+ * conEstadoFisico: de una copia que se ve limpia no viaja nada, y de las demás
+ * viaja sólo lo que se pinta) y el cliente se limita a pintar lo que le
  * llega. LA AUSENCIA DEL DATO SIGNIFICA "SE VE LIMPIA", nunca "no se sabe": en
  * cuanto esta función llamara a `desperfectosDeCopia` o a `notaDeCopia`, el
  * agujero quedaría reabierto.

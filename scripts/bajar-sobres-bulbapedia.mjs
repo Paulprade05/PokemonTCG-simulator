@@ -2,9 +2,23 @@
 /**
  * BAJA DE BULBAPEDIA LA ILUSTRACIÓN REAL DEL SOBRE DE CADA EXPANSIÓN.
  *
- *   node scripts/bajar-sobres-bulbapedia.mjs
- *   node scripts/bajar-sobres-bulbapedia.mjs --solo-informe   (no baja ni escribe nada)
+ *   node scripts/bajar-sobres-bulbapedia.mjs                  (SIMULACIÓN: informe y nada más)
+ *   node scripts/bajar-sobres-bulbapedia.mjs --aplicar        (baja y sustituye en public/sobres)
+ *   node scripts/bajar-sobres-bulbapedia.mjs --solo-informe   (lo mismo que sin argumentos)
  *   node scripts/bajar-sobres-bulbapedia.mjs --refrescar      (ignora la caché)
+ *   node scripts/bajar-sobres-bulbapedia.mjs --aplicar --retirar-sobrantes
+ *                                 (además MUEVE a la caché las variantes de antes que ya no salen)
+ *
+ * NO BORRA NADA, NUNCA. Ni una foto, ni una carpeta. Lo nuevo se prepara fuera
+ * del repositorio y sólo sustituye a lo que había cuando está entero y
+ * comprobado; si algo falla, lo que había se queda como estaba y el informe lo
+ * dice. El porqué —y el fallo que había antes— está en la cabecera del paso 4.
+ *
+ * NECESITA `sharp`, QUE NO ESTÁ EN package.json: hoy llega sólo como dependencia
+ * OPCIONAL de Next (next -> sharp). Con `npm install --omit=optional`, o en una
+ * plataforma para la que sharp no traiga binario, este script y
+ * preparar-sobres.mjs dejan de arrancar con "Cannot find package sharp".
+ * Declararlo en devDependencies exige instalar, y eso lo decide el dueño.
  *
  * Es el hermano automático de scripts/preparar-sobres.mjs. Aquél convierte los
  * PNG que una persona ha bajado a mano a una carpeta; éste hace el trabajo de
@@ -129,12 +143,17 @@
  * una persona (hoy, me5) y vale más que la mía.
  */
 
+// OJO: aquí NO se importa `rmSync` ni `unlinkSync`, y es a propósito. Este
+// script no borra nada (ver el paso 4); si algún día hace falta uno de los dos,
+// antes hay que leer por qué se quitaron.
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
-  rmSync,
+  renameSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -165,6 +184,9 @@ import sharp from "sharp";
  * que el día que alguien le añada una dependencia el fallo sea un mensaje
  * claro y no un `undefined` diez líneas más abajo.
  */
+// Que `loadBindings` no reescriba package-lock.json ni llame al registro de npm
+// (lo hace si al lockfile le faltan los `@next/swc-*`; ver scripts/sim-mercado.mjs).
+process.env.NEXT_IGNORE_INCORRECT_LOCKFILE ??= "1";
 await loadBindings();
 
 const _modulos = new Map();
@@ -253,8 +275,15 @@ const valor = (f) => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : null;
 };
 
-const SOLO_INFORME = tiene("--solo-informe");
+/* POR DEFECTO, SIMULACIÓN. Este script reescribe ~400 ficheros commiteados de
+ * public/sobres, así que tocar el disco tiene que ser una decisión y no lo que
+ * pasa al pulsar Intro: sin --aplicar se queda en informe, igual que con
+ * --solo-informe (que se conserva, y gana si se pasan los dos). */
+const APLICAR = tiene("--aplicar");
+const SOLO_INFORME = tiene("--solo-informe") || !APLICAR;
 const REFRESCAR = tiene("--refrescar");
+/** Mover a la caché las variantes de antes que ya no salen. Mover, no borrar. */
+const RETIRAR_SOBRANTES = tiene("--retirar-sobrantes");
 
 const SETS = join(raiz, "src", "data", "all-sets.json");
 const MAPA = join(raiz, "src", "data", "sobres-bulbapedia.json");
@@ -345,7 +374,10 @@ async function pedirApi(params) {
       await dormir(1500 * intento);
     }
   }
-  throw new Error("no debería llegarse aquí");
+  // Aquí se llega cuando los cuatro intentos acabaron en 429, 5xx o maxlag: la
+  // wiki está caída o pidiendo que se pare. Antes decía "no debería llegarse
+  // aquí", que era falso y no ayudaba a nadie.
+  throw new Error("la API de Bulbapedia no ha contestado en 4 intentos (429, 5xx o maxlag). No se ha tocado nada: vuelve a probar más tarde");
 }
 
 /* ------------------------------------------------------------------ *
@@ -484,6 +516,15 @@ async function bajarImagen(url) {
   const r = await fetch(url, { headers: { "User-Agent": AGENTE } });
   if (!r.ok) throw new Error("HTTP " + r.status + " al bajar " + url);
   const buf = Buffer.from(await r.arrayBuffer());
+  /* A la caché sólo entra lo que se deja abrir como imagen. Una descarga cortada
+   * o una página de error servida con 200 se guardaba tal cual, y como la caché
+   * manda sobre la red, esa expansión fallaba ya en TODAS las pasadas siguientes
+   * hasta que alguien se acordase de --refrescar. */
+  try {
+    await sharp(buf).metadata();
+  } catch (e) {
+    throw new Error("lo que se ha bajado no es una imagen (" + buf.length + " bytes): " + e.message);
+  }
   writeFileSync(destino, buf);
   await dormir(PAUSA_IMG);
   return buf;
@@ -538,14 +579,91 @@ function manifiestoDesdeDisco(carpetaRaiz) {
   return ordenado;
 }
 
+/**
+ * Cuántas variantes tiene AHORA una expansión en el disco: 1.webp, 2.webp…
+ * hasta el primer hueco. Es la misma cuenta que hace `manifiestoDesdeDisco`, y
+ * es lo que el paso 4 se compromete a no perder.
+ */
+function variantesEnDisco(dir) {
+  let n = 0;
+  while (existsSync(join(dir, `${n + 1}.webp`))) n++;
+  return n;
+}
+
+/* ------------------------------------------------------------------ *
+ * PASO 5 BIS. SUSTITUIR SIN BORRAR
+ * ------------------------------------------------------------------ *
+ *
+ * Las tres funciones de aquí abajo existen por una sola razón: que entre "había
+ * una foto buena" y "hay una foto nueva" no exista ningún instante en el que no
+ * haya ninguna. El porqué largo está en la cabecera del paso 4.
+ */
+
+/**
+ * ¿Lo que acaba de escribir `convertir` es de verdad la foto que se pidió?
+ *
+ * Se vuelve a abrir el fichero del disco —no el buffer del que salió— porque lo
+ * que se va a copiar a public/sobres es el fichero: un disco lleno o un proceso
+ * cortado dejan un WebP a medias que `toFile` no siempre denuncia. Devuelve el
+ * peso, que `sustituir` usa para comprobar la copia.
+ */
+async function comprobarFoto(fichero, W, H) {
+  const bytesDelFichero = readFileSync(fichero);
+  if (bytesDelFichero.length === 0) throw new Error("el WebP convertido está vacío");
+  const meta = await sharp(bytesDelFichero).metadata();
+  if (meta.format !== "webp" || meta.width !== W || meta.height !== H) {
+    throw new Error(`el WebP convertido no es el esperado (${meta.format} ${meta.width}x${meta.height}, se pidió webp ${W}x${H})`);
+  }
+  return bytesDelFichero.length;
+}
+
+/**
+ * Coloca el juego nuevo de una expansión encima del viejo.
+ *
+ * EN DOS TIEMPOS, y el orden es el arreglo: primero se copian TODAS al lado de
+ * su destino con nombre provisional y se comprueba que cada copia pesa lo que
+ * debe; sólo cuando están todas se renombran encima. Copiar puede fallar (disco
+ * lleno, permisos); renombrar dentro de la misma carpeta, casi nunca. Así un
+ * fallo deja las fotos de antes intactas y, como mucho, algún `N.webp.nuevo`
+ * suelto que el manifiesto no cuenta y la siguiente pasada vuelve a escribir.
+ *
+ * `renameSync` sobre un nombre que existe lo REEMPLAZA de una vez (en Windows
+ * también): no hay un "borro y luego pongo".
+ */
+function sustituir(dir, preparadas) {
+  mkdirSync(dir, { recursive: true });
+  const provisionales = preparadas.map((p, k) => {
+    const provisional = join(dir, `${k + 1}.webp.nuevo`);
+    copyFileSync(p.fichero, provisional);
+    const copiado = statSync(provisional).size;
+    if (copiado !== p.peso) throw new Error(`la copia de ${k + 1}.webp pesa ${copiado} bytes y el original ${p.peso}`);
+    return provisional;
+  });
+  provisionales.forEach((provisional, k) => renameSync(provisional, join(dir, `${k + 1}.webp`)));
+}
+
+/**
+ * Escribe un fichero de texto sin pasar por el estado "truncado y a medias":
+ * `writeFileSync` vacía el destino antes de escribir, y si el proceso muere ahí
+ * el manifiesto se queda en un JSON roto. Se escribe al lado y se renombra.
+ */
+function escribirEntero(fichero, texto) {
+  const provisional = fichero + ".nuevo";
+  writeFileSync(provisional, texto);
+  renameSync(provisional, fichero);
+}
+
 /* ================================================================== *
  * PROGRAMA
  * ================================================================== */
 
 console.log("Bulbapedia -> " + DESTINO);
 console.log("Caché:  " + CACHE);
-if (SOLO_INFORME) console.log("MODO INFORME: no se baja ni se escribe nada.\n");
-else console.log("");
+if (SOLO_INFORME) {
+  console.log("MODO INFORME: no se baja ninguna foto ni se escribe nada en el repositorio.");
+  if (!tiene("--solo-informe")) console.log("  (es lo que hace por defecto; para escribir de verdad, añade --aplicar)");
+  console.log("");
+} else console.log("");
 
 /* --- Orden: de la más nueva a la más vieja. Si el tope de peso corta, corta
  *     por las que menos se abren. --- */
@@ -631,13 +749,49 @@ console.log("\nConsultando tamaños...");
 const todosLosFicheros = [...new Set(planes.flatMap((p) => p.candidatas.map((c) => c.titulo)))];
 const info = await infoDeFicheros(todosLosFicheros);
 
-/* --- Paso 4: bajar y convertir. --- */
+/* --- Paso 4: bajar, convertir y —sólo si todo sale bien— sustituir. ---
+ *
+ * AQUÍ ESTABA EL FALLO GORDO DE ESTE SCRIPT, y conviene dejar escrito cuál era
+ * para que nadie lo "simplifique" de vuelta. Antes, por cada expansión:
+ *
+ *   1. se BORRABAN los 1.webp, 2.webp… que ya había en public/sobres/<id>;
+ *   2. se intentaba bajar las nuevas;
+ *   3. si fallaban todas, se borraba la carpeta entera;
+ *   4. y el manifiesto y el registro se reescribían con lo que quedase.
+ *
+ * O sea que el estado bueno se destruía ANTES de tener con qué reemplazarlo.
+ * Un día con la wiki contestando 429 o 503 —o sin red, o con --refrescar y la
+ * caché vacía— vaciaba las 130 carpetas, que además están commiteadas, y dejaba
+ * la tienda entera con el sobre dibujado. Con fallos parciales, una expansión
+ * de 3 variantes se quedaba en 1.
+ *
+ * LA REGLA AHORA ES UNA Y NO TIENE EXCEPCIONES: ESTE SCRIPT NO BORRA NADA.
+ *
+ *   · Las fotos nuevas se preparan en una ANTESALA fuera del repositorio
+ *     (<caché>/nuevo/<id>/) y se comprueban una a una (`comprobarFoto`).
+ *   · Si la expansión YA TENÍA fotos, sólo se sustituyen cuando el juego nuevo
+ *     está ENTERO. Con una sola variante que falle, se queda lo que había y se
+ *     dice. Si no tenía ninguna no hay nada que proteger y vale lo que llegue.
+ *   · Sustituir es copiar al lado con nombre provisional y renombrar encima
+ *     (`sustituir`): el único instante en que una foto buena deja de existir es
+ *     el mismo en que la nueva ocupa su nombre.
+ *   · Si esta vez salen MENOS variantes que antes, las que sobran NO se quitan:
+ *     se quedan, se cuentan en el manifiesto —que se lee del disco— y salen en
+ *     el informe con su ruta. Con --retirar-sobrantes se MUEVEN (no se borran)
+ *     a <caché>/retiradas/<id>/. Antes se borraban sin preguntar para que no se
+ *     viera un 3.webp huérfano; un huérfano es una foto de más de la expansión
+ *     correcta, y borrar sin permiso es justo lo que el dueño ha prohibido.
+ *   · La carpeta de una expansión no se borra nunca, ni vacía.
+ */
 console.log("");
 const conSobre = [];
 const descartes = [];
+const sobrantes = []; // líneas del informe: variantes de antes que esta vez no salen
 let bytes = 0;
 let topeAlcanzado = false;
 const generado = {};
+/** Para que dos retiradas de la misma variante en días distintos no se pisen. */
+const SELLO = new Date().toISOString().replace(/[:.]/g, "-");
 
 for (const plan of planes) {
   const { set: s } = plan;
@@ -672,53 +826,143 @@ for (const plan of planes) {
   }
 
   const dir = join(DESTINO, s.id);
-  mkdirSync(dir, { recursive: true });
-  // Se limpian los .webp de antes: si esta vez salen 2 variantes donde había 3,
-  // un 3.webp huérfano se seguiría viendo (el manifiesto lo contaría).
-  for (const f of readdirSync(dir)) if (/^\d+\.webp$/.test(f)) rmSync(join(dir, f));
+  // Lo que hay que proteger. Se mira ANTES de tocar nada y no se vuelve a mirar.
+  const habia = variantesEnDisco(dir);
 
-  let kb = 0;
-  const puestos = [];
-  for (let i = 0; i < elegidas.length; i++) {
-    const e = elegidas[i];
+  /* 4a. A LA ANTESALA. Nada de lo que pase aquí dentro toca public/sobres. */
+  const antesala = join(CACHE, "nuevo", s.id);
+  mkdirSync(antesala, { recursive: true });
+  const preparadas = [];
+  let fallo = null;
+  for (const e of elegidas) {
     try {
       const buf = await bajarImagen(e.url);
-      const destino = join(dir, `${puestos.length + 1}.webp`);
-      const { W, H } = await convertir(buf, destino);
-      const peso = readFileSync(destino).length;
-      kb += peso / 1024;
-      bytes += peso;
-      puestos.push(e.titulo);
-      console.log(
-        `${s.id.padEnd(12)} ${(puestos.length + ".webp").padEnd(8)} ${String(W) + "x" + H}`.padEnd(38) +
-          (peso / 1024).toFixed(0).padStart(5) + " KB   " + e.titulo.replace(/^File:/, ""),
-      );
+      const fichero = join(antesala, `${preparadas.length + 1}.webp`);
+      const { W, H } = await convertir(buf, fichero);
+      const peso = await comprobarFoto(fichero, W, H);
+      preparadas.push({ titulo: e.titulo, fichero, W, H, peso });
     } catch (err) {
-      descartes.push(`${s.id}: ${e.titulo} — ${err.message}`);
+      fallo = `${e.titulo} — ${err.message}`;
+      descartes.push(`${s.id}: ${fallo}`);
+      // Con fotos que proteger, un fallo ya decide que no se sustituye: seguir
+      // bajando las demás sería pedirle a la wiki un trabajo que se va a tirar.
+      if (habia > 0) break;
     }
   }
 
-  if (puestos.length === 0) {
-    rmSync(dir, { recursive: true, force: true });
-    sinSobre.push({ id: s.id, nombre: s.name, motivo: "todas sus imágenes fallaron al bajar" });
+  if (preparadas.length === 0 || (habia > 0 && preparadas.length < elegidas.length)) {
+    sinSobre.push({
+      id: s.id,
+      nombre: s.name,
+      motivo:
+        habia > 0
+          ? `no se pudo preparar el juego nuevo completo (${fallo}): NO se ha tocado nada`
+          : "todas sus imágenes fallaron al bajar",
+    });
     continue;
   }
 
+  /* 4b. SUSTITUIR. El único punto del script que pisa una foto buena. */
+  try {
+    sustituir(dir, preparadas);
+  } catch (err) {
+    descartes.push(`${s.id}: no se pudieron colocar las fotos nuevas — ${err.message}`);
+    sinSobre.push({
+      id: s.id,
+      nombre: s.name,
+      motivo:
+        `falló al colocar las fotos en public/sobres/${s.id} (${err.message}). MÍRALA A MANO: puede haber` +
+        " quedado algún *.webp.nuevo y, si falló a mitad del renombrado, variantes nuevas y viejas mezcladas",
+    });
+    continue;
+  }
+
+  let kb = 0;
+  const puestos = [];
+  for (const p of preparadas) {
+    kb += p.peso / 1024;
+    bytes += p.peso;
+    puestos.push(p.titulo);
+    console.log(
+      `${s.id.padEnd(12)} ${(puestos.length + ".webp").padEnd(8)} ${String(p.W) + "x" + p.H}`.padEnd(38) +
+        (p.peso / 1024).toFixed(0).padStart(5) + " KB   " + p.titulo.replace(/^File:/, ""),
+    );
+  }
+
+  /* 4c. LO QUE SOBRA de antes (había 3 y ahora salen 2). No se borra: o se
+   * queda donde está, o —si se ha pedido— se MUEVE fuera del repositorio. */
+  const ficherosDelRegistro = [...puestos];
+  if (habia > puestos.length) {
+    const titulosDeAntes = GENERADO_ANTES[s.id]?.ficheros ?? [];
+    for (let k = habia; k > puestos.length; k--) {
+      const viejo = join(dir, `${k}.webp`);
+      if (RETIRAR_SOBRANTES) {
+        try {
+          const retirada = join(CACHE, "retiradas", s.id);
+          mkdirSync(retirada, { recursive: true });
+          const a = join(retirada, `${SELLO}-${k}.webp`);
+          // renameSync y no copiar+borrar: o se mueve entera o no se toca. Si la
+          // caché está en otro disco esto falla (EXDEV) y la foto se queda.
+          renameSync(viejo, a);
+          sobrantes.push(`${s.id}: ${k}.webp de antes MOVIDA a ${a}`);
+          continue;
+        } catch (err) {
+          sobrantes.push(`${s.id}: ${k}.webp de antes no se pudo mover (${err.message}) y SIGUE en ${viejo}`);
+        }
+      } else {
+        sobrantes.push(
+          `${s.id}: ${viejo} es de la tanda anterior y SIGUE AHÍ (ahora salen ${puestos.length} variantes y había ${habia}).` +
+            " Se seguirá viendo como una variante más; con --retirar-sobrantes se mueve a la caché",
+        );
+      }
+      // La que se queda sigue siendo de esta expansión y el registro lo dice: el
+      // cron (services/sobresIngest.ts) usa esta lista para saber qué fichero de
+      // la wiki está ya adjudicado.
+      const titulo = titulosDeAntes[k - 1];
+      if (titulo && !ficherosDelRegistro.includes(titulo)) ficherosDelRegistro.push(titulo);
+    }
+  }
+
   conSobre.push({ id: s.id, nombre: s.name, pagina: plan.pagina, ficheros: puestos, kb });
-  generado[s.id] = { pagina: plan.pagina, ficheros: puestos };
+  generado[s.id] = { pagina: plan.pagina, ficheros: ficherosDelRegistro };
   if (bytes / 1024 / 1024 >= TOPE_MB) topeAlcanzado = true;
 }
+
+/* --- LO QUE TENÍA FOTO Y NO SE HA REGENERADO SIGUE SIENDO DE ESTE SCRIPT. ---
+ *
+ * Antes el registro "generado" se reescribía sólo con lo bajado EN ESTA
+ * ejecución. Una expansión que hoy fallaba (o a la que no se llegaba por el tope
+ * de peso) desaparecía del registro con su carpeta todavía en el disco, y a la
+ * siguiente pasada el script la tomaba por ajena —"ya existe y no la bajé yo"—
+ * y no volvía a actualizarla nunca. Y el cron perdía de vista que esos ficheros
+ * de la wiki ya estaban adjudicados. Mientras las fotos sigan en el disco, su
+ * entrada se conserva tal cual.
+ *
+ * De paso, esto separa en el informe dos cosas que no son la misma: una
+ * expansión SIN SOBRE (no tiene foto: hay que mirarla) y una que SE QUEDA COMO
+ * ESTABA (tiene la de antes: no hay prisa). */
+const regeneradas = new Set(conSobre.map((c) => c.id));
+const motivoDe = new Map(sinSobre.map((x) => [x.id, x.motivo]));
+const seQuedan = []; // {id, variantes, motivo}
+for (const [id, entrada] of Object.entries(GENERADO_ANTES)) {
+  if (regeneradas.has(id)) continue;
+  const variantes = variantesEnDisco(join(DESTINO, id));
+  if (variantes === 0) continue; // la carpeta ya no está: no hay nada que conservar
+  generado[id] = entrada;
+  seQuedan.push({ id, variantes, motivo: motivoDe.get(id) ?? "ya no está en src/data/all-sets.json" });
+}
+const idsQueSeQuedan = new Set(seQuedan.map((x) => x.id));
 
 /* --- Paso 5: manifiesto y registro. --- */
 if (!SOLO_INFORME) {
   const manifiesto = manifiestoDesdeDisco(DESTINO);
-  writeFileSync(MANIFIESTO, JSON.stringify(manifiesto, null, 2) + "\n");
+  escribirEntero(MANIFIESTO, JSON.stringify(manifiesto, null, 2) + "\n");
 
   const ordenado = {};
   for (const k of Object.keys(generado).sort()) ordenado[k] = generado[k];
   // "manual" se vuelve a escribir TAL CUAL: es de una persona y este script no
   // opina sobre ella.
-  writeFileSync(MAPA, JSON.stringify({ manual: MANUAL, generado: ordenado }, null, 2) + "\n");
+  escribirEntero(MAPA, JSON.stringify({ manual: MANUAL, generado: ordenado }, null, 2) + "\n");
 }
 
 /* ------------------------------------------------------------------ *
@@ -726,16 +970,32 @@ if (!SOLO_INFORME) {
  * ------------------------------------------------------------------ */
 
 console.log("\n" + "=".repeat(72));
-console.log(`CON SOBRE: ${conSobre.length} expansiones`);
+console.log(`CON SOBRE${SOLO_INFORME ? " (lo que se bajaría)" : " NUEVO"}: ${conSobre.length} expansiones`);
 console.log("=".repeat(72));
 for (const c of conSobre) {
   console.log(`  ${c.id.padEnd(12)} ${c.nombre.padEnd(34)} ${c.ficheros.length} var  ${c.kb.toFixed(0).padStart(4)} KB`);
 }
 
+/* En simulación `conSobre` es todo lo que se INTENTARÍA bajar, así que esta
+ * lista sale corta: sólo trae lo que ni se intentaría. Las que fallen al bajar
+ * de verdad aparecen aquí al aplicar. */
+if (seQuedan.length > 0) {
+  console.log("\n" + "=".repeat(72));
+  console.log(`SE QUEDAN COMO ESTABAN: ${seQuedan.length} expansiones — tienen la foto de antes y no se ha tocado`);
+  console.log("=".repeat(72));
+  for (const q of seQuedan.sort((a, b) => a.id.localeCompare(b.id))) {
+    console.log(`  ${q.id.padEnd(12)} ${String(q.variantes).padStart(2)} var  ${q.motivo}`);
+  }
+  console.log("\nEste script no borra fotos. Si una de éstas SOBRA (por ejemplo, la has marcado");
+  console.log('"omitir" porque el sobre era de otra expansión), retira tú su carpeta de public/sobres');
+  console.log("y vuelve a ejecutar: el manifiesto se cuenta del disco.");
+}
+
+const sinFoto = sinSobre.filter((s) => !idsQueSeQuedan.has(s.id));
 console.log("\n" + "=".repeat(72));
-console.log(`SIN SOBRE: ${sinSobre.length} expansiones — hay que mirarlas a mano`);
+console.log(`SIN SOBRE: ${sinFoto.length} expansiones — hay que mirarlas a mano`);
 console.log("=".repeat(72));
-for (const s of sinSobre.sort((a, b) => a.id.localeCompare(b.id))) {
+for (const s of sinFoto.sort((a, b) => a.id.localeCompare(b.id))) {
   console.log(`  ${s.id.padEnd(12)} ${s.nombre.padEnd(34)} ${s.motivo}`);
 }
 console.log("\nPara arreglar una: añádela a \"manual\" en src/data/sobres-bulbapedia.json");
@@ -752,6 +1012,11 @@ if (descartes.length > 0) {
   for (const d of descartes) console.log("  " + d);
 }
 
+if (sobrantes.length > 0) {
+  console.log(`\nVARIANTES DE ANTES QUE ESTA VEZ NO SALEN (${sobrantes.length}) — no se ha borrado ninguna:`);
+  for (const l of sobrantes) console.log("  " + l);
+}
+
 const totalDisco = existsSync(DESTINO)
   ? readdirSync(DESTINO, { withFileTypes: true })
       .filter((d) => d.isDirectory())
@@ -760,7 +1025,11 @@ const totalDisco = existsSync(DESTINO)
   : 0;
 
 console.log("\n" + "=".repeat(72));
-console.log(`Bajado ahora:   ${(bytes / 1024 / 1024).toFixed(2)} MB en ${conSobre.reduce((a, c) => a + c.ficheros.length, 0)} imágenes`);
+console.log(
+  SOLO_INFORME
+    ? `Se bajarían:    ${conSobre.reduce((a, c) => a + c.ficheros.length, 0)} imágenes (simulación: no se ha escrito nada; añade --aplicar)`
+    : `Bajado ahora:   ${(bytes / 1024 / 1024).toFixed(2)} MB en ${conSobre.reduce((a, c) => a + c.ficheros.length, 0)} imágenes`,
+);
 console.log(`public/sobres:  ${(totalDisco / 1024 / 1024).toFixed(2)} MB en total (incluye las que puso preparar-sobres.mjs)`);
 if (topeAlcanzado) console.log(`AVISO: se alcanzó el tope de ${TOPE_MB} MB y quedaron expansiones sin bajar.`);
 console.log("=".repeat(72));

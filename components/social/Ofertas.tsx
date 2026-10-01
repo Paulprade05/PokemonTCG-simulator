@@ -66,7 +66,6 @@ function Miniatura({ carta }: { carta: CartaDeOferta }) {
       {carta?.images?.small && (
         // <img> y no next/image, como todas las cartas de la app: vienen de un
         // CDN ajeno y las guarda el service worker tal cual llegan.
-        // eslint-disable-next-line @next/next/no-img-element
         <img
           src={carta.images.small}
           alt={carta.name ?? ""}

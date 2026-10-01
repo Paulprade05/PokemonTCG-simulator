@@ -673,7 +673,7 @@ html[data-theme="dark"] .sobre__pliegues { opacity: .66; }
    (services/sobresEmparejar.ts) y llega por --sb-arte-size.
 
    EL VALOR POR DEFECTO ES LA REGLA DE SIEMPRE, literalmente la misma
-   cadena. Las 130 expansiones con foto estática NO EMITEN la variable
+   cadena. Las 131 expansiones con foto estática NO EMITEN la variable
    —el componente sólo la pone para las fotos crudas— así que su pintado
    no cambia ni en una milésima. Y una foto remota que ya venga con
    r >= 1,8282 tampoco la emite, porque en ese caso el cálculo da 100%.
@@ -1103,7 +1103,7 @@ export default function BoosterPack({
             ? { "--sb-arte": `url("${urlArte}")`, "--tapa-h": CORTE_ARTE }
             : null),
           /* Y el recorte, SÓLO cuando hace falta. `tamanoArte` es null para las
-             130 fotos estáticas (ya vienen a 780/1426) y también para una foto
+             fotos estáticas de las 131 expansiones (ya vienen a 780/1426) y también para una foto
              remota que ya venga alargada, así que en la inmensa mayoría de los
              casos esta variable no se emite y la regla CSS cae en su valor por
              defecto, que es la cadena "100% auto" de siempre. Es un `X% auto`
@@ -1169,7 +1169,6 @@ export default function BoosterPack({
                 style={{ top: "var(--tapa-h)", bottom: "calc(var(--sobre-w) * .126)" }}
               >
                 {logo ? (
-                  // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={logo}
                     alt=""

@@ -38,7 +38,6 @@ export default function SeguirAbriendo({ set, detalle, onAbrir, onPrecalentar }:
         {set.images?.logo ? (
           // Un logo, no una carta: decorativo (el nombre va al lado) y sin
           // `loading="lazy"`, que está en la primera pantalla.
-          // eslint-disable-next-line @next/next/no-img-element
           <img src={set.images.logo} alt="" decoding="async" className="max-h-11 max-w-full object-contain" />
         ) : null}
       </span>

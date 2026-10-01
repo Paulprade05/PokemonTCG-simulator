@@ -108,10 +108,11 @@ const MAX_EN_LISTA = 36;
 const ERRORES_PUBLICAR: Record<string, string> = {
   "demasiados-anuncios":
     "Ya tienes el máximo de anuncios abiertos. Retira alguno para publicar otro.",
-  // Cubre los dos motivos reales: no queda copia libre, o esa copia graduada ya
-  // está en otro anuncio (lo impide un índice único en bazar_listings).
+  // Cubre los motivos reales: no queda copia libre (las graduadas y las que ya
+  // tienen anuncio no cuentan), o esa copia graduada ya está en otro anuncio
+  // (lo impide un índice único en bazar_listings).
   "sin-copias":
-    "Ya no te sobra ninguna copia de esa carta, o esa copia graduada ya está publicada.",
+    "Ya no te sobra ninguna copia libre de esa carta, o esa copia ya está anunciada.",
   "no-existe": "Esa carta ya no está en tu colección.",
   "sin-valor": "Esa carta no tiene valor de referencia, así que no se puede publicar.",
   "no-autorizado": "Inicia sesión para vender en el bazar.",
@@ -331,7 +332,14 @@ export default function PublicarSheet({
           );
           return;
         }
-        toast(ERRORES_PUBLICAR[res.error] ?? "No se pudo publicar.", "error");
+        toast(
+          // El tope de frecuencia del servidor (services/limite.ts): llega como
+          // "servidor" más `limitado`, y no es un fallo, es "espera un poco".
+          "limitado" in res && res.limitado
+            ? "Demasiados anuncios seguidos. Espera unos segundos: no se ha publicado nada."
+            : (ERRORES_PUBLICAR[res.error] ?? "No se pudo publicar."),
+          "error",
+        );
         return;
       }
       haptic("success");

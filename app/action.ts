@@ -3,13 +3,20 @@
 
   import { auth, currentUser } from "@clerk/nextjs/server";
   import { sql } from '@vercel/postgres';
-  import { revalidatePath } from 'next/cache';
+  // `revalidatePath` (next/cache) ya no se importa, y las 32 llamadas que había
+  // repartidas por las acciones se han quitado: invalidaban '/', '/collection',
+  // '/vitrina', '/bazar' y '/mercado', que son páginas 100 % de cliente —leen
+  // sus datos llamando a estas acciones, no del render del servidor—, así que
+  // invalidarlas no refrescaba nada. Lo que sí hacían era marcar esas páginas
+  // estáticas para regenerarse y meter en la respuesta de CADA compra o venta un
+  // render de la ruta en curso. Si algún día una página pasa a pintar datos en
+  // el servidor, la invalidación vuelve con ella, en la acción que le toque.
   // SELL_PRICES ya no se importa a propósito: el valor de una colección se
   // calcula con `precioDeCartaSuelta` + `valorDeVenta`, que son la curva real
   // que paga la tienda. Multiplicar SELL_PRICES por la cantidad inflaba el
   // patrimonio y premiaba acaparar repetidas que valen la octava parte.
   import { AVAILABLE_SETS, RARITY_RANK, STARTING_COINS, DAILY_BASE, DAILY_STREAK_STEP, DAILY_STREAK_CAP, DAILY_ESPERA_H, DAILY_PLAZO_RACHA_H, SET_COMPLETION_BONUS, PACK_PRICES, valorDeVenta, precioDeCartaSuelta } from "../utils/constanst";
-  import { loadLocalSets, loadLocalCards } from "../services/localData";
+  import { loadLocalSets, loadLocalCards, loadLocalCardsCrudas } from "../services/localData";
   // Capa de presentación en español. Se aplica AQUÍ, en el servidor y en el
   // punto en el que las cartas salen hacia la interfaz, por dos razones: el
   // diccionario (724 KB en 39 ficheros) no baja al navegador, y las doce
@@ -28,6 +35,7 @@
     admiteSobrePremium,
     composicionDelSobre,
     eraDeSerie,
+    esColeccionEspecial,
     openGoldenPack,
     openPremiumPack,
     openStandardPack,
@@ -40,11 +48,13 @@
   import {
     costeDeGraduar,
     descuentoPorVolumen,
+    desgasteALaVista,
     desgasteEsVisible,
     desperfectosDeCopia,
     etiquetaNota,
     marcasDeCopia,
     notaDeCopia,
+    seVeLimpia,
     semillaDeCopia,
     valorGraduado,
     type Desperfectos,
@@ -63,11 +73,21 @@
     precioValido,
   } from "../utils/bazar";
   // Las tablas nuevas. Se aseguran en ensureSchema (ver más abajo el porqué).
+  // `objetoDeSentencia` dice qué tabla, índice o columna asegura cada sentencia:
+  // con eso ensureSchema pregunta al catálogo antes de lanzar DDL.
   import {
     SENTENCIAS_ARCHIVADOR,
     SENTENCIAS_BAZAR,
     SENTENCIAS_GRADUACION,
+    objetoDeSentencia,
   } from "../services/esquemaMejoras";
+  // El escritor de `cards` del cron y de /seed-database. La siembra bajo
+  // demanda (syncSetToDatabase) lo reutiliza en vez de llevar un INSERT propio.
+  // Módulo SIN 'use server': aquí sólo se importa, no se reexporta nada.
+  import { upsertCards } from "../services/ingest";
+  // Tope de frecuencia en memoria, por instancia. Lo que promete y lo que no,
+  // en la cabecera del módulo.
+  import { LIMITES, dentroDelLimite } from "../services/limite";
   // Precios reales de Cardmarket. Degrada a "sin ajuste" si la tabla no existe
   // o si Postgres no responde: el juego se comporta como antes de que existiera.
   import { preciosEnEuros } from "../services/preciosBD";
@@ -103,44 +123,167 @@
     return [...(await traducirCartasEs(cartas, idioma))];
   }
 
-  // Las columnas y tablas auxiliares (recompensa diaria, tema, lista de deseos y
-  // premios de set) se crean una sola vez por instancia, no en cada invocación.
-  // Un ALTER TABLE ... ADD COLUMN IF NOT EXISTS toma un candado ACCESS EXCLUSIVE
-  // sobre `users` —la tabla más caliente de la app— aunque la columna ya exista;
-  // repetirlo en cada cobro, venta o lectura de saldo serializaba todo el tráfico
-  // contra ella. Se memoiza en una promesa: si la creación falla, se reintenta.
+  /* ==================================================================== *
+   * EL ESQUEMA SE ASEGURA PREGUNTANDO, NO LANZANDO DDL
+   * ====================================================================
+   *
+   * Las columnas y tablas auxiliares (recompensa diaria, tema, lista de deseos,
+   * premios de set, recibos...) se aseguran una sola vez por instancia, no en
+   * cada invocación: la promesa se memoiza y, si falla, se reintenta.
+   *
+   * EL AGUJERO QUE CIERRA. Hasta ahora "asegurar" era ejecutar las ~22
+   * sentencias de DDL en serie en cada arranque en frío, existiera ya todo o
+   * no, y eso tenía dos costes que nadie veía:
+   *
+   *   - `ALTER TABLE users ADD COLUMN IF NOT EXISTS` toma un candado ACCESS
+   *     EXCLUSIVE sobre `users` AUNQUE LA COLUMNA EXISTA. Eran cuatro, sobre la
+   *     tabla más caliente de la aplicación. Vercel levanta instancias nuevas
+   *     justo en los picos: cada una lanzaba sus ALTER, y si en ese momento
+   *     había una sentencia larga sobre `users` (un vaciado de duplicados,
+   *     /db-stats), el ALTER se quedaba esperando en la cola de candados y
+   *     TODAS las lecturas de saldo que llegaban después esperaban detrás de él.
+   *     Medido contra PostgreSQL real con una transacción abierta que sólo
+   *     había LEÍDO `users`: el arranque en frío se quedaba colgado hasta que
+   *     esa transacción terminaba, y con él cualquier lectura de saldo que
+   *     llegara después.
+   *   - los `CREATE INDEX IF NOT EXISTS` toman SHARE sobre su tabla antes de
+   *     descubrir que el índice ya existe, y los dos `ALTER TABLE graded_cards`
+   *     de SENTENCIAS_GRADUACION, otro ACCESS EXCLUSIVE. El comentario que
+   *     había aquí decía que las tablas nuevas "no bloquean nada": era cierto
+   *     del CREATE TABLE y falso de lo que venía con él.
+   *
+   * AHORA se pregunta primero al catálogo (`pg_class` vía to_regclass y
+   * `pg_attribute`), que es una lectura sin candados sobre las tablas del
+   * juego, y sólo se ejecuta el DDL de lo que FALTA. En una base ya montada
+   * —el caso de todos los arranques menos el primero— son cero sentencias de
+   * DDL y un solo viaje en vez de veintidós.
+   *
+   * POR QUÉ NO SE QUITAN LOS ALTER SIN MÁS, aunque /migrate-core ya crea
+   * `users` con esas columnas: desde el código no se puede saber si producción
+   * ejecutó esa ruta. Comprobar y lanzar sólo si falta vale para las dos bases.
+   *
+   * QUÉ OBJETO ASEGURA CADA SENTENCIA se deduce de la propia sentencia
+   * (`objetoDeSentencia`, en services/esquemaMejoras.ts), no de una lista
+   * aparte que habría que mantener a mano y que un día dejaría de coincidir.
+   * Una sentencia que esa función no sepa leer se ejecuta siempre, que es lo
+   * que se hacía antes con todas.
+   */
   let schemaReady: Promise<void> | null = null;
+
+  /** De estas sentencias de esquema, las que hace falta ejecutar en ESTA base. */
+  async function sentenciasQueFaltan(sentencias: readonly string[]): Promise<readonly string[]> {
+    const pendientes = new Set<number>();
+    const indices: number[] = [];
+    const relaciones: string[] = [];
+    const columnas: (string | null)[] = [];
+    sentencias.forEach((stmt, i) => {
+      const objeto = objetoDeSentencia(stmt);
+      if (!objeto) {
+        pendientes.add(i);
+        return;
+      }
+      indices.push(i);
+      relaciones.push(objeto.relacion);
+      columnas.push(objeto.columna);
+    });
+    if (indices.length === 0) return sentencias;
+
+    try {
+      /* UNA lectura para todo. to_regclass devuelve NULL si la tabla o el
+       * indice no existen (y no lanza, a diferencia del cast ::regclass); para
+       * una columna se mira pg_attribute de esa tabla. Nada de esto toma
+       * candados sobre users ni sobre ninguna tabla del juego. */
+      const { rows } = await sql.query(
+        `SELECT o.i
+           FROM unnest($1::int[], $2::text[], $3::text[]) AS o(i, relacion, columna)
+          WHERE CASE
+                  WHEN o.columna IS NULL THEN to_regclass(o.relacion) IS NULL
+                  ELSE NOT EXISTS (
+                         SELECT 1 FROM pg_attribute a
+                          WHERE a.attrelid = to_regclass(o.relacion)
+                            AND a.attname = o.columna
+                            AND a.attnum > 0
+                            AND NOT a.attisdropped
+                       )
+                END`,
+        [indices, relaciones, columnas],
+      );
+      for (const fila of rows) pendientes.add(Number(fila.i));
+    } catch (e) {
+      // Si el catálogo no se deja leer, lo de siempre: se lanza todo el DDL,
+      // que es idempotente. Peor rendimiento, mismo resultado.
+      console.error("ensureSchema: no se pudo consultar el catálogo; se ejecuta todo el DDL:", e);
+      return sentencias;
+    }
+    // En el orden original: una tabla va siempre delante de sus índices y de
+    // sus ALTER.
+    return sentencias.filter((_, i) => pendientes.has(i));
+  }
+
+  /**
+   * ¿Este fallo de DDL es sólo que OTRA instancia creó lo mismo a la vez?
+   *
+   * EL AGUJERO QUE CIERRA: `IF NOT EXISTS` no es atómico entre sesiones. Dos
+   * instancias en frío que lanzan a la vez el mismo CREATE TABLE IF NOT EXISTS
+   * pasan las dos la comprobación, y la que llega segunda choca en el índice
+   * único del CATÁLOGO de Postgres (pg_type_typname_nsp_index o
+   * pg_class_relname_nsp_index) con un 23505. Medido contra PostgreSQL real, en
+   * el primer pico sobre una base sin las tablas auxiliares: de 30 instancias
+   * en frío, 25 contestaban "servidor" a su primera acción. Se arreglaba solo
+   * en la siguiente llamada, pero ese primer pico es justo después de
+   * desplegar.
+   *
+   * SÓLO SE PERDONA LO QUE ES SEGURO PERDONAR:
+   *  - la sentencia tiene que llevar IF NOT EXISTS (es idempotente por diseño);
+   *  - 42P07 / 42701 / 42710: "ya existe" la tabla, la columna o el objeto;
+   *  - 23505 SÓLO si el índice que chocó es del catálogo (empieza por pg_).
+   *    Un 23505 al crear un índice ÚNICO sobre datos que ya tienen duplicados
+   *    es otra cosa muy distinta —el índice NO se ha creado, y es el que impide
+   *    reciclar notas o duplicar anuncios— y ése sigue lanzando, como antes.
+   */
+  function yaLoCreoOtraInstancia(sentencia: string, e: unknown): boolean {
+    if (!/\bIF\s+NOT\s+EXISTS\b/i.test(sentencia)) return false;
+    const error = e as { code?: unknown; constraint?: unknown; message?: unknown } | null;
+    const codigo = String(error?.code ?? "");
+    if (codigo === "42P07" || codigo === "42701" || codigo === "42710") return true;
+    if (codigo !== "23505") return false;
+    const indice = String(error?.constraint ?? "");
+    const texto = String(error?.message ?? "");
+    return /^pg_/.test(indice) || /"pg_(type|class)_[a-z_]+_index"/.test(texto);
+  }
+
   function ensureSchema(): Promise<void> {
     if (!schemaReady) {
       schemaReady = (async () => {
-        await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily_claim TIMESTAMP`;
-        await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS streak INT DEFAULT 0`;
-        await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT`;
-        // Idioma de las cartas ("en" | "es"). Igual que `theme`: preferencia de
-        // la CUENTA, que pisa a la del dispositivo cuando hay sesión.
-        await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS lang TEXT`;
-        await sql`
+        const sentencias: string[] = [
+          `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily_claim TIMESTAMP`,
+          `ALTER TABLE users ADD COLUMN IF NOT EXISTS streak INT DEFAULT 0`,
+          `ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT`,
+          // Idioma de las cartas ("en" | "es"). Igual que theme: preferencia de
+          // la CUENTA, que pisa a la del dispositivo cuando hay sesión.
+          `ALTER TABLE users ADD COLUMN IF NOT EXISTS lang TEXT`,
+          `
           CREATE TABLE IF NOT EXISTS wishlist (
             user_id TEXT NOT NULL,
             card_id TEXT NOT NULL,
             added_at TIMESTAMP DEFAULT NOW(),
             PRIMARY KEY (user_id, card_id)
           )
-        `;
-        await sql`
+        `,
+          `
           CREATE TABLE IF NOT EXISTS set_rewards (
             user_id TEXT NOT NULL,
             set_id TEXT NOT NULL,
             rewarded_at TIMESTAMP DEFAULT NOW(),
             PRIMARY KEY (user_id, set_id)
           )
-        `;
-        // Ofertas del mercado ya cobradas. La PK (usuario, ciclo, oferta) es
-        // quien arbitra la carrera: dos pestañas cobrando la misma oferta a la
-        // vez chocan en el índice único y sólo una inserta, así que sólo una
-        // cobra. `ciclo` es la semilla de mercado.ts, no una fecha: el tablón
-        // se deriva de ella y no hace falta guardarlo.
-        await sql`
+        `,
+          // Ofertas del mercado ya cobradas. La PK (usuario, ciclo, oferta) es
+          // quien arbitra la carrera: dos pestañas cobrando la misma oferta a la
+          // vez chocan en el índice único y sólo una inserta, así que sólo una
+          // cobra. El ciclo es la semilla de mercado.ts, no una fecha: el tablón
+          // se deriva de ella y no hace falta guardarlo.
+          `
           CREATE TABLE IF NOT EXISTS market_claims (
             user_id TEXT NOT NULL,
             ciclo BIGINT NOT NULL,
@@ -149,12 +292,13 @@
             claimed_at TIMESTAMP DEFAULT NOW(),
             PRIMARY KEY (user_id, ciclo, oferta_id)
           )
-        `;
-        // Recibos de compra de sobres. La PK (usuario, clave) es lo que hace
-        // idempotente la compra: la clave la genera el cliente por intento, así
-        // que un reenvío choca aquí y no vuelve a cobrar. `cartas` guarda los
-        // ids EN ORDEN para poder devolver el mismo sobre en el reenvío.
-        await sql`
+        `,
+          // Recibos de compra de sobres. La PK (usuario, clave) es lo que hace
+          // idempotente la compra: la clave la genera el cliente por intento, así
+          // que un reenvío choca aquí y no vuelve a cobrar. La columna cartas
+          // guarda los ids EN ORDEN para poder devolver el mismo sobre en el
+          // reenvío.
+          `
           CREATE TABLE IF NOT EXISTS pack_purchases (
             user_id TEXT NOT NULL,
             clave TEXT NOT NULL,
@@ -166,29 +310,30 @@
             bought_at TIMESTAMP DEFAULT NOW(),
             PRIMARY KEY (user_id, clave)
           )
-        `;
-        /* GRADUACIÓN Y BAZAR.
-         *
-         * Van aquí y no sólo en /migrate-mejoras porque las tocan acciones del
-         * jugador —graduar, publicar, comprar— y una acción no puede fallar
-         * porque a alguien se le olvidara ejecutar una ruta a mano. Es el mismo
-         * criterio por el que ya están aquí wishlist, set_rewards,
-         * market_claims y pack_purchases.
-         *
-         * Y NO se paga el precio que documenta el comentario de arriba: ese
-         * aviso es sobre `ALTER TABLE ... ADD COLUMN`, que toma un candado
-         * ACCESS EXCLUSIVE sobre `users` aunque la columna ya exista. Un
-         * `CREATE TABLE IF NOT EXISTS` sobre una tabla NUEVA no bloquea nada de
-         * lo existente. La tabla `card_prices` NO está aquí a propósito: sólo
-         * la escribe el cron de precios, y el criterio del repositorio
-         * (services/idiomaIngest.ts) es que ésa se asegure en su propio módulo.
-         */
-        for (const stmt of [
+        `,
+          /* GRADUACIÓN, ARCHIVADOR Y BAZAR.
+           *
+           * Van aquí y no sólo en /migrate-mejoras porque las tocan acciones del
+           * jugador —graduar, publicar, comprar— y una acción no puede fallar
+           * porque a alguien se le olvidara ejecutar una ruta a mano. Es el
+           * mismo criterio por el que ya están aquí wishlist, set_rewards,
+           * market_claims y pack_purchases.
+           *
+           * La tabla card_prices NO está aquí a propósito: sólo la escribe el
+           * cron de precios, y el criterio del repositorio
+           * (services/idiomaIngest.ts) es que ésa se asegure en su propio
+           * módulo.
+           */
           ...SENTENCIAS_GRADUACION,
           ...SENTENCIAS_ARCHIVADOR,
           ...SENTENCIAS_BAZAR,
-        ]) {
-          await sql.query(stmt);
+        ];
+        for (const stmt of await sentenciasQueFaltan(sentencias)) {
+          try {
+            await sql.query(stmt);
+          } catch (e) {
+            if (!yaLoCreoOtraInstancia(stmt, e)) throw e;
+          }
         }
       })().catch((e) => {
         // No cachear el fallo: la próxima llamada vuelve a intentar la creación.
@@ -343,22 +488,52 @@
    * carta, pero de esa carta se pueden tener quince copias con quince estados
    * distintos. ¿Cuál se pinta?
    *
-   * LA MEJOR. Es lo que hace cualquiera con una carpeta delante: si tienes una
-   * machacada y una impecable, enseñas la impecable y la otra se queda en la
-   * caja. Pintar la peor sería mentir sobre lo que tienes, y pintar "la
-   * primera" sería un número de serie que no significa nada para nadie.
+   * LA QUE MEJOR SE VE. Es lo que hace cualquiera con una carpeta delante: si
+   * tienes una machacada y una impecable, enseñas la impecable y la otra se
+   * queda en la caja. Pintar la peor sería mentir sobre lo que tienes, y pintar
+   * "la primera" sería un número de serie que no significa nada para nadie.
    *
-   * CONSECUENCIA PRÁCTICA: una carta sólo se ve marcada si TODAS sus copias
-   * están marcadas. Con un 5% de copias en mal estado, eso es el 5% de las
-   * cartas de las que sólo se tiene una, y prácticamente nunca a partir de dos
-   * (0,25%). Es raro a propósito: una colección llena de cartas rotas sería
-   * ruido, y lo que se quería era que de vez en cuando salga una fea.
+   * ------------------------------------------------------------------
+   * "LA QUE MEJOR SE VE" NO ES "LA DE MEJOR NOTA", Y ESA DIFERENCIA ERA UNA FUGA
+   * ------------------------------------------------------------------
    *
-   * EL TOPE DE COPIAS QUE SE MIRAN no es una optimización, es lo mismo dicho de
-   * otra forma: la probabilidad de que sesenta copias seguidas salgan todas del
-   * 6 para abajo es 0,05^60, o sea cero. Mirar más copias no puede cambiar la
-   * respuesta, y sí multiplicaría el trabajo en la colección de quien acumula
-   * cientos de repetidas.
+   * Esto elegía la copia de MEJOR NOTA entre las que se tienen. Parece lo
+   * mismo y no lo es: la nota es justo lo que el jugador paga por saber, y
+   * elegir con ella convertía la miniatura en un oráculo.
+   *
+   * EL CASO: dos copias con desgaste distinto. El jugador vio el de las dos al
+   * abrir los sobres, así que sabe a cuál de ellas corresponde la miniatura de
+   * la colección; y como la miniatura era la de MEJOR NOTA, eso le dice cuál
+   * de las dos tiene la nota más alta sin pagar por saberlo. Si además tiene
+   * una graduada, peor: con un 9 con un pique en la vitrina, que la miniatura
+   * salga sin el pique significa que la otra copia es un 10.
+   *
+   * MEDIDO sobre 200.000 parejas: graduando sólo la copia que la miniatura
+   * señala como la mejor de las dos, y sólo cuando además se ve limpia, esas
+   * copias dan ×1,488 de media contra un techo de ×1,40 (utils/graduacion.ts).
+   * Es justo el "elegir en vez de tirar" que la tabla de notas existe para
+   * impedir.
+   *
+   * AHORA ELIGE POR LO QUE SE VE (`desgasteALaVista`), sin mirar la nota para
+   * ordenar. Lo que la miniatura enseña es función del desgaste de cada copia,
+   * que el jugador ya tiene delante desde que la sacó del sobre: no puede
+   * decirle nada que no supiera. Con la misma medida, lo mejor que puede hacer
+   * es graduar "la copia que se ve limpia", y eso da ×1,345: el grupo limpio de
+   * siempre, que está por debajo del techo a propósito.
+   *
+   * Y SI LA ELEGIDA SE VE LIMPIA NO VIAJA NADA (`seVeLimpia`). Con el umbral de
+   * desgaste visible en 10 se calcula el desgaste de TODAS las notas, así que
+   * la rama "copia sana, no se pinta nada" que había aquí no se cumplía nunca:
+   * la colección entera viajaba con sus desperfectos y sus marcas, casi siempre
+   * todo a cero, y se recorrían hasta sesenta copias por carta para mandarlo.
+   * Ahora una carta con alguna copia limpia —la mayoría— no manda nada, que es
+   * lo que las pantallas ya entendían por "se ve bien".
+   *
+   * EL TOPE DE COPIAS QUE SE MIRAN. Cuatro de cada diez copias se ven limpias,
+   * así que la probabilidad de que doce seguidas tengan todas alguna marca es
+   * 0,6^12, un 0,2 %. Mirar más casi nunca cambia la respuesta y sí multiplica
+   * el trabajo en la colección de quien acumula cientos de repetidas. Cuando
+   * pasa, se enseña la menos gastada de esas doce.
    *
    * ------------------------------------------------------------------
    * ESTO RECORRE 1..CANTIDAD Y ESE RANGO NO ES EXACTO. POR QUÉ SE DEJA ASÍ
@@ -377,11 +552,10 @@
    * una condición:
    *
    *   1. NO AFECTA A NINGÚN NÚMERO. De aquí no sale dinero ni notas: sale el
-   *      aspecto de la miniatura, y encima el de LA MEJOR de las copias, que es
-   *      un resumen de varias y no la promesa de ninguna en concreto.
-   *   2. NO DELATA NADA. El desgaste que viaja es el de la mejor copia; la nota
-   *      que se revelará al graduar es la del índice libre más bajo. Nunca
-   *      fueron la misma copia, ni antes de este desajuste.
+   *      aspecto de la miniatura, y encima el de la que mejor se ve, que es un
+   *      resumen de varias y no la promesa de ninguna en concreto.
+   *   2. NO DELATA NADA. La copia se elige por su desgaste, y el desgaste de un
+   *      índice es el mismo lo tenga el jugador o lo haya vendido: ya lo vio.
    *   3. ARREGLARLO CUESTA CARO Y EN EL SITIO MALO. Haría falta traerse los
    *      índices ocupados (array_agg sobre graded_cards, SIN filtrar por estado)
    *      carta a carta, y el sitio donde se llama esto es `getFullCollection`,
@@ -398,7 +572,7 @@
    * contando hacia atrás desde la cantidad resultante de la compra, así que
    * hereda el mismo desajuste y por las mismas razones se queda igual.
    */
-  const COPIAS_QUE_SE_MIRAN = 60;
+  const COPIAS_QUE_SE_MIRAN = 12;
 
   function estadoDeLaMejorCopia(
     userId: string,
@@ -407,22 +581,31 @@
     secreto: string,
   ): { desperfectos: Desperfectos; marcas: MarcasDeCarta } | null {
     const tope = Math.min(Math.max(1, Math.floor(cantidad) || 1), COPIAS_QUE_SE_MIRAN);
-    let mejorNota = 0;
     let mejorSemilla = "";
+    let mejor: Desperfectos | null = null;
+    let menorDesgaste = Infinity;
     for (let copia = 1; copia <= tope; copia++) {
       const semilla = semillaDeCopia(userId, cardId, copia, secreto);
       const nota = notaDeCopia(semilla);
-      // En cuanto aparece una copia sana, la carta se ve sana: no hace falta
-      // seguir mirando ni calcular desgaste de nada.
+      // Una copia cuyo desgaste no se enseña (por encima del umbral) se ve sana,
+      // y con una sana la carta se ve sana. Con el umbral en 10 esta rama no se
+      // cumple; se conserva porque es lo correcto si el umbral vuelve a bajar.
       if (!desgasteEsVisible(nota)) return null;
-      if (nota > mejorNota) {
-        mejorNota = nota;
+      const desperfectos = desperfectosDeCopia(semilla, nota);
+      // En cuanto aparece una copia que se ve limpia, la carta se ve limpia: no
+      // hace falta seguir mirando ni mandar nada.
+      if (seVeLimpia(desperfectos)) return null;
+      // LA NOTA NO ENTRA EN LA COMPARACIÓN (ver arriba): sólo lo que se ve. Con
+      // `<` estricto, a igual desgaste gana el índice más bajo.
+      const desgaste = desgasteALaVista(desperfectos);
+      if (desgaste < menorDesgaste) {
+        menorDesgaste = desgaste;
+        mejor = desperfectos;
         mejorSemilla = semilla;
       }
     }
-    if (!mejorSemilla) return null;
-    const desperfectos = desperfectosDeCopia(mejorSemilla, mejorNota);
-    return { desperfectos, marcas: marcasDeCopia(mejorSemilla, desperfectos) };
+    if (!mejor) return null;
+    return { desperfectos: mejor, marcas: marcasDeCopia(mejorSemilla, mejor) };
   }
 
   /* ==================================================================== *
@@ -444,12 +627,16 @@
    * cabe otra compra —el botón ×10, dos pestañas— y el número de copia saldría
    * movido. La cantidad viene de la MISMA sentencia que la escribió.
    *
-   * NO SE MANDA NADA DE LO QUE PERMITA DEDUCIR LA NOTA. Sólo viaja el desgaste
-   * de las copias que de verdad se ven mal (utils/graduacion.ts,
-   * UMBRAL_DESGASTE_VISIBLE): el 95% sale limpio y sin distintivo, así que
-   * mirar una carta recién abierta no dice si es un 7 o un 10. Enseñarlo todo
-   * delataría los dieces —medido: cero piques era siempre un 10— y graduar
-   * dejaría de ser una apuesta para ser un negocio.
+   * QUÉ VIAJA Y QUÉ NO. El desgaste se calcula para todas las notas que el
+   * umbral deja ver (utils/graduacion.ts, UMBRAL_DESGASTE_VISIBLE; hoy, todas)
+   * y viaja SÓLO el de las copias a las que se les ve algo. De una copia que
+   * se ve limpia no viaja nada (`seVeLimpia`), y no es por ahorrar bytes: el
+   * dato lleva el descentrado con dos decimales, y "todo a cero exacto" es un
+   * grupo más fino que "se ve limpia" —deja fuera a casi todos los sietes— que
+   * la pantalla no enseña pero la respuesta sí. Medido: ese grupo da ×1,3955,
+   * a tres milésimas del techo; el que se VE limpio, ×1,3465. Sin mandarlo, lo
+   * que sabe quien lee la respuesta es lo que sabe quien mira la carta, que es
+   * lo que mide el invariante "ningún estado visible delata una nota".
    */
   function conEstadoFisico(
     userId: string,
@@ -487,10 +674,12 @@
 
       const semilla = semillaDeCopia(userId, id, copia, secreto);
       const nota = notaDeCopia(semilla);
-      // AQUÍ ESTÁ EL FILTRO QUE PROTEGE LA ECONOMÍA: de 7 para arriba no viaja
-      // nada, así que todas las buenas se ven exactamente igual.
+      // AQUÍ ESTÁ EL FILTRO QUE PROTEGE LA ECONOMÍA: por encima del umbral no
+      // viaja nada, y de lo que queda tampoco viaja lo que se ve limpio, así
+      // que todas las que parecen buenas llegan exactamente igual: sin nada.
       if (!desgasteEsVisible(nota)) continue;
       const desperfectos = desperfectosDeCopia(semilla, nota);
+      if (seVeLimpia(desperfectos)) continue;
       estados.set(i, { desperfectos, marcas: marcasDeCopia(semilla, desperfectos) });
     }
     if (estados.size === 0) return sobre;
@@ -523,9 +712,10 @@
      */
     precioEur?: number | null;
     /**
-     * Estado físico de ESTA copia, si se ve mal. Opcional y ausente en el 95%
-     * de las cartas: sólo viaja para las que de verdad salen marcadas, porque
-     * mandarlo siempre delataría la nota (ver conEstadoFisico).
+     * Estado físico de ESTA copia, si se le ve algo. Opcional: ausente en las
+     * copias que se ven limpias (unas cuatro de cada diez), porque mandarlo
+     * siempre daría más detalle del que enseña la pantalla (ver
+     * conEstadoFisico).
      */
     desperfectos?: Desperfectos;
     marcas?: MarcasDeCarta;
@@ -563,18 +753,49 @@
   const CATALOGO_TTL_MS = 10 * 60 * 1000;
   const catalogoDeSet = new Map<string, { cartas: CartaDeSobre[]; expira: number }>();
 
+  /* ==================================================================== *
+   * CUÁNDO UN CATÁLOGO ESTÁ A MEDIAS
+   * ====================================================================
+   *
+   * EL AGUJERO QUE CIERRA: el cron escribe una expansión por páginas de 250
+   * cartas ordenadas por número y, si se queda sin tiempo, sigue al día
+   * siguiente. Mientras tanto la expansión ya estaba en la tienda, y cada sobre
+   * se sorteaba —y se CALIBRABA— contra un catálogo sin sus números altos, que
+   * son justo las Hyper Rare y las Special Illustration Rare: se cobraban 50
+   * monedas por un sobre en el que el premio gordo no podía salir. Para las
+   * expansiones sin JSON local (las ~133 que sólo trae el cron) ese catálogo
+   * cojo se cacheaba además diez minutos, porque la única comprobación era
+   * contra `loadLocalCards`, que para ellas devuelve cero.
+   *
+   * LA REGLA ES LA MISMA que ya usaba `claimSetCompletionBonuses` para no pagar
+   * el bono de un set a medias, y ahora vive en un solo sitio: si la ficha
+   * declara un total y en `cards` hay menos del 90 %, la descarga no ha
+   * terminado. El 90 % deja pasar el desajuste normal de la API (declarar dos
+   * o tres cartas de más) y corta la descarga a medias, que siempre va mucho
+   * más lejos. Con ese catálogo no se vende, no se anuncia y no se cachea.
+   */
+  const CATALOGO_FIABLE = 0.9;
+  const catalogoIncompleto = (enBase: number, totalDeclarado: unknown): boolean => {
+    const total = Number(totalDeclarado);
+    return Number.isFinite(total) && total > 0 && enBase < total * CATALOGO_FIABLE;
+  };
+
   /**
    * @param sembrarSiFalta true (lo de siempre, y lo que necesita la COMPRA):
-   *   si el set no está en `cards`, se siembra antes de sortear. Se pasa false
-   *   desde lecturas que sólo ANUNCIAN —`getComposicionDeSobres`, que no exige
-   *   sesión—: sembrar son ~250 INSERT, y una lectura abierta que escriba en la
-   *   base es exactamente el endpoint que app/page.tsx dejó de llamar a
-   *   propósito cuando la siembra se movió aquí. Sin sembrar, la lectura
-   *   devuelve vacío y quien llama decide con qué respalda.
+   *   si al set le faltan cartas en `cards`, se siembran antes de sortear. Se
+   *   pasa false desde lecturas que sólo ANUNCIAN —`getComposicionDeSobres`,
+   *   que no exige sesión—: una lectura abierta que escriba en la base es
+   *   exactamente el endpoint que app/page.tsx dejó de llamar a propósito
+   *   cuando la siembra se movió aquí. Sin sembrar, la lectura devuelve lo que
+   *   haya y quien llama decide con qué respalda.
+   * @param totalDeclarado el `total` de la ficha del set, si quien llama ya la
+   *   tiene: con él, un catálogo a medias NO se cachea (ver arriba). Decidir si
+   *   se vende con ese catálogo sigue siendo cosa de quien llama.
    */
   async function cartasDelSet(
     setId: string,
     sembrarSiFalta = true,
+    totalDeclarado: unknown = 0,
   ): Promise<CartaDeSobre[]> {
     const guardado = catalogoDeSet.get(setId);
     if (guardado && guardado.expira > Date.now()) return guardado.cartas;
@@ -587,18 +808,26 @@
     };
 
     let cartas = await leer();
-    if (cartas.length === 0 && sembrarSiFalta) {
-      // Set todavía sin sembrar. Se siembra AQUÍ y no se sortea contra el JSON
-      // local: el abono hace JOIN contra `cards`, así que un sobre generado con
-      // ids que aún no están en la tabla se cobraría y no acreditaría nada.
+    const locales = (await loadLocalCards(setId)) as any[];
+    /* SE SIEMBRA CUANDO FALTAN, NO SÓLO CUANDO NO HAY NINGUNA. Antes la
+     * condición era `cartas.length === 0`, así que una siembra cortada a mitad
+     * —esto corre DENTRO de la compra, con su límite de tiempo— dejaba el set
+     * con un catálogo parcial que ninguna compra posterior completaba: la
+     * siembra sabía reanudarse (`syncSetToDatabase` compara contra el
+     * catálogo) pero nadie volvía a llamarla. */
+    if (cartas.length < locales.length && sembrarSiFalta) {
+      // Se siembra AQUÍ y no se sortea contra el JSON local: el abono hace JOIN
+      // contra `cards`, así que un sobre generado con ids que aún no están en
+      // la tabla se cobraría y no acreditaría nada.
       await syncSetToDatabase(setId);
       cartas = await leer();
     }
-    // SÓLO SE CACHEA UN CATÁLOGO COMPLETO. `syncSetToDatabase` inserta las
-    // cartas de una en una y ordenadas por número, así que una compra que caiga
-    // en mitad de la siembra lee un set a medias y sesgado hacia las comunes.
-    // Sortear con eso es un mal sobre; cachearlo son diez minutos de malos
-    // sobres para todo el que abra esa expansión en esta instancia.
+    // SÓLO SE CACHEA UN CATÁLOGO COMPLETO (la condición está al final). Tanto
+    // la siembra como el cron escriben por lotes ordenados por número, así que
+    // una compra que caiga en mitad lee un set a medias y sin sus cartas de
+    // número alto, que son las mejores. Sortear con eso es un mal sobre;
+    // cachearlo son diez minutos de malos sobres para todo el que abra esa
+    // expansión en esta instancia.
     /* EL PRECIO REAL SE PEGA AQUÍ, antes de cachear y antes de que nadie mire
      * el catálogo. Es el único punto por el que pasan a la vez el sorteo del
      * sobre (openStandardPack y compañía) y el calibrado que decide si ese
@@ -623,8 +852,15 @@
       }
     }
 
-    const locales = (await loadLocalCards(setId)) as any[];
-    if (cartas.length > 0 && cartas.length >= locales.length) {
+    // Completo contra los DOS patrones: el JSON del repositorio (las 38
+    // expansiones sembradas) y el total que declara la ficha (las que sólo trae
+    // el cron, para las que `locales` está vacío y la primera condición no
+    // decía nada).
+    if (
+      cartas.length > 0 &&
+      cartas.length >= locales.length &&
+      !catalogoIncompleto(cartas.length, totalDeclarado)
+    ) {
       catalogoDeSet.set(setId, { cartas, expira: Date.now() + CATALOGO_TTL_MS });
     }
     return cartas;
@@ -655,19 +891,12 @@
       : null;
   }
 
-  /**
-   * Colección "sin morralla". Es `composicionEspecial` de app/page.tsx palabra
-   * por palabra, pero medida contra las cartas de la BASE DE DATOS, que es lo
-   * único que el usuario no puede tocar.
-   */
-  const composicionEspecial = (cartas: CartaDeSobre[]): boolean => {
-    if (cartas.length === 0) return false;
-    const comunes = cartas.filter((c) => c.rarity === "Common").length;
-    const relleno = cartas.filter(
-      (c) => c.rarity === "Common" || c.rarity === "Uncommon",
-    ).length;
-    return comunes < 8 || relleno / cartas.length < 0.2;
-  };
+  /* LA REGLA DE "COLECCIÓN ESPECIAL" YA NO SE ESCRIBE AQUÍ. Vivía copiada a
+   * mano en este fichero y en app/page.tsx, y las dos copias ya se separaron
+   * una vez (ver el comentario del total, más abajo). Ahora los dos lados
+   * importan `esColeccionEspecial` de utils/packLogic.ts; lo que cambia de un
+   * lado a otro son las CARTAS con las que se mide: aquí las de la base de
+   * datos, que es lo único que el usuario no puede tocar. */
 
   /**
    * Qué sobres se pueden vender de este set. Es el `isSpecialSet` de la tienda
@@ -687,7 +916,6 @@
     cartas: CartaDeSobre[],
     era?: Era,
   ): Set<TipoSobre> {
-    const nombre = ficha.name.toLowerCase();
     /* OJO AL TOTAL, que es un `> 0 &&` y no un `Number.isFinite`.
      *
      * `fichaDelSet` hace `Number(rows[0].total)`, y `Number(null)` es 0, no NaN:
@@ -700,15 +928,10 @@
      * `typeof null === "object"`, así que allí NO se marcaba de especial y se
      * pintaban los tres sobres normales... que aquí se rechazaban uno por uno
      * con "ese sobre no está a la venta". Botones que fallan al pulsarlos.
-     * El cliente aplica ahora exactamente esta misma condición.
+     * El cliente aplica ahora exactamente esta misma condición, y no una copia:
+     * la misma función (`esColeccionEspecial`, utils/packLogic.ts).
      */
-    const especial =
-      nombre.includes("promos") ||
-      nombre.includes("gallery") ||
-      ficha.series === "POP" ||
-      ficha.series === "Other" ||
-      (ficha.total > 0 && ficha.total < 69) ||
-      composicionEspecial(cartas);
+    const especial = esColeccionEspecial(ficha, cartas);
 
     if (especial) return new Set<TipoSobre>(["SPECIAL"]);
 
@@ -915,11 +1138,17 @@
        * loadLocalCards), así que la respuesta no cambia por eso; y las
        * expansiones que sólo existen en la base —las que trae el cron y no
        * están en los 38 JSON— ya están sembradas por definición. */
+      // La ficha va PRIMERO: su `total` es lo que le dice a `cartasDelSet` si
+      // el catálogo que ha leído está entero o a medio ingerir.
+      const ficha = await fichaDelSet(setId);
       let fuente: "bd" | "local" = "bd";
-      let cartas = await cartasDelSet(setId, false);
-      if (cartas.length === 0) {
+      let cartas = await cartasDelSet(setId, false, ficha?.total);
+      const locales = await loadLocalCards(setId);
+      // `<` y no `=== 0`: a una siembra cortada a mitad le faltan cartas que la
+      // compra va a sembrar antes de sortear (`cartasDelSet` con siembra), así
+      // que lo que se anuncia es el catálogo local entero, igual que con cero.
+      if (cartas.length < locales.length) {
         fuente = "local";
-        const locales = await loadLocalCards(setId);
         cartas = locales.map(aCartaDeSobre);
         if (cartas.length > 0) {
           // El precio real también aquí: si no, el respaldo local anunciaría un
@@ -941,7 +1170,6 @@
         return { ok: false as const, motivo: "sin-catalogo" as const };
       }
 
-      const ficha = await fichaDelSet(setId);
       if (!ficha) return { ok: false as const, motivo: "set-invalido" as const };
 
       /* LA ERA Y LOS PRECIOS, LOS DE QUIEN VA A REPARTIR DE VERDAD, y las dos
@@ -967,7 +1195,14 @@
         ? cartas
         : cartas.map((c) => ({ ...c, precioEur: null }));
 
-      const permitidos = sobresPermitidos(ficha, catalogo, era);
+      /* UNA EXPANSIÓN A MEDIO INGERIR NO VENDE NINGÚN SOBRE, y se anuncia así:
+       * es el mismo corte que aplica `comprarSobreAction` (ver
+       * `catalogoIncompleto`). Sólo puede pasar con el catálogo de la base: el
+       * del repositorio está entero por definición. */
+      const incompleto = fuente === "bd" && catalogoIncompleto(cartas.length, ficha.total);
+      const permitidos = incompleto
+        ? new Set<TipoSobre>()
+        : sobresPermitidos(ficha, catalogo, era);
       const sobres = {} as Record<TipoSobre, SobreAnunciado>;
       for (const tipo of TIPOS_DE_SOBRE) {
         sobres[tipo] = fichaDeSobre(tipo, catalogo, era, permitidos.has(tipo));
@@ -976,6 +1211,8 @@
       return {
         ok: true as const,
         setId,
+        /** true = la expansión aún se está descargando y no vende ningún sobre. */
+        incompleto,
         /** La era con la que se reparte de verdad el hueco de premio. */
         era,
         /** Quién sortea el sobre de quien está preguntando. */
@@ -1080,14 +1317,75 @@
     // EL PRECIO SE CALCULA AQUÍ. El cliente no lo manda ni lo puede sugerir.
     const precio = PACK_PRICES[tipoSobre] * cantidad;
 
+    /* TOPE DE FRECUENCIA, antes de tocar la base. Una compra legítima va detrás
+     * de una animación de apertura; veinte en diez segundos sólo las manda un
+     * script. Es una negativa FIRME y con motivo propio —no "error"— porque el
+     * cliente reintenta los "error" y da la compra por dudosa
+     * (components/tienda/compra.ts), y aquí no hay duda: no se ha hecho nada.
+     * Ver services/limite.ts para lo que este tope puede y no puede prometer. */
+    if (!dentroDelLimite("sobre:" + userId, LIMITES.comprarSobre)) {
+      /* PERO ANTES SE MIRA SI ESTA CLAVE YA SE COBRÓ. El reenvío de una compra
+       * cuya respuesta se perdió llega con la misma clave; si para entonces el
+       * tope está gastado (otras pestañas, un doble toque insistente), la
+       * negativa firme de abajo le decía al cliente "no se ha hecho nada" de un
+       * sobre que SÍ se había cobrado, y el jugador no veía las cartas que
+       * pagó. Es una lectura por clave primaria: no reabre lo que el tope
+       * protege, que es el catálogo, el sorteo y el cobro. Si esa lectura
+       * falla, se contesta lo de siempre. */
+      try {
+        await ensureSchema();
+        const servido = await sobreYaServido(userId, clave);
+        if (servido) return servido;
+      } catch (e) {
+        console.error("comprarSobreAction: no se pudo mirar el recibo con el tope gastado:", e);
+      }
+      return { ok: false as const, motivo: "demasiadas-peticiones" as const };
+    }
+
     try {
       await ensureSchema();
 
-      const cartas = await cartasDelSet(setId);
+      /* LA FICHA Y EL SALDO, A LA VEZ Y ANTES QUE NADA.
+       *
+       * EL AGUJERO QUE CIERRA: sin saldo, esta acción leía el catálogo, la
+       * ficha y las cartas poseídas, sorteaba hasta diez sobres, lanzaba la
+       * sentencia de cobro y, al no cobrar, aún consultaba el recibo: cuatro o
+       * cinco viajes a Postgres y el sorteo entero por cada POST de una cuenta
+       * a cero. Ahora quien no puede pagar se queda en dos lecturas por clave
+       * primaria.
+       *
+       * NO ES EL GUARD DEL DINERO: el saldo se vuelve a comprobar dentro del
+       * UPDATE del cobro, sobre la fila bloqueada. Esto sólo evita trabajar
+       * para una compra que no va a ocurrir. Y van en paralelo para que la
+       * compra legítima no pague un viaje de más: la ficha ya se leía.
+       *
+       * EL REENVÍO SIGUE FUNCIONANDO IGUAL: si no llega el saldo se mira antes
+       * si esa clave ya se sirvió, que es lo que pasa cuando el reintento llega
+       * después de un cobro que dejó la cuenta por debajo del precio. */
+      const [ficha, previo] = await Promise.all([
+        fichaDelSet(setId),
+        sql`SELECT coins FROM users WHERE id = ${userId}`,
+      ]);
+      if (!ficha) return { ok: false as const, motivo: "set-invalido" as const };
+      if (Number(previo.rows[0]?.coins ?? 0) < precio) {
+        const servido = await sobreYaServido(userId, clave);
+        return servido ?? { ok: false as const, motivo: "sin-saldo" as const };
+      }
+
+      const cartas = await cartasDelSet(setId, true, ficha.total);
       if (cartas.length === 0) return { ok: false as const, motivo: "set-invalido" as const };
 
-      const ficha = await fichaDelSet(setId);
-      if (!ficha) return { ok: false as const, motivo: "set-invalido" as const };
+      /* EXPANSIÓN A MEDIO INGERIR: no se vende. Ver `catalogoIncompleto`. El
+       * motivo es el que la tienda ya sabe decir ("ese sobre no está a la venta
+       * en esta expansión"), y `detalle` cuenta por qué a quien quiera pintarlo
+       * mejor. No se cobra ni se sortea nada. */
+      if (catalogoIncompleto(cartas.length, ficha.total)) {
+        return {
+          ok: false as const,
+          motivo: "sobre-no-disponible" as const,
+          detalle: "set-incompleto" as const,
+        };
+      }
 
       /* LA ERA DE LA EXPANSIÓN, que decide con qué probabilidades se reparte el
        * hueco de premio. Sale de `series`, que ya venía en la ficha y que hasta
@@ -1273,8 +1571,6 @@
       }
 
       await podarRecibosViejos(userId);
-      revalidatePath('/');
-      revalidatePath('/collection');
       return {
         ok: true as const,
         cartas: conEstadoFisico(userId, sobre, rows[0]?.resultantes),
@@ -1474,8 +1770,16 @@
    * es `quantity` a secas— pero sale por la vitrina, así que no entra en el
    * recuento de lo vendible.
    *
+   * Y LAS ANUNCIADAS EN EL BAZAR, IGUAL QUE LAS GRADUADAS: siguen en el montón
+   * y tampoco se venden por aquí (ver `copiasComprometidas`). Por eso el tercer
+   * argumento es la SUMA de las dos, aunque conserve el nombre: el cuerpo de la
+   * función está amarrado carácter a carácter a su réplica de
+   * scripts/test-invariantes.mjs, y la cuenta es la misma para las dos clases
+   * de copia comprometida.
+   *
    * @param copiasQueTengo copias en propiedad AHORA, graduadas incluidas.
-   * @param graduadas      cuántas de ellas están en la vitrina.
+   * @param graduadas      cuántas de ellas están COMPROMETIDAS: las de la
+   *                       vitrina más las de anuncios sueltos abiertos.
    */
   function valoresDeVentaDelMonton(
     rareza: string | null | undefined,
@@ -1495,11 +1799,31 @@
     };
   }
 
-  export async function getFullCollection() {
+  /**
+   * @param setId OPCIONAL. Con él, sólo las cartas de ESA expansión. Lo pide el
+   *   álbum, que antes se bajaba la colección entera —441 cartas con ataques,
+   *   legalidades y precios— para filtrarla por prefijo en el navegador y
+   *   quedarse con las 30 de una expansión. La forma de cada carta es
+   *   exactamente la misma con y sin él; sin él (lo de siempre), todo.
+   */
+  export async function getFullCollection(setId?: string) {
     const { userId } = await auth();
     if (!userId) return [];
+    /* Lo que llega del cliente es un deseo, no un dato. Y un argumento que no
+     * sea un id de expansión se IGNORA en vez de rechazarse: esta acción se
+     * llamaba sin argumentos, y quien la pase como manejador de un evento le
+     * estará mandando el evento. Lo peor que puede pasar así es lo de siempre,
+     * la colección entera. */
+    const soloSet =
+      typeof setId === "string" && /^[a-z0-9._-]{1,40}$/i.test(setId) ? setId : null;
 
     try {
+      // La consulta lee graded_cards y bazar_listings: tienen que existir aunque
+      // ésta sea la primera acción de la instancia (y casi siempre lo es: la
+      // portada pide la colección antes que nada). Con `catch`: si asegurar el
+      // esquema falla pero las tablas están, la colección se sirve igual; y si
+      // no están, la consulta de abajo ya falla por su cuenta.
+      await ensureSchema().catch((e) => console.error("getFullCollection: esquema:", e));
       /* ORDEN: favoritas, luego rareza de mejor a peor, luego nombre.
        *
        * `ORDER BY c.rarity DESC` ordenaba CADENAS, no rarezas: "Uncommon"
@@ -1534,10 +1858,16 @@
          *
          * Solo las ACTIVAS: una copia vendida conserva su fila para que su
          * indice no se recicle (ver services/esquemaMejoras.ts), pero ya no
-         * esta en la coleccion y no debe pintar insignia. */
+         * esta en la coleccion y no debe pintar insignia.
+         *
+         * Y LAS ANUNCIADAS EN EL BAZAR, con el mismo LEFT JOIN agregado: son
+         * copias comprometidas que no se venden por la via normal, asi que
+         * entran en lo que la pantalla ofrece vender. Solo los anuncios
+         * SUELTOS: la copia de un anuncio de graduada ya va en "graduadas". */
         `SELECT c.*, uc.quantity, uc.is_favorite,
                 COALESCE(g.n, 0)::int AS graduadas,
-                g.mejor_nota
+                g.mejor_nota,
+                COALESCE(z.n, 0)::int AS anunciadas
            FROM user_collection uc
            JOIN cards c ON uc.card_id = c.id
            LEFT JOIN unnest($2::text[], $3::int[]) AS rk(rareza, rango)
@@ -1548,12 +1878,19 @@
               WHERE user_id = $1 AND estado = 'activa'
               GROUP BY card_id
            ) g ON g.card_id = uc.card_id
+           LEFT JOIN (
+             SELECT card_id, count(*)::int AS n
+               FROM bazar_listings
+              WHERE seller_id = $1 AND estado = 'activa' AND graded_id IS NULL
+              GROUP BY card_id
+           ) z ON z.card_id = uc.card_id
           WHERE uc.user_id = $1 AND uc.quantity > 0
+            AND ($4::text IS NULL OR c.set_id = $4::text)
           ORDER BY
             COALESCE(uc.is_favorite, false) DESC,
             COALESCE(rk.rango, 0) DESC,
             c.name ASC`,
-        [userId, rarezas, rangos],
+        [userId, rarezas, rangos, soloSet],
       );
       
       const parse = (v: any, fb: any = null) => {
@@ -1590,6 +1927,10 @@
             secretoNotas,
           );
           const eur = euros.get(String(row.id));
+          const copias = Number(row.quantity) || 0;
+          // Copias que NO se venden por la vía normal: las de la vitrina más
+          // las de anuncios sueltos abiertos en el bazar.
+          const comprometidas = (Number(row.graduadas) || 0) + (Number(row.anunciadas) || 0);
           return {
             ...row,
             images: parse(row.images),
@@ -1599,15 +1940,20 @@
             weaknesses: parse(row.weaknesses, []),
             retreatCost: parse(row.retreat_cost, []),
             flavorText: row.flavor_text,
+            /**
+             * COPIAS QUE SE PUEDEN VENDER O ENTREGAR: las que se tienen menos
+             * las graduadas y menos las anunciadas en el bazar. Es el número
+             * con el que deciden las tres rutas de venta (de éstas, una se
+             * queda siempre en el álbum). Viaja hecho por lo mismo que los
+             * importes: la pantalla lo calculaba como `quantity - graduadas`, y
+             * desde que una copia anunciada tampoco se vende esa cuenta ofrece
+             * copias que el servidor ya no deja vender.
+             */
+            copiasLibres: Math.max(0, copias - comprometidas),
             /* LO QUE ABONAN LAS DOS RUTAS DE VENTA, YA CALCULADO. Ver el bloque
              * de `valoresDeVentaDelMonton`: la pantalla no vuelve a aplicar la
              * curva ni el ajuste por euros, pinta estos números. */
-            ...valoresDeVentaDelMonton(
-              row.rarity,
-              Number(row.quantity) || 0,
-              Number(row.graduadas) || 0,
-              eur,
-            ),
+            ...valoresDeVentaDelMonton(row.rarity, copias, comprometidas, eur),
             /**
              * Tarifa plana de la carta con su ajuste por precio real: lo que
              * VALE, no lo que se cobra por una repetida. Es la casilla "Valor de
@@ -1623,6 +1969,78 @@
       );
     } catch (error) {
       console.error("❌ Error cargando colección:", error);
+      return [];
+    }
+  }
+
+  /**
+   * La colección EN LIGERO: de cada carta, sólo lo que hace falta para saber
+   * qué se tiene y cuánto darían sus repetidas.
+   *
+   * POR QUÉ EXISTE. La portada pide `getFullCollection()` al entrar y después
+   * de cada sobre, y de todo lo que baja —unos 800 bytes por carta: ataques,
+   * debilidades, legalidades, precios de tcgplayer, el estado físico de la
+   * mejor copia calculado fila a fila— usa el id, la rareza, las cantidades y
+   * el importe de las repetidas (components/tienda/repetidas.ts). Con 441
+   * cartas son unos 350 KB para pintar una insignia de "Nueva" y un botón.
+   *
+   * Los campos se llaman IGUAL que en `getFullCollection` y significan lo
+   * mismo, así que quien ya lee aquéllos puede cambiar de acción sin tocar
+   * nada más. Los importes salen de la misma función (`valoresDeVentaDelMonton`)
+   * y con el mismo precio real, por lo que no pueden discrepar.
+   *
+   * Sólo lee datos de quien llama y no recibe argumentos: no hay nada que
+   * validar ni que falsificar.
+   */
+  export async function getInventarioColeccion() {
+    const { userId } = await auth();
+    if (!userId) return [];
+    try {
+      await ensureSchema().catch((e) => console.error("getInventarioColeccion: esquema:", e));
+      const { rows } = await sql.query(
+        `SELECT uc.card_id AS id, c.rarity, uc.quantity, uc.is_favorite,
+                COALESCE(g.n, 0)::int AS graduadas,
+                COALESCE(z.n, 0)::int AS anunciadas
+           FROM user_collection uc
+           JOIN cards c ON uc.card_id = c.id
+           LEFT JOIN (
+             SELECT card_id, count(*)::int AS n
+               FROM graded_cards
+              WHERE user_id = $1 AND estado = 'activa'
+              GROUP BY card_id
+           ) g ON g.card_id = uc.card_id
+           LEFT JOIN (
+             SELECT card_id, count(*)::int AS n
+               FROM bazar_listings
+              WHERE seller_id = $1 AND estado = 'activa' AND graded_id IS NULL
+              GROUP BY card_id
+           ) z ON z.card_id = uc.card_id
+          WHERE uc.user_id = $1 AND uc.quantity > 0`,
+        [userId],
+      );
+      const euros = await preciosEnEuros(rows.map((r) => String(r.id)));
+      return rows.map((r) => {
+        const copias = Number(r.quantity) || 0;
+        const graduadas = Number(r.graduadas) || 0;
+        const anunciadas = Number(r.anunciadas) || 0;
+        return {
+          id: String(r.id),
+          rarity: String(r.rarity ?? "Common"),
+          quantity: copias,
+          is_favorite: r.is_favorite === true,
+          graduadas,
+          anunciadas,
+          copiasLibres: Math.max(0, copias - graduadas - anunciadas),
+          ...valoresDeVentaDelMonton(
+            r.rarity,
+            copias,
+            graduadas + anunciadas,
+            euros.get(String(r.id)),
+          ),
+        };
+      });
+    } catch (error) {
+      console.error("❌ Error cargando el inventario de la colección:", error);
       return [];
     }
   }
@@ -1688,17 +2106,73 @@
    *
    * Lo que sí compra este catch es que un despliegue sin migrar siga vendiendo
    * cartas con normalidad en vez de romperse. */
-  async function copiasGraduadas(userId: string, cardId: string): Promise<number> {
+  /* ==================================================================== *
+   * Y LAS COPIAS ANUNCIADAS EN EL BAZAR TAMPOCO
+   * ====================================================================
+   *
+   * EL AGUJERO QUE CIERRA (anuncios zombi): el bazar no aparta la carta al
+   * publicarla —el anuncio es una fila y `quantity` no se mueve—, y la copia
+   * anunciada sólo se contaba AL PUBLICAR. Las demás rutas la ignoraban: con 2
+   * copias y una anunciada, "vender todas las repetidas" cobraba la copia
+   * anunciada y dejaba `quantity = 1`. El anuncio seguía 'activa' en el
+   * escaparate, todo comprador leía "o se la ha llevado otro, o no te llega el
+   * saldo", no caducaba nunca y ocupaba uno de los 20 huecos del vendedor.
+   *
+   * LA REGLA, que es la misma que ya protegía a las graduadas: UNA COPIA
+   * ANUNCIADA ESTÁ COMPROMETIDA. No se vende a la tienda, no se entrega en el
+   * mercado, no se gradúa y no se da en un trueque mientras su anuncio siga
+   * abierto; para usarla en otra cosa hay que retirar el anuncio. El invariante
+   * que sostienen TODAS las rutas que gastan copias es
+   *
+   *     quantity resultante  >=  graduadas + anunciadas sueltas + 1
+   *
+   * (el +1 es la copia libre que `comprarEnBazarAction` exige que le quede al
+   * vendedor: sin ella la compra se niega aunque el anuncio exista).
+   *
+   * POR QUÉ ASÍ Y NO RETIRANDO EL ANUNCIO DESDE CADA VENTA, que era la otra
+   * salida:
+   *   - publicar es una decisión del jugador (quiere por esa copia más de lo
+   *     que paga la tienda); que el botón "vender repetidas" se la vendiera a
+   *     la tienda y le retirase el anuncio sin decir nada sería deshacérsela;
+   *   - retirar desde la venta obligaría a escribir en bazar_listings DESPUÉS
+   *     de bloquear user_collection, y la compra bloquea al revés (primero el
+   *     anuncio, luego la colección): interbloqueo nuevo entre el vendedor que
+   *     vende y el comprador que compra;
+   *   - contar es lo que ya hacen estas sentencias con las graduadas: un
+   *     recuento más en el mismo guard, sin candados ni tablas nuevas.
+   *
+   * COMO EL DE LAS GRADUADAS, ESTE NÚMERO NO ES EL GUARD: sirve para el precio
+   * y para decir que no con un mensaje; quien lo impide es la condición SQL de
+   * la sentencia que descuenta.
+   *
+   * LO QUE EL RECUENTO NO PUEDE CERRAR, dicho claro: sale de la instantánea de
+   * la sentencia, así que una publicación y una venta de la MISMA carta que se
+   * crucen en el mismo instante pueden pasar las dos. Queda entonces un anuncio
+   * sin respaldo, que ya no es un zombi eterno: `getBazar` no lo enseña y
+   * `retirarAnunciosSinRespaldo` lo cierra (ver el bloque del bazar).
+   */
+  async function copiasComprometidas(
+    userId: string,
+    cardId: string,
+  ): Promise<{ graduadas: number; anunciadas: number }> {
     try {
       const { rows } = await sql`
-        SELECT count(*)::int AS n FROM graded_cards
-        WHERE user_id = ${userId} AND card_id = ${cardId} AND estado = 'activa'
+        SELECT
+          (SELECT count(*)::int FROM graded_cards
+            WHERE user_id = ${userId} AND card_id = ${cardId} AND estado = 'activa') AS graduadas,
+          (SELECT count(*)::int FROM bazar_listings
+            WHERE seller_id = ${userId} AND card_id = ${cardId}
+              AND estado = 'activa' AND graded_id IS NULL) AS anunciadas
       `;
-      return Number(rows[0]?.n ?? 0);
+      return {
+        graduadas: Number(rows[0]?.graduadas ?? 0),
+        anunciadas: Number(rows[0]?.anunciadas ?? 0),
+      };
     } catch {
-      // La tabla puede no existir todavía en un despliegue sin migrar. Sin
-      // graduaciones, cero copias bloqueadas: el comportamiento de siempre.
-      return 0;
+      // Las tablas pueden no existir todavía en un despliegue sin migrar. Sin
+      // graduaciones ni bazar, cero copias bloqueadas: el comportamiento de
+      // siempre.
+      return { graduadas: 0, anunciadas: 0 };
     }
   }
 
@@ -1721,11 +2195,37 @@
     }
   }
 
+  /**
+   * Forma MÍNIMA de un id de carta que llega del cliente: una cadena corta.
+   *
+   * Para las rutas en las que el id sólo se usa para BUSCAR una fila que ya
+   * existe (vender, marcar como deseada): ahí lo que valida de verdad es que la
+   * fila esté, y esto sólo evita que un objeto o una cadena de kilobytes lleguen
+   * hasta Postgres.
+   *
+   * NO ES `ID_CARTA` A PROPÓSITO. Aquel patrón sólo admite letras, cifras,
+   * punto, guion y guion bajo, y el id de una carta es "expansión-número" con
+   * el número IMPRESO, que no siempre es un número: Unseen Forces (ex10) trae
+   * Unown numerados "!" y "?". En los 38 JSON del repositorio no hay ninguno
+   * así —comprobado: los 6.779 ids pasan el patrón—, pero la base de producción
+   * tiene las 171 expansiones. Usar `ID_CARTA` aquí sería dejar sin poder
+   * venderse una carta que hasta hoy se vendía, por un patrón que estas rutas no
+   * necesitan.
+   */
+  function esIdPlausible(valor: unknown): valor is string {
+    return typeof valor === "string" && valor.length > 0 && valor.length <= 64;
+  }
+
   export async function sellCardAction(cardId: string) {
     const { userId } = await auth();
     if (!userId) return null;
+    // Lo que llega es el cuerpo de un POST, no un dato comprobado.
+    if (!esIdPlausible(cardId)) return null;
 
     try {
+      // El guard de la venta lee graded_cards y bazar_listings: tienen que
+      // existir aunque ésta sea la primera acción de la instancia.
+      await ensureSchema();
       const { rows: info } = await sql`
         SELECT uc.quantity, c.rarity
         FROM user_collection uc JOIN cards c ON c.id = uc.card_id
@@ -1733,9 +2233,12 @@
       `;
       if (info.length === 0) return null;
       const cantidad = Number(info[0].quantity);
-      // Las graduadas salen del montón de repetidas: están en la vitrina.
-      const graduadas = await copiasGraduadas(userId, cardId);
-      const vendibles = cantidad - graduadas;
+      // Las graduadas salen del montón de repetidas: están en la vitrina. Y las
+      // anunciadas en el bazar también: están apalabradas (ver el bloque de
+      // `copiasComprometidas`).
+      const { graduadas, anunciadas } = await copiasComprometidas(userId, cardId);
+      const comprometidas = graduadas + anunciadas;
+      const vendibles = cantidad - comprometidas;
       // Sin una copia LIBRE de sobra no hay nada que vender por aquí.
       if (vendibles <= 1) return null;
       /* La curva se aplica sobre el montón ENTERO (ver el bloque de arriba):
@@ -1762,20 +2265,29 @@
             AND quantity = ${cantidad} AND quantity > 1
             -- El guard de verdad de las graduadas, sobre la fila ya bloqueada:
             -- vender no puede dejar quantity por debajo de lo que hay graduado.
+            -- Y tampoco por debajo de las copias anunciadas en el bazar: la
+            -- copia de un anuncio abierto no se vende por otra via.
             AND quantity - 1 >= (
               SELECT count(*) FROM graded_cards
               WHERE user_id = ${userId} AND card_id = ${cardId} AND estado = 'activa'
+            ) + (
+              SELECT count(*) FROM bazar_listings
+              WHERE seller_id = ${userId} AND card_id = ${cardId}
+                AND estado = 'activa' AND graded_id IS NULL
             ) + 1
           RETURNING 1
         )
-        UPDATE users SET coins = coins + ${price}
+        /* COALESCE, como el vaciado, el bono, el mercado y la graduada. Con
+         * users.coins a NULL (que el esquema admite: es "sin saldo inicial"),
+         * NULL + importe es NULL: la copia se descontaba y el saldo seguia
+         * NULL. Carta perdida sin cobrar, y la respuesta decia que se habia
+         * cobrado. */
+        UPDATE users SET coins = COALESCE(coins, 0) + ${price}
         WHERE id = ${userId} AND EXISTS (SELECT 1 FROM venta)
         RETURNING coins
       `;
       if (rows.length === 0) return null;
 
-      revalidatePath('/');
-      revalidatePath('/collection');
       /* Y SE DEVUELVEN LOS IMPORTES DEL MONTÓN QUE QUEDA.
        *
        * Sin esto, el arreglo de arriba traía un fallo nuevo: la colección pinta
@@ -1797,7 +2309,7 @@
       return {
         earned: price,
         coins: Number(rows[0]?.coins ?? 0),
-        ...valoresDeVentaDelMonton(info[0].rarity, cantidad - 1, graduadas, eur),
+        ...valoresDeVentaDelMonton(info[0].rarity, cantidad - 1, comprometidas, eur),
       };
     } catch (error) {
       console.error("Error vendiendo carta:", error);
@@ -1848,7 +2360,6 @@
         `;
       }
 
-      revalidatePath('/collection');
       return { success: true, isFavorite: !isFav };
 
     } catch (error) {
@@ -1870,7 +2381,7 @@
    * ya estuviera sembrado; se ha retirado de allí, y el único que la necesita de
    * verdad es `cartasDelSet`, aquí mismo, justo antes de sortear un sobre.
    *
-   * (Se llama desde arriba, en la línea ~264: las declaraciones de función se
+   * (Se llama desde arriba, en `cartasDelSet`: las declaraciones de función se
    * elevan, así que el orden en el fichero da igual.)
    *
    * Nunca se fía de lo que le manden: reconstruye las cartas desde el catálogo
@@ -1882,35 +2393,64 @@
       const cards = (await loadLocalCards(setId)) as any[];
       if (cards.length === 0) return { status: 'unknown_set' };
 
-      const { count } = (await sql`SELECT count(*) FROM cards WHERE set_id = ${setId}`).rows[0];
-
-      /* SE COMPARA CONTRA EL CATÁLOGO, NO CONTRA CERO.
+      /* SE COMPARA CONTRA EL CATÁLOGO, CARTA A CARTA, y no contra cero ni
+       * contra un recuento.
        *
        * Antes bastaba `count > 0` para darlo por sembrado, y eso convertía
-       * cualquier siembra interrumpida en permanente: si los ~250 INSERT de
-       * abajo se cortan a mitad (esto corre DENTRO de la compra de un sobre, con
-       * su límite de tiempo), el set se queda con un catálogo parcial —y
-       * sesgado, porque loadLocalCards devuelve ordenado por número— contra el
-       * que se sortearían todos los sobres siguientes. Ningún reintento lo
-       * completaba: el primer `count > 0` lo daba por bueno.
+       * cualquier siembra interrumpida en permanente: si la escritura se corta
+       * a mitad (esto corre DENTRO de la compra de un sobre, con su límite de
+       * tiempo), el set se queda con un catálogo parcial —y sesgado, porque
+       * loadLocalCards devuelve ordenado por número— contra el que se
+       * sortearían todos los sobres siguientes.
        *
-       * Con la comparación contra `cards.length` la siembra es reanudable: cada
-       * intento rellena lo que falte y el ON CONFLICT DO NOTHING hace que
-       * repetir no cueste nada.
+       * Ahora se leen los ids que ya están y se escriben SÓLO los que faltan:
+       * la siembra es reanudable y, sobre todo, una compra nunca reescribe una
+       * carta que ya existía (la pudo traer el cron con datos más completos que
+       * los del JSON local).
        */
-      if (parseInt(count) >= cards.length) return { status: 'already_synced' };
+      const { rows: yaEstan } = await sql`SELECT id FROM cards WHERE set_id = ${setId}`;
+      const enBase = new Set(yaEstan.map((r) => String(r.id)));
+      const faltan = cards.filter((card) => card?.id && !enBase.has(String(card.id)));
+      if (faltan.length === 0) return { status: 'already_synced' };
 
-      for (const card of cards) {
-        await sql`
-          INSERT INTO cards (id, name, rarity, images, set_id, number, artist, flavor_text, tcgplayer)
-          VALUES (
-            ${card.id}, ${card.name}, ${card.rarity || 'Common'},
-            ${JSON.stringify(card.images)}, ${setId}, ${card.number || '???'},
-            ${card.artist || 'Artista Desconocido'}, ${card.flavorText || ''},
-            ${JSON.stringify(card.tcgplayer || {})}
-          ) ON CONFLICT (id) DO NOTHING;
-        `;
+      /* POR EL MISMO ESCRITOR QUE EL CRON Y QUE /seed-database (`upsertCards`).
+       *
+       * EL AGUJERO QUE CIERRA: aquí vivía un tercer INSERT propio que escribía
+       * 9 de las 28 columnas de `cards`, con sus propios rellenos ('???',
+       * 'Artista Desconocido') y de una en una: ~250 sentencias dentro de una
+       * compra. En un despliegue donde alguien comprase un sobre antes de
+       * ejecutar /seed-database, la expansión se quedaba con `supertype`,
+       * `subtypes` y `evolves_from` en NULL —la siembra posterior la salta
+       * porque el recuento ya cuadra— y los filtros del mercado por supertipo,
+       * etapa y evolución no casaban con ninguna de sus cartas.
+       *
+       * `upsertCards` escribe las 28 columnas en lotes de 100 (tres sentencias
+       * para una expansión) y es el mismo código que ya está probado contra la
+       * tabla. El `set` se inyecta porque `valoresCarta` lo lee de `c.set.id` y
+       * el nombre del fichero es la fuente de la verdad del set, igual que hace
+       * la ruta de siembra.
+       *
+       * Y SE ESCRIBE LA CARTA CRUDA DEL JSON, no la que devuelve
+       * `loadLocalCards`. Aquélla es la forma que pintan las pantallas: no trae
+       * abilities, rules, resistances, legalities ni regulationMark, y esas
+       * columnas se quedaban en NULL —/seed-database salta luego la expansión
+       * porque el recuento ya cuadra—. Con la cruda, comprar un sobre antes de
+       * sembrar deja la expansión igual que si se hubiera sembrado. Si la
+       * lectura cruda fallara, se cae a la de siempre: menos columnas, mismas
+       * cartas.
+       */
+      let crudas = new Map<string, Record<string, unknown>>();
+      try {
+        crudas = new Map((await loadLocalCardsCrudas(setId)).map((c) => [String(c.id), c]));
+      } catch (e) {
+        console.error("syncSetToDatabase: sin JSON crudo, se siembra con la forma recortada:", e);
       }
+      await upsertCards(
+        faltan.map((card) => ({ ...(crudas.get(String(card.id)) ?? card), set: { id: setId } })),
+      );
+      // El recuento de cartas de esta expansión acaba de cambiar: que la lista
+      // memorizada de `getSetsFromDB` no enseñe el viejo durante un minuto.
+      setsEnMemoria = null;
 
       return { status: 'success' };
     } catch (error) {
@@ -1929,8 +2469,13 @@
   export async function sellAllDuplicatesAction(cardId: string) {
     const { userId } = await auth();
     if (!userId) return { success: false, error: "No autorizado" };
+    if (!esIdPlausible(cardId)) {
+      return { success: false, error: "No tienes la carta" };
+    }
 
     try {
+      // Mismo motivo que en sellCardAction: el guard lee las dos tablas.
+      await ensureSchema();
       const { rows: info } = await sql`
         SELECT uc.quantity, c.rarity
         FROM user_collection uc JOIN cards c ON c.id = uc.card_id
@@ -1939,13 +2484,19 @@
       if (info.length === 0) return { success: false, error: "No tienes la carta" };
 
       // Las graduadas no cuentan como duplicados vendibles: están en la vitrina.
-      const graduadas = await copiasGraduadas(userId, cardId);
-      const vendibles = Number(info[0].quantity) - graduadas;
+      // Las anunciadas en el bazar tampoco: están apalabradas con su comprador.
+      const { graduadas, anunciadas } = await copiasComprometidas(userId, cardId);
+      const vendibles = Number(info[0].quantity) - graduadas - anunciadas;
       const duplicates = vendibles - 1;
       if (duplicates <= 0) {
         return {
           success: false,
-          error: graduadas > 0 ? "Sólo te quedan copias graduadas" : "No tienes duplicados",
+          error:
+            anunciadas > 0
+              ? "Las copias que te sobran están anunciadas en el bazar: retira el anuncio para venderlas aquí"
+              : graduadas > 0
+                ? "Sólo te quedan copias graduadas"
+                : "No tienes duplicados",
         };
       }
 
@@ -1978,35 +2529,62 @@
            *    venderla. El guard de cantidad no lo detectaba porque graduar no
            *    toca user_collection.
            *
-           *  - "= ${graduadas}" ata el recuento al que se usó para calcular el
+           *  - la igualdad del recuento con el que trae JavaScript (la ultima
+           *    condicion) ata el recuento al que se usó para calcular el
            *    importe unas líneas más arriba. Si cambió entretanto —otra
            *    pestaña graduando—, no se vende nada, igual que cuando cambia la
            *    cantidad. Cobrar el importe de un montón que ya no existe es
-           *    pagar de más. */
+           *    pagar de más.
+           *
+           * OJO: ESTE COMENTARIO VIVE DENTRO DE LA PLANTILLA sql, y ahi dentro
+           * un dolar-llave ES UN PARAMETRO aunque este en un comentario. Aqui
+           * hubo uno citando esa condicion: Postgres no ve los comentarios, se
+           * encontraba con un parametro que nadie usaba y rechazaba la
+           * sentencia ENTERA con 42P18 ("could not determine data type of
+           * parameter"). Este boton no vendio nada desde que se escribio.
+           *
+           * LAS ANUNCIADAS EN EL BAZAR VAN EN LOS TRES SITIOS, por lo mismo que
+           * las graduadas: se quedan (1 + graduadas + anunciadas), no se vende
+           * si no sobra nada por encima de eso, y el recuento tiene que ser el
+           * que se usó para el importe. Sin esto, este botón vendía la copia
+           * anunciada y dejaba el anuncio abierto sin nada detrás. */
           UPDATE user_collection SET quantity = 1 + (
             SELECT count(*) FROM graded_cards
             WHERE user_id = ${userId} AND card_id = ${cardId} AND estado = 'activa'
+          ) + (
+            SELECT count(*) FROM bazar_listings
+            WHERE seller_id = ${userId} AND card_id = ${cardId}
+              AND estado = 'activa' AND graded_id IS NULL
           )
           WHERE user_id = ${userId} AND card_id = ${cardId}
             AND quantity = ${info[0].quantity}
             AND quantity > 1 + (
               SELECT count(*) FROM graded_cards
               WHERE user_id = ${userId} AND card_id = ${cardId} AND estado = 'activa'
+            ) + (
+              SELECT count(*) FROM bazar_listings
+              WHERE seller_id = ${userId} AND card_id = ${cardId}
+                AND estado = 'activa' AND graded_id IS NULL
             )
             AND (
               SELECT count(*) FROM graded_cards
               WHERE user_id = ${userId} AND card_id = ${cardId} AND estado = 'activa'
             ) = ${graduadas}
+            AND (
+              SELECT count(*) FROM bazar_listings
+              WHERE seller_id = ${userId} AND card_id = ${cardId}
+                AND estado = 'activa' AND graded_id IS NULL
+            ) = ${anunciadas}
           RETURNING 1
         )
-        UPDATE users SET coins = coins + ${totalEarned}
+        -- COALESCE: con el saldo a NULL, NULL + importe es NULL y las copias
+        -- se iban sin cobrar. Ver sellCardAction.
+        UPDATE users SET coins = COALESCE(coins, 0) + ${totalEarned}
         WHERE id = ${userId} AND EXISTS (SELECT 1 FROM venta)
         RETURNING coins
       `;
       if (rows.length === 0) return { success: false, error: "La carta cambió, inténtalo de nuevo" };
 
-      revalidatePath('/');
-      revalidatePath('/collection');
       return { success: true, sold: duplicates, earned: totalEarned, coins: Number(rows[0]?.coins ?? 0) };
     } catch (error) {
       console.error("Error vendiendo todo:", error);
@@ -2043,6 +2621,14 @@
   export async function sellAllDuplicatesBulkAction() {
     const { userId } = await auth();
     if (!userId) return { success: false as const, error: "No autorizado" };
+    // Tope de frecuencia (services/limite.ts): este botón recorre la colección
+    // entera, y nadie lo pulsa ocho veces en diez segundos.
+    if (!dentroDelLimite("vaciado:" + userId, LIMITES.ventaEnLote)) {
+      return {
+        success: false as const,
+        error: "Demasiadas ventas seguidas. Espera unos segundos.",
+      };
+    }
 
     try {
       // Sólo lo que sobra y no está protegido. El ORDER BY es para que la
@@ -2058,10 +2644,17 @@
        *
        * El filtro pasa de "quantity > 1" a "quantity > 1 + graduadas": una
        * carta con 3 copias y 2 graduadas tiene UNA copia libre, o sea ningún
-       * duplicado que vender, y no debe ni aparecer en la lista. */
+       * duplicado que vender, y no debe ni aparecer en la lista.
+       *
+       * Y LAS ANUNCIADAS EN EL BAZAR, con otro LEFT JOIN agregado igual: este
+       * botón era el camino más corto al anuncio zombi —con 2 copias y una
+       * anunciada dejaba quantity en 1 y el anuncio abierto sin nada detrás—.
+       * Ver `copiasComprometidas`. */
+      await ensureSchema();
       const { rows } = await sql`
         SELECT uc.card_id, uc.quantity, c.rarity,
-               COALESCE(g.n, 0)::int AS graduadas
+               COALESCE(g.n, 0)::int AS graduadas,
+               COALESCE(a.n, 0)::int AS anunciadas
         FROM user_collection uc
         JOIN cards c ON c.id = uc.card_id
         LEFT JOIN (
@@ -2070,8 +2663,14 @@
           WHERE user_id = ${userId} AND estado = 'activa'
           GROUP BY card_id
         ) g ON g.card_id = uc.card_id
+        LEFT JOIN (
+          SELECT card_id, count(*)::int AS n
+          FROM bazar_listings
+          WHERE seller_id = ${userId} AND estado = 'activa' AND graded_id IS NULL
+          GROUP BY card_id
+        ) a ON a.card_id = uc.card_id
         WHERE uc.user_id = ${userId}
-          AND uc.quantity > 1 + COALESCE(g.n, 0)
+          AND uc.quantity > 1 + COALESCE(g.n, 0) + COALESCE(a.n, 0)
           AND COALESCE(uc.is_favorite, false) = false
         ORDER BY uc.card_id
       `;
@@ -2096,9 +2695,11 @@
       const cantidades: number[] = [];
       const valores: number[] = [];
       const graduadasPorId: number[] = [];
+      const anunciadasPorId: number[] = [];
       for (const row of rows) {
         const cantidad = Number(row.quantity);
         const graduadas = Number(row.graduadas ?? 0);
+        const anunciadas = Number(row.anunciadas ?? 0);
         /* Curva sobre el montón ENTERO y número de copias acotado a las libres.
          * Pasar "cantidad - graduadas" como montón reiniciaba la curva y hacía
          * que graduar parte del montón fuese la forma de cobrar tarifa de
@@ -2107,7 +2708,7 @@
         const valor = valorDeVenta(
           row.rarity,
           cantidad,
-          cantidad - 1 - graduadas,
+          cantidad - 1 - graduadas - anunciadas,
           euros.get(String(row.card_id)),
         );
         if (valor <= 0) continue;
@@ -2115,6 +2716,7 @@
         cantidades.push(cantidad);
         valores.push(valor);
         graduadasPorId.push(graduadas);
+        anunciadasPorId.push(anunciadas);
       }
       if (ids.length === 0) {
         const { rows: saldo } = await sql`SELECT coins FROM users WHERE id = ${userId}`;
@@ -2135,8 +2737,8 @@
       // va después y no puede desviarse de esa suma.
       const { rows: resultado } = await sql.query(
         `WITH esperado AS (
-           SELECT * FROM unnest($2::text[], $3::int[], $4::int[], $5::int[])
-             AS t(card_id, cantidad, valor, graduadas)
+           SELECT * FROM unnest($2::text[], $3::int[], $4::int[], $5::int[], $6::int[])
+             AS t(card_id, cantidad, valor, graduadas, anunciadas)
          ),
          /* EL RECUENTO DE GRADUADAS SE HACE AQUÍ DENTRO, no fuera.
           *
@@ -2150,34 +2752,89 @@
           * pagan por algo que ya no está.
           *
           * La ventana no era teórica: entre aquel SELECT y esta sentencia hay
-          * un preciosEnEuros sobre la colección entera. */
+          * un preciosEnEuros sobre la colección entera.
+          *
+          * LO QUE ESTO NO CIERRA, Y HAY QUE DECIRLO: el recuento de aqui dentro
+          * sale de la INSTANTANEA de esta sentencia. Graduar bloquea la fila de
+          * la coleccion pero no la modifica, asi que si este vaciado estaba
+          * esperando ese candado, al despertar sigue adelante sin releer nada
+          * (Postgres solo reevalua filas MODIFICADAS, y aun entonces relee la
+          * fila, no las subconsultas): vende contando cero graduadas y deja mas
+          * graduadas activas que copias. Lo mismo vale para la venta suelta,
+          * vender todas y las repetidas del sobre. Medido contra PostgreSQL
+          * real con carga mezclada: aparece en 13 de 101 pasadas.
+          *
+          * NO IMPRIME DINERO: la graduada fantasma no se puede vender ni
+          * anunciar hasta que el jugador vuelva a tener otra copia (las dos
+          * rutas exigen que sobre una). Cerrarlo de verdad pide que el numero
+          * de copias comprometidas viva en la propia fila de user_collection,
+          * que es la que Postgres relee: una columna nueva que escribirian
+          * graduar, publicar, retirar, comprar y vender graduada. Es una
+          * migracion con relleno y es decision del dueno; ver el bloque de
+          * carreras conocidas, mas abajo. */
          graduadasAhora AS (
            SELECT card_id, count(*)::int AS n
            FROM graded_cards
            WHERE user_id = $1 AND estado = 'activa' AND card_id = ANY($2::text[])
            GROUP BY card_id
          ),
+         /* Y EL DE LAS ANUNCIADAS EN EL BAZAR, aqui dentro por el mismo motivo:
+          * publicar tampoco escribe en user_collection, asi que el guard de
+          * cantidad no ve un anuncio que se haya abierto entre el SELECT de
+          * arriba y esta sentencia. Solo los anuncios SUELTOS: la copia de un
+          * anuncio de graduada ya va contada en graduadasAhora. */
+         anunciadasAhora AS (
+           SELECT card_id, count(*)::int AS n
+           FROM bazar_listings
+           WHERE seller_id = $1 AND estado = 'activa' AND graded_id IS NULL
+             AND card_id = ANY($2::text[])
+           GROUP BY card_id
+         ),
+         /* LAS FILAS QUE SE VAN A VENDER, BLOQUEADAS EN EL ORDEN GLOBAL.
+          *
+          * El UPDATE de abajo tocaba sus filas en el orden que le diera el plan
+          * (el del join con esperado), y todas las demas sentencias que cogen
+          * varias filas de user_collection lo hacen por (user_id, card_id): la
+          * compra de un sobre, el trueque, el mercado, la graduacion. Un sobre
+          * comprado en otra pestana mientras se vaciaban duplicados, o dos
+          * vaciados a la vez, se abrazaban. Con este CTE delante las filas se
+          * piden ordenadas y el que llega segundo espera sin tener ninguna.
+          *
+          * No cambia lo que hace la venta: son las MISMAS filas, y el guard de
+          * cantidad sigue evaluandose sobre la version confirmada. El count del
+          * WHERE de venta es lo que obliga a que esto se ejecute antes. */
+         bloqueo AS MATERIALIZED (
+           SELECT uc.card_id
+           FROM user_collection uc
+           WHERE uc.user_id = $1 AND uc.card_id = ANY($2::text[])
+           ORDER BY uc.user_id, uc.card_id
+           FOR UPDATE OF uc
+         ),
          venta AS (
            UPDATE user_collection uc
-           -- Se deja UNA copia libre MÁS las graduadas, que no se venden aquí.
-           SET quantity = 1 + COALESCE(g.n, 0)
+           -- Se deja UNA copia libre MÁS las graduadas y las anunciadas, que no
+           -- se venden aquí.
+           SET quantity = 1 + COALESCE(g.n, 0) + COALESCE(a.n, 0)
            FROM esperado e
            LEFT JOIN graduadasAhora g ON g.card_id = e.card_id
+           LEFT JOIN anunciadasAhora a ON a.card_id = e.card_id
            WHERE uc.user_id = $1
              AND uc.card_id = e.card_id
+             AND (SELECT count(*) FROM bloqueo) >= 0
              AND uc.quantity = e.cantidad
-             AND uc.quantity > 1 + COALESCE(g.n, 0)
+             AND uc.quantity > 1 + COALESCE(g.n, 0) + COALESCE(a.n, 0)
              /* Y EL RECUENTO TIENE QUE SER EL MISMO con el que se calculó el
               * precio. Si cambió, esta carta no se vende y ya está: pagarle el
               * importe de otra cantidad de copias sería pagar de más o de
               * menos. Es el mismo criterio que el guard de cantidad. */
              AND COALESCE(g.n, 0) = e.graduadas
+             AND COALESCE(a.n, 0) = e.anunciadas
              AND COALESCE(uc.is_favorite, false) = false
              -- Sin fila en users el abono no tocaría nada y las cartas
              -- desaparecerían gratis.
              AND EXISTS (SELECT 1 FROM users WHERE id = $1)
            RETURNING e.card_id AS card_id, e.valor AS valor,
-                     e.cantidad - 1 - COALESCE(g.n, 0) AS copias
+                     e.cantidad - 1 - COALESCE(g.n, 0) - COALESCE(a.n, 0) AS copias
          ),
          total AS (
            SELECT
@@ -2194,15 +2851,11 @@
            (SELECT ganado FROM total) AS ganado,
            (SELECT copias FROM total) AS copias,
            (SELECT ids FROM total) AS ids`,
-        [userId, ids, cantidades, valores, graduadasPorId],
+        [userId, ids, cantidades, valores, graduadasPorId, anunciadasPorId],
       );
       if (resultado.length === 0) return { success: false as const, error: "Error en servidor" };
 
       const vendidas = Number(resultado[0].copias ?? 0);
-      if (vendidas > 0) {
-        revalidatePath('/');
-        revalidatePath('/collection');
-      }
       return {
         success: true as const,
         sold: vendidas,
@@ -2218,8 +2871,55 @@
   // src/app/action.ts
   // src/app/action.ts
 
-  export async function getSetsFromDB() {
-    try {
+  /* ==================================================================== *
+   * EL CATÁLOGO DE EXPANSIONES, MEMORIZADO POR INSTANCIA
+   * ====================================================================
+   *
+   * EL AGUJERO QUE CIERRA: `getSetsFromDB` agrupa `sets LEFT JOIN cards` —toda
+   * la tabla de cartas, decenas de miles de filas con 171 expansiones— y lo
+   * hacía en CADA llamada. La piden al montar la portada, la colección, cada
+   * álbum, el perfil de un entrenador y la vitrina, así que abrir un sobre,
+   * mirar el álbum y volver a la tienda eran tres agregados completos para un
+   * dato que sólo cambia cuando pasa el cron de las 05:00. Y no exige sesión:
+   * cualquiera podía pedirlo en bucle.
+   *
+   * Se guardan las filas CRUDAS, antes de la capa de idioma (que depende de la
+   * petición), con el mismo patrón que `catalogoDeSet`: un valor con caducidad
+   * en la memoria de la instancia. Es más simple que `unstable_cache` y no
+   * depende de `revalidateTag`.
+   *
+   * UN MINUTO, y no los diez del catálogo de un set: aquí el dato que envejece
+   * es `cards_count`, que sube mientras una expansión se está sembrando o
+   * ingiriendo, y es el denominador del progreso que ve el jugador. Con un
+   * minuto el ahorro es el mismo —de un agregado por visita a uno por minuto e
+   * instancia— y lo viejo no dura. La siembra bajo demanda lo vacía además.
+   *
+   * `setsEnVuelo` evita la estampida: si llegan diez peticiones con la memoria
+   * caducada, lanzan UNA consulta y esperan las diez a la misma promesa.
+   *
+   * DE AQUÍ NO SALE DINERO, y por eso `claimSetCompletionBonuses` NO lo usa:
+   * el bono de expansión cuenta las cartas en el momento de pagar, no las de
+   * hace un minuto.
+   */
+  const SETS_TTL_MS = 60 * 1000;
+  type FilaDeSet = Record<string, unknown>;
+  let setsEnMemoria: { filas: FilaDeSet[]; expira: number } | null = null;
+  let setsEnVuelo: Promise<FilaDeSet[]> | null = null;
+
+  /** Las filas de expansiones ya montadas (sin idioma). Vacío = tabla sin sembrar. */
+  function filasDeSets(): Promise<FilaDeSet[]> {
+    if (setsEnMemoria && setsEnMemoria.expira > Date.now()) {
+      return Promise.resolve(setsEnMemoria.filas);
+    }
+    if (!setsEnVuelo) {
+      setsEnVuelo = leerFilasDeSets().finally(() => {
+        setsEnVuelo = null;
+      });
+    }
+    return setsEnVuelo;
+  }
+
+  async function leerFilasDeSets(): Promise<FilaDeSet[]> {
       // `cardsCount` es el número de cartas que EXISTEN de la expansión, que es
       // contra lo que se colecciona. `total` es lo que el set DICE tener y no
       // coincide: viene inflado de la API y además la ingesta es reanudable, así
@@ -2239,8 +2939,9 @@
         ORDER BY s.release_date DESC NULLS LAST
       `;
 
-      // Si la tabla está vacía todavía no se ha ejecutado el seed.
-      if (rows.length === 0) return setsEnIdioma(await loadLocalSets());
+      // Si la tabla está vacía todavía no se ha ejecutado el seed: no se
+      // memoriza nada, y quien llama cae al catálogo del repositorio.
+      if (rows.length === 0) return [];
 
       /* CUÁNTAS FOTOS DE SOBRE TIENE CADA EXPANSIÓN EN POSTGRES.
        *
@@ -2259,14 +2960,27 @@
        * `undefined` en todas y el sobre se pinta como se ha pintado siempre. */
       const variantesSobre = await variantesDeSobre();
 
-      return setsEnIdioma(rows.map(set => ({
+      const filas = rows.map(set => ({
         ...set,
         releaseDate: set.release_date,
         cardsCount: Number(set.cards_count) || 0,
         // El id va CRUDO, que es la clave de la tabla y la que compone la URL.
         variantesSobre: variantesSobre.get(String(set.id)),
         images: typeof set.images === 'string' ? JSON.parse(set.images) : set.images
-      })));
+      }));
+      setsEnMemoria = { filas, expira: Date.now() + SETS_TTL_MS };
+      return filas;
+  }
+
+  export async function getSetsFromDB() {
+    try {
+      const filas = await filasDeSets();
+      // Si la tabla está vacía todavía no se ha ejecutado el seed.
+      if (filas.length === 0) return setsEnIdioma(await loadLocalSets());
+      // COPIAS, no las filas memorizadas: lo que sale de aquí lo retoca la capa
+      // de idioma y lo serializa Next, y la memoria la comparten todas las
+      // peticiones de la instancia.
+      return setsEnIdioma(filas.map((fila) => ({ ...fila })));
     } catch (error) {
       // Sin Postgres configurado servimos el catálogo del repositorio.
       console.error("Error al obtener sets, uso el JSON local:", error);
@@ -2404,12 +3118,20 @@
       // Incluimos `coins` con COALESCE: si esta función gana la carrera de
       // creación frente a getUserData, el usuario nace con su saldo inicial en
       // vez de con coins NULL (que dejaba el saldo vacío y bloqueaba spendCoins).
+      //
+      // Y SÓLO ESCRIBE SI CAMBIA ALGO (el WHERE del DO UPDATE). La pantalla de
+      // amigos llama a esto en cada visita, y sin él cada visita era una versión
+      // nueva de la fila de `users` —la más caliente de la aplicación— para
+      // volver a guardar el mismo nombre. Con el WHERE, cuando el nombre es el
+      // mismo y el saldo existe no se reescribe nada.
       await sql`
         INSERT INTO users (id, username, coins)
         VALUES (${user.id}, ${displayName}, ${STARTING_COINS})
         ON CONFLICT (id)
         DO UPDATE SET username = ${displayName},
                       coins = COALESCE(users.coins, ${STARTING_COINS})
+        WHERE users.username IS DISTINCT FROM EXCLUDED.username
+           OR users.coins IS NULL
       `;
     } catch (error) {
       console.error("Error sincronizando nombre de usuario:", error);
@@ -2496,7 +3218,6 @@ export async function claimDailyReward() {
       return { error: "Esa recompensa ya se ha reclamado" };
     }
 
-    revalidatePath('/');
     return {
       success: true,
       reward: totalReward,
@@ -2599,7 +3320,10 @@ export async function getProfileStats() {
     // Conteo de rarezas tier alto para logros
     let rareHits = 0;
     cards.forEach((row: any) => {
-      if ((RARITY_RANK[row.rarity] || 0) >= 70) rareHits += 1; // Illustration Rare+
+      // Propiedad propia y número: una rareza que se llame como un método de
+      // Object no puede colarse en la comparación.
+      const rango = RARITY_RANK[String(row.rarity ?? "")];
+      if (typeof rango === "number" && rango >= 70) rareHits += 1; // Illustration Rare+
     });
 
     return {
@@ -2807,19 +3531,53 @@ export async function searchCardsInDB(query: string, page = 1, pageSize = 10) {
 
 // --- SET COMPLETION BONUS ---
 // Grants one-time coin reward when user completes a full set.
-export async function claimSetCompletionBonuses() {
+/* RIESGO CONOCIDO Y ACEPTADO (decisión del dueño, no un descuido): el bono
+ * sólo comprueba que el jugador TIENE todas las cartas de la expansión, no de
+ * dónde vienen. Como el trueque mueve cartas entre amigos sin barrera, una
+ * cuenta puede prestarle la expansión completa a otra, que cobra el bono y la
+ * devuelve. Se deja así a sabiendas: cerrarlo pide marcar la procedencia de
+ * cada copia (una columna en user_collection y tocar la compra, el trueque y el
+ * bazar) y cambia quién cobra el bono, que es una decisión de economía.
+ *
+ * @param setId OPCIONAL. Con él, sólo se mira ESA expansión: es lo que pide la
+ *   tienda después de abrir un sobre, que sólo puede completar la expansión que
+ *   se acaba de abrir. Sin él (lo de siempre), todas las del jugador.
+ */
+export async function claimSetCompletionBonuses(setId?: string) {
   const { userId } = await auth();
   if (!userId) return { granted: 0, sets: [] };
+  // Un argumento que no sea un id de expansión se ignora (se mira todo), por el
+  // mismo motivo que en getFullCollection: esta acción se llamaba sin ninguno.
+  const soloSet =
+    typeof setId === "string" && /^[a-z0-9._-]{1,40}$/i.test(setId) ? setId : null;
   try {
     await ensureSchema();
     // Unique owned cards per set
-    const { rows: owned } = await sql`
-      SELECT c.set_id, COUNT(*)::int AS owned
-      FROM user_collection uc
-      JOIN cards c ON uc.card_id = c.id
-      WHERE uc.user_id = ${userId} AND uc.quantity > 0
-      GROUP BY c.set_id
-    `;
+    const { rows: owned } = await sql.query(
+      `SELECT c.set_id, COUNT(*)::int AS owned
+         FROM user_collection uc
+         JOIN cards c ON uc.card_id = c.id
+        WHERE uc.user_id = $1 AND uc.quantity > 0
+          AND ($2::text IS NULL OR c.set_id = $2::text)
+        GROUP BY c.set_id`,
+      [userId, soloSet],
+    );
+
+    const { rows: already } = await sql`SELECT set_id FROM set_rewards WHERE user_id = ${userId}`;
+    const rewarded = new Set(already.map((r: any) => r.set_id));
+
+    const BONUS = SET_COMPLETION_BONUS;
+    /* SÓLO SE CUENTAN LAS EXPANSIONES QUE PUEDEN COBRAR: aquéllas en las que el
+     * jugador tiene alguna carta y cuyo bono no ha cobrado ya. Antes se
+     * agrupaba `sets LEFT JOIN cards` ENTERO —171 expansiones y decenas de
+     * miles de cartas— en cada llamada, y la tienda llama a esto después de
+     * CADA sobre abierto, casi siempre para descubrir que no hay nada que
+     * pagar. Si no queda ninguna candidata, ni se pregunta. */
+    const candidatas = owned
+      .map((r) => String(r.set_id))
+      .filter((id) => !rewarded.has(id));
+    if (candidatas.length === 0) return { granted: 0, sets: [], bonusPerSet: BONUS };
+
     /* EL TOTAL SON LAS CARTAS QUE HAY, NO LAS QUE EL SET DICE TENER.
      *
      * `sets.total` viene de la API y NO coincide con las filas de `cards`. La
@@ -2833,21 +3591,19 @@ export async function claimSetCompletionBonuses() {
      * `reales` es el conteo de `cards`, que es contra lo que de verdad se
      * colecciona. Se pide `total` igualmente para el guard de abajo.
      */
-    const { rows: setsRows } = await sql`
-      SELECT s.id, s.total, s.name, COUNT(c.id)::int AS reales
-      FROM sets s
-      LEFT JOIN cards c ON c.set_id = s.id
-      GROUP BY s.id, s.total, s.name
-    `;
+    const { rows: setsRows } = await sql.query(
+      `SELECT s.id, s.total, s.name, COUNT(c.id)::int AS reales
+         FROM sets s
+         LEFT JOIN cards c ON c.set_id = s.id
+        WHERE s.id = ANY($1::text[])
+        GROUP BY s.id, s.total, s.name`,
+      [candidatas],
+    );
     const totals: Record<string, { total: number; reales: number; name: string }> = {};
     setsRows.forEach((s: any) => {
       totals[s.id] = { total: Number(s.total), reales: Number(s.reales), name: s.name };
     });
 
-    const { rows: already } = await sql`SELECT set_id FROM set_rewards WHERE user_id = ${userId}`;
-    const rewarded = new Set(already.map((r: any) => r.set_id));
-
-    const BONUS = SET_COMPLETION_BONUS;
     // El aviso de "¡has completado X!" nombra la expansión: en español también.
     // La fila de set_rewards se sigue escribiendo con el id canónico.
     const idioma = await idiomaActual();
@@ -2869,14 +3625,16 @@ export async function claimSetCompletionBonuses() {
      * nada; ya se cobrará cuando la base esté al día. El 90% deja pasar el
      * desajuste normal de la API (declarar dos o tres cartas de más) y corta la
      * descarga a medias, que siempre va mucho más lejos.
+     *
+     * La regla vive en `catalogoIncompleto`, junto a `cartasDelSet`: es la
+     * misma con la que la tienda deja de vender sobres de una expansión a
+     * medias, y tenía que ser UNA.
      */
-    const CATALOGO_FIABLE = 0.9;
-
     for (const row of owned) {
       const meta = totals[row.set_id];
       if (!meta || !meta.reales) continue;
       // Siembra a medias: ni se paga ni se quema la fila de set_rewards.
-      if (meta.total > 0 && meta.reales < meta.total * CATALOGO_FIABLE) continue;
+      if (catalogoIncompleto(meta.reales, meta.total)) continue;
       if (row.owned >= meta.reales && !rewarded.has(row.set_id)) {
         /* MARCA Y ABONO EN UNA SOLA SENTENCIA, Y ESTO ERA UNA FUGA.
          *
@@ -2920,9 +3678,6 @@ export async function claimSetCompletionBonuses() {
       }
     }
 
-    if (granted > 0) {
-      revalidatePath('/');
-    }
     return { granted, sets: completedSets, bonusPerSet: BONUS };
   } catch (e) {
     console.error("claimSetCompletionBonuses error:", e);
@@ -2933,39 +3688,105 @@ export async function claimSetCompletionBonuses() {
 // --- VENDER DUPLICADOS DE UN SOBRE (resumen) ---
 // Recibe ids de cartas que YA poseías antes del sobre (los duplicados ganados).
 // Vende 1 copia de cada (sin bajar de 1), acredita precio segun rareza.
+/* LAS LECTURAS VAN FUERA DEL BUCLE.
+ *
+ * Antes, por CADA id distinto se hacían en serie tres lecturas (cantidad y
+ * rareza, copias graduadas, precio real) y la sentencia de venta: con las ~60
+ * repetidas distintas del resumen de un ×10 eran unos 240 viajes a Postgres
+ * dentro de una sola acción, con el botón en "vendiendo" varios segundos. Y los
+ * ids no se validaban: 200 cadenas inventadas eran 200 SELECT vacíos.
+ *
+ * Ahora son DOS lecturas para el lote entero —los montones con sus copias
+ * comprometidas, y los precios— y una sentencia de venta por carta que de
+ * verdad se vende. Esa sentencia se queda como estaba a propósito: descuento y
+ * abono en un solo comando, atada a la cantidad leída. Lo que se ha movido es
+ * lo que no decide nada.
+ *
+ * Devuelve además `coins`, el saldo tras la última venta, para que la pantalla
+ * no tenga que sumar por su cuenta ni volver a preguntar. Sólo viene cuando se
+ * ha vendido algo.
+ */
 export async function sellPackDuplicates(cardIds: string[]) {
   const { userId } = await auth();
   if (!userId || !Array.isArray(cardIds) || cardIds.length === 0) return { earned: 0, sold: 0 };
   // Tope de entrada: un ×10 trae como mucho ~100 cartas. Un array mayor sólo
   // puede ser abuso, y cada id son un par de consultas.
   if (cardIds.length > 200) return { earned: 0, sold: 0 };
+  // Y cada elemento tiene que ser una cadena corta: lo que llega es un array de
+  // un POST, no una lista que haya montado nuestra pantalla. Que el id sea de
+  // una carta que se tiene lo decide la lectura de abajo (ver `esIdPlausible`).
+  if (!cardIds.every(esIdPlausible)) {
+    return { earned: 0, sold: 0 };
+  }
+  // Tope de frecuencia (services/limite.ts).
+  if (!dentroDelLimite("repes:" + userId, LIMITES.ventaEnLote)) {
+    return { earned: 0, sold: 0, limitado: true as const };
+  }
+  /* LO ACUMULADO VIVE FUERA DEL try. Cada carta es su propia sentencia, ya
+   * confirmada cuando se pasa a la siguiente: si la tercera falla (un corte,
+   * un interbloqueo), las dos primeras ESTÁN vendidas y abonadas. El catch
+   * devolvía ceros, y la pantalla se quedaba con el saldo viejo y diciendo
+   * "no había repetidas que vender" con 60 monedas más en la cuenta. */
+  let earned = 0;
+  let sold = 0;
+  let coins: number | undefined;
   try {
-    // Contar cuántas veces aparece cada id en el sobre
-    const counts: Record<string, number> = {};
-    cardIds.forEach((id) => { counts[id] = (counts[id] || 0) + 1; });
+    // El guard de la venta lee graded_cards y bazar_listings.
+    await ensureSchema();
 
-    let earned = 0;
-    let sold = 0;
-    for (const [cardId, qtyToSell] of Object.entries(counts)) {
-      const { rows } = await sql`
-        SELECT uc.quantity, c.rarity
-        FROM user_collection uc JOIN cards c ON uc.card_id = c.id
-        WHERE uc.user_id = ${userId} AND uc.card_id = ${cardId} AND uc.quantity > 0
-      `;
-      if (rows.length === 0) continue;
-      const have = Number(rows[0].quantity);
-      const rarity = rows[0].rarity;
-      // No bajar de 1 copia LIBRE: las graduadas están en la vitrina y no
-      // entran en el montón que vacía este botón.
-      const graduadas = await copiasGraduadas(userId, cardId);
-      const libres = have - graduadas;
+    // Contar cuántas veces aparece cada id en el sobre
+    const counts = new Map<string, number>();
+    for (const id of cardIds) counts.set(id, (counts.get(id) ?? 0) + 1);
+    const ids = Array.from(counts.keys());
+
+    /* Los montones de TODAS las cartas pedidas en una consulta, con las copias
+     * comprometidas ya contadas: las graduadas (en la vitrina) y las anunciadas
+     * en el bazar. Es el mismo patrón de LEFT JOIN agregado que el vaciado en
+     * lote, acotado a los ids recibidos. */
+    const { rows: montones } = await sql.query(
+      `SELECT uc.card_id, uc.quantity, c.rarity,
+              COALESCE(g.n, 0)::int AS graduadas,
+              COALESCE(a.n, 0)::int AS anunciadas
+         FROM user_collection uc
+         JOIN cards c ON uc.card_id = c.id
+         LEFT JOIN (
+           SELECT card_id, count(*)::int AS n FROM graded_cards
+            WHERE user_id = $1 AND estado = 'activa' AND card_id = ANY($2::text[])
+            GROUP BY card_id
+         ) g ON g.card_id = uc.card_id
+         LEFT JOIN (
+           SELECT card_id, count(*)::int AS n FROM bazar_listings
+            WHERE seller_id = $1 AND estado = 'activa' AND graded_id IS NULL
+              AND card_id = ANY($2::text[])
+            GROUP BY card_id
+         ) a ON a.card_id = uc.card_id
+        WHERE uc.user_id = $1 AND uc.card_id = ANY($2::text[]) AND uc.quantity > 0
+        ORDER BY uc.card_id`,
+      [userId, ids],
+    );
+    if (montones.length === 0) return { earned: 0, sold: 0 };
+
+    // Los precios reales de todas, también de una vez (trocea y cachea solo).
+    const euros = await preciosEnEuros(montones.map((m) => String(m.card_id)));
+
+    for (const m of montones) {
+      const cardId = String(m.card_id);
+      const qtyToSell = counts.get(cardId) ?? 0;
+      const have = Number(m.quantity);
+      const rarity = m.rarity;
+      // No bajar de 1 copia LIBRE: las graduadas están en la vitrina, las
+      // anunciadas están apalabradas en el bazar, y ninguna de las dos entra en
+      // el montón que vacía este botón.
+      const comprometidas = Number(m.graduadas ?? 0) + Number(m.anunciadas ?? 0);
+      const libres = have - comprometidas;
       const sellable = Math.min(qtyToSell, Math.max(0, libres - 1));
       if (sellable <= 0) continue;
       // Precio decreciente: se van las copias de índice más alto. Con una copia
       // repetida es la tarifa de siempre; con cincuenta, la del suelo.
       // Curva sobre el montón entero ("have"), y sólo el número de copias que
       // se venden sale de las libres. Ver el bloque de sellCardAction.
-      const importe = valorDeVenta(rarity, have, sellable, await euroDeCarta(cardId));
+      const importe = valorDeVenta(rarity, have, sellable, euros.get(cardId));
+      if (importe <= 0) continue;
 
       // Descuento y abono de esta carta en UNA sentencia (CTE) con la condición
       // de cantidad repetida DENTRO del UPDATE. Antes,
@@ -2983,46 +3804,125 @@ export async function sellPackDuplicates(cardIds: string[]) {
         WITH venta AS (
           UPDATE user_collection SET quantity = quantity - ${sellable}
           WHERE user_id = ${userId} AND card_id = ${cardId} AND quantity = ${have}
-            -- Guard de graduadas sobre la fila ya bloqueada.
+            -- Guard de graduadas y de anunciadas sobre la fila ya bloqueada:
+            -- lo que queda no puede bajar de las copias comprometidas mas una.
             AND quantity - ${sellable} >= (
               SELECT count(*) FROM graded_cards
               WHERE user_id = ${userId} AND card_id = ${cardId} AND estado = 'activa'
+            ) + (
+              SELECT count(*) FROM bazar_listings
+              WHERE seller_id = ${userId} AND card_id = ${cardId}
+                AND estado = 'activa' AND graded_id IS NULL
             ) + 1
           RETURNING 1
         )
-        UPDATE users SET coins = coins + ${importe}
+        -- COALESCE: con el saldo a NULL, NULL + importe es NULL y la copia se
+        -- iba sin cobrar. Ver sellCardAction.
+        UPDATE users SET coins = COALESCE(coins, 0) + ${importe}
         WHERE id = ${userId} AND EXISTS (SELECT 1 FROM venta)
         RETURNING coins
       `;
       if (upd.rows.length === 0) continue; // otra pestaña se adelantó: no se cobra
       earned += importe;
       sold += sellable;
+      coins = Number(upd.rows[0]?.coins ?? 0);
     }
-    if (sold > 0) {
-      revalidatePath('/');
-      revalidatePath('/collection');
-    }
-    return { earned, sold };
+    return coins === undefined ? { earned, sold } : { earned, sold, coins };
   } catch (e) {
     console.error("sellPackDuplicates error:", e);
-    return { earned: 0, sold: 0 };
+    // Lo que ya se vendió, vendido está: se cuenta. `parcial` avisa de que el
+    // lote no se recorrió entero, por si la pantalla quiere decirlo.
+    return coins === undefined
+      ? { earned, sold }
+      : { earned, sold, coins, parcial: true as const };
   }
 }
 
 // --- WISHLIST ---
+/** Tope de cartas deseadas por usuario. Ver `toggleWishlist`. */
+const MAX_DESEADAS = 500;
+
+/* MARCAR Y DESMARCAR UNA CARTA DESEADA.
+ *
+ * LOS TRES AGUJEROS QUE CIERRA:
+ *
+ *  1. `cardId` se insertaba TAL CUAL: ni pasaba por ID_CARTA ni se contrastaba
+ *     con `cards`. La clave primaria admite claves de unos 2,7 KB, así que un
+ *     usuario con sesión podía repetir la llamada con cadenas aleatorias de
+ *     2.600 caracteres y cada una era una fila nueva. Un millón de llamadas son
+ *     unos 2,7 GB en `wishlist`: suficiente para agotar la cuota de la base y
+ *     dejar sin escrituras —compras, ventas— a todos los jugadores. Nadie lo
+ *     notaba antes, porque `getWishlistCards` hace JOIN con `cards` y no
+ *     enseña la basura.
+ *  2. No había tope de filas por usuario.
+ *  3. El alternado era leer y luego escribir, en dos sentencias: un doble toque
+ *     leía dos veces "no está" y dejaba la carta añadida en vez de alternar.
+ *
+ * AHORA ES UNA SENTENCIA. Primero intenta QUITAR (`borrada`); sólo si no había
+ * nada que quitar intenta PONER (`puesta`), y la fila sale de `cards` —una
+ * carta inventada no existe y no se inserta— y sólo entra si el usuario está
+ * por debajo del tope. El tope va DENTRO del INSERT, que cierra el agujero que
+ * importaba —crecer sin límite, petición tras petición—.
+ *
+ * LO QUE NO ES: un tope exacto. El recuento sale de la instantánea de cada
+ * sentencia, así que las altas que se SOLAPEN ven todas el mismo número y
+ * entran todas. Medido contra PostgreSQL real: con 499 filas, 40 altas a la
+ * vez dejan 504; con 495 y 30, 520. El exceso está acotado por lo que se
+ * pueda solapar —y por el tope de frecuencia de arriba— y no crece después:
+ * la siguiente petición ya ve más de 500 y no entra. Es la misma holgura que
+ * el tope de anuncios del bazar, que sí se recorta con un barrido porque allí
+ * hay algo que cerrar; aquí cinco deseadas de más no son un problema.
+ *
+ * La forma de la respuesta no cambia: `{ wishlisted }` o `{ error }`.
+ */
 export async function toggleWishlist(cardId: string) {
   const { userId } = await auth();
   if (!userId) return { error: "No logueado" };
+  if (!esIdPlausible(cardId)) {
+    return { error: "Carta no válida" };
+  }
+  // Tope de frecuencia (services/limite.ts).
+  if (!dentroDelLimite("deseos:" + userId, LIMITES.deseos)) {
+    return { error: "Demasiados cambios seguidos. Espera unos segundos." };
+  }
   try {
     await ensureSchema();
-    const { rows } = await sql`SELECT 1 FROM wishlist WHERE user_id = ${userId} AND card_id = ${cardId}`;
-    if (rows.length > 0) {
-      await sql`DELETE FROM wishlist WHERE user_id = ${userId} AND card_id = ${cardId}`;
-      revalidatePath('/collection');
+    const { rows } = await sql.query(
+      `WITH borrada AS (
+         DELETE FROM wishlist WHERE user_id = $1 AND card_id = $2
+         RETURNING 1
+       ),
+       puesta AS (
+         INSERT INTO wishlist (user_id, card_id)
+         SELECT $1::text, c.id
+           FROM cards c
+          WHERE c.id = $2
+            AND NOT EXISTS (SELECT 1 FROM borrada)
+            AND (SELECT count(*) FROM wishlist WHERE user_id = $1) < $3::int
+         ON CONFLICT DO NOTHING
+         RETURNING 1
+       )
+       SELECT (SELECT count(*)::int FROM borrada) AS borradas,
+              (SELECT count(*)::int FROM puesta)  AS puestas,
+              EXISTS (SELECT 1 FROM cards WHERE id = $2) AS existe,
+              (SELECT count(*)::int FROM wishlist WHERE user_id = $1) AS tenia`,
+      [userId, cardId, MAX_DESEADAS],
+    );
+    const r = rows[0] ?? {};
+    if (Number(r.borradas) > 0) {
       return { wishlisted: false };
     }
-    await sql`INSERT INTO wishlist (user_id, card_id) VALUES (${userId}, ${cardId}) ON CONFLICT DO NOTHING`;
-    revalidatePath('/collection');
+    if (Number(r.puestas) > 0) {
+      return { wishlisted: true };
+    }
+    // Ni se quitó ni se puso, y la sentencia dice por qué.
+    if (!r.existe) return { error: "Esa carta no existe" };
+    if (Number(r.tenia) >= MAX_DESEADAS) {
+      return { error: `Tu lista de deseos está llena (${MAX_DESEADAS} cartas). Quita alguna para añadir otra.` };
+    }
+    // Sólo queda la carrera: dos toques a la vez sobre una carta que no estaba.
+    // Las dos sentencias ven "no está", una inserta y la otra choca en la clave
+    // primaria y no hace nada. La carta HA QUEDADO marcada, y eso se contesta.
     return { wishlisted: true };
   } catch (e) {
     console.error("toggleWishlist error:", e);
@@ -3311,7 +4211,13 @@ async function admiteOfertaAtada(setId: string): Promise<boolean> {
     let morralla = false;
     let raras = false;
     for (const c of cartas) {
-      const r = RARITY_RANK[c.rarity ?? ""] ?? 1;
+      // `typeof … === "number"` y no `?? 1`: la rareza viene de datos, y con
+      // una llamada "constructor" el índice devuelve una función heredada de
+      // Object.prototype, que no es null: el `??` no saltaba y la carta no
+      // contaba ni como morralla ni como rara. Una rareza desconocida es
+      // morralla (rango 1), como en `rangoDeRareza` de utils/mercado.ts.
+      const rango = RARITY_RANK[c.rarity ?? ""];
+      const r = typeof rango === "number" ? rango : 1;
       if (r >= 1 && r <= 5) morralla = true;
       else if (r >= 10 && r <= 20) raras = true;
       if (morralla && raras) return true;
@@ -3530,26 +4436,12 @@ function opcionesDeConjunto(
     .map((x) => x.o);
 }
 
-/** Subconjuntos de `k` elementos, hasta `tope`. */
-function combinaciones<T>(lista: T[], k: number, tope: number): T[][] {
-  const salida: T[][] = [];
-  if (k <= 0 || lista.length < k) return salida;
-  const actual: T[] = [];
-  const bajar = (desde: number) => {
-    if (salida.length >= tope) return;
-    if (actual.length === k) {
-      salida.push([...actual]);
-      return;
-    }
-    for (let i = desde; i < lista.length; i++) {
-      actual.push(lista[i]);
-      bajar(i + 1);
-      actual.pop();
-    }
-  };
-  bajar(0);
-  return salida;
-}
+/* AQUÍ VIVÍA `combinaciones` (subconjuntos de k elementos con un tope de 200),
+ * con la que `entregaValida` resolvía el arcoíris. Ese tope era un fallo —un
+ * lote válido se rechazaba según el orden de las filas— y la función dejó de
+ * usarse cuando el arcoíris pasó al emparejamiento. Se conservó mientras
+ * scripts/test-invariantes.mjs la sacaba de este fichero por nombre; ya la
+ * trata como opcional, así que se ha quitado. */
 
 /**
  * ¿Se pueden repartir EXACTAMENTE estas cartas entre estos huecos?
@@ -3595,6 +4487,24 @@ function emparejaHuecos(cartas: CartaMinima[], indices: number[], huecos: Hueco[
  * no sabe expresarlos: playset y evolución se enumeran (son pocas opciones) y
  * el arcoíris se convierte en un hueco POR TIPO, que es exactamente lo que
  * pide ("N cartas de N tipos distintos") y vuelve a caber en el emparejamiento.
+ *
+ * EL ARCOÍRIS YA NO SE ENUMERA, Y ERA UN FALSO NEGATIVO. Antes se probaban
+ * combinaciones de N tipos entre los que hubiera en el lote, como mucho 200 y
+ * en el orden en que Postgres devolviera las filas. Con 10 tipos y un arcoíris
+ * de 5 son C(10,5) = 252: las 52 últimas no se probaban nunca. Si la única
+ * buena caía ahí, el servidor contestaba "requisitos" a un lote correcto que la
+ * pantalla seguía pintando completo, y reintentar no servía porque las filas
+ * volvían en el mismo orden. Medido por scripts/test-invariantes.mjs con el
+ * tablón y el catálogo reales: 16 lotes válidos rechazados de 2.724.
+ *
+ * AHORA ENTRA ENTERO EN EL EMPAREJAMIENTO, sin elegir tipos por adelantado. Se
+ * pone un hueco por CADA tipo presente (no sólo N) y, para que sobren
+ * exactamente los que tienen que sobrar, se añaden tantos COMODINES como tipos
+ * hay de más: un comodín sólo cabe en los huecos de tipo de su arcoíris. Con
+ * T tipos y un arcoíris de N, T − N huecos se los llevan los comodines y los N
+ * restantes tienen que llenarse con N cartas de verdad, cada una en un tipo
+ * distinto. Es exacto, no depende del orden de las filas y no tiene tope que
+ * alcanzar: un solo emparejamiento por reparto, haya los tipos que haya.
  */
 function entregaValida(cartas: CartaMinima[], requisitos: Requisito[]): boolean {
   const pedidas = requisitos.reduce((t, r) => t + r.cantidad, 0);
@@ -3613,36 +4523,59 @@ function entregaValida(cartas: CartaMinima[], requisitos: Requisito[]): boolean 
   // Cortafuegos de CPU: esto corre en una server action, no en un batch.
   let presupuesto = 400;
 
-  const conArcoiris = (k: number, restantes: number[], huecos: Hueco[]): boolean => {
+  /** ¿Caben estas cartas, todas, entre los requisitos simples y los arcoíris? */
+  const encajaElResto = (restantes: number[]): boolean => {
     if (presupuesto-- <= 0) return false;
-    if (k === arcoiris.length) return emparejaHuecos(cartas, restantes, huecos);
-    const r = arcoiris[k];
-    const tipos = Array.from(
-      new Set(
-        restantes
-          .filter((i) => sirveParaRequisito(cartas[i], r))
-          .flatMap((i) => listaSegura(cartas[i].types).map(enMinusculas)),
-      ),
-    );
-    for (const combinacion of combinaciones(tipos, r.cantidad, 200)) {
-      const conTipos = combinacion.map<Hueco>(
-        (tipo) => (c) =>
-          sirveParaRequisito(c, r) && listaSegura(c.types).map(enMinusculas).includes(tipo),
-      );
-      if (conArcoiris(k + 1, restantes, huecos.concat(conTipos))) return true;
+    // Comodín → índice de su arcoíris. Los comodines no son cartas: son el
+    // relleno de los huecos de tipo que sobran (ver la cabecera).
+    const arcoirisDeComodin = new Map<CartaMinima, number>();
+    const comodines: CartaMinima[] = [];
+    const huecos: Hueco[] = [];
+    for (const r of simples) {
+      for (let i = 0; i < r.cantidad; i++) {
+        huecos.push((c) => !arcoirisDeComodin.has(c) && sirveParaRequisito(c, r));
+      }
     }
-    return false;
+    for (let k = 0; k < arcoiris.length; k++) {
+      const r = arcoiris[k];
+      const tipos = Array.from(
+        new Set(
+          restantes
+            .filter((i) => sirveParaRequisito(cartas[i], r))
+            .flatMap((i) => listaSegura(cartas[i].types).map(enMinusculas)),
+        ),
+      );
+      // Con menos tipos que cartas pide el arcoíris, no hay reparto posible.
+      if (tipos.length < r.cantidad) return false;
+      for (const tipo of tipos) {
+        huecos.push(
+          (c) =>
+            arcoirisDeComodin.get(c) === k ||
+            (!arcoirisDeComodin.has(c) &&
+              sirveParaRequisito(c, r) &&
+              listaSegura(c.types).map(enMinusculas).includes(tipo)),
+        );
+      }
+      for (let sobran = tipos.length - r.cantidad; sobran > 0; sobran--) {
+        const comodin: CartaMinima = { id: "", name: "" };
+        arcoirisDeComodin.set(comodin, k);
+        comodines.push(comodin);
+      }
+    }
+    // `emparejaHuecos` exige tantos huecos como cartas y los llena todos, así
+    // que los comodines ocupan exactamente los huecos de tipo que sobran y cada
+    // carta de verdad acaba en un hueco que la acepta.
+    return emparejaHuecos(
+      cartas.concat(comodines),
+      restantes.concat(comodines.map((_, j) => cartas.length + j)),
+      huecos,
+    );
   };
 
   const explorar = (k: number, usadas: Set<number>): boolean => {
     if (presupuesto <= 0) return false;
     if (k === enumerables.length) {
-      const restantes = todos.filter((i) => !usadas.has(i));
-      const huecos: Hueco[] = [];
-      for (const r of simples) {
-        for (let i = 0; i < r.cantidad; i++) huecos.push((c) => sirveParaRequisito(c, r));
-      }
-      return conArcoiris(0, restantes, huecos);
+      return encajaElResto(todos.filter((i) => !usadas.has(i)));
     }
     for (const opcion of opciones[k]) {
       if (opcion.some((i) => usadas.has(i))) continue;
@@ -3772,16 +4705,30 @@ export async function getCartasMercado(idsInvitado?: string[]) {
        * regla y la aplican cliente y servidor— siga recibiendo un número que
        * ya significa "copias libres". Si se restaran sólo en el cobro, la
        * pantalla pintaría la barra en verde y el servidor rechazaría: es
-       * exactamente el fallo contra el que avisa el comentario de más abajo. */
+       * exactamente el fallo contra el que avisa el comentario de más abajo.
+       *
+       * LAS ANUNCIADAS EN EL BAZAR TAMPOCO, y se restan en el mismo sitio y por
+       * el mismo motivo: entregar la copia de un anuncio abierto dejaba el
+       * anuncio sin nada detrás (ver `copiasComprometidas`). */
+      // Con `catch`, como en getFullCollection: esto es una lectura y no puede
+      // fallar por no poder asegurar un esquema que casi siempre ya está.
+      await ensureSchema().catch((e) => console.error("getCartasMercado: esquema:", e));
       const { rows } = await sql.query(
-        `SELECT ${COLUMNAS_MERCADO}, uc.quantity - COALESCE(g.n, 0) AS quantity
+        `SELECT ${COLUMNAS_MERCADO},
+                uc.quantity - COALESCE(g.n, 0) - COALESCE(a.n, 0) AS quantity
          FROM user_collection uc
          JOIN cards c ON c.id = uc.card_id
          LEFT JOIN (
            SELECT card_id, count(*)::int AS n FROM graded_cards
            WHERE user_id = $1 AND estado = 'activa' GROUP BY card_id
          ) g ON g.card_id = uc.card_id
-         WHERE uc.user_id = $1 AND uc.quantity - COALESCE(g.n, 0) > 0`,
+         LEFT JOIN (
+           SELECT card_id, count(*)::int AS n FROM bazar_listings
+           WHERE seller_id = $1 AND estado = 'activa' AND graded_id IS NULL
+           GROUP BY card_id
+         ) a ON a.card_id = uc.card_id
+         WHERE uc.user_id = $1
+           AND uc.quantity - COALESCE(g.n, 0) - COALESCE(a.n, 0) > 0`,
         [userId],
       );
       const cartas = rows
@@ -3894,6 +4841,11 @@ export async function cumplirOferta(ofertaId: string, cardIds: string[]) {
   ) {
     return { ok: false as const, error: "peticion" as const };
   }
+  // Tope de frecuencia (services/limite.ts): validar un lote contra el tablón
+  // es la acción con más CPU del fichero.
+  if (!dentroDelLimite("oferta:" + userId, LIMITES.cumplirOferta)) {
+    return { ok: false as const, error: "servidor" as const, limitado: true as const };
+  }
 
   const { ciclo, ofertas } = await tablonVigente();
   const oferta = ofertas.find((o) => o.id === ofertaId);
@@ -3910,18 +4862,24 @@ export async function cumplirOferta(ofertaId: string, cardIds: string[]) {
     await ensureSchema();
 
     // La colección manda: si no la tienes, no la entregas.
-    // Misma resta de graduadas que en getCartasMercado, y por el mismo motivo:
-    // las dos tienen que ver el mismo número de copias libres.
+    // Misma resta de graduadas y de anunciadas que en getCartasMercado, y por
+    // el mismo motivo: las dos tienen que ver el mismo número de copias libres.
     const { rows } = await sql.query(
-      `SELECT ${COLUMNAS_MERCADO}, uc.quantity - COALESCE(g.n, 0) AS quantity
+      `SELECT ${COLUMNAS_MERCADO},
+              uc.quantity - COALESCE(g.n, 0) - COALESCE(a.n, 0) AS quantity
        FROM user_collection uc
        JOIN cards c ON c.id = uc.card_id
        LEFT JOIN (
          SELECT card_id, count(*)::int AS n FROM graded_cards
          WHERE user_id = $1 AND estado = 'activa' GROUP BY card_id
        ) g ON g.card_id = uc.card_id
+       LEFT JOIN (
+         SELECT card_id, count(*)::int AS n FROM bazar_listings
+         WHERE seller_id = $1 AND estado = 'activa' AND graded_id IS NULL
+         GROUP BY card_id
+       ) a ON a.card_id = uc.card_id
        WHERE uc.user_id = $1 AND uc.card_id = ANY($2::text[])
-         AND uc.quantity - COALESCE(g.n, 0) > 0`,
+         AND uc.quantity - COALESCE(g.n, 0) - COALESCE(a.n, 0) > 0`,
       [userId, ids],
     );
     if (rows.length !== ids.length) return { ok: false as const, error: "posesion" as const };
@@ -3990,11 +4948,25 @@ export async function cumplirOferta(ofertaId: string, cardIds: string[]) {
          WHERE user_id = $1 AND card_id = ANY($3::text[]) AND estado = 'activa'
          GROUP BY card_id
        ),
+       /* Y las anunciadas en el bazar (anuncios SUELTOS abiertos): la copia de
+        * un anuncio no se entrega aqui, igual que no se vende a la tienda. Sin
+        * esto, cumplir un encargo con ella dejaba el anuncio abierto y sin nada
+        * detras. Se restan donde las graduadas: en lo que ve la puerta
+        * (bloqueo), que es quien decide. */
+       anunciadas AS (
+         SELECT card_id, count(*)::int AS n
+         FROM bazar_listings
+         WHERE seller_id = $1 AND card_id = ANY($3::text[])
+           AND estado = 'activa' AND graded_id IS NULL
+         GROUP BY card_id
+       ),
        bloqueo AS (
-         SELECT uc.card_id, uc.quantity - COALESCE(g.n, 0) AS quantity
+         SELECT uc.card_id,
+                uc.quantity - COALESCE(g.n, 0) - COALESCE(z.n, 0) AS quantity
          FROM user_collection uc
          JOIN entregas e ON e.card_id = uc.card_id
          LEFT JOIN graduadas g ON g.card_id = uc.card_id
+         LEFT JOIN anunciadas z ON z.card_id = uc.card_id
          WHERE uc.user_id = $1
          ORDER BY uc.card_id
          FOR UPDATE OF uc
@@ -4024,16 +4996,33 @@ export async function cumplirOferta(ofertaId: string, cardIds: string[]) {
          UPDATE user_collection uc
          SET quantity = uc.quantity - e.cantidad
          FROM entregas e
-         LEFT JOIN graduadas g ON g.card_id = e.card_id
          WHERE uc.user_id = $1 AND uc.card_id = e.card_id
-           -- La copia reservada MÁS las graduadas: entregar no puede dejar
-           -- quantity por debajo de las filas de graded_cards que la apuntan.
-           AND uc.quantity >= e.cantidad + $7::int + COALESCE(g.n, 0)
+           /* SIN GUARD DE CANTIDAD PROPIO, Y ES A PROPOSITO. Aqui se repetia
+            * la cuenta de suficiente (reservada mas graduadas mas anunciadas),
+            * y esa repeticion era un agujero: un UPDATE busca sus filas en la
+            * INSTANTANEA de la sentencia, y si la version vieja de una fila no
+            * cumple el guard ni la mira, aunque la version confirmada que
+            * devolvio el FOR UPDATE de bloqueo si lo cumpla. Con una carta que
+            * baja y vuelve a subir alrededor de la instantanea (otra pestana la
+            * vende y la recompra), suficiente decia que si, el encargo se
+            * pagaba ENTERO y esa carta no salia de la coleccion. Medido contra
+            * PostgreSQL real: 103 monedas cobradas y 2 cartas entregadas de 3.
+            *
+            * Quien decide es suficiente, sobre las filas BLOQUEADAS, que siguen
+            * bloqueadas por esta sentencia hasta el final. Aqui solo se
+            * descuenta lo que ya se decidio. Y el SELECT final cuadra pago y
+            * consumo: una entrega parcial ya no se apunta en el log, aborta. */
            AND EXISTS (SELECT 1 FROM abono)
          RETURNING 1
        )
        SELECT (SELECT coins FROM abono) AS coins,
-              (SELECT count(*) FROM consumo) AS consumidas`,
+              (SELECT count(*) FROM consumo) AS consumidas,
+              -- EL CUADRE: si se pago, se ha consumido una fila por cada carta
+              -- distinta del lote. Si no, division por cero y la sentencia
+              -- entera se deshace: ni marca, ni abono, ni cartas.
+              1 / (CASE WHEN (SELECT count(*) FROM abono) = 0
+                          OR (SELECT count(*) FROM consumo) = (SELECT count(*) FROM entregas)
+                        THEN 1 ELSE 0 END) AS cuadra`,
       [userId, ciclo, ids, cantidades, oferta.id, pago, COPIAS_RESERVADAS],
     );
 
@@ -4054,16 +5043,15 @@ export async function cumplirOferta(ofertaId: string, cardIds: string[]) {
 
     const consumidas = Number(resultado[0]?.consumidas ?? 0);
     if (consumidas !== ids.length) {
-      // No debería pasar (el guard `suficiente` va en la misma instantánea):
-      // si pasa, alguien vendió una carta a la vez. Queda anotado.
+      // YA NO PUEDE PASAR: el cuadre del SELECT final aborta la sentencia si se
+      // paga sin consumir todas las cartas (antes pasaba, y sólo se anotaba
+      // aquí, con el encargo ya pagado). Se deja la línea como testigo: si
+      // algún día vuelve a escribirse, es que alguien ha quitado el cuadre.
       console.error(
         `mercado: entrega parcial usuario=${userId} oferta=${oferta.id} ${consumidas}/${ids.length}`,
       );
     }
 
-    revalidatePath("/");
-    revalidatePath("/collection");
-    revalidatePath("/mercado");
     return {
       ok: true as const,
       pago,
@@ -4095,9 +5083,10 @@ export async function cumplirOferta(ofertaId: string, cardIds: string[]) {
  * cuánto cuesta y si hay saldo lo decide todo el servidor contra la base de
  * datos. Es la misma regla que comprarSobreAction.
  *
- * POR QUÉ EL COSTE NO ES 100 A SECAS. El multiplicador medio de la tabla de
- * notas es x1,35 (utils/graduacion.ts lo documenta y scripts/test-invariantes.mjs
- * lo comprueba). Con un coste FIJO, graduar sería beneficio garantizado en
+ * POR QUÉ EL COSTE NO ES 100 A SECAS. El multiplicador de un diez es x1,95
+ * (la media de la tabla es x1,048; utils/graduacion.ts lo documenta y
+ * scripts/test-invariantes.mjs lo comprueba). Con un coste FIJO, graduar lo que
+ * tiene mejor pinta sería beneficio garantizado en
  * cuanto la carta pasara de cierto valor —y como se pueden graduar las
  * repetidas, un bucle infinito—. El coste lleva por eso un tramo proporcional:
  * max(100, 40% del valor). Por debajo de 250 monedas, que es la carta más cara
@@ -4263,17 +5252,42 @@ export async function getCartasGraduables() {
 
   try {
     await ensureSchema();
+    /* LO QUE EL BAZAR TIENE APALABRADO TAMPOCO SE GRADÚA.
+     *
+     * Graduar no gasta la copia, pero la saca del montón de sueltas, y un
+     * anuncio abierto necesita detrás una copia suelta MÁS la reservada del
+     * álbum (es lo que exige la puerta de `comprarEnBazarAction`). Con 2 copias
+     * y una anunciada, graduar las dos dejaba el anuncio abierto y sin compra
+     * posible para siempre. Así que, mientras haya algún anuncio abierto de la
+     * carta, no se gradúan ni las copias de los anuncios sueltos ni esa
+     * reservada:
+     *
+     *     en_bazar = anuncios sueltos + 1      (0 si no hay ningún anuncio)
+     *
+     * El +1 cuenta también cuando el único anuncio es de una graduada: su copia
+     * ya va en `graduadas`, pero la compra le sigue exigiendo al vendedor una
+     * copia libre. Es EXACTAMENTE la cuenta del CTE `posibles` de
+     * `graduarCartasAction`: lo que aquí se ofrece es lo que allí entra. */
     const { rows } = await sql`
       SELECT uc.card_id, uc.quantity, c.name, c.rarity, c.images, c.set_id,
-             COALESCE(g.n, 0)::int AS graduadas
+             COALESCE(g.n, 0)::int AS graduadas,
+             COALESCE(z.sueltos, 0)::int AS anunciadas,
+             COALESCE(z.sueltos + 1, 0)::int AS en_bazar
       FROM user_collection uc
       JOIN cards c ON c.id = uc.card_id
       LEFT JOIN (
         SELECT card_id, count(*)::int AS n FROM graded_cards
         WHERE user_id = ${userId} AND estado = 'activa' GROUP BY card_id
       ) g ON g.card_id = uc.card_id
+      LEFT JOIN (
+        SELECT card_id,
+               (count(*) FILTER (WHERE graded_id IS NULL))::int AS sueltos
+        FROM bazar_listings
+        WHERE seller_id = ${userId} AND estado = 'activa'
+        GROUP BY card_id
+      ) z ON z.card_id = uc.card_id
       WHERE uc.user_id = ${userId}
-        AND uc.quantity - COALESCE(g.n, 0) > 0
+        AND uc.quantity - COALESCE(g.n, 0) - COALESCE(z.sueltos + 1, 0) > 0
       ORDER BY c.rarity, c.name
     `;
 
@@ -4281,6 +5295,8 @@ export async function getCartasGraduables() {
     const cartas = rows.map((r: any) => {
       const cantidad = Number(r.quantity);
       const graduadas = Number(r.graduadas ?? 0);
+      const anunciadas = Number(r.anunciadas ?? 0);
+      const enBazar = Number(r.en_bazar ?? 0);
       const eur = euros.get(String(r.card_id));
       /* LOS DOS VALORES, cada uno con su nombre. Ver el bloque largo de arriba:
        * el plano es el de la banda del bazar y el del coste de graduar, y la
@@ -4295,14 +5311,26 @@ export async function getCartasGraduables() {
         setId: String(r.set_id ?? ""),
         cantidad,
         graduadas,
-        /** Copias que aún no tienen nota. Son las que se pueden mandar. */
-        libres: cantidad - graduadas,
+        /** Copias con un anuncio suelto abierto en el bazar. */
+        anunciadas,
         /**
-         * Lo que la tienda paga HOY por UNA copia sobrante sin graduar: la
-         * misma expresión que cobra `sellCardAction`. Es 0 cuando sólo queda
-         * una copia, porque esa no se vende (el álbum no se vacía).
+         * Copias que se pueden mandar a graduar: las que no tienen nota ni
+         * están apalabradas en el bazar (ver el comentario de la consulta).
          */
-        valorDeVentaAhora: valorDeVenta(r.rarity, cantidad, 1, eur),
+        libres: cantidad - graduadas - enBazar,
+        /**
+         * Lo que la tienda paga HOY por UNA copia sobrante sin graduar: el
+         * mismo número que cobra `sellCardAction`, sacado de la misma función
+         * que usa la colección. Es 0 cuando no sobra ninguna copia libre —las
+         * graduadas y las anunciadas no se venden por esa vía y la última libre
+         * se queda en el álbum—, que es justo cuando la venta se niega.
+         */
+        valorDeVentaAhora: valoresDeVentaDelMonton(
+          r.rarity,
+          cantidad,
+          graduadas + anunciadas,
+          eur,
+        ).valorDeVentaAhora,
         /**
          * Tarifa plana de la carta. Es la base del coste de graduar (lo que
          * cobra `graduarCartasAction`) y del valor con el que
@@ -4365,6 +5393,10 @@ export async function graduarCartasAction(
   const totalPedido = Array.from(pedidas.values()).reduce((a, b) => a + b, 0);
   if (totalPedido > MAX_GRADUAR_DE_UNA_VEZ) {
     return { ok: false as const, error: "demasiadas" as const };
+  }
+  // Tope de frecuencia (services/limite.ts).
+  if (!dentroDelLimite("graduar:" + userId, LIMITES.graduar)) {
+    return { ok: false as const, error: "servidor" as const, limitado: true as const };
   }
 
   const ids = Array.from(pedidas.keys());
@@ -4541,6 +5573,24 @@ export async function graduarCartasAction(
            AND card_id IN (SELECT DISTINCT card_id FROM candidatas)
          GROUP BY card_id
        ),
+       /* LO QUE EL BAZAR TIENE APALABRADO DE CADA CARTA: las copias de sus
+        * anuncios sueltos MAS una, la que la compra exige que le quede libre al
+        * vendedor. Solo hay fila si la carta tiene algun anuncio abierto (de
+        * suelta o de graduada), asi que sin anuncios no se resta nada.
+        *
+        * Graduar no baja quantity, pero SI saca la copia del monton de sueltas:
+        * con 2 copias y una anunciada, graduar las dos dejaba el anuncio
+        * abierto y sin compra posible. Es la misma cuenta que anuncia
+        * getCartasGraduables (libres), que es lo que hace que la pantalla no
+        * ofrezca copias que esta sentencia va a dejar fuera. */
+       enBazar AS (
+         SELECT card_id,
+                (count(*) FILTER (WHERE graded_id IS NULL) + 1)::int AS n
+         FROM bazar_listings
+         WHERE seller_id = $1 AND estado = 'activa'
+           AND card_id IN (SELECT DISTINCT card_id FROM candidatas)
+         GROUP BY card_id
+       ),
        /* LAS QUE DE VERDAD CABEN.
         *
         * EL GUARD ERA POR ÍNDICE Y TENÍA QUE SER POR RECUENTO. Antes exigía
@@ -4569,7 +5619,8 @@ export async function graduarCartasAction(
          ) c
          JOIN bloqueo b ON b.card_id = c.card_id
          LEFT JOIN yaGraduadas y ON y.card_id = c.card_id
-         WHERE c.puesto <= b.quantity - COALESCE(y.n, 0)
+         LEFT JOIN enBazar z ON z.card_id = c.card_id
+         WHERE c.puesto <= b.quantity - COALESCE(y.n, 0) - COALESCE(z.n, 0)
        ),
        total AS (
          SELECT COALESCE(SUM(coste), 0)::int AS coste, count(*)::int AS n FROM posibles
@@ -4644,6 +5695,9 @@ export async function graduarCartasAction(
        )
        SELECT (SELECT coins FROM cobro) AS coins,
               (SELECT coste FROM facturado) AS cobrado,
+              -- Cuantas copias cabian (posibles): el diagnostico de por que no
+              -- se cobro, sacado de las mismas filas bloqueadas que decidieron.
+              (SELECT n FROM total) AS caben,
               COALESCE(
                 (SELECT json_agg(json_build_object(
                    'cardId', card_id, 'copia', copia, 'nota', nota)) FROM alta),
@@ -4656,6 +5710,14 @@ export async function graduarCartasAction(
     // coins NULL significa que el cobro no tocó fila: o no había saldo, o no
     // quedaba nada que graduar. Es el mismo convenio que comprarSobreAction.
     if (coins === null || coins === undefined) {
+      /* Y SE DICE CUÁL DE LAS DOS. Desde que 'posibles' resta lo apalabrado en
+       * el bazar, "no cabe ninguna" es alcanzable con saldo de sobra: con 2
+       * copias, una anunciada y 5.000 monedas esto contestaba "saldo" y la
+       * pantalla le decía al jugador que no le llegaban las monedas. Llega aquí
+       * quien tiene la lista de graduables vieja (anunció en otra pestaña). */
+      if (Number(res[0]?.caben ?? 0) === 0) {
+        return { ok: false as const, error: "nada-que-graduar" as const };
+      }
       return { ok: false as const, error: "saldo" as const };
     }
 
@@ -4676,9 +5738,6 @@ export async function graduarCartasAction(
       return { ...g, desperfectos, marcas: marcasDeCopia(semillaG, desperfectos) };
     });
 
-    revalidatePath("/");
-    revalidatePath("/collection");
-    revalidatePath("/vitrina");
     return {
       ok: true as const,
       coins: Number(coins),
@@ -4878,11 +5937,30 @@ export async function venderGraduadaAction(gradedId: number) {
        *
        * El FOR UPDATE es lo que hace que la comprobación valga: sin él, via
        * leería la instantánea del principio de la sentencia y volveríamos a
-       * tener la ventana que se intentaba cerrar. */
-      WITH bloqueo AS MATERIALIZED (
+       * tener la ventana que se intentaba cerrar.
+       *
+       * Y EL ANUNCIO DE ESTA GRADUADA, SI LO TIENE, SE BLOQUEA ANTES QUE LA
+       * COLECCION. Esta sentencia tomaba primero la fila de la coleccion y al
+       * final, en retirada, la del anuncio; la compra del bazar los toma al
+       * reves (anuncio, luego coleccion). Vender a la tienda una graduada que
+       * alguien estaba comprando en ese instante era un abrazo seguro, y con
+       * carga mezclada era la pareja de interbloqueos mas repetida. Ahora las
+       * dos piden anuncio y despues coleccion: la que llega segunda espera en
+       * el anuncio sin tener nada cogido. El count de bloqueo es lo que fuerza
+       * el orden (se evalua en el filtro, por debajo del nodo que bloquea la
+       * fila de la coleccion), igual que en comprarSobreAction. */
+      WITH anuncioPropio AS MATERIALIZED (
+        SELECT b.id
+        FROM bazar_listings b
+        WHERE b.graded_id = ${gradedId} AND b.seller_id = ${userId}
+          AND b.estado = 'activa'
+        FOR UPDATE OF b
+      ),
+      bloqueo AS MATERIALIZED (
         SELECT uc.user_id, uc.card_id, uc.quantity
         FROM user_collection uc
         WHERE uc.user_id = ${userId} AND uc.card_id = ${cardId}
+          AND (SELECT count(*) FROM anuncioPropio) >= 0
         FOR UPDATE OF uc
       ),
       via AS MATERIALIZED (
@@ -4918,22 +5996,35 @@ export async function venderGraduadaAction(gradedId: number) {
         RETURNING 1
       ),
       consumo AS (
+        /* SIN LA CONDICION DE CANTIDAD AQUI, a proposito. Que quede mas de una
+         * copia ya lo decidio via sobre la fila BLOQUEADA; repetido aqui se
+         * evaluaba contra la version de la INSTANTANEA (un UPDATE no relee las
+         * filas que no casaban al empezar), y si la cantidad subia entre medias
+         * (la copia suelta se va en un trueque y entra otra por el bazar) via
+         * pasaba, la baja de la graduada se hacia y este descuento no tocaba
+         * fila: graduada vendida y cero monedas. Era justo el fallo que el
+         * comentario de arriba dice haber cerrado. Medido contra PostgreSQL
+         * real. */
         UPDATE user_collection
         SET quantity = quantity - 1
         WHERE user_id = ${userId} AND card_id = ${cardId}
-          AND quantity > 1
           AND EXISTS (SELECT 1 FROM baja)
         RETURNING 1
       )
       UPDATE users SET coins = COALESCE(coins, 0) + ${importe}
-      WHERE id = ${userId} AND EXISTS (SELECT 1 FROM consumo)
+      WHERE id = ${userId}
+        /* EL CUADRE, EN UNA SOLA EXPRESION (dos condiciones unidas por AND no
+         * garantizan el orden en que se evaluan). Si la graduada se dio de baja
+         * y la copia no se desconto, el divisor es cero: division por cero, la
+         * sentencia entera se deshace y no pasa nada. Si cuadran, vale lo que
+         * valia el EXISTS de antes: se abona solo si hubo descuento. */
+        AND (SELECT count(*) FROM consumo)
+            / (CASE WHEN (SELECT count(*) FROM baja) = (SELECT count(*) FROM consumo)
+                    THEN 1 ELSE 0 END) > 0
       RETURNING coins
     `;
     if (rows.length === 0) return { ok: false as const, error: "cambio" as const };
 
-    revalidatePath("/");
-    revalidatePath("/collection");
-    revalidatePath("/vitrina");
     return { ok: true as const, earned: importe, nota, coins: Number(rows[0]?.coins ?? 0) };
   } catch (e) {
     console.error("venderGraduadaAction error:", e);
@@ -5002,23 +6093,29 @@ async function anunciosEnIdiomaUsuario<
 }
 
 /* ==================================================================== *
- * DOS CARRERAS CONOCIDAS QUE NO SE CIERRAN, Y POR QUÉ
+ * LAS CARRERAS CONOCIDAS QUE NO SE CIERRAN, Y POR QUÉ
  * ====================================================================
  *
- * 1. INTERBLOQUEO RECÍPROCO EN EL BAZAR. `comprarEnBazarAction` actualiza
- *    `users` primero del comprador (cobro) y luego del vendedor (abono). Si A
- *    compra a B y B compra a A EN EL MISMO INSTANTE, las dos sentencias piden
- *    los candados en orden opuesto y se abrazan. No se arregla ordenando por
- *    id, porque quién es comprador y quién vendedor lo decide el anuncio y no
- *    se sabe hasta haber leído la fila.
+ * 1. INTERBLOQUEOS QUE POSTGRES CORTA. Con carga mezclada quedan abrazos que
+ *    ninguna ordenación puede evitar, porque nacen de filas que todavía NO
+ *    EXISTEN cuando la sentencia toma sus candados: dos sobres del mismo
+ *    jugador que estrenan la misma carta, o un sobre y otra escritura que crea
+ *    la fila entre medias. Una fila que no existe no se puede bloquear por
+ *    adelantado.
  *
  *    SE DEJA ASÍ A SABIENDAS: Postgres DETECTA el interbloqueo y aborta una de
  *    las dos transacciones —no se queda colgado—, el catch de la acción lo
  *    convierte en "servidor" y el jugador vuelve a pulsar. Ninguna de las dos
- *    compras se queda a medias, que es lo único que importaba. Cerrarlo del
- *    todo pediría un candado consultivo por par de usuarios, y eso es más
- *    maquinaria de la que justifica un choque que necesita dos personas
- *    comprándose la una a la otra en el mismo milisegundo.
+ *    operaciones se queda a medias, que es lo único que importaba.
+ *
+ *    (Los abrazos que SÍ eran de orden están cerrados: la compra cruzada —A
+ *    compra a B mientras B compra a A— pide ahora las dos filas de `users`
+ *    ordenadas por id (CTE `cuentas`); la fila de colección del comprador se
+ *    quedaba sin bloquear cuando el vendedor ordenaba antes (CTE `bloqueo`);
+ *    `venderGraduadaAction` tomaba colección y anuncio al revés que la compra;
+ *    y el vaciado de duplicados tocaba sus filas en el orden que le diera el
+ *    plan, no en el de (user_id, card_id). Medido contra PostgreSQL real con
+ *    la carga mezclada de siempre.)
  *
  * 2. GRADUAR MIENTRAS SE ACEPTA UN INTERCAMBIO. El CTE `saldo` de
  *    `acceptTradeOffer` resta las copias graduadas, pero ese recuento sale de
@@ -5033,7 +6130,198 @@ async function anunciosEnIdiomaUsuario<
  *    user_collection antes de insertar, así que las dos sentencias se serializan
  *    y la ventana es sólo la del recuento. El daño máximo es una carta graduada
  *    fantasma en la vitrina del propio jugador: no imprime dinero.
+ *
+ * 3. PUBLICAR Y GASTAR LA MISMA CARTA EN EL MISMO INSTANTE. Todas las rutas que
+ *    gastan copias cuentan los anuncios abiertos (ver `copiasComprometidas`),
+ *    y publicar bloquea la fila de la colección antes de contar. Pero los
+ *    RECUENTOS —anuncios y graduadas— salen de la instantánea de cada
+ *    sentencia: una venta que arrancó antes de confirmarse la publicación no
+ *    ve el anuncio, y dos publicaciones simultáneas de la misma carta suelta no
+ *    se ven entre sí. El tope de 20 anuncios tenía la misma holgura; ése sí se
+ *    recorta ahora, con `retirarAnunciosPorEncimaDelTope` tras publicar.
+ *
+ *    SE DEJA ASÍ A SABIENDAS, y con red: cerrarlo de verdad pide que el número
+ *    de copias anunciadas viva en la propia fila de user_collection (una
+ *    columna nueva que escribirían la publicación, la retirada, la compra y
+ *    todas las ventas), que es la fila que Postgres sí relee tras esperar un
+ *    candado. Es una migración y media docena de sentencias de dinero más
+ *    largas para una ventana de milisegundos cuyo daño máximo es un anuncio que
+ *    nadie puede comprar. Ese anuncio ya no es eterno: el escaparate no lo
+ *    enseña y `retirarAnunciosSinRespaldo` lo cierra (el barrido de después de
+ *    publicar es, de hecho, lo que cierra la doble publicación).
+ *
+ *    LO QUE SE HA MEDIDO, sin redondear a favor. En 60 carreras
+ *    publicar-contra-vender y 60 dobles publicaciones lanzadas sin más, no
+ *    quedó ningún anuncio sin respaldo. Pero eso es por el orden natural de
+ *    llegada: forzando el entrelazado (la venta con instantánea vieja se
+ *    confirma DESPUÉS del barrido de publicar) el anuncio sobrevive 'activa'
+ *    con una sola copia, y publicar ya ha contestado ok:true. Lo prometido se
+ *    cumple igual —no sale en el escaparate, comprarlo por id no mueve nada y
+ *    esa compra lo cierra—, pero hasta que el vendedor abre "mis ventas" ese
+ *    anuncio ocupa uno de sus 20 huecos.
+ *
+ * 4. GRADUAR Y VENDER LA MISMA CARTA EN EL MISMO INSTANTE. Las cuatro ventas a
+ *    la tienda cuentan las graduadas con una subconsulta, o sea con la
+ *    instantánea de su sentencia, y graduar bloquea la fila de la colección sin
+ *    modificarla: la venta que estaba esperando ese candado sigue adelante sin
+ *    releer nada y puede dejar más graduadas activas que copias (2 graduadas,
+ *    quantity 1). Con carga mezclada aparece en 13 de 101 pasadas.
+ *
+ *    SE DEJA ASÍ HASTA QUE EL DUEÑO DECIDA, y no imprime dinero: la graduada
+ *    fantasma no se puede vender ni anunciar mientras no haya otra copia. El
+ *    arreglo es el mismo de la carrera 3 —el recuento de comprometidas en la
+ *    fila de user_collection, que escribirían graduar, publicar, retirar,
+ *    comprar y vender graduada— y pide una migración con relleno: no es algo
+ *    que se cuele en una corrección. Probado en pequeño contra PostgreSQL real:
+ *    tocar la fila sin cambiarla NO basta (la relectura es de la fila, no de
+ *    las subconsultas); con el recuento en la fila, la venta se rechaza.
  */
+
+/* ==================================================================== *
+ * ANUNCIOS SIN RESPALDO: NO SE ENSEÑAN Y SE CIERRAN SOLOS
+ * ====================================================================
+ *
+ * Un anuncio tiene respaldo si `comprarEnBazarAction` lo cobraría AHORA: al
+ * vendedor le sobra la copia después de descontar la reservada del álbum y las
+ * que tiene en la vitrina. Es, literalmente, la condición de la puerta `via`.
+ *
+ * DE DÓNDE SALEN LOS QUE NO LO TIENEN:
+ *   - de antes de este arreglo: hasta ahora vender, entregar, graduar o
+ *     intercambiar la copia anunciada dejaba el anuncio abierto sin nada detrás
+ *     (ver `copiasComprometidas`). En producción puede haber de ésos;
+ *   - de una carrera que el recuento no puede cerrar: una publicación y una
+ *     venta de la misma carta en el mismo instante ven cada una la instantánea
+ *     de antes de la otra, y dos publicaciones simultáneas de la misma carta
+ *     suelta pasan las dos el guard.
+ *
+ * QUÉ SE HACE CON ELLOS, en tres sitios y todos baratos:
+ *   1. `getBazar` no los enseña: nadie llega a pulsar "Pagar" sobre un anuncio
+ *      que va a contestar que no;
+ *   2. `retirarAnunciosSinRespaldo` los marca 'retirada'. La llaman
+ *      `publicarEnBazarAction` (después de publicar, que es lo que cierra la
+ *      doble publicación; y antes, si el vendedor está en el tope de anuncios),
+ *      `getMisAnunciosBazar` (el vendedor abre "mis ventas" y sus huecos del
+ *      tope de 20 quedan libres) y `comprarEnBazarAction` cuando una compra
+ *      descubre que el anuncio no tenía nada detrás;
+ *   3. la compra lo dice con `motivo: "sin-respaldo"`, en vez del "o se la ha
+ *      llevado otro o no te llega el saldo" que no era ninguna de las dos cosas.
+ *
+ * DE VARIOS ANUNCIOS SUELTOS DE LA MISMA CARTA SE CIERRAN LOS MÁS NUEVOS: con
+ * dos anuncios y respaldo para uno, se queda el primero que se publicó.
+ *
+ * ES UNA SENTENCIA APARTE Y NO UN CTE DE CADA VENTA, a propósito. Lee una
+ * instantánea coherente (cantidad, graduadas y anuncios del mismo instante) y
+ * sólo bloquea filas de bazar_listings, en orden de id: no puede abrazarse con
+ * la compra, que toma primero el anuncio y luego la colección. Un cierre de
+ * más por una instantánea vieja es inofensivo —el vendedor vuelve a publicar—;
+ * lo que no puede pasar es que mueva una moneda o una carta, y no toca ninguna.
+ */
+async function retirarAnunciosSinRespaldo(
+  sellerId: string,
+  cardId: string | null = null,
+): Promise<number[]> {
+  const { rows } = await sql.query(
+    `WITH abiertos AS (
+       /* puesto: que numero de anuncio SUELTO es este entre los de su carta,
+        * del mas viejo al mas nuevo. Para un anuncio de graduada no se usa. */
+       SELECT b.id, b.card_id, b.graded_id,
+              count(*) FILTER (WHERE b.graded_id IS NULL)
+                OVER (PARTITION BY b.card_id ORDER BY b.created_at, b.id) AS puesto
+       FROM bazar_listings b
+       WHERE b.seller_id = $1 AND b.estado = 'activa'
+         AND ($2::text IS NULL OR b.card_id = $2::text)
+     ),
+     estado AS (
+       SELECT x.card_id,
+              COALESCE((SELECT uc.quantity FROM user_collection uc
+                         WHERE uc.user_id = $1 AND uc.card_id = x.card_id), 0) AS quantity,
+              (SELECT count(*)::int FROM graded_cards g
+                WHERE g.user_id = $1 AND g.card_id = x.card_id
+                  AND g.estado = 'activa') AS graduadas
+       FROM (SELECT DISTINCT card_id FROM abiertos) x
+     ),
+     sobran AS (
+       SELECT a.id
+       FROM abiertos a
+       JOIN estado e ON e.card_id = a.card_id
+       WHERE CASE
+               WHEN a.graded_id IS NULL THEN
+                 /* El anuncio suelto numero p necesita su copia, las p-1 de los
+                  * anuncios anteriores, la reservada y las de la vitrina. */
+                 e.quantity < a.puesto + $3::int + e.graduadas
+               ELSE
+                 /* El de una graduada: su copia ya va contada en graduadas, y
+                  * tiene que quedar ademas la reservada. Y la graduada tiene
+                  * que seguir en la vitrina del vendedor. */
+                 e.quantity < e.graduadas + $3::int
+                 OR NOT EXISTS (
+                      SELECT 1 FROM graded_cards g
+                       WHERE g.id = a.graded_id AND g.user_id = $1
+                         AND g.estado = 'activa')
+             END
+     ),
+     bloqueo AS MATERIALIZED (
+       /* En orden de id: dos barridos del mismo vendedor a la vez piden los
+        * candados en la misma secuencia y no se abrazan. */
+       SELECT b.id
+       FROM bazar_listings b
+       WHERE b.id IN (SELECT id FROM sobran) AND b.estado = 'activa'
+       ORDER BY b.id
+       FOR UPDATE OF b
+     )
+     UPDATE bazar_listings b
+        SET estado = 'retirada', closed_at = NOW()
+      WHERE b.id IN (SELECT id FROM bloqueo) AND b.estado = 'activa'
+     RETURNING b.id`,
+    [sellerId, cardId, COPIAS_RESERVADAS],
+  );
+  return rows.map((r) => Number(r.id));
+}
+
+/**
+ * Cierra los anuncios MÁS NUEVOS de un vendedor que pasan del tope.
+ *
+ * EL AGUJERO QUE CIERRA: el tope de MAX_ANUNCIOS_ABIERTOS va dentro del INSERT
+ * de `publicarEnBazarAction`, pero el recuento de ese INSERT sale de la
+ * instantánea de su sentencia. Varias publicaciones lanzadas a la vez ven
+ * todas el mismo número de anuncios abiertos y entran todas: con 15 abiertos
+ * y 12 publicaciones simultáneas quedaban 27.
+ *
+ * Esto se ejecuta DESPUÉS de publicar, en otra sentencia, así que ya ve los
+ * anuncios confirmados de las demás. De dos barridos que se crucen, el que
+ * tiene la instantánea más nueva ve un superconjunto de lo que ve el otro, y
+ * lo que cierra el primero está siempre dentro de lo que cerraría el segundo:
+ * entre los dos dejan exactamente el tope, nunca menos.
+ *
+ * SE QUEDAN LOS MÁS VIEJOS, como en `retirarAnunciosSinRespaldo`. Sólo toca
+ * filas de bazar_listings y las bloquea en orden de id, igual que aquél: no
+ * puede abrazarse con la compra ni con el otro barrido. No mueve ni una moneda
+ * ni una carta: un anuncio es una fila, la copia nunca salió de la colección.
+ */
+async function retirarAnunciosPorEncimaDelTope(sellerId: string): Promise<number[]> {
+  const { rows } = await sql.query(
+    `WITH sobran AS (
+       SELECT b.id
+       FROM bazar_listings b
+       WHERE b.seller_id = $1 AND b.estado = 'activa'
+       ORDER BY b.created_at, b.id
+       OFFSET $2::int
+     ),
+     bloqueo AS MATERIALIZED (
+       SELECT b.id
+       FROM bazar_listings b
+       WHERE b.id IN (SELECT id FROM sobran) AND b.estado = 'activa'
+       ORDER BY b.id
+       FOR UPDATE OF b
+     )
+     UPDATE bazar_listings b
+        SET estado = 'retirada', closed_at = NOW()
+      WHERE b.id IN (SELECT id FROM bloqueo) AND b.estado = 'activa'
+     RETURNING b.id`,
+    [sellerId, MAX_ANUNCIOS_ABIERTOS],
+  );
+  return rows.map((r) => Number(r.id));
+}
 
 /** Escaparate: lo que hay a la venta ahora mismo. Funciona sin sesión. */
 export async function getBazar(pagina = 0) {
@@ -5052,6 +6340,28 @@ export async function getBazar(pagina = 0) {
       JOIN cards c ON c.id = b.card_id
       LEFT JOIN users u ON u.id = b.seller_id
       WHERE b.estado = 'activa'
+        /* SOLO LOS QUE SE PUEDEN COMPRAR. Es la condicion de la puerta de
+         * comprarEnBazarAction escrita aqui: al vendedor le sobra la copia
+         * despues de la reservada y de las que tiene en la vitrina (la suya no
+         * cuenta si lo que se anuncia ES una graduada). Sin esto, el escaparate
+         * ensenaba anuncios a los que toda compra contestaba que no. */
+        AND EXISTS (
+          SELECT 1 FROM user_collection uc
+          WHERE uc.user_id = b.seller_id AND uc.card_id = b.card_id
+            AND uc.quantity > ${COPIAS_RESERVADAS} + (
+              SELECT count(*) FROM graded_cards g
+              WHERE g.user_id = b.seller_id AND g.card_id = b.card_id
+                AND g.estado = 'activa'
+                AND (b.graded_id IS NULL OR g.id <> b.graded_id)
+            )
+        )
+        AND (
+          b.graded_id IS NULL
+          OR EXISTS (
+            SELECT 1 FROM graded_cards g
+            WHERE g.id = b.graded_id AND g.user_id = b.seller_id AND g.estado = 'activa'
+          )
+        )
       ORDER BY b.created_at DESC
       LIMIT ${POR_PAGINA} OFFSET ${desde}
     `;
@@ -5066,7 +6376,12 @@ export async function getBazar(pagina = 0) {
       precio: Number(r.precio),
       nota: r.nota === null || r.nota === undefined ? null : Number(r.nota),
       graduada: r.graded_id !== null && r.graded_id !== undefined,
-      vendedor: String(r.vendedor ?? "Entrenador"),
+      /* EL NOMBRE DEL VENDEDOR SÓLO VIAJA CON SESIÓN. El escaparate funciona
+       * sin cuenta, y sin esto cualquier visitante leía los nombres (el
+       * username o el nombre de pila de Clerk) de quienes venden, cuando la
+       * búsqueda de entrenadores —que da ese mismo dato— exige sesión. El campo
+       * se conserva con el rótulo genérico para que la tarjeta se pinte igual. */
+      vendedor: userId ? String(r.vendedor ?? "Entrenador") : "Entrenador",
       // Para que la pantalla pueda pintar "tuyo" y no ofrecer comprarte a ti
       // mismo. La comprobación de verdad está en comprarEnBazarAction.
       esMio: Boolean(userId) && String(r.seller_id) === userId,
@@ -5111,6 +6426,11 @@ export async function publicarEnBazarAction(
   if (idGraduada !== null && (!Number.isInteger(idGraduada) || idGraduada <= 0)) {
     return { ok: false as const, error: "peticion" as const };
   }
+  // Tope de frecuencia (services/limite.ts). Con el error que la pantalla ya
+  // sabe pintar ("inténtalo de nuevo") y un campo opcional que dice por qué.
+  if (!dentroDelLimite("publicar:" + userId, LIMITES.publicarEnBazar)) {
+    return { ok: false as const, error: "servidor" as const, limitado: true as const };
+  }
 
   try {
     await ensureSchema();
@@ -5131,7 +6451,22 @@ export async function publicarEnBazarAction(
       };
     }
     if (Number(quien[0].abiertos) >= MAX_ANUNCIOS_ABIERTOS) {
-      return { ok: false as const, error: "demasiados-anuncios" as const };
+      /* EN EL TOPE: antes de decir que no, se cierran los anuncios que ya no
+       * tienen nada detrás (ver `retirarAnunciosSinRespaldo`). Un anuncio que
+       * nadie puede comprar no puede seguir ocupando uno de los 20 huecos: era
+       * la otra mitad del anuncio zombi, y sin esto quien tuviera veinte de
+       * antes del arreglo no podría volver a publicar hasta retirarlos a mano
+       * uno a uno. Esto sólo es el aviso temprano; el tope que decide va dentro
+       * del INSERT de más abajo. */
+      let liberados = 0;
+      try {
+        liberados = (await retirarAnunciosSinRespaldo(userId)).length;
+      } catch (e) {
+        console.error("publicarEnBazarAction: no se pudieron cerrar anuncios sin respaldo:", e);
+      }
+      if (Number(quien[0].abiertos) - liberados >= MAX_ANUNCIOS_ABIERTOS) {
+        return { ok: false as const, error: "demasiados-anuncios" as const };
+      }
     }
 
     // El VALOR lo calcula el servidor contra la rareza de la base de datos y el
@@ -5160,7 +6495,7 @@ export async function publicarEnBazarAction(
       if (g.length === 0) return { ok: false as const, error: "no-existe" as const };
       nota = Number(g[0].nota);
       // El valor de referencia de la banda es el YA multiplicado por la nota:
-      // un 10 vale el triple, y si la banda se calculase sobre el valor sin
+      // un 10 vale casi el doble (×1,95), y si la banda se calculase sobre el valor sin
       // graduar, publicar un 10 al precio que le corresponde sería imposible.
       //
       // Sale de la MISMA función que pinta la hoja de publicar (getVitrina
@@ -5182,6 +6517,30 @@ export async function publicarEnBazarAction(
      * cuenta ya la lleva el índice único parcial de bazar_listings, que impide
      * que una misma copia graduada esté en dos anuncios a la vez. */
     const { rows } = await sql`
+      /* LA FILA DE LA COLECCION SE BLOQUEA ANTES DE CONTAR.
+       *
+       * El guard de abajo era un EXISTS a secas, o sea la instantanea del
+       * principio de la sentencia: una venta de esa misma carta que se
+       * confirmase mientras tanto no se veia, y el anuncio se creaba sobre una
+       * copia que ya no estaba. Con FOR UPDATE esta sentencia espera a la venta
+       * y lee la cantidad YA descontada (Postgres relee la fila bloqueada).
+       *
+       * Es el mismo candado, sobre la misma fila, que toman las ventas, la
+       * graduacion y la compra del bazar: publicar entra en esa cola en vez de
+       * colarse. Y es el UNICO candado de la sentencia, asi que no puede
+       * abrazarse con nadie.
+       *
+       * Lo que NO cierra, y por eso existe retirarAnunciosSinRespaldo: el
+       * recuento de anuncios y de graduadas sigue saliendo de la instantanea.
+       * Dos publicaciones simultaneas de la misma carta se ponen en fila aqui,
+       * pero la segunda no ve el anuncio de la primera; lo ve el barrido que se
+       * lanza justo despues, en otra sentencia. */
+      WITH bloqueo AS MATERIALIZED (
+        SELECT uc.quantity
+        FROM user_collection uc
+        WHERE uc.user_id = ${userId} AND uc.card_id = ${cardId}
+        FOR UPDATE OF uc
+      )
       INSERT INTO bazar_listings (seller_id, card_id, graded_id, nota, precio, comision)
       SELECT ${userId}, ${cardId}, ${idGraduada}, ${nota}, ${precioPedido}, ${comisionDe(precioPedido)}
       /* LO QUE TIENE QUE SOBRAR, y el recuento es más largo de lo que parece.
@@ -5199,9 +6558,8 @@ export async function publicarEnBazarAction(
        * se descuenta una del recuento de graduadas en ese caso. Que no esté ya
        * publicada lo impide el índice único parcial de bazar_listings. */
       WHERE EXISTS (
-        SELECT 1 FROM user_collection uc
-        WHERE uc.user_id = ${userId} AND uc.card_id = ${cardId}
-          AND uc.quantity > (
+        SELECT 1 FROM bloqueo uc
+        WHERE uc.quantity > (
             SELECT count(*) FROM bazar_listings
             WHERE seller_id = ${userId} AND card_id = ${cardId}
               AND estado = 'activa' AND graded_id IS NULL
@@ -5211,12 +6569,69 @@ export async function publicarEnBazarAction(
           ) - CASE WHEN ${idGraduada}::int IS NULL THEN 0 ELSE 1 END
           + ${COPIAS_RESERVADAS}
       )
+      /* EL TOPE DE ANUNCIOS, DENTRO DEL INSERT. Antes solo se leia arriba, en
+       * otra sentencia: entre aquella lectura y este INSERT cabian todas las
+       * publicaciones que se quisieran lanzar en paralelo, y las veinte que
+       * pasaban la lectura con 19 abiertos entraban todas. */
+      AND (
+        SELECT count(*) FROM bazar_listings
+        WHERE seller_id = ${userId} AND estado = 'activa'
+      ) < ${MAX_ANUNCIOS_ABIERTOS}
       ON CONFLICT DO NOTHING
       RETURNING id
     `;
-    if (rows.length === 0) return { ok: false as const, error: "sin-copias" as const };
+    if (rows.length === 0) {
+      // No entró: o no sobraba copia, o el vendedor ya está en el tope. Se
+      // pregunta cuál de las dos para no decirle "no te sobran copias" a quien
+      // lo que tiene son veinte anuncios abiertos.
+      const { rows: tope } = await sql`
+        SELECT count(*)::int AS n FROM bazar_listings
+        WHERE seller_id = ${userId} AND estado = 'activa'
+      `;
+      if (Number(tope[0]?.n ?? 0) >= MAX_ANUNCIOS_ABIERTOS) {
+        return { ok: false as const, error: "demasiados-anuncios" as const };
+      }
+      return { ok: false as const, error: "sin-copias" as const };
+    }
 
-    revalidatePath("/bazar");
+    /* Y DESPUÉS DE PUBLICAR, LOS DOS BARRIDOS. Son lo que cierra la doble
+     * publicación: dos peticiones a la vez pasan las dos el guard (cada una
+     * cuenta los anuncios de ANTES de la otra), pero la que barra en segundo
+     * lugar ya ve los dos anuncios confirmados y cierra el que sobra.
+     *
+     *  - el de la carta (`retirarAnunciosSinRespaldo`): dos publicaciones de la
+     *    MISMA copia suelta;
+     *  - el del tope (`retirarAnunciosPorEncimaDelTope`): publicaciones de
+     *    cartas DISTINTAS lanzadas a la vez con el vendedor a punto de llenar
+     *    sus huecos. El recuento del INSERT sale de su instantánea, así que
+     *    todas veían "19 abiertos" y entraban todas (medido: 27 anuncios con un
+     *    tope de 20).
+     *
+     * Y LA RESPUESTA SALE DE CÓMO HA QUEDADO EL ANUNCIO, NO DE LO QUE CERRÓ ESTE
+     * BARRIDO. Antes se miraba si el id propio estaba en la lista de cerrados
+     * de la llamada de aquí; pero si lo había cerrado el barrido de la OTRA
+     * publicación (o una compra fallida), esa lista venía vacía y se contestaba
+     * ok:true con el id de un anuncio ya retirado: en 49 de 60 dobles
+     * publicaciones contra PostgreSQL real. Ahora se lee el estado, que no
+     * depende de quién barrió.
+     *
+     * Un fallo aquí no deshace la publicación; el anuncio sin respaldo, si lo
+     * hubiera, no se enseña y se cierra en el siguiente barrido. */
+    try {
+      await retirarAnunciosSinRespaldo(userId, cardId);
+      const porTope = await retirarAnunciosPorEncimaDelTope(userId);
+      const { rows: comoQuedo } = await sql`
+        SELECT estado FROM bazar_listings WHERE id = ${Number(rows[0].id)}
+      `;
+      if (comoQuedo[0]?.estado === "retirada") {
+        return porTope.includes(Number(rows[0].id))
+          ? { ok: false as const, error: "demasiados-anuncios" as const }
+          : { ok: false as const, error: "sin-copias" as const };
+      }
+    } catch (e) {
+      console.error("publicarEnBazarAction: barrido tras publicar:", e);
+    }
+
     return {
       ok: true as const,
       id: Number(rows[0].id),
@@ -5246,7 +6661,6 @@ export async function retirarDelBazarAction(anuncioId: number) {
     // rowCount 0 significa que no era suyo o que ya estaba cerrado. Se dice, en
     // vez de cantar éxito sobre algo que no ocurrió.
     if (!rowCount) return { ok: false as const, error: "no-existe" as const };
-    revalidatePath("/bazar");
     return { ok: true as const };
   } catch (e) {
     console.error("retirarDelBazarAction error:", e);
@@ -5262,10 +6676,29 @@ export async function retirarDelBazarAction(anuncioId: number) {
  *              simultáneos se serializan aquí y sólo uno lo ve 'activa'.
  *   `bloqueo`  bloquea las filas de user_collection de LOS DOS usuarios, en
  *              orden (user_id, card_id), que es el orden global del repositorio.
+ *   `respaldo` ¿le sobra la copia al vendedor? Va aparte de `via` para poder
+ *              decir POR QUÉ no se vendió (ver `motivo` más abajo).
  *   `via`      la puerta: anuncio vivo, vendedor con copia y comprador con saldo.
- *   el resto   cierre del anuncio, cobro, abono, traspaso de la carta y —si era
- *              graduada— baja de la fila del vendedor y alta de una NUEVA para
- *              el comprador (la fila no se mueve nunca: ver el CTE `traspaso`).
+ *   `cobro`    EL ÁRBITRO. Es el primer CTE que escribe y cuelga de `via`: relee
+ *              el saldo sobre la fila que bloquea, así que si el dinero ya no
+ *              está no toca fila y NADA de lo que sigue ocurre.
+ *   el resto   cierre del anuncio (cuelga de `cobro`), abono al vendedor
+ *              (cuelga de `cierre`), traspaso de la carta y —si era graduada—
+ *              baja de la fila del vendedor y alta de una NUEVA para el
+ *              comprador (la fila no se mueve nunca: ver el CTE `traspaso`).
+ *
+ * EL ORDEN cobro → cierre → abono ES EL ARREGLO DE UN FALLO: antes el cierre
+ * iba delante y colgaba sólo de `via`, que lee el saldo de la instantánea. Un
+ * comprador con saldo para UN anuncio que lanzase varias compras a la vez las
+ * pasaba todas por `via`; las que perdían el cobro dejaban anuncios AJENOS
+ * marcados 'vendida' a su nombre sin mover ni una carta ni una moneda, y el
+ * vendedor leía "Cobraste X" en sus ventas. Ahora el anuncio sólo se cierra si
+ * se cobró.
+ *
+ * SI NO SE VENDE, la respuesta sigue siendo `error: "no-disponible"` y lleva
+ * además `motivo`: "vendido" (ya no está activo: se lo llevó otro o se retiró),
+ * "sin-respaldo" (el vendedor ya no tiene la copia; el anuncio se cierra en ese
+ * mismo momento) o "sin-saldo".
  *
  * LA COMISIÓN SE DESTRUYE: al vendedor se le abona `pagoAlVendedor(precio)` y al
  * comprador se le cobra `precio`. La diferencia no va a ninguna cuenta. Es
@@ -5276,6 +6709,11 @@ export async function comprarEnBazarAction(anuncioId: number) {
   if (!userId) return { ok: false as const, error: "no-autorizado" as const };
   if (!Number.isInteger(anuncioId) || anuncioId <= 0) {
     return { ok: false as const, error: "peticion" as const };
+  }
+  // Tope de frecuencia (services/limite.ts). "servidor" es el error que la
+  // pantalla ya pinta como "no se ha movido nada", que aquí es verdad.
+  if (!dentroDelLimite("comprar-bazar:" + userId, LIMITES.comprarEnBazar)) {
+    return { ok: false as const, error: "servidor" as const, limitado: true as const };
   }
 
   try {
@@ -5298,7 +6736,7 @@ export async function comprarEnBazarAction(anuncioId: number) {
     }
 
     const { rows: previo } = await sql`
-      SELECT seller_id, precio FROM bazar_listings
+      SELECT seller_id, precio, card_id FROM bazar_listings
       WHERE id = ${anuncioId} AND estado = 'activa'
     `;
     if (previo.length === 0) return { ok: false as const, error: "no-existe" as const };
@@ -5324,7 +6762,19 @@ export async function comprarEnBazarAction(anuncioId: number) {
         * dentro de los que lo usan y ejecutar el FOR UPDATE más de una vez, o
         * en otro orden. El orden (user_id, card_id) es un invariante de todo el
         * repositorio —acceptTradeOffer bloquea igual— y una sentencia que
-        * bloqueara al revés se abrazaría con ella. */
+        * bloqueara al revés se abrazaría con ella.
+        *
+        * Y TIENE QUE LEERSE ENTERO, que no es lo mismo que estar escrito. Un
+        * CTE con FOR UPDATE solo bloquea las filas que alguien llega a LEER, y
+        * quien lo lee es respaldo, al que via pregunta con un EXISTS que para
+        * en la primera fila. Cuando el vendedor ordena antes que el comprador,
+        * esa primera fila es la suya y la del comprador se quedaba SIN
+        * bloquear: la tomaba pon al final, DESPUES de users, o sea en el orden
+        * contrario al de todas las ventas. Una venta del comprador de esa misma
+        * carta en otra pestana (coleccion y luego users) se abrazaba con su
+        * compra siempre, no a veces. Por eso respaldo lleva un count(*) de este
+        * CTE: lo recorre hasta el final antes de que nadie toque users. Es el
+        * mismo truco que el cobro de comprarSobreAction. */
        bloqueo AS MATERIALIZED (
          SELECT uc.user_id, uc.card_id, uc.quantity
          FROM user_collection uc
@@ -5348,47 +6798,116 @@ export async function comprarEnBazarAction(anuncioId: number) {
            AND g.estado = 'activa'
            AND (a.graded_id IS NULL OR g.id <> a.graded_id)
        ),
+       /* EL RESPALDO: al vendedor le tiene que sobrar la copia DESPUÉS de
+        * descontar la reservada y las que están en su vitrina, sobre la fila ya
+        * bloqueada. Va en su propio CTE, y no dentro de via, para que la
+        * respuesta pueda distinguir "el vendedor ya no la tiene" de "no te
+        * llega el saldo": con las dos cosas en la misma puerta, el comprador de
+        * un anuncio sin nada detras leia que le faltaba dinero.
+        *
+        * Y si lo anunciado es una graduada, su fila tiene que seguir activa y
+        * ser del vendedor. Hoy no hay camino que la cierre dejando el anuncio
+        * abierto (venderGraduadaAction lo retira en la misma sentencia), pero
+        * sin esta linea, el dia que lo hubiera, la compra cobraria el precio de
+        * una graduada y entregaria una copia suelta: traspaso no tocaria fila
+        * y todo lo demas seguiria adelante. */
+       respaldo AS MATERIALIZED (
+         SELECT 1
+         FROM bloqueo b, anuncio a
+         WHERE b.user_id = a.seller_id AND b.card_id = a.card_id
+           -- Siempre cierto (un recuento no es negativo): esta aqui para que
+           -- bloqueo se lea ENTERO antes de cobrar. Ver su comentario.
+           AND (SELECT count(*) FROM bloqueo) >= 0
+           AND b.quantity > $4::int + (SELECT n FROM comprometidas)
+           AND (
+             a.graded_id IS NULL
+             OR EXISTS (
+               SELECT 1 FROM graded_cards g
+               WHERE g.id = a.graded_id AND g.user_id = a.seller_id
+                 AND g.estado = 'activa'
+             )
+           )
+       ),
+       /* LAS DOS FILAS DE users, EN ORDEN DE id Y ANTES DE ESCRIBIR NADA.
+        *
+        * EL ABRAZO QUE CIERRA: cobro toca la fila del comprador y abono, mas
+        * abajo, la del vendedor. Si A le compra a B y B le compra a A en el
+        * mismo instante, cada sentencia tenia la suya y pedia la del otro:
+        * interbloqueo, y una de las dos compras contestaba servidor. Estaba
+        * documentado como carrera conocida con el argumento de que no se podia
+        * ordenar por id porque quien vende no se sabe hasta leer el anuncio.
+        * Pero aqui el anuncio YA esta leido y bloqueado: se piden las dos filas
+        * juntas, ordenadas, y las dos compras cruzadas las piden en el mismo
+        * orden. La segunda espera a la primera sin tener cogida ninguna.
+        *
+        * SOLO SI HAY RESPALDO: sin anuncio vivo o sin copia detras no se va a
+        * cobrar, y no hace falta bloquear a nadie. Y ese EXISTS es ademas lo
+        * que fuerza el orden global: respaldo recorre bloqueo entero, asi que
+        * las filas de user_collection estan tomadas antes que estas.
+        *
+        * MATERIALIZED, como los demas candados, y via lo lee ENTERO (count)
+        * antes de preguntarle nada: un EXISTS a secas pararia en la primera
+        * fila y dejaria la otra sin bloquear, que es exactamente el fallo que
+        * tenia bloqueo. */
+       cuentas AS MATERIALIZED (
+         SELECT u.id, u.coins
+         FROM users u
+         WHERE u.id IN ($2, (SELECT seller_id FROM anuncio))
+           AND EXISTS (SELECT 1 FROM respaldo)
+         ORDER BY u.id
+         FOR UPDATE OF u
+       ),
        via AS MATERIALIZED (
-         /* LA PUERTA ÚNICA. Las tres condiciones sobre filas ya bloqueadas. */
+         /* LA PUERTA ÚNICA: anuncio vivo, vendedor con copia y con fila en
+          * users (sin ella el abono no tocaria nada y el comprador pagaria por
+          * una carta que no se mueve), y comprador con saldo. Las dos cosas de
+          * users se miran en cuentas, o sea sobre las filas ya bloqueadas. */
          SELECT 1
          WHERE EXISTS (SELECT 1 FROM anuncio)
-           /* Al vendedor le tiene que sobrar la copia DESPUÉS de descontar la
-            * reservada y las que están en su vitrina. */
+           AND EXISTS (SELECT 1 FROM respaldo)
+           AND (SELECT count(*) FROM cuentas) >= 0
            AND EXISTS (
-             SELECT 1 FROM bloqueo b, anuncio a
-             WHERE b.user_id = a.seller_id AND b.card_id = a.card_id
-               AND b.quantity > $4::int + (SELECT n FROM comprometidas)
+             SELECT 1 FROM cuentas c, anuncio a WHERE c.id = a.seller_id
            )
            AND EXISTS (
-             SELECT 1 FROM users
-             WHERE id = $2 AND COALESCE(coins, 0) >= $3::int
+             SELECT 1 FROM cuentas c
+             WHERE c.id = $2 AND COALESCE(c.coins, 0) >= $3::int
            )
-       ),
-       cierre AS (
-         UPDATE bazar_listings
-         SET estado = 'vendida', buyer_id = $2, closed_at = NOW()
-         WHERE id = $1 AND estado = 'activa' AND EXISTS (SELECT 1 FROM via)
-         RETURNING card_id, graded_id
        ),
        cobro AS (
-         /* LA COMPROBACIÓN DE SALDO SE REPITE AQUÍ, Y NO ES REDUNDANTE.
+         /* EL ÁRBITRO, Y POR ESO VA EL PRIMERO DE LOS QUE ESCRIBEN.
           *
-          * El EXISTS de 'via' lee la fila de users SIN bloquearla, así que en
-          * READ COMMITTED puede estar mirando una instantánea vieja: entre esa
-          * lectura y este UPDATE el comprador puede haberse gastado el dinero
-          * en otra pestaña. Sin esta condición, el saldo se quedaba en negativo
-          * —monedas de la nada— y el resto de la sentencia seguía adelante.
-          * Con ella, si no hay dinero no se toca ninguna fila y toda la cadena
-          * que cuelga de 'cobro' se cae con ella. */
+          * LA COMPROBACIÓN DE SALDO SE REPITE AQUÍ, Y SE QUEDA. Desde que
+          * 'cuentas' bloquea la fila, 'via' ya mira el saldo confirmado y no
+          * una instantánea vieja; pero este guard es el que hace que el cobro
+          * no pueda dejar un saldo negativo pase lo que pase con los CTE de
+          * arriba, y falla CERRADO: si no casa, este UPDATE no toca fila, y
+          * como todo lo demás cuelga de él no se mueve nada.
+          *
+          * Y TODO LO DEMAS CUELGA DE AQUI. Antes el cierre del anuncio iba
+          * delante, colgando solo de 'via': cuando el cobro no tocaba fila, el
+          * anuncio YA estaba marcado 'vendida' a nombre del comprador, sin
+          * pago ni traspaso, y no se podia volver a comprar. En Postgres todos
+          * los CTE que escriben se ejecutan aunque nadie los lea, asi que el
+          * unico orden seguro es que cada escritura cuelgue de la anterior. */
          UPDATE users SET coins = COALESCE(coins, 0) - $3::int
          WHERE id = $2
            AND COALESCE(coins, 0) >= $3::int
-           AND EXISTS (SELECT 1 FROM cierre)
+           AND EXISTS (SELECT 1 FROM via)
          RETURNING coins
+       ),
+       cierre AS (
+         /* Solo si se cobró. La fila del anuncio la tiene bloqueada esta misma
+          * sentencia (CTE anuncio) y sigue 'activa', asi que si hubo cobro este
+          * UPDATE toca fila siempre: no añade ningun candado nuevo. */
+         UPDATE bazar_listings
+         SET estado = 'vendida', buyer_id = $2, closed_at = NOW()
+         WHERE id = $1 AND estado = 'activa' AND EXISTS (SELECT 1 FROM cobro)
+         RETURNING card_id, graded_id
        ),
        abono AS (
          UPDATE users SET coins = COALESCE(coins, 0) + $5::int
-         WHERE id = (SELECT seller_id FROM anuncio) AND EXISTS (SELECT 1 FROM cobro)
+         WHERE id = (SELECT seller_id FROM anuncio) AND EXISTS (SELECT 1 FROM cierre)
          RETURNING 1
        ),
        quita AS (
@@ -5396,10 +6915,28 @@ export async function comprarEnBazarAction(anuncioId: number) {
          SET quantity = uc.quantity - 1
          FROM anuncio a
          WHERE uc.user_id = a.seller_id AND uc.card_id = a.card_id
-           /* Guard propio y no sólo el de 'via': entre una cosa y otra hay
-            * varios CTE, y esta condición se evalúa sobre la fila que este
-            * mismo UPDATE bloquea. */
-           AND uc.quantity > $4::int + (SELECT n FROM comprometidas)
+           /* SIN GUARD DE CANTIDAD PROPIO, Y ES A PROPOSITO. Aqui hubo uno
+            * (el mismo quantity mayor que reservada mas comprometidas de
+            * respaldo), con un comentario que decia que se evaluaba sobre la
+            * fila que este UPDATE bloquea. No era verdad, y costaba dinero.
+            *
+            * Un UPDATE busca sus filas en la INSTANTANEA de la sentencia y solo
+            * relee la version nueva de las que ya casaban con la vieja. Si la
+            * cantidad SUBE entre la instantanea y el candado (al vendedor le
+            * entra otra copia justo entonces), respaldo decide que si sobre la
+            * version confirmada que devuelve el FOR UPDATE, pero la version
+            * vieja no cumple el guard y este UPDATE ni la mira: no toca fila.
+            * Para entonces el comprador ya ha pagado, el anuncio ya esta
+            * vendida y el vendedor ya ha cobrado. Medido contra PostgreSQL real:
+            * comprador 1000 a 930 monedas y 0 copias, vendedor +59 y 2 copias.
+            *
+            * La decision ya esta tomada, y bien tomada: respaldo miro la fila
+            * BLOQUEADA, que sigue bloqueada por esta misma sentencia hasta el
+            * final, asi que entre aquella comprobacion y este descuento nadie
+            * puede cambiarla. Repetir el guard no anadia nada y quitaba la
+            * carta de la operacion. Y por si algun dia otra cosa dejara este
+            * UPDATE sin fila, el SELECT final lleva un cuadre que deshace la
+            * sentencia entera. */
            AND EXISTS (SELECT 1 FROM abono)
          RETURNING 1
        ),
@@ -5485,20 +7022,66 @@ export async function comprarEnBazarAction(anuncioId: number) {
          FROM traspaso t
          RETURNING 1
        )
+       -- vivo y respaldado son el diagnostico de por que NO se vendio, sacado
+       -- de las mismas filas bloqueadas que decidieron: no hay que volver a
+       -- consultar nada para decirselo al comprador.
        SELECT (SELECT coins FROM cobro) AS coins,
-              (SELECT count(*) FROM pon) AS recibidas`,
+              (SELECT count(*) FROM pon) AS recibidas,
+              EXISTS (SELECT 1 FROM anuncio)  AS vivo,
+              EXISTS (SELECT 1 FROM respaldo) AS respaldado,
+              -- EL CUADRE. Si hubo cobro tiene que haber traspaso de la carta, y
+              -- de la nota si el anuncio era de una graduada. Si no cuadra,
+              -- division por cero: Postgres aborta la sentencia ENTERA y no se
+              -- mueve ni una moneda (el catch contesta servidor, que es verdad:
+              -- no ha pasado nada). Es la red de las tres escrituras de arriba:
+              -- todos los CTE que escriben se ejecutan, y uno que no toque fila
+              -- no deshace a los anteriores por si solo.
+              1 / (CASE WHEN (SELECT count(*) FROM cobro) = (SELECT count(*) FROM pon)
+                         AND (SELECT count(*) FROM entrega)
+                             = (SELECT count(*) FROM cobro)
+                               * (SELECT count(*) FROM anuncio WHERE graded_id IS NOT NULL)
+                        THEN 1 ELSE 0 END) AS cuadra`,
       [anuncioId, userId, precio, COPIAS_RESERVADAS, paga],
     );
 
     const coins = rows[0]?.coins;
     if (coins === null || coins === undefined) {
-      return { ok: false as const, error: "no-disponible" as const };
+      /* NO SE VENDIÓ, Y SE DICE POR QUÉ. El error sigue siendo el de siempre
+       * —la pantalla ya lo conoce— y `motivo` lo afina. */
+      if (!rows[0]?.vivo) {
+        // Entre la lectura de arriba y la sentencia, otro lo compró o se retiró.
+        return {
+          ok: false as const,
+          error: "no-disponible" as const,
+          motivo: "vendido" as const,
+        };
+      }
+      if (!rows[0]?.respaldado) {
+        /* EL ANUNCIO NO TENÍA NADA DETRÁS. Se cierra ahora (retirada perezosa),
+         * para que no lo intente nadie más ni siga ocupando hueco del tope del
+         * vendedor. Es otra sentencia y puede fallar sin consecuencias: aquí no
+         * se ha movido nada, y `getBazar` ya no lo enseña de todos modos. */
+        try {
+          await retirarAnunciosSinRespaldo(
+            String(previo[0].seller_id),
+            String(previo[0].card_id),
+          );
+        } catch (e) {
+          console.error("comprarEnBazarAction: no se pudo cerrar el anuncio sin respaldo:", e);
+        }
+        return {
+          ok: false as const,
+          error: "no-disponible" as const,
+          motivo: "sin-respaldo" as const,
+        };
+      }
+      return {
+        ok: false as const,
+        error: "no-disponible" as const,
+        motivo: "sin-saldo" as const,
+      };
     }
 
-    revalidatePath("/");
-    revalidatePath("/collection");
-    revalidatePath("/bazar");
-    revalidatePath("/vitrina");
     return { ok: true as const, precio, coins: Number(coins) };
   } catch (e) {
     console.error("comprarEnBazarAction error:", e);
@@ -5512,9 +7095,35 @@ export async function getMisAnunciosBazar() {
   if (!userId) return { ok: false as const, error: "no-autorizado" as const };
   try {
     await ensureSchema();
+    /* ANTES DE LEER, SE CIERRAN LOS QUE YA NO TIENEN NADA DETRÁS (ver
+     * `retirarAnunciosSinRespaldo`). Es el sitio natural: quien abre "mis
+     * ventas" es el único que puede hacer algo con un anuncio muerto, y hasta
+     * ahora lo veía 'activa' para siempre, ocupándole un hueco del tope. Sólo
+     * toca filas del propio usuario, es idempotente y, si falla, se lee igual:
+     * por eso va en su propio try. */
+    try {
+      await retirarAnunciosSinRespaldo(userId);
+    } catch (e) {
+      console.error("getMisAnunciosBazar: barrido de anuncios sin respaldo:", e);
+    }
     const { rows } = await sql`
       SELECT b.id, b.card_id, b.precio, b.nota, b.estado, b.created_at, b.closed_at,
-             c.name, c.rarity, c.images, c.set_id
+             c.name, c.rarity, c.images, c.set_id,
+             /* La misma condicion que el escaparate y que la puerta de la
+              * compra: se podria comprar ahora mismo? */
+             (
+               b.estado = 'activa'
+               AND EXISTS (
+                 SELECT 1 FROM user_collection uc
+                 WHERE uc.user_id = b.seller_id AND uc.card_id = b.card_id
+                   AND uc.quantity > ${COPIAS_RESERVADAS} + (
+                     SELECT count(*) FROM graded_cards g
+                     WHERE g.user_id = b.seller_id AND g.card_id = b.card_id
+                       AND g.estado = 'activa'
+                       AND (b.graded_id IS NULL OR g.id <> b.graded_id)
+                   )
+               )
+             ) AS respaldado
       FROM bazar_listings b
       JOIN cards c ON c.id = b.card_id
       WHERE b.seller_id = ${userId}
@@ -5532,6 +7141,14 @@ export async function getMisAnunciosBazar() {
       cobrarias: pagoAlVendedor(Number(r.precio)),
       nota: r.nota === null || r.nota === undefined ? null : Number(r.nota),
       estado: String(r.estado),
+      /**
+       * Sólo dice algo de los anuncios 'activa': false = sigue abierto pero
+       * ahora mismo nadie podría comprarlo (al vendedor ya no le sobra la
+       * copia). Tras el barrido de arriba lo normal es que no quede ninguno; si
+       * queda —se coló entre el barrido y esta lectura—, la pantalla puede
+       * avisarlo. En los cerrados no significa nada.
+       */
+      respaldado: String(r.estado) === "activa" ? Boolean(r.respaldado) : true,
     }));
     return { ok: true as const, anuncios: await anunciosEnIdiomaUsuario(anuncios) };
   } catch (e) {
@@ -5710,7 +7327,6 @@ export async function ponerEnRanura(hoja: number, ranura: number, cardId: string
       };
     }
 
-    revalidatePath("/vitrina");
     return { ok: true as const };
   } catch (e) {
     console.error("ponerEnRanura error:", e);
@@ -5743,7 +7359,6 @@ export async function quitarDeRanura(hoja: number, ranura: number) {
       WHERE user_id = ${userId} AND hoja = ${h} AND ranura = ${r}
     `;
     if (!rowCount) return { ok: false as const, error: "vacia" as const };
-    revalidatePath("/vitrina");
     return { ok: true as const };
   } catch (e) {
     console.error("quitarDeRanura error:", e);

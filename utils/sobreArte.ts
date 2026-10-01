@@ -57,7 +57,7 @@
  * LO QUE SÍ HAY EN DISCO, Y QUE YA ES LA MAYORÍA. En public/sobres hay sobres
  * FOTOGRAFIADOS, y este fichero también contesta a "¿tiene foto esta
  * expansión?" (sección 6). Eso SÍ contradice lo que decía aquí antes: eran 1 de
- * 171 y hoy son 130, así que la foto pasa a ser lo normal y el dibujo, lo que
+ * 171 y hoy son 131, así que la foto pasa a ser lo normal y el dibujo, lo que
  * se ve en las 41 restantes.
  *
  * Y aun así nada de lo de arriba sobra, por dos motivos que no se ven en el
@@ -493,8 +493,8 @@ export function arteDeSobre(logo?: string, nombreSet?: string, setId?: string): 
 /*                                                                     */
 /* LA RELACIÓN ENTRE LAS DOS SE HA DADO LA VUELTA, y conviene saberlo  */
 /* antes de tocar nada: aquí ponía "hoy hay foto de UNA expansión de    */
-/* ~171, así que el sobre CSS es el caso NORMAL". Ya no. Son 130 de     */
-/* 171, y el dibujo es lo que se ve en las 41 que quedan.               */
+/* ~171, así que el sobre CSS es el caso NORMAL". Ya no. Son 131 de     */
+/* 171, y el dibujo es lo que se ve en las 40 que quedan.               */
 /*                                                                     */
 /* Ojo con la tentación que eso invita: "ya que casi todas tienen foto, */
 /* quitemos el dibujo". Sigue siendo un error, y por dos motivos.       */
@@ -594,7 +594,7 @@ const ILUSTRACIONES: Record<string, Ilustracion> = (() => {
  * quedaban siempre con el sobre dibujado.
  *
  * EL MANIFIESTO ESTÁTICO MANDA SIEMPRE QUE TENGA ENTRADA, y eso no es una
- * preferencia: es la garantía de que las 130 expansiones que ya tienen foto no
+ * preferencia: es la garantía de que las 131 expansiones que ya tienen foto no
  * cambian de comportamiento por nada de esto. Se mira primero, y si contesta,
  * aquí se acabó. El almacén de Postgres sólo se consulta cuando el manifiesto
  * dice que no hay nada, y por construcción el cron ni siquiera baja fotos de
@@ -649,7 +649,7 @@ export const PREFIJO_ARTE_REMOTO = "/api/arte-sobre/";
 /**
  * ¿Tiene esta expansión foto en public/sobres?
  *
- * La usa el cron para NO PREGUNTARLE A LA WIKI por las 130 que ya la tienen,
+ * La usa el cron para NO PREGUNTARLE A LA WIKI por las 131 que ya la tienen,
  * que es el filtro que más peticiones ahorra de todos. Vive aquí y no allí
  * porque la comparación es por id NORMALIZADO y la tabla normalizada se
  * construye en este fichero: preguntarlo desde fuera con el id crudo es

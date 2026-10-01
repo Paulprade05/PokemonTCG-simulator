@@ -11,7 +11,7 @@ import DesperfectosCarta, {
   estadoDeCopia,
   estiloDescentrado,
 } from "./DesperfectosCarta";
-import { precioDeCartaSuelta, valorDeVenta } from "../utils/constanst";
+import { copiasLibresDe, precioDeCartaSuelta, valorDeVenta } from "../utils/constanst";
 import { etiquetaNota, valorGraduado } from "../utils/graduacion";
 import { getCardFromDB, toggleWishlist, getWishlistIds } from "../app/action";
 import { useFondoQuieto } from "../hooks/useBloqueoScroll";
@@ -508,11 +508,17 @@ export default function CardDetailModal({
    * `graduadas` viaja con la carta desde `getFullCollection`; falta en las
    * cartas que llegan del álbum, del bazar o del invitado, y ahí el `?? 0` deja
    * el comportamiento de siempre.
+   *
+   * Y LAS ANUNCIADAS EN EL BAZAR, por lo mismo: el servidor las cuenta como
+   * comprometidas y esta resta no. Con 2 copias y una anunciada el botón decía
+   * "Vender 1 repetida · +0" y `sellAllDuplicatesAction` contestaba que la
+   * copia que sobra está anunciada. Ahora el botón no sale y se dice por qué.
+   * La resta es `copiasLibresDe` (utils/constanst.ts), la misma de la colección.
    */
-  const copiasLibres = c
-    ? Math.max(0, (Number(c.quantity) || 0) - (Number(c.graduadas) || 0))
-    : 0;
+  const copiasLibres = c ? copiasLibresDe(c) : 0;
   const repetidasVendibles = Math.max(0, copiasLibres - 1);
+  /** Copias con anuncio suelto abierto en el bazar (0 si la carta no lo trae). */
+  const anunciadasEnBazar = c ? Math.max(0, Math.floor(Number(c.anunciadas) || 0)) : 0;
 
   /* ==================================================================== *
    * EL VALOR DE VENTA, Y POR QUE ANTES MENTIA CON LAS GRADUADAS
@@ -1181,6 +1187,16 @@ export default function CardDetailModal({
                     Vender {repetidasVendibles} repetida{repetidasVendibles > 1 ? "s" : ""} · +{delServidor((c as { valorDeVentaRepetidas?: number | null }).valorDeVentaRepetidas) ?? valorDeVenta(c.rarity, c.quantity, repetidasVendibles)}
                     <IconoMoneda tam={16} />
                   </button>
+                )}
+                {/* SIN BOTÓN, PERO CON EL MOTIVO. Si no queda repetida libre y
+                    hay copias anunciadas, lo que le falta saber al jugador es
+                    dónde está la que le sobra y qué hacer para venderla aquí. */}
+                {!readOnly && repetidasVendibles === 0 && anunciadasEnBazar > 0 && onSellAll && (
+                  <p className="text-center t-etiqueta ink-soft">
+                    {anunciadasEnBazar === 1
+                      ? "La copia que te sobra está anunciada en el bazar. Retira el anuncio para venderla aquí."
+                      : `Las ${anunciadasEnBazar} copias que te sobran están anunciadas en el bazar. Retira el anuncio para venderlas aquí.`}
+                  </p>
                 )}
                 {readOnly && c.quantity != null && (
                   <div className="text-center t-etiqueta ink-soft">

@@ -1,6 +1,7 @@
 import { sql } from "@vercel/postgres";
 import { NextResponse } from "next/server";
-import { requireAdmin } from "../_admin-auth";
+import { LONGITUD_MINIMA_SECRETO, requireAdmin } from "../_admin-auth";
+import { SELL_PRICES } from "@/utils/constanst";
 
 /* ==================================================================== *
  * ¿ESTÁ PUESTA ESTA VARIABLE DE ENTORNO?
@@ -28,6 +29,13 @@ import { requireAdmin } from "../_admin-auth";
  * La longitud se mide DESPUÉS de recortar espacios, que es lo mismo que hace
  * quien la consume: así "64" aquí significa exactamente lo que el código va a
  * usar, y no lo que se pegó con un salto de línea detrás.
+ *
+ * ESO ÚLTIMO SÓLO ERA VERDAD PARA GRADING_SECRET. Las puertas de ADMIN_SECRET
+ * y CRON_SECRET comparaban contra la variable sin recortar y sin mínimo, así
+ * que este informe podía decir «correcta (64)» de un CRON_SECRET con un salto
+ * de línea detrás que hacía fallar el cron todas las noches. Ahora las tres
+ * consumen igual (`secretoDeEntorno`, en app/_admin-auth.ts) y el mínimo sale
+ * de la misma constante que usa la puerta.
  */
 function estadoDeVariable(nombre: string, minimo = 1) {
   const bruto = process.env[nombre];
@@ -63,8 +71,9 @@ export async function GET(request: Request) {
   const entorno = [
     // El mínimo de 16 es el mismo que exige secretoDeNotas en app/action.ts.
     estadoDeVariable("GRADING_SECRET", 16),
-    estadoDeVariable("CRON_SECRET", 16),
-    estadoDeVariable("ADMIN_SECRET", 16),
+    // Y éstos, el de la propia puerta: no pueden separarse de lo que exige.
+    estadoDeVariable("CRON_SECRET", LONGITUD_MINIMA_SECRETO),
+    estadoDeVariable("ADMIN_SECRET", LONGITUD_MINIMA_SECRETO),
     estadoDeVariable("POSTGRES_URL"),
     estadoDeVariable("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"),
     estadoDeVariable("CLERK_SECRET_KEY"),
@@ -95,6 +104,7 @@ export async function GET(request: Request) {
           (SELECT count(*)::int FROM graded_cards)  AS graduadas,
           (SELECT count(*)::int FROM binder_slots)  AS fundas_archivador,
           (SELECT count(*)::int FROM card_prices WHERE eur IS NOT NULL) AS cartas_con_precio_eur,
+          (SELECT count(*)::int FROM card_prices WHERE estado = 'sospechoso') AS precios_sospechosos,
           (SELECT count(*)::int FROM bazar_listings WHERE estado = 'activa') AS anuncios_bazar
       `;
       tablasNuevas = n[0] as Record<string, number>;
@@ -104,7 +114,86 @@ export async function GET(request: Request) {
       };
     }
 
-    return NextResponse.json({ ...rows[0], ...tablasNuevas, entorno });
+    /* RAREZAS QUE EL JUEGO NO CONOCE, con cuántas cartas tiene cada una.
+     *
+     * POR QUÉ ESTÁ AQUÍ: SELL_PRICES tiene las rarezas de los JSON del
+     * repositorio, y el invariante «toda rareza tiene precio» de `npm test`
+     * sólo mira esos JSON. Pero la base la llena el cron con ~170 expansiones,
+     * y las antiguas traen rarezas que no están en la tabla ('Rare Holo EX',
+     * 'Rare Holo GX', 'LEGEND', 'Rare Prime'...). Esas cartas se venden a la
+     * tarifa de respaldo —menos que una Rara—, casi ninguna sale en sobre
+     * estándar ni premium y el mercado no las admite, y no había NINGÚN sitio
+     * donde verlo.
+     *
+     * Es informativo: decidir qué tarifa, rango y cubo les toca es economía.
+     * Con su propio try para que un fallo aquí no se lleve el informe. */
+    let rarezasFueraDeTabla: { rareza: string; cartas: number }[] | { aviso: string } = [];
+    try {
+      const { rows: r } = await sql.query(
+        `SELECT COALESCE(rarity, '(sin rareza)') AS rareza, count(*)::int AS cartas
+           FROM cards
+          WHERE rarity IS NULL OR rarity <> ALL($1::text[])
+          GROUP BY 1
+          ORDER BY cartas DESC, rareza ASC
+          LIMIT 100`,
+        [Object.keys(SELL_PRICES)],
+      );
+      rarezasFueraDeTabla = r.map((f) => ({
+        rareza: String(f.rareza),
+        cartas: Number(f.cartas),
+      }));
+    } catch (e: unknown) {
+      rarezasFueraDeTabla = {
+        aviso: `no se pudo contar: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+
+    /* EXPANSIONES QUE NO VENDEN SOBRES POR ESTAR A MEDIAS.
+     *
+     * POR QUÉ ESTÁ AQUÍ: una expansión con menos del 90 % de las cartas que
+     * declara su ficha no vende sobres, no los anuncia y no paga el bono de
+     * expansión completa (`catalogoIncompleto`, en app/action.ts: es el mismo
+     * 0,9 de `CATALOGO_FIABLE`). Eso protege de sortear contra un catálogo sin
+     * sus cartas de número alto, pero tiene un falso positivo posible: una
+     * expansión COMPLETA cuya ficha declare un total inflado más de un 10 %
+     * desaparece de la tienda sin que nada lo diga. Esta lista es dónde verlo:
+     * lo que salga aquí o se está descargando todavía (se arregla solo en la
+     * siguiente pasada del cron) o tiene el `total` mal, y entonces hay que
+     * corregirlo en `sets`.
+     *
+     * Informativo y con su propio try, como el recuento de rarezas. */
+    let expansionesAMedias:
+      | { id: string; nombre: string; total: number; cartas: number }[]
+      | { aviso: string } = [];
+    try {
+      const { rows: m } = await sql`
+        SELECT s.id, s.name, s.total::int AS total, count(c.id)::int AS cartas
+          FROM sets s
+          LEFT JOIN cards c ON c.set_id = s.id
+         GROUP BY s.id, s.name, s.total
+        HAVING s.total > 0 AND count(c.id) < s.total * 0.9
+         ORDER BY s.id
+         LIMIT 200
+      `;
+      expansionesAMedias = m.map((f) => ({
+        id: String(f.id),
+        nombre: String(f.name ?? ""),
+        total: Number(f.total),
+        cartas: Number(f.cartas),
+      }));
+    } catch (e: unknown) {
+      expansionesAMedias = {
+        aviso: `no se pudo contar: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+
+    return NextResponse.json({
+      ...rows[0],
+      ...tablasNuevas,
+      rarezas_fuera_de_tabla: rarezasFueraDeTabla,
+      expansiones_a_medias: expansionesAMedias,
+      entorno,
+    });
   } catch (e: unknown) {
     // Aun con la base caída se devuelve el estado del entorno.
     return NextResponse.json(

@@ -1,4 +1,14 @@
-"use server";
+// services/localData.ts
+//
+// SIN 'use server' A PROPÓSITO, igual que services/preciosBD.ts, sobresBD.ts e
+// idiomaBD.ts: en un fichero 'use server' cada función exportada es un endpoint
+// POST público. Este módulo llevaba la directiva sin necesitarla —sólo lo
+// importa código de servidor: app/action.ts, app/album/[setId]/layout.tsx y
+// services/pokemon.ts—, y con ella bastaba que un componente de cliente
+// importase `loadLocalCards` para publicar, sin sesión, un endpoint que lee
+// ficheros del disco a partir de un id que manda el navegador. Sin la
+// directiva, esa importación falla al compilar (el módulo usa `fs`) en vez de
+// publicar nada.
 
 import { promises as fs } from "fs";
 import path from "path";
@@ -109,6 +119,37 @@ export async function loadLocalSets() {
   }
 
   return setsCache;
+}
+
+/**
+ * Las cartas de una expansión TAL CUAL vienen en su JSON, sin recortar.
+ *
+ * PARA QUÉ: sólo para SEMBRAR. `loadLocalCards` devuelve la forma que pintan
+ * las pantallas (19 campos, con rellenos como "Desconocido"), y la siembra bajo
+ * demanda escribía en `cards` a partir de ella: `abilities`, `rules`,
+ * `resistances`, `legalities`, `regulationMark` y `convertedRetreatCost` se
+ * quedaban en NULL para siempre, porque /seed-database salta después esa
+ * expansión al ver que el recuento ya cuadra. Con el objeto crudo, la siembra
+ * bajo demanda escribe exactamente lo mismo que /seed-database, que es quien
+ * lee estos mismos ficheros.
+ *
+ * NO SE CACHEA A PROPÓSITO: se llama una vez por expansión y por despliegue
+ * (cuando faltan cartas), y guardar los 38 JSON crudos en memoria sería pagar
+ * siempre por algo que casi nunca se usa. Y NO SE EXPORTA A NINGUNA PANTALLA:
+ * engordar `loadLocalCards` con estos campos los mandaría al navegador en el
+ * respaldo sin base de datos.
+ */
+export async function loadLocalCardsCrudas(setId: string): Promise<Record<string, unknown>[]> {
+  // Misma validación que `loadLocalCards`: el id no puede salir del directorio.
+  if (!/^[a-z0-9._-]+$/i.test(setId)) return [];
+  try {
+    const raw = await fs.readFile(path.join(DATA_DIR, `${setId}.json`), "utf8");
+    const parsed = JSON.parse(raw);
+    const list = Array.isArray(parsed) ? parsed : parsed?.data;
+    return Array.isArray(list) ? list.filter((c) => c && typeof c.id === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function loadLocalCards(setId: string) {

@@ -108,6 +108,9 @@ export async function preciosEnEuros(
  * `precioEur`. Las cartas sin precio se devuelven TAL CUAL (misma referencia),
  * igual que hace services/idioma.ts con las que no tienen traducción: así el
  * caso normal —que es no tener precio— no genera basura ni invalida memos.
+ *
+ * SIN USO a fecha del commit d4d558e: app/action.ts pega el precio por su
+ * cuenta con `preciosEnEuros`. No se borra sin el sí del dueño.
  */
 export async function conPrecioReal<T extends { id: string }>(
   cartas: readonly T[],

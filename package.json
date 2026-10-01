@@ -7,9 +7,16 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit --incremental false",
     "test": "node scripts/test-invariantes.mjs",
+    "test:idioma": "node scripts/probar-idioma.mjs",
+    "comprobar": "npm run typecheck && npm test && npm run test:idioma",
     "sim:economia": "node scripts/sim-economia.mjs",
-    "sim:mercado": "node scripts/sim-mercado.mjs"
+    "sim:mercado": "node scripts/sim-mercado.mjs",
+    "es:generar": "node scripts/generar-diccionario-es.mjs",
+    "sobres:preparar": "node scripts/preparar-sobres.mjs",
+    "sobres:bajar": "node scripts/bajar-sobres-bulbapedia.mjs",
+    "pwa:imagenes": "node scripts/generar-imagenes-pwa.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.37.3",

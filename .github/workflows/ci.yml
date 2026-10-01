@@ -1,0 +1,98 @@
+# CI: lo que tiene que pasar antes de que un cambio llegue a los jugadores.
+#
+# POR QUÉ EXISTE: Vercel sólo ejecuta `next build`. Hasta ahora un push a main
+# se desplegaba sin typecheck y sin `npm test`, y `npm test` es lo único que
+# avisa de que un cambio en un precio, en la tabla de notas o en la comisión
+# del bazar ha vuelto a abrir una fuga de monedas. Bastaba editar una
+# constante desde la web de GitHub para ponerlo en producción sin que nadie
+# hubiera ejecutado un solo invariante.
+#
+# ESTE FICHERO NO IMPIDE EL DESPLIEGUE POR SÍ SOLO: sólo dice si el commit
+# está sano. Que Vercel espere a esa respuesta es un ajuste del panel, y está
+# explicado en el README («CI y puerta de despliegue»).
+#
+# SIN SECRETOS, A PROPÓSITO. Nada de aquí toca Postgres, Clerk ni ninguna API:
+# el typecheck y los invariantes trabajan sobre el código y sobre las cartas
+# de src/data. Por eso puede correr también en los pull request que vienen de
+# un fork, que no reciben secretos. `next build` NO está aquí por lo mismo:
+# necesita las claves de Clerk y red para bajar la tipografía, y ya lo hace
+# Vercel.
+name: CI
+
+on:
+  push:
+  pull_request:
+  # Para lanzarlo a mano desde la pestaña Actions.
+  workflow_dispatch:
+
+# El flujo sólo lee el repositorio.
+permissions:
+  contents: read
+
+# Un push nuevo a la misma rama deja sin sentido la comprobación del anterior.
+# En main NO se cancela: cada commit de main es un despliegue de producción y
+# tiene que quedarse con su veredicto, no con un «cancelado».
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # LA PUERTA. Es el trabajo que hay que marcar como obligatorio en GitHub y
+  # en Vercel. Su `name` es el nombre con el que aparece en esas listas: si se
+  # cambia, hay que volver a elegirlo allí.
+  comprobar:
+    name: Typecheck e invariantes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      # Node 24: el mismo con el que se desarrolla. scripts/probar-idioma.mjs importa un .ts
+      # directamente, así que hace falta un Node que quite los tipos él solo
+      # (22.18 o posterior).
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      # `npm ci` y no `npm install`: instala EXACTAMENTE lo del
+      # package-lock.json y falla si no cuadra con package.json, en vez de
+      # resolver versiones nuevas por su cuenta.
+      - name: Instalar dependencias
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Los invariantes deterministas de la economía. Sale con código distinto
+      # de cero si uno solo se rompe.
+      - name: Invariantes (npm test)
+        run: npm test
+
+      # Que la capa de español no cambia id, rareza ni expansión de ninguna
+      # carta: de esos tres campos cuelgan los precios y los sobres.
+      - name: Capa de idioma
+        run: npm run test:idioma
+
+  # AVISO, NO PUERTA. El lint todavía tiene errores heredados (README, «CI y
+  # puerta de despliegue»). `continue-on-error` hace que un fallo aquí NO deje
+  # el flujo en rojo ni bloquee nada: el trabajo sale marcado como fallido en
+  # la lista, que es justo el aviso que se quiere, y el flujo sigue en verde.
+  #
+  # PARA ENDURECERLO: cuando `npm run lint` salga con 0 errores, quitar la
+  # línea `continue-on-error` y marcar también este trabajo como obligatorio.
+  lint:
+    name: ESLint (aviso, no bloquea)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - name: Instalar dependencias
+        run: npm ci --no-audit --no-fund
+      - name: ESLint
+        run: npm run lint

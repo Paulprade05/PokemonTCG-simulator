@@ -54,6 +54,14 @@ export interface MiAnuncio {
    * saca de una columna de texto libre y la pantalla tiene que saber pintar un
    * estado que todavía no conoce sin romperse. El rótulo cae a "Cerrada". */
   estado: string;
+  /**
+   * ¿Se podría comprar ahora mismo? Falso en un anuncio 'activa' cuya copia ya
+   * no está detrás (se gastó por otra vía). `getMisAnunciosBazar` cierra esos
+   * anuncios antes de contestar, así que aquí sólo llega falso si ese cierre
+   * falló: entonces se dice, para que el vendedor lo retire a mano. Opcional:
+   * una respuesta sin el campo es "sí", lo de siempre.
+   */
+  respaldado?: boolean;
 }
 
 /**

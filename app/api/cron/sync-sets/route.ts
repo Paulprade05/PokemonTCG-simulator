@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 import { sql } from "@vercel/postgres";
 import { sincronizar } from "@/services/ingest";
 import { setsConEspanol } from "@/services/idiomaBD";
+import { requireCron } from "@/app/_admin-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,33 +58,12 @@ async function cobertura(setsNuevos: string[]) {
   return { nuevosSinEs, conEspanol: conEs.size, enBD, sinEsEnBD };
 }
 
-/**
- * Comparación en tiempo constante sin dependencias. Filtra por longitud (que no
- * es secreta) y luego recorre la cadena entera, de modo que el tiempo de
- * respuesta no delata cuántos caracteres del secreto se acertaron.
- */
-function igualEnTiempoConstante(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diferencia = 0;
-  for (let i = 0; i < a.length; i++) diferencia |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diferencia === 0;
-}
-
 export async function GET(request: Request) {
-  const secreto = process.env.CRON_SECRET;
-  // Sin secreto configurado la ruta se cierra: nunca queda abierta a Internet.
-  if (!secreto) {
-    return NextResponse.json(
-      { error: "CRON_SECRET no está configurado: sincronización deshabilitada." },
-      { status: 503 },
-    );
-  }
-
-  // Vercel Cron envía "Authorization: Bearer $CRON_SECRET".
-  const autorizacion = request.headers.get("authorization") ?? "";
-  if (!igualEnTiempoConstante(autorizacion, `Bearer ${secreto}`)) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  }
+  // La puerta es la de las tres rutas de cron y vive en app/_admin-auth.ts:
+  // sin CRON_SECRET utilizable (recortado y de 16 caracteres o más) la ruta se
+  // cierra con 503, nunca queda abierta a Internet.
+  const noAutorizado = requireCron(request);
+  if (noAutorizado) return noAutorizado;
 
   const { searchParams } = new URL(request.url);
   const soloSetId = searchParams.get("setId");
@@ -106,6 +86,24 @@ export async function GET(request: Request) {
     if (resumen.pendientes.length > 0) {
       const cola = resumen.pendientes.map((p) => `${p.id} (${p.enBD}/${p.total})`).join(", ");
       console.log(`[sync-sets] quedan por completar: ${cola}`);
+    }
+    /* RAREZAS QUE EL JUEGO NO CONOCE. Como AVISO y con sus nombres, porque es
+     * lo único de esta ruta que pide una decisión de economía: esas cartas se
+     * venden a la tarifa de respaldo (menos que una Rara), casi ninguna sale en
+     * sobre estándar ni premium y el mercado no las admite. Hasta ahora
+     * entraban en silencio. El recuento de toda la base está en /db-stats. */
+    if (resumen.rarezasDesconocidas.length > 0) {
+      const lista = resumen.rarezasDesconocidas
+        .map((r) => `${JSON.stringify(r.rareza)} ×${r.cartas}`)
+        .join(", ");
+      console.warn(
+        `[sync-sets] RAREZAS FUERA DE TABLA (sin precio ni rango en utils/constanst.ts): ${lista}`,
+      );
+    }
+    if (resumen.cartasSinRareza > 0) {
+      console.warn(
+        `[sync-sets] ${resumen.cartasSinRareza} cartas llegaron sin rareza y se han guardado como 'Common'`,
+      );
     }
 
     const idioma = await cobertura(resumen.setsNuevos);
